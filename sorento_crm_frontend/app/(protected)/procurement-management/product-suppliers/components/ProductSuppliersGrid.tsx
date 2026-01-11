@@ -1,0 +1,144 @@
+'use client';
+
+import { useMemo, useState } from 'react';
+import {
+  ColumnDef,
+  PaginationState,
+  SortingState,
+  useReactTable,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+} from '@tanstack/react-table';
+import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Input } from '@/components/ui/input';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { Skeleton } from '@/components/ui/skeleton';
+import type { ProductSupplier } from '../types/productSupplier.types';
+import { getProductSuppliers, type DataGridApiFetchParams } from '../services/productSupplierService';
+import { useQuery } from '@tanstack/react-query';
+
+export default function ProductSuppliersGrid() {
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['product-suppliers', pagination, sorting, searchQuery],
+    queryFn: () => getProductSuppliers({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+    }),
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+
+  const columns = useMemo<ColumnDef<ProductSupplier>[]>(
+    () => [
+      {
+        accessorKey: 'product.product_code',
+        header: ({ column }) => <DataGridColumnHeader title="Product Code" column={column} />,
+        size: 150,
+        cell: ({ row }) => row.original.product?.product_code || '-',
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        accessorKey: 'product.product_name',
+        header: ({ column }) => <DataGridColumnHeader title="Product Name" column={column} />,
+        size: 250,
+        cell: ({ row }) => row.original.product?.product_name || '-',
+        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+      },
+      {
+        accessorKey: 'supplier.supplier_code',
+        header: ({ column }) => <DataGridColumnHeader title="Supplier Code" column={column} />,
+        size: 150,
+        cell: ({ row }) => row.original.supplier?.supplier_code || '-',
+      },
+      {
+        accessorKey: 'supplier.supplier_name',
+        header: ({ column }) => <DataGridColumnHeader title="Supplier Name" column={column} />,
+        size: 200,
+        cell: ({ row }) => row.original.supplier?.supplier_name || '-',
+      },
+      {
+        accessorKey: 'actions',
+        header: '',
+        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
+        size: 40,
+      },
+    ],
+    [],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: data?.data || [],
+    pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
+    getRowId: (row) => row.id,
+    state: { pagination, sorting },
+    onPaginationChange: setPagination,
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    manualPagination: true,
+    manualSorting: true,
+    manualFiltering: true,
+  });
+
+  return (
+    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <div className="relative">
+            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+            <Input
+              placeholder="Search product suppliers..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="ps-9 w-64"
+            />
+            {searchQuery && (
+              <Button
+                mode="icon"
+                variant="dim"
+                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                onClick={() => setSearchQuery('')}
+              >
+                <X />
+              </Button>
+            )}
+          </div>
+          <Button onClick={() => {
+            // TODO: Open supplier assignment modal
+            console.log('Add supplier');
+          }}>
+            <Plus />
+            Add Supplier
+          </Button>
+        </CardHeader>
+        <CardTable>
+          <ScrollArea>
+            <DataGridTable />
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
+        </CardTable>
+        <CardFooter>
+          <DataGridPagination />
+        </CardFooter>
+      </Card>
+    </DataGrid>
+  );
+}

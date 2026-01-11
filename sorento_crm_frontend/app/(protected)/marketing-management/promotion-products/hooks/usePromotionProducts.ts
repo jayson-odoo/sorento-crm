@@ -1,0 +1,14 @@
+import { useQuery } from '@tanstack/react-query';
+import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import { getPromotionProductsList } from '../services/promotionProductService';
+
+export function usePromotionProductsList(params: DataGridApiFetchParams) {
+  return useQuery({
+    queryKey: ['promotion-products-list', params.pageIndex, params.pageSize, params.sorting, params.searchQuery],
+    queryFn: () => getPromotionProductsList(params),
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
