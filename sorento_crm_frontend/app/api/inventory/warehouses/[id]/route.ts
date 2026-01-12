@@ -153,12 +153,20 @@ export async function DELETE(
       );
     }
 
-    // Warehouses don't support soft delete, so we deactivate instead
-    await prisma.warehouse.update({
+    // Check if warehouse has zones
+    const zones = await prisma.storageZone.findMany({
+      where: { warehouseId: id },
+    });
+    if (zones.length > 0) {
+      return NextResponse.json(
+        { message: 'Warehouse has zones and cannot be deleted' },
+        { status: 400 },
+      );
+    }
+
+    // Delete the warehouse
+    await prisma.warehouse.delete({
       where: { id },
-      data: {
-        isActive: false,
-      },
     });
 
     return NextResponse.json({ message: 'Warehouse deactivated successfully' });

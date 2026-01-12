@@ -1,5 +1,10 @@
 {
   "pages": {
+    "/api/marketing/promotions/[id]/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/marketing/promotions/[id]/route.js"
+    ],
     "/layout": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -11,15 +16,35 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/layout.js"
     ],
-    "/(protected)/page": [
+    "/(protected)/marketing-management/promotions/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/page.js"
+      "static/chunks/app/(protected)/marketing-management/promotions/[id]/page.js"
     ],
     "/api/auth/[...nextauth]/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/[...nextauth]/route.js"
+    ],
+    "/api/master-data/products/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/master-data/products/route.js"
+    ],
+    "/(protected)/marketing-management/promotions/[id]/edit/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/marketing-management/promotions/[id]/edit/page.js"
+    ],
+    "/(protected)/marketing-management/promotion-products/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/marketing-management/promotion-products/page.js"
+    ],
+    "/api/marketing/promotion-products/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/marketing/promotion-products/route.js"
     ]
   }
 }

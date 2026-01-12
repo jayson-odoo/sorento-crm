@@ -186,7 +186,7 @@ model SystemSetting {
 }
 
 // ============================================
-// Master Data Management - Products
+// Product Management - Products
 // ============================================
 
 model ProductCategory {
@@ -266,8 +266,8 @@ model Product {
   warrantyMonths    Int?      @map("warranty_months")
   hasSerialTracking Boolean   @default(false) @map("has_serial_tracking")
   hasBatchTracking  Boolean   @default(false) @map("has_batch_tracking")
-  reorderLevel      Int       @default(10) @map("reorder_level")
-  reorderQuantity   Int       @default(50) @map("reorder_quantity")
+  reorderLevel      Int?      @map("reorder_level")
+  reorderQuantity   Int?      @map("reorder_quantity")
   isActive          Boolean   @default(true) @map("is_active")
   createdBy         String?   @map("created_by")
   updatedBy         String?   @map("updated_by")
@@ -291,7 +291,7 @@ model Product {
 }
 
 // ============================================
-// Procurement Management
+// Procurement
 // ============================================
 
 model Supplier {
@@ -366,7 +366,6 @@ model StorageZone {
   zoneName     String?  @map("zone_name") @db.VarChar(150)
   zoneType     String   @map("zone_type") @db.VarChar(100) // shelf, rack, bin, pallet
   capacity     Int?     @default(0)
-  displayOrder Int      @default(0) @map("display_order")
   createdAt    DateTime @default(now()) @map("created_at")
 
   warehouse    Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
@@ -378,11 +377,20 @@ model StorageZone {
 }
 
 model Stock {
-  id               String   @id @default(uuid())
-  productId        String   @map("product_id")
-  warehouseId      String   @map("warehouse_id")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime? @map("updated_at")
+  id                  String    @id @default(uuid())
+  productId           String    @map("product_id")
+  warehouseId         String    @map("warehouse_id")
+  zoneId              String?   @map("zone_id")
+  quantityOnHand      Int       @default(0) @map("quantity_on_hand")
+  quantityReserved    Int       @default(0) @map("quantity_reserved")
+  quantityAvailable   Int       @default(0) @map("quantity_available")
+  quantityDamaged     Int       @default(0) @map("quantity_damaged")
+  reorderPoint        Int?      @map("reorder_point")
+  lastCountDate       DateTime? @map("last_count_date")
+  syncedToExcel       Boolean   @default(false) @map("synced_to_excel")
+  lastSyncedToExcel   DateTime? @map("last_synced_to_excel")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime? @map("updated_at")
 
   product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouse Warehouse     @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
@@ -427,19 +435,11 @@ model StockBatch {
 // Marketing Management
 // ============================================
 
-enum PromotionType {
-  price_override
-  discount_percent
-  discount_amount
-  bundle
-  other
-}
-
 model Promotion {
   id          String        @id @default(uuid())
   promoCode   String        @unique @map("promo_code") @db.VarChar(50)
   name        String        @db.VarChar(255)
-  promoType   PromotionType @map("promo_type")
+  promoType   String        @map("promo_type") @db.VarChar(50)
   description String?       @db.Text
   startDate   DateTime      @map("start_date")
   endDate     DateTime      @map("end_date")
@@ -458,11 +458,14 @@ model Promotion {
 }
 
 model PromotionProduct {
-  id          String    @id @default(uuid())
-  promotionId String    @map("promotion_id")
-  productId    String    @map("product_id")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime? @map("updated_at")
+  id              String    @id @default(uuid())
+  promotionId     String    @map("promotion_id")
+  productId       String    @map("product_id")
+  promotionPrice  Decimal?  @map("promo_selling_price") @db.Decimal(12, 2)
+  discountAmount  Decimal?  @map("discount_amount") @db.Decimal(12, 2)
+  discountPercent Decimal?  @map("discount_percent") @db.Decimal(5, 2)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime? @map("updated_at")
 
   promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
   product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)

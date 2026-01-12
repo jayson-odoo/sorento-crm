@@ -45,11 +45,35 @@ export async function DELETE(
       );
     }
 
-    // TODO: Implement once Prisma models are added
-    return NextResponse.json(
-      { message: 'Product supplier delete endpoint - database tables need to be created first' },
-      { status: 501 },
-    );
+    const { id } = await params;
+
+    // Validate that id is a valid UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(id)) {
+      return NextResponse.json(
+        { message: 'Invalid product supplier ID format' },
+        { status: 400 },
+      );
+    }
+
+    // Check if product supplier exists
+    const productSupplier = await prisma.productSupplier.findUnique({
+      where: { id },
+    });
+
+    if (!productSupplier) {
+      return NextResponse.json(
+        { message: 'Product supplier not found' },
+        { status: 404 },
+      );
+    }
+
+    // Permanently delete the product supplier
+    await prisma.productSupplier.delete({
+      where: { id },
+    });
+
+    return NextResponse.json({ message: 'Product supplier deleted successfully' });
   } catch (error) {
     console.error('Error deleting product supplier:', error);
     return NextResponse.json(

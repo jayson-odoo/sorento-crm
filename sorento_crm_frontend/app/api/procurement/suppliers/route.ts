@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
         country: body.country || null,
         paymentTermsDays: body.payment_terms_days || 30,
         isActive: body.is_active !== false,
-        createdBy: session.user?.id || null,
+        createdAt: new Date(),
       },
     });
 

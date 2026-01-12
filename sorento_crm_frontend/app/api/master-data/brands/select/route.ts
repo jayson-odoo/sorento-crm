@@ -33,7 +33,14 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(brands);
+    // Transform to snake_case for consistency with other API endpoints
+    const transformedBrands = brands.map((brand) => ({
+      id: brand.id,
+      brand_code: brand.brandCode,
+      brand_name: brand.brandName,
+    }));
+
+    return NextResponse.json(transformedBrands);
   } catch (error) {
     console.error('Error fetching brands:', error);
     return NextResponse.json(

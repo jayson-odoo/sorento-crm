@@ -12,7 +12,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Plus, Search, X, ChevronRight } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
@@ -86,6 +86,7 @@ export default function PromotionsList() {
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
           <Badge variant={row.original.is_active ? 'success' : 'secondary'} appearance="ghost">
+            <BadgeDot />
             {row.original.is_active ? 'Active' : 'Inactive'}
           </Badge>
         ),
@@ -106,6 +107,11 @@ export default function PromotionsList() {
     [],
   );
 
+  const handleRowClick = (row: Promotion) => {
+    const promotionId = row.id;
+    router.push(`/marketing-management/promotions/${promotionId}`);
+  };
+
   const table = useReactTable({
     columns,
     data: data?.data || [],
@@ -123,7 +129,7 @@ export default function PromotionsList() {
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">

@@ -318,7 +318,7 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
-    title: 'Master Data Management',
+    title: 'Product Management',
     icon: Package,
     children: [
       {
@@ -340,7 +340,7 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
-    title: 'Procurement Management',
+    title: 'Procurement',
     icon: ShoppingBag,
     children: [
       {
@@ -816,7 +816,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     ],
   },
   {
-    title: 'Master Data Management',
+    title: 'Product Management',
     icon: Package,
     children: [
       {
@@ -838,7 +838,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     ],
   },
   {
-    title: 'Procurement Management',
+    title: 'Procurement',
     icon: ShoppingBag,
     children: [
       {

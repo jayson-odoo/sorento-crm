@@ -173,16 +173,35 @@ export async function DELETE(
       );
     }
 
-    await prisma.supplier.update({
+    // Check if supplier exists
+    const supplier = await prisma.supplier.findUnique({
       where: { id },
-      data: {
-        isActive: false,
-      },
+    });
+
+    if (!supplier) {
+      return NextResponse.json(
+        { message: 'Supplier not found' },
+        { status: 404 },
+      );
+    }
+
+    // Permanently delete the supplier from the database
+    await prisma.supplier.delete({
+      where: { id },
     });
 
     return NextResponse.json({ message: 'Supplier deleted successfully' });
   } catch (error) {
     console.error('Error deleting supplier:', error);
+    
+    // Handle foreign key constraint errors
+    if (error instanceof Error && error.message.includes('Foreign key constraint')) {
+      return NextResponse.json(
+        { message: 'Cannot delete supplier. It is being used in other records.' },
+        { status: 400 },
+      );
+    }
+
     return NextResponse.json(
       { message: 'Oops! Something went wrong. Please try again in a moment.' },
       { status: 500 },

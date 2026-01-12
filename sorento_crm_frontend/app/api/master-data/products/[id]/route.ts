@@ -164,9 +164,9 @@ export async function PUT(
         brandId: body.brand_id || null,
         baseUomId: body.base_uom_id,
         itemType: body.item_type,
-        listPrice: body.list_price,
-        costPrice: body.cost_price || null,
-        invoicePrice: body.invoice_price || null,
+        listPrice: typeof body.list_price === 'number' ? body.list_price : Number(body.list_price),
+        costPrice: body.cost_price ? (typeof body.cost_price === 'number' ? body.cost_price : Number(body.cost_price)) : null,
+        invoicePrice: body.invoice_price ? (typeof body.invoice_price === 'number' ? body.invoice_price : Number(body.invoice_price)) : null,
         weight: body.weight || null,
         dimensionsLength: body.dimensions_length || null,
         dimensionsWidth: body.dimensions_width || null,
@@ -199,7 +199,7 @@ export async function PUT(
 /**
  * DELETE /api/master-data/products/:id
  * 
- * Delete (soft delete) a product
+ * Permanently delete a product from the database
  */
 export async function DELETE(
   request: NextRequest,
@@ -226,17 +226,35 @@ export async function DELETE(
       );
     }
 
-    // Products don't support soft delete, so we deactivate instead
-    await prisma.product.update({
+    // Check if product exists
+    const product = await prisma.product.findUnique({
       where: { id },
-      data: {
-        isActive: false,
-      },
     });
 
-    return NextResponse.json({ message: 'Product deactivated successfully' });
+    if (!product) {
+      return NextResponse.json(
+        { message: 'Product not found' },
+        { status: 404 },
+      );
+    }
+
+    // Permanently delete the product from the database
+    await prisma.product.delete({
+      where: { id },
+    });
+
+    return NextResponse.json({ message: 'Product deleted successfully' });
   } catch (error) {
     console.error('Error deleting product:', error);
+    
+    // Handle foreign key constraint errors
+    if (error instanceof Error && error.message.includes('Foreign key constraint')) {
+      return NextResponse.json(
+        { message: 'Cannot delete product. It is being used in other records.' },
+        { status: 400 },
+      );
+    }
+
     return NextResponse.json(
       { message: 'Oops! Something went wrong. Please try again in a moment.' },
       { status: 500 },

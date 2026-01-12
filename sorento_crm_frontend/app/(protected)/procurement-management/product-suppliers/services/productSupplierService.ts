@@ -53,6 +53,15 @@ export async function deleteProductSupplier(id: string): Promise<void> {
   }
 }
 
+export async function getProductSuppliersByProductId(productId: string): Promise<ProductSupplier[]> {
+  const response = await apiFetch(`/api/procurement/product-suppliers/product/${productId}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to fetch product suppliers' }));
+    throw new Error(error.message || 'Failed to fetch product suppliers');
+  }
+  return response.json();
+}
+
 export async function bulkUploadProductSuppliers(file: File): Promise<{ success: number; errors: any[] }> {
   const formData = new FormData();
   formData.append('file', file);

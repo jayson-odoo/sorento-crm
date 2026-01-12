@@ -12,7 +12,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Plus, Search, X, ChevronRight } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
@@ -37,6 +37,11 @@ export default function SuppliersList() {
     sorting,
     searchQuery,
   });
+
+  const handleRowClick = (row: Supplier) => {
+    const supplierId = row.id;
+    router.push(`/procurement-management/suppliers/${supplierId}`);
+  };
 
   const columns = useMemo<ColumnDef<Supplier>[]>(
     () => [
@@ -73,11 +78,18 @@ export default function SuppliersList() {
       {
         accessorKey: 'is_active',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        cell: ({ row }) => (
-          <Badge variant={row.original.is_active ? 'success' : 'secondary'} appearance="ghost">
-            {row.original.is_active ? 'Active' : 'Inactive'}
-          </Badge>
-        ),
+        cell: ({ row }) => {
+          const isActive = row.original.is_active;
+          return (
+            <Badge
+              variant={isActive ? 'success' : 'secondary'}
+              appearance="ghost"
+            >
+              <BadgeDot />
+              {isActive ? 'Active' : 'Inactive'}
+            </Badge>
+          );
+        },
         size: 100,
       },
       {
@@ -107,7 +119,12 @@ export default function SuppliersList() {
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid
+      table={table}
+      recordCount={data?.pagination.total || 0}
+      isLoading={isLoading}
+      onRowClick={handleRowClick}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">

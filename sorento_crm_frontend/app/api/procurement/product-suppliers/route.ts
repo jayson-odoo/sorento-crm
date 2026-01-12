@@ -89,12 +89,27 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+    const leadTimeDays = body.standard_lead_time_days || body.lead_time_days || 0;
 
-    const productSupplier = await prisma.productSupplier.create({
-      data: {
-        productId: body.product_id,
-        supplierId: body.supplier_id,
-      },
+    // Use raw query since Prisma schema doesn't include standard_lead_time_days yet
+    const result = await prisma.$queryRaw<Array<{ id: string }>>`
+      INSERT INTO product_suppliers (id, product_id, supplier_id, standard_lead_time_days, created_at)
+      VALUES (gen_random_uuid(), ${body.product_id}::uuid, ${body.supplier_id}::uuid, ${leadTimeDays}, NOW())
+      RETURNING id
+    `;
+
+    if (!result || result.length === 0) {
+      return NextResponse.json(
+        { message: 'Failed to create product supplier' },
+        { status: 500 },
+      );
+    }
+
+    const createdId = result[0].id;
+
+    // Fetch the created record with relations
+    const productSupplier = await prisma.productSupplier.findUnique({
+      where: { id: createdId },
       include: {
         product: {
           select: {
@@ -113,11 +128,28 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    if (!productSupplier) {
+      return NextResponse.json(
+        { message: 'Failed to fetch created product supplier' },
+        { status: 500 },
+      );
+    }
+
+    // Fetch standard_lead_time_days using raw query
+    const leadTimeResult = await prisma.$queryRaw<Array<{ standard_lead_time_days: number | null }>>`
+      SELECT standard_lead_time_days
+      FROM product_suppliers
+      WHERE id = ${createdId}::uuid
+    `;
+    const leadTimeDaysValue = leadTimeResult[0]?.standard_lead_time_days ?? null;
+
     // Transform to snake_case for frontend
     const transformedProductSupplier = {
       id: productSupplier.id,
       product_id: productSupplier.productId,
       supplier_id: productSupplier.supplierId,
+      standard_lead_time_days: leadTimeDaysValue,
+      lead_time_days: leadTimeDaysValue, // Alias for compatibility
       created_at: productSupplier.createdAt,
       product: productSupplier.product ? {
         id: productSupplier.product.id,

@@ -10,7 +10,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -72,12 +72,6 @@ export default function ProductSuppliersGrid() {
         size: 200,
         cell: ({ row }) => row.original.supplier?.supplier_name || '-',
       },
-      {
-        accessorKey: 'actions',
-        header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
-        size: 40,
-      },
     ],
     [],
   );
@@ -121,13 +115,6 @@ export default function ProductSuppliersGrid() {
               </Button>
             )}
           </div>
-          <Button onClick={() => {
-            // TODO: Open supplier assignment modal
-            console.log('Add supplier');
-          }}>
-            <Plus />
-            Add Supplier
-          </Button>
         </CardHeader>
         <CardTable>
           <ScrollArea>

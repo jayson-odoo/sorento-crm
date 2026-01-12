@@ -34,7 +34,15 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(categories);
+    // Transform to snake_case for consistency with other API endpoints
+    const transformedCategories = categories.map((cat) => ({
+      id: cat.id,
+      category_code: cat.categoryCode,
+      category_name: cat.categoryName,
+      parent_category_id: cat.parentCategoryId,
+    }));
+
+    return NextResponse.json(transformedCategories);
   } catch (error) {
     console.error('Error fetching categories:', error);
     return NextResponse.json(

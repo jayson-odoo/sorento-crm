@@ -14,7 +14,7 @@ import {
 } from '@tanstack/react-table';
 import { ChevronRight, Plus, Search, X, Edit, Trash2, Copy } from 'lucide-react';
 import { formatDate } from '@/lib/helpers';
-import { Badge } from '@/components/ui/badge';
+import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import {
@@ -39,6 +39,7 @@ import { useProducts } from '../hooks/useProducts';
 import { useProductFilters } from '../hooks/useProductFilters';
 import type { ProductListItem } from '../types/product.types';
 import { getProducts, type GetProductsParams } from '../services/productService';
+import ProductDeleteDialog from './product-delete-dialog';
 
 const ProductsList = () => {
   const router = useRouter();
@@ -53,6 +54,8 @@ const ProductsList = () => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | null>('all');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<ProductListItem | null>(null);
 
   const {
     filters,
@@ -158,8 +161,8 @@ const ProductsList = () => {
 
   const handleDelete = (e: React.MouseEvent, row: ProductListItem) => {
     e.stopPropagation();
-    // TODO: Implement delete with confirmation dialog
-    console.log('Delete product:', row.id);
+    setProductToDelete(row);
+    setDeleteDialogOpen(true);
   };
 
   const handleDuplicate = (e: React.MouseEvent, row: ProductListItem) => {
@@ -316,6 +319,7 @@ const ProductsList = () => {
               variant={isActive ? 'success' : 'secondary'}
               appearance="ghost"
             >
+              <BadgeDot />
               {isActive ? 'Active' : 'Inactive'}
             </Badge>
           );
@@ -553,6 +557,16 @@ const ProductsList = () => {
           <DataGridPagination />
         </CardFooter>
       </Card>
+      {productToDelete && (
+        <ProductDeleteDialog
+          open={deleteDialogOpen}
+          closeDialog={() => {
+            setDeleteDialogOpen(false);
+            setProductToDelete(null);
+          }}
+          product={productToDelete}
+        />
+      )}
     </DataGrid>
   );
 };

@@ -158,15 +158,23 @@ export async function DELETE(
       );
     }
 
-    // Brands don't support soft delete, so we deactivate instead
-    await prisma.brand.update({
+    // Check if brand has products
+    const products = await prisma.product.findMany({
+      where: { brandId: id },
+    });
+    if (products.length > 0) {
+      return NextResponse.json(
+        { message: 'Brand has products and cannot be deleted' },
+        { status: 400 },
+      );
+    }
+
+    // Delete the brand
+    await prisma.brand.delete({
       where: { id },
-      data: {
-        isActive: false,
-      },
     });
 
-    return NextResponse.json({ message: 'Brand deactivated successfully' });
+    return NextResponse.json({ message: 'Brand deleted successfully' });
   } catch (error) {
     console.error('Error deleting brand:', error);
     return NextResponse.json(

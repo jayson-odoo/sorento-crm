@@ -11,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Search, X, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -44,15 +44,27 @@ export default function PromotionProductsList() {
       {
         accessorKey: 'promotion.promo_code',
         header: ({ column }) => <DataGridColumnHeader title="Promotion Code" column={column} />,
-        size: 200,
-        cell: ({ row }) => row.original.promotion?.promo_code || '-',
+        size: 150,
+        minSize: 100,
+        maxSize: 500,
+        cell: ({ row }) => (
+          <div className="truncate" title={row.original.promotion?.promo_code || '-'}>
+            {row.original.promotion?.promo_code || '-'}
+          </div>
+        ),
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'promotion.name',
         header: ({ column }) => <DataGridColumnHeader title="Promotion Name" column={column} />,
         size: 250,
-        cell: ({ row }) => row.original.promotion?.name || '-',
+        minSize: 150,
+        maxSize: 500,
+        cell: ({ row }) => (
+          <div className="truncate" title={row.original.promotion?.name || '-'}>
+            {row.original.promotion?.name || '-'}
+          </div>
+        ),
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
@@ -139,10 +151,24 @@ export default function PromotionProductsList() {
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+    defaultColumn: {
+      minSize: 50,
+      maxSize: 800,
+      size: 150,
+    },
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid 
+      table={table} 
+      recordCount={data?.pagination.total || 0} 
+      isLoading={isLoading}
+      tableLayout={{
+        columnsResizable: true,
+      }}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">

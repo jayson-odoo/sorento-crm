@@ -29,7 +29,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { useCreateCategory, useUpdateCategory } from '../hooks/useProductCategories';
+import { useCreateCategory, useUpdateCategory, useCategory } from '../hooks/useProductCategories';
 import { useCategoriesTree } from '../hooks/useProductCategories';
 import type { CategoryFormData } from '../types/category.types';
 
@@ -50,6 +50,7 @@ interface CategoryFormProps {
 
 export default function CategoryForm({ open, onOpenChange, categoryId }: CategoryFormProps) {
   const { data: categories } = useCategoriesTree();
+  const { data: category, isLoading: isLoadingCategory } = useCategory(categoryId || null);
   const createMutation = useCreateCategory();
   const updateMutation = useUpdateCategory();
 
@@ -67,9 +68,27 @@ export default function CategoryForm({ open, onOpenChange, categoryId }: Categor
 
   useEffect(() => {
     if (open) {
-      form.reset();
+      if (categoryId && category) {
+        form.reset({
+          category_code: category.category_code,
+          category_name: category.category_name,
+          description: category.description || '',
+          parent_category_id: category.parent_category_id || null,
+          is_active: category.is_active,
+          display_order: category.display_order || 0,
+        });
+      } else {
+        form.reset({
+          category_code: '',
+          category_name: '',
+          description: '',
+          parent_category_id: null,
+          is_active: true,
+          display_order: 0,
+        });
+      }
     }
-  }, [open, form]);
+  }, [open, form, categoryId, category]);
 
   const onSubmit = async (data: CategoryFormData) => {
     try {

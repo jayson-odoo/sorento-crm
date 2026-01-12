@@ -1845,11 +1845,17 @@
   .max-w-\[70\%\] {
     max-width: 70%;
   }
+  .max-w-\[150px\] {
+    max-width: 150px;
+  }
   .max-w-\[198px\] {
     max-width: 198px;
   }
   .max-w-\[200px\] {
     max-width: 200px;
+  }
+  .max-w-\[250px\] {
+    max-width: 250px;
   }
   .max-w-\[280px\] {
     max-width: 280px;
@@ -2163,8 +2169,8 @@
   .grid-cols-4 {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
-  .grid-cols-5 {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+  .grid-cols-6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
   .grid-cols-12 {
     grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -2503,6 +2509,9 @@
   }
   .overflow-hidden {
     overflow: hidden;
+  }
+  .overflow-x-auto {
+    overflow-x: auto;
   }
   .overflow-x-hidden {
     overflow-x: hidden;
@@ -3859,6 +3868,9 @@
   .text-left {
     text-align: left;
   }
+  .text-right {
+    text-align: right;
+  }
   .text-start {
     text-align: start;
   }
@@ -4626,6 +4638,9 @@
   }
   .paused {
     animation-play-state: paused;
+  }
+  .running {
+    animation-play-state: running;
   }
   .\*\:border-border {
     :is(& > *) {

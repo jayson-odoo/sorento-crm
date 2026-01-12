@@ -61,7 +61,7 @@ export default function UOMDetailPage({
                   </BreadcrumbItem>
                   <BreadcrumbSeparator />
                   <BreadcrumbItem>
-                    <BreadcrumbPage>Master Data Management</BreadcrumbPage>
+                    <BreadcrumbPage>Product Management</BreadcrumbPage>
                   </BreadcrumbItem>
                   <BreadcrumbSeparator />
                   <BreadcrumbItem>
@@ -105,7 +105,7 @@ export default function UOMDetailPage({
                   </BreadcrumbItem>
                   <BreadcrumbSeparator />
                   <BreadcrumbItem>
-                    <BreadcrumbPage>Master Data Management</BreadcrumbPage>
+                    <BreadcrumbPage>Product Management</BreadcrumbPage>
                   </BreadcrumbItem>
                   <BreadcrumbSeparator />
                   <BreadcrumbItem>
@@ -155,7 +155,7 @@ export default function UOMDetailPage({
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Master Data Management</BreadcrumbPage>
+                  <BreadcrumbPage>Product Management</BreadcrumbPage>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>

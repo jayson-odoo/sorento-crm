@@ -150,7 +150,7 @@ export async function updateProduct(
 }
 
 /**
- * Delete product (soft delete)
+ * Permanently delete product from database
  */
 export async function deleteProduct(id: string): Promise<void> {
   const response = await apiFetch(`/api/master-data/products/${id}`, {

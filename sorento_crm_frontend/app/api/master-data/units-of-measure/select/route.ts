@@ -32,7 +32,16 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(uoms);
+    // Transform to snake_case for consistency with other API endpoints
+    const transformedUOMs = uoms.map((uom) => ({
+      id: uom.id,
+      uom_code: uom.uomCode,
+      uom_name: uom.uomName,
+      base_uom_id: uom.baseUomId,
+      conversion_factor: uom.conversionFactor,
+    }));
+
+    return NextResponse.json(transformedUOMs);
   } catch (error) {
     console.error('Error fetching UOMs:', error);
     return NextResponse.json(
