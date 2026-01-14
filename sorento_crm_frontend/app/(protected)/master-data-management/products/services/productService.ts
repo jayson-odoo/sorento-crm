@@ -60,7 +60,7 @@ export async function getProducts(
   });
 
   const response = await apiFetch(
-    `/api/master-data/products?${queryParams.toString()}`,
+    `/api/v1/master-data/products?${queryParams.toString()}`,
     {
       method: 'GET',
       headers: {
@@ -83,11 +83,12 @@ export async function getProducts(
  * Get single product by ID
  */
 export async function getProduct(id: string): Promise<ProductDetail> {
-  const response = await apiFetch(`/api/master-data/products/${id}`, {
+  const response = await apiFetch(`/api/v1/master-data/products/${id}`, {
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
     },
+    credentials: 'include',
   });
 
   if (!response.ok) {
@@ -106,7 +107,7 @@ export async function getProduct(id: string): Promise<ProductDetail> {
 export async function createProduct(
   data: ProductFormData,
 ): Promise<Product> {
-  const response = await apiFetch('/api/master-data/products', {
+  const response = await apiFetch('/api/v1/master-data/products', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -131,7 +132,7 @@ export async function updateProduct(
   id: string,
   data: Partial<ProductFormData>,
 ): Promise<Product> {
-  const response = await apiFetch(`/api/master-data/products/${id}`, {
+  const response = await apiFetch(`/api/v1/master-data/products/${id}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -153,7 +154,7 @@ export async function updateProduct(
  * Permanently delete product from database
  */
 export async function deleteProduct(id: string): Promise<void> {
-  const response = await apiFetch(`/api/master-data/products/${id}`, {
+  const response = await apiFetch(`/api/v1/master-data/products/${id}`, {
     method: 'DELETE',
     headers: {
       'Content-Type': 'application/json',
@@ -175,7 +176,7 @@ export async function duplicateProduct(
   id: string,
   newProductCode: string,
 ): Promise<Product> {
-  const response = await apiFetch(`/api/master-data/products/${id}/duplicate`, {
+  const response = await apiFetch(`/api/v1/master-data/products/${id}/duplicate`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -198,7 +199,7 @@ export async function duplicateProduct(
  */
 export async function getPriceHistory(id: string): Promise<PriceHistory[]> {
   const response = await apiFetch(
-    `/api/master-data/products/${id}/price-history`,
+    `/api/v1/master-data/products/${id}/price-history`,
     {
       method: 'GET',
       headers: {
@@ -224,7 +225,7 @@ export async function bulkUpdateProducts(
   ids: string[],
   updates: Partial<ProductFormData>,
 ): Promise<void> {
-  const response = await apiFetch('/api/master-data/products/bulk', {
+  const response = await apiFetch('/api/v1/master-data/products/bulk', {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
@@ -244,7 +245,7 @@ export async function bulkUpdateProducts(
  * Bulk delete products
  */
 export async function bulkDeleteProducts(ids: string[]): Promise<void> {
-  const response = await apiFetch('/api/master-data/products/bulk', {
+  const response = await apiFetch('/api/v1/master-data/products/bulk', {
     method: 'DELETE',
     headers: {
       'Content-Type': 'application/json',
@@ -280,7 +281,7 @@ export async function exportProducts(
   }
 
   const response = await apiFetch(
-    `/api/master-data/products/export?${queryParams.toString()}`,
+    `/api/v1/master-data/products/export?${queryParams.toString()}`,
     {
       method: 'GET',
       headers: {

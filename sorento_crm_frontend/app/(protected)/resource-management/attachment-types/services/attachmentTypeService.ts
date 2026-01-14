@@ -12,19 +12,19 @@ export async function getAttachmentTypes(params: DataGridApiFetchParams): Promis
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
   });
-  const response = await apiFetch(`/api/resource-management/attachment-types?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/resource-management/attachment-types?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch attachment types');
   return response.json();
 }
 
 export async function getAttachmentType(id: string): Promise<AttachmentType> {
-  const response = await apiFetch(`/api/resource-management/attachment-types/${id}`);
+  const response = await apiFetch(`/api/v1/resource-management/attachment-types/${id}`);
   if (!response.ok) throw new Error('Failed to fetch attachment type');
   return response.json();
 }
 
 export async function createAttachmentType(data: AttachmentTypeFormData): Promise<AttachmentType> {
-  const response = await apiFetch('/api/resource-management/attachment-types', {
+  const response = await apiFetch('/api/v1/resource-management/attachment-types', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -37,7 +37,7 @@ export async function createAttachmentType(data: AttachmentTypeFormData): Promis
 }
 
 export async function updateAttachmentType(id: string, data: Partial<AttachmentTypeFormData>): Promise<AttachmentType> {
-  const response = await apiFetch(`/api/resource-management/attachment-types/${id}`, {
+  const response = await apiFetch(`/api/v1/resource-management/attachment-types/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -50,7 +50,7 @@ export async function updateAttachmentType(id: string, data: Partial<AttachmentT
 }
 
 export async function deleteAttachmentType(id: string): Promise<void> {
-  const response = await apiFetch(`/api/resource-management/attachment-types/${id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/resource-management/attachment-types/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete attachment type' }));
     throw new Error(error.message);

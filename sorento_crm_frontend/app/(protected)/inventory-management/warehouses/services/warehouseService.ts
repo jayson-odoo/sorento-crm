@@ -12,19 +12,19 @@ export async function getWarehouses(params: DataGridApiFetchParams): Promise<Dat
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
   });
-  const response = await apiFetch(`/api/inventory/warehouses?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/inventory/warehouses?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch warehouses');
   return response.json();
 }
 
 export async function getWarehouse(id: string): Promise<Warehouse> {
-  const response = await apiFetch(`/api/inventory/warehouses/${id}`);
+  const response = await apiFetch(`/api/v1/inventory/warehouses/${id}`);
   if (!response.ok) throw new Error('Failed to fetch warehouse');
   return response.json();
 }
 
 export async function createWarehouse(data: WarehouseFormData): Promise<Warehouse> {
-  const response = await apiFetch('/api/inventory/warehouses', {
+  const response = await apiFetch('/api/v1/inventory/warehouses', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -37,7 +37,7 @@ export async function createWarehouse(data: WarehouseFormData): Promise<Warehous
 }
 
 export async function updateWarehouse(id: string, data: Partial<WarehouseFormData>): Promise<Warehouse> {
-  const response = await apiFetch(`/api/inventory/warehouses/${id}`, {
+  const response = await apiFetch(`/api/v1/inventory/warehouses/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -50,7 +50,7 @@ export async function updateWarehouse(id: string, data: Partial<WarehouseFormDat
 }
 
 export async function deleteWarehouse(id: string): Promise<void> {
-  const response = await apiFetch(`/api/inventory/warehouses/${id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/inventory/warehouses/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete warehouse' }));
     throw new Error(error.message);

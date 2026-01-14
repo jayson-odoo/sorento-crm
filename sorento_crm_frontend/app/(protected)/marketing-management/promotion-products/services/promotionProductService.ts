@@ -12,7 +12,7 @@ export async function getPromotionProductsList(params: DataGridApiFetchParams): 
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
   });
-  const response = await apiFetch(`/api/marketing/promotion-products?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/marketing/promotion-products?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch promotion products');
   return response.json();
 }

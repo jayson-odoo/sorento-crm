@@ -3,7 +3,7 @@ import type { Stock, StockDashboard } from '../types/stock.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
 export async function getStockDashboard(): Promise<StockDashboard> {
-  const response = await apiFetch('/api/inventory/stock/dashboard');
+  const response = await apiFetch('/api/v1/inventory/stock/dashboard');
   if (!response.ok) throw new Error('Failed to fetch stock dashboard');
   return response.json();
 }
@@ -21,13 +21,13 @@ export async function getStockBalance(params: DataGridApiFetchParams & { warehou
     ...(category_id ? { category_id } : {}),
     ...(status ? { status } : {}),
   });
-  const response = await apiFetch(`/api/inventory/stock/balance?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/inventory/stock/balance?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch stock balance');
   return response.json();
 }
 
 export async function getStockAlerts(): Promise<Stock[]> {
-  const response = await apiFetch('/api/inventory/stock/alerts');
+  const response = await apiFetch('/api/v1/inventory/stock/alerts');
   if (!response.ok) throw new Error('Failed to fetch stock alerts');
   return response.json();
 }

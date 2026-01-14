@@ -16,19 +16,19 @@ export async function getSuppliers(params: DataGridApiFetchParams & { country?: 
     ...(payment_terms_days ? { payment_terms_days: String(payment_terms_days) } : {}),
     ...(status ? { status } : {}),
   });
-  const response = await apiFetch(`/api/procurement/suppliers?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/procurement/suppliers?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch suppliers');
   return response.json();
 }
 
 export async function getSupplier(id: string): Promise<SupplierDetail> {
-  const response = await apiFetch(`/api/procurement/suppliers/${id}`);
+  const response = await apiFetch(`/api/v1/procurement/suppliers/${id}`);
   if (!response.ok) throw new Error('Failed to fetch supplier');
   return response.json();
 }
 
 export async function createSupplier(data: SupplierFormData): Promise<Supplier> {
-  const response = await apiFetch('/api/procurement/suppliers', {
+  const response = await apiFetch('/api/v1/procurement/suppliers', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -41,7 +41,7 @@ export async function createSupplier(data: SupplierFormData): Promise<Supplier> 
 }
 
 export async function updateSupplier(id: string, data: Partial<SupplierFormData>): Promise<Supplier> {
-  const response = await apiFetch(`/api/procurement/suppliers/${id}`, {
+  const response = await apiFetch(`/api/v1/procurement/suppliers/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -54,7 +54,7 @@ export async function updateSupplier(id: string, data: Partial<SupplierFormData>
 }
 
 export async function deleteSupplier(id: string): Promise<void> {
-  const response = await apiFetch(`/api/procurement/suppliers/${id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/procurement/suppliers/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete supplier' }));
     throw new Error(error.message);

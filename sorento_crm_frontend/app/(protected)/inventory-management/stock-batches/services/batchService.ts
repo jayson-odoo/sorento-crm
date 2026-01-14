@@ -15,19 +15,19 @@ export async function getStockBatches(params: DataGridApiFetchParams & { warehou
     ...(product_id ? { product_id } : {}),
     ...(status ? { status } : {}),
   });
-  const response = await apiFetch(`/api/inventory/stock-batches?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/inventory/stock-batches?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch stock batches');
   return response.json();
 }
 
 export async function getStockBatch(id: string): Promise<StockBatch> {
-  const response = await apiFetch(`/api/inventory/stock-batches/${id}`);
+  const response = await apiFetch(`/api/v1/inventory/stock-batches/${id}`);
   if (!response.ok) throw new Error('Failed to fetch stock batch');
   return response.json();
 }
 
 export async function createStockBatch(data: BatchFormData): Promise<StockBatch> {
-  const response = await apiFetch('/api/inventory/stock-batches', {
+  const response = await apiFetch('/api/v1/inventory/stock-batches', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -40,7 +40,7 @@ export async function createStockBatch(data: BatchFormData): Promise<StockBatch>
 }
 
 export async function updateStockBatch(id: string, data: Partial<BatchFormData>): Promise<StockBatch> {
-  const response = await apiFetch(`/api/inventory/stock-batches/${id}`, {
+  const response = await apiFetch(`/api/v1/inventory/stock-batches/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -53,7 +53,7 @@ export async function updateStockBatch(id: string, data: Partial<BatchFormData>)
 }
 
 export async function deleteStockBatch(id: string): Promise<void> {
-  const response = await apiFetch(`/api/inventory/stock-batches/${id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/inventory/stock-batches/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete stock batch' }));
     throw new Error(error.message);
@@ -61,7 +61,7 @@ export async function deleteStockBatch(id: string): Promise<void> {
 }
 
 export async function bulkAddSerialNumbers(batchId: string, serialNumbers: string[]): Promise<void> {
-  const response = await apiFetch(`/api/inventory/stock-batches/${batchId}/serials/bulk`, {
+  const response = await apiFetch(`/api/v1/inventory/stock-batches/${batchId}/serials/bulk`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ serial_numbers: serialNumbers }),

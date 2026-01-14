@@ -2,7 +2,7 @@ import { apiFetch } from '@/lib/api';
 import type { ProductCategory, CategoryTreeItem, CategoryFormData } from '../types/category.types';
 
 export async function getCategoriesTree(): Promise<CategoryTreeItem[]> {
-  const response = await apiFetch('/api/master-data/product-categories/tree', {
+  const response = await apiFetch('/api/v1/master-data/product-categories/tree', {
     method: 'GET',
   });
 
@@ -14,7 +14,7 @@ export async function getCategoriesTree(): Promise<CategoryTreeItem[]> {
 }
 
 export async function getCategory(id: string): Promise<ProductCategory> {
-  const response = await apiFetch(`/api/master-data/product-categories/${id}`, {
+  const response = await apiFetch(`/api/v1/master-data/product-categories/${id}`, {
     method: 'GET',
   });
 
@@ -26,7 +26,7 @@ export async function getCategory(id: string): Promise<ProductCategory> {
 }
 
 export async function createCategory(data: CategoryFormData): Promise<ProductCategory> {
-  const response = await apiFetch('/api/master-data/product-categories', {
+  const response = await apiFetch('/api/v1/master-data/product-categories', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -41,7 +41,7 @@ export async function createCategory(data: CategoryFormData): Promise<ProductCat
 }
 
 export async function updateCategory(id: string, data: Partial<CategoryFormData>): Promise<ProductCategory> {
-  const response = await apiFetch(`/api/master-data/product-categories/${id}`, {
+  const response = await apiFetch(`/api/v1/master-data/product-categories/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -56,7 +56,7 @@ export async function updateCategory(id: string, data: Partial<CategoryFormData>
 }
 
 export async function deleteCategory(id: string): Promise<void> {
-  const response = await apiFetch(`/api/master-data/product-categories/${id}`, {
+  const response = await apiFetch(`/api/v1/master-data/product-categories/${id}`, {
     method: 'DELETE',
   });
 
@@ -67,7 +67,7 @@ export async function deleteCategory(id: string): Promise<void> {
 }
 
 export async function moveCategory(id: string, parentId: string | null, displayOrder: number): Promise<void> {
-  const response = await apiFetch(`/api/master-data/product-categories/${id}/move`, {
+  const response = await apiFetch(`/api/v1/master-data/product-categories/${id}/move`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ parent_category_id: parentId, display_order: displayOrder }),

@@ -11,6 +11,7 @@ import {
   CalendarCheck,
   Captions,
   CheckCircle,
+  Clock,
   Code,
   Codepen,
   Coffee,
@@ -304,6 +305,14 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/user-management/permissions',
       },
       {
+        title: 'Access Agents',
+        path: '/user-management/access-agents',
+      },
+      {
+        title: 'Contact Access Agents',
+        path: '/user-management/contact-access-agents',
+      },
+      {
         title: 'Account',
         path: '/user-management/account',
       },
@@ -314,6 +323,48 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Settings',
         path: '/user-management/settings',
+      },
+    ],
+  },
+  {
+    title: 'Order Management',
+    icon: ShoppingCart,
+    children: [
+      {
+        title: 'Orders',
+        path: '/order-management/orders',
+      },
+      {
+        title: 'Order Status',
+        path: '/order-management/order-statuses',
+      },
+      {
+        title: 'Customers',
+        path: '/order-management/customers',
+      },
+    ],
+  },
+  {
+    title: 'Complaint Management',
+    icon: AlertCircle,
+    children: [
+      {
+        title: 'Complaints',
+        path: '/complaint-management/complaints',
+      },
+    ],
+  },
+  {
+    title: 'SLA Management',
+    icon: Clock,
+    children: [
+      {
+        title: 'SLA Policies',
+        path: '/sla-management/sla-policies',
+      },
+      {
+        title: 'Conversation SLA Tracking',
+        path: '/sla-management/conversation-sla-tracking',
       },
     ],
   },
@@ -350,6 +401,22 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
+      },
+      {
+        title: 'Packing Lists',
+        path: '/procurement-management/packing-lists',
+      },
+      {
+        title: 'SPO Allocations',
+        path: '/procurement-management/spo-allocations',
+      },
+      {
+        title: 'GRN',
+        path: '/procurement-management/grn',
+      },
+      {
+        title: 'Stock Inquiries',
+        path: '/procurement-management/stock-inquiries',
       },
     ],
   },
@@ -802,6 +869,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/user-management/permissions',
       },
       {
+        title: 'Access Agents',
+        path: '/user-management/access-agents',
+      },
+      {
+        title: 'Contact Access Agents',
+        path: '/user-management/contact-access-agents',
+      },
+      {
         title: 'Account',
         path: '/user-management/account',
       },
@@ -812,6 +887,48 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Settings',
         path: '/user-management/settings',
+      },
+    ],
+  },
+  {
+    title: 'Order Management',
+    icon: ShoppingCart,
+    children: [
+      {
+        title: 'Orders',
+        path: '/order-management/orders',
+      },
+      {
+        title: 'Order Status',
+        path: '/order-management/order-statuses',
+      },
+      {
+        title: 'Customers',
+        path: '/order-management/customers',
+      },
+    ],
+  },
+  {
+    title: 'Complaint Management',
+    icon: AlertCircle,
+    children: [
+      {
+        title: 'Complaints',
+        path: '/complaint-management/complaints',
+      },
+    ],
+  },
+  {
+    title: 'SLA Management',
+    icon: Clock,
+    children: [
+      {
+        title: 'SLA Policies',
+        path: '/sla-management/sla-policies',
+      },
+      {
+        title: 'Conversation SLA Tracking',
+        path: '/sla-management/conversation-sla-tracking',
       },
     ],
   },
@@ -848,6 +965,22 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
+      },
+      {
+        title: 'Packing Lists',
+        path: '/procurement-management/packing-lists',
+      },
+      {
+        title: 'SPO Allocations',
+        path: '/procurement-management/spo-allocations',
+      },
+      {
+        title: 'GRN',
+        path: '/procurement-management/grn',
+      },
+      {
+        title: 'Stock Inquiries',
+        path: '/procurement-management/stock-inquiries',
       },
     ],
   },

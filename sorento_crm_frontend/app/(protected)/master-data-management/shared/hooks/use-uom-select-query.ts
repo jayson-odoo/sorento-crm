@@ -5,7 +5,7 @@ import type { UnitOfMeasure } from '../../products/types/product.types';
 
 export const useUOMSelectQuery = () => {
   const fetchUOMList = async (): Promise<UnitOfMeasure[]> => {
-    const response = await apiFetch('/api/master-data/units-of-measure/select');
+    const response = await apiFetch('/api/v1/master-data/units-of-measure/select');
 
     if (!response.ok) {
       toast.error(

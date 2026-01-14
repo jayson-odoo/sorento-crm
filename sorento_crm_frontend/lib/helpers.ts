@@ -115,3 +115,26 @@ export function formatDateTime(input: Date | string | number): string {
     hour12: true,
   });
 }
+
+/**
+ * Format a duration in milliseconds to a human-readable string with hours, minutes, and seconds
+ * @param milliseconds - Duration in milliseconds (can be negative for overdue times)
+ * @returns Formatted string like "2h 30m 15s" or "-1h 5m 20s" for overdue
+ */
+export function formatDuration(milliseconds: number): string {
+  const isNegative = milliseconds < 0;
+  const absMs = Math.abs(milliseconds);
+  
+  const totalSeconds = Math.floor(absMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
+  
+  const formatted = parts.join(' ');
+  return isNegative ? `-${formatted}` : formatted;
+}

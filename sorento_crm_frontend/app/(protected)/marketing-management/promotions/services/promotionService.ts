@@ -16,19 +16,19 @@ export async function getPromotions(params: DataGridApiFetchParams & { promo_typ
     ...(date_from ? { date_from } : {}),
     ...(date_to ? { date_to } : {}),
   });
-  const response = await apiFetch(`/api/marketing/promotions?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/marketing/promotions?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch promotions');
   return response.json();
 }
 
 export async function getPromotion(id: string): Promise<PromotionDetail> {
-  const response = await apiFetch(`/api/marketing/promotions/${id}`);
+  const response = await apiFetch(`/api/v1/marketing/promotions/${id}`);
   if (!response.ok) throw new Error('Failed to fetch promotion');
   return response.json();
 }
 
 export async function createPromotion(data: PromotionFormData): Promise<Promotion> {
-  const response = await apiFetch('/api/marketing/promotions', {
+  const response = await apiFetch('/api/v1/marketing/promotions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -41,7 +41,7 @@ export async function createPromotion(data: PromotionFormData): Promise<Promotio
 }
 
 export async function updatePromotion(id: string, data: Partial<PromotionFormData>): Promise<Promotion> {
-  const response = await apiFetch(`/api/marketing/promotions/${id}`, {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -54,7 +54,7 @@ export async function updatePromotion(id: string, data: Partial<PromotionFormDat
 }
 
 export async function deletePromotion(id: string): Promise<void> {
-  const response = await apiFetch(`/api/marketing/promotions/${id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/marketing/promotions/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete promotion' }));
     throw new Error(error.message);
@@ -62,13 +62,13 @@ export async function deletePromotion(id: string): Promise<void> {
 }
 
 export async function getPromotionProducts(promotionId: string): Promise<PromotionProduct[]> {
-  const response = await apiFetch(`/api/marketing/promotions/${promotionId}/products`);
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products`);
   if (!response.ok) throw new Error('Failed to fetch promotion products');
   return response.json();
 }
 
 export async function addPromotionProduct(promotionId: string, productId: string, promotionPrice?: number): Promise<PromotionProduct> {
-  const response = await apiFetch(`/api/marketing/promotions/${promotionId}/products`, {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ product_id: productId, promotion_price: promotionPrice }),
@@ -81,7 +81,7 @@ export async function addPromotionProduct(promotionId: string, productId: string
 }
 
 export async function removePromotionProduct(promotionId: string, productId: string): Promise<void> {
-  const response = await apiFetch(`/api/marketing/promotions/${promotionId}/products/${productId}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/${productId}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to remove product from promotion' }));
     throw new Error(error.message);
@@ -89,7 +89,7 @@ export async function removePromotionProduct(promotionId: string, productId: str
 }
 
 export async function updatePromotionProductPrice(promotionId: string, productId: string, promotionPrice: number): Promise<PromotionProduct> {
-  const response = await apiFetch(`/api/marketing/promotions/${promotionId}/products/${productId}`, {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/${productId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ promotion_price: promotionPrice }),

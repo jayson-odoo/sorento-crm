@@ -5,7 +5,7 @@ import type { Brand } from '../../products/types/product.types';
 
 export const useBrandSelectQuery = () => {
   const fetchBrandList = async (): Promise<Brand[]> => {
-    const response = await apiFetch('/api/master-data/brands/select');
+    const response = await apiFetch('/api/v1/master-data/brands/select');
 
     if (!response.ok) {
       toast.error(
