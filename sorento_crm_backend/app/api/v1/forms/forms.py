@@ -19,15 +19,33 @@ async def get_forms(
     query: Optional[str] = Query(None),
     language: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get forms with pagination and filtering."""
     try:
         service = FormService(db)
-        result = service.list_forms(page=page, limit=limit, query=query, language=language, status=status)
+        # Handle empty strings or None values
+        sort_field = (sort and sort.strip()) or "updated_at"
+        sort_dir = (dir and dir.strip()) or "desc"
+        result = service.list_forms(
+            page=page, 
+            limit=limit, 
+            query=query, 
+            language=language, 
+            status=status,
+            sort_field=sort_field,
+            sort_dir=sort_dir
+        )
         return result
     except Exception as e:
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in get_forms: {str(e)}")
+        logger.error(traceback.format_exc())
         raise handle_internal_error(str(e))
 
 

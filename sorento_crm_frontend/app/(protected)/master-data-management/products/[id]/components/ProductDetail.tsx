@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2 } from 'lucide-react';
+import { Edit, Trash2, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useProduct } from '../../hooks/useProducts';
 import { formatDate } from '@/lib/helpers';
 import { DataGrid } from '@/components/ui/data-grid';
+import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
 
 interface ProductDetailProps {
   productId: string;
@@ -140,6 +141,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="stock">Stock</TabsTrigger>
+              <TabsTrigger value="attachments">Attachments</TabsTrigger>
               <TabsTrigger value="related">Related Data</TabsTrigger>
               <TabsTrigger value="audit">Audit Trail</TabsTrigger>
             </TabsList>
@@ -258,6 +260,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            {/* Tab: Attachments */}
+            <TabsContent value="attachments">
+              <ProductAttachmentsTab productId={productId} isEditMode={false} />
             </TabsContent>
 
             {/* Tab: Related Data */}

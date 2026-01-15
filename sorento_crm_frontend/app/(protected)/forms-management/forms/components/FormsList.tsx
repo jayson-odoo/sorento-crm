@@ -39,24 +39,53 @@ export default function FormsList() {
     searchQuery,
   });
 
+  const handleRowClick = (row: Form) => {
+    const formId = row.id;
+    router.push(`/forms-management/forms/${formId}`);
+  };
+
   const columns = useMemo<ColumnDef<Form>[]>(
     () => [
       {
         accessorKey: 'code',
         header: ({ column }) => <DataGridColumnHeader title="Form Code" column={column} />,
-        size: 150,
+        cell: ({ row }) => (
+          <div className="truncate" title={row.original.code}>
+            {row.original.code}
+          </div>
+        ),
+        size: 180,
+        minSize: 120,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'name',
         header: ({ column }) => <DataGridColumnHeader title="Form Name" column={column} />,
+        cell: ({ row }) => (
+          <div className="truncate" title={row.original.name}>
+            {row.original.name}
+          </div>
+        ),
         size: 250,
+        minSize: 150,
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'purpose',
         header: ({ column }) => <DataGridColumnHeader title="Purpose" column={column} />,
+        cell: ({ row }) => {
+          const purpose = row.original.purpose;
+          if (!purpose || purpose.trim() === '') {
+            return <span className="text-muted-foreground">-</span>;
+          }
+          return (
+            <div className="truncate" title={purpose}>
+              {purpose}
+            </div>
+          );
+        },
         size: 200,
+        minSize: 120,
         meta: { skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
@@ -109,10 +138,20 @@ export default function FormsList() {
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid 
+      table={table} 
+      recordCount={data?.pagination.total || 0} 
+      isLoading={isLoading}
+      onRowClick={handleRowClick}
+      tableLayout={{
+        columnsResizable: true,
+      }}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">

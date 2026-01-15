@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.models.inventory import Stock, StockBatch
     from app.models.procurement import ProductSupplier, InboundShipmentLine, SPOAllocation, PickingLine
     from app.models.marketing import PromotionProduct
+    from app.models.resources import Attachment
 
 
 class ProductCategory(Base):
@@ -120,6 +121,7 @@ class Product(Base):
     inbound_shipment_lines = relationship("InboundShipmentLine", back_populates="product")
     spo_allocations = relationship("SPOAllocation", back_populates="product")
     picking_lines = relationship("PickingLine", back_populates="product")
+    product_attachments = relationship("ProductAttachment", back_populates="product")
     
     __table_args__ = (
         Index("ix_products_category_id", "category_id"),
@@ -127,4 +129,28 @@ class Product(Base):
         Index("ix_products_base_uom_id", "base_uom_id"),
         Index("ix_products_is_active", "is_active"),
         Index("ix_products_product_code", "product_code"),
+    )
+
+
+class ProductAttachment(Base):
+    __tablename__ = "product_attachments"
+    
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="CASCADE"), nullable=False)
+    is_primary = Column(Boolean, default=False, nullable=True)
+    sort_order = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    synced_to_excel = Column(Boolean, default=False, nullable=True)
+    last_synced_to_excel = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+    
+    product = relationship("Product", back_populates="product_attachments")
+    attachment = relationship("Attachment", foreign_keys=[attachment_id])
+    
+    __table_args__ = (
+        Index("ix_product_attachments_product_id", "product_id"),
+        Index("ix_product_attachments_attachment_id", "attachment_id"),
+        Index("uq_product_attachment", "product_id", "attachment_id", unique=True),
     )

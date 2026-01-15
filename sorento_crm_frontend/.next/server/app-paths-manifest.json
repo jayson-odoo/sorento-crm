@@ -1,10 +1,10 @@
 {
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/(protected)/procurement-management/grn/page": "app/(protected)/procurement-management/grn/page.js",
+  "/(protected)/forms-management/forms/[id]/page": "app/(protected)/forms-management/forms/[id]/page.js",
+  "/(protected)/forms-management/forms/[id]/edit/page": "app/(protected)/forms-management/forms/[id]/edit/page.js",
+  "/(protected)/forms-management/forms/page": "app/(protected)/forms-management/forms/page.js",
+  "/(protected)/marketing-management/promotions/page": "app/(protected)/marketing-management/promotions/page.js",
+  "/(protected)/marketing-management/promotions/[id]/edit/page": "app/(protected)/marketing-management/promotions/[id]/edit/page.js",
   "/(protected)/marketing-management/promotions/[id]/page": "app/(protected)/marketing-management/promotions/[id]/page.js",
-  "/(protected)/inventory-management/warehouses/page": "app/(protected)/inventory-management/warehouses/page.js",
-  "/(protected)/page": "app/(protected)/page.js",
-  "/(protected)/marketing-management/promotion-products/page": "app/(protected)/marketing-management/promotion-products/page.js",
-  "/(protected)/marketing-management/promotions/page": "app/(protected)/marketing-management/promotions/page.js"
+  "/(protected)/resource-management/attachments/page": "app/(protected)/resource-management/attachments/page.js"
 }

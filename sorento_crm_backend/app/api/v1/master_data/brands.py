@@ -1,7 +1,7 @@
 """Brands API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.product_service import BrandService
@@ -25,6 +25,32 @@ async def get_brands(
         service = BrandService(db)
         result = service.list_brands(page=page, limit=limit, query=query)
         return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/select", response_model=List[BrandResponse])
+async def get_brands_select(
+    query: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get brands for select dropdowns."""
+    try:
+        from sqlalchemy import or_
+        from app.models.product import Brand
+        q = db.query(Brand).filter(Brand.is_active == True)
+        
+        if query:
+            q = q.filter(
+                or_(
+                    Brand.brand_code.ilike(f"%{query}%"),
+                    Brand.brand_name.ilike(f"%{query}%")
+                )
+            )
+        
+        brands = q.limit(100).all()
+        return brands
     except Exception as e:
         raise handle_internal_error(str(e))
 

@@ -1,5 +1,6 @@
 """Configuration settings for the FastAPI application."""
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 from typing import List
 
 
@@ -25,9 +26,11 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = ConfigDict(
+        env_file=".env",
+        case_sensitive=False,
+        extra="ignore"  # Ignore extra environment variables (like AWS_* variables)
+    )
 
 
 settings = Settings()

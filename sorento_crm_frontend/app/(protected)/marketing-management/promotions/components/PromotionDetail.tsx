@@ -30,6 +30,7 @@ import type { GetProductsParams } from '../../../master-data-management/products
 import { formatDate } from '@/lib/helpers';
 import { toast } from 'sonner';
 import { LoaderCircleIcon } from 'lucide-react';
+import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 
 interface PromotionDetailProps {
   promotionId: string;
@@ -212,6 +213,16 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
               </div>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Attachments Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Attachments</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <PromotionAttachmentsTab promotionId={promotionId} isEditMode={false} />
         </CardContent>
       </Card>
 

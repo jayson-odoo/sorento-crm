@@ -17,13 +17,15 @@ class Form(Base):
     language = Column(String(10), default="en", nullable=False)
     version = Column(Integer, default=1, nullable=False)
     is_active = Column(Boolean, default=False, nullable=False)
-    attachment_id = Column(String, nullable=True)
-    created_by = Column(String, nullable=True)
+    attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True)
+    # created_by column doesn't exist in database, removed from model
+    # created_by = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     sections = relationship("FormSection", back_populates="form")
     versions = relationship("FormVersion", back_populates="form")
+    attachment = relationship("Attachment", foreign_keys=[attachment_id])
     
     __table_args__ = (
         Index("ix_forms_is_active", "is_active"),

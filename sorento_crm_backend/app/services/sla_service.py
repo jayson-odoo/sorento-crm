@@ -202,13 +202,20 @@ class ConversationSLATrackingService:
     def get_tracking(self, tracking_id: str):
         """Get a tracking record by ID."""
         from sqlalchemy.orm import joinedload
+        from app.models.sla import ConversationSLAEscalationLog
         tracking = self.db.query(ConversationSLATracking).options(
-            joinedload(ConversationSLATracking.policy)
+            joinedload(ConversationSLATracking.policy),
+            joinedload(ConversationSLATracking.escalation_logs)
         ).filter(
             ConversationSLATracking.id == tracking_id
         ).first()
         if not tracking:
             raise handle_not_found("SLA Tracking", tracking_id)
+        
+        # Sort escalation logs by escalated_at chronologically
+        if tracking.escalation_logs:
+            tracking.escalation_logs.sort(key=lambda x: x.escalated_at)
+        
         return tracking
     
     def create_tracking(self, tracking_data: ConversationSLATrackingCreate):

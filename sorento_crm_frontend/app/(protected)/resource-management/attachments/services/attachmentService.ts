@@ -23,20 +23,40 @@ export async function getAttachments(params: DataGridApiFetchParams & { entity_t
   return response.json();
 }
 
-export async function uploadAttachment(file: File, entityType: string, entityId: string, description?: string): Promise<Attachment> {
+export async function uploadAttachment(
+  file: File,
+  attachmentTypeId: string,
+  entityType?: string,
+  entityId?: string
+): Promise<Attachment> {
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('entity_type', entityType);
-  formData.append('entity_id', entityId);
-  if (description) formData.append('description', description);
+  formData.append('attachment_type_id', attachmentTypeId);
+  if (entityType) formData.append('entity_type', entityType);
+  if (entityId) formData.append('entity_id', entityId);
 
+  // Debug: Log FormData contents
+  console.log('FormData entries:');
+  for (const [key, value] of formData.entries()) {
+    console.log(`  ${key}:`, value instanceof File ? `File(${value.name}, ${value.size} bytes)` : value);
+  }
+
+  // For FormData, we need to ensure no Content-Type is set
+  // The apiFetch function should handle this, but let's be explicit
   const response = await apiFetch('/api/v1/resource-management/attachments', {
     method: 'POST',
     body: formData,
+    // Don't set headers here - apiFetch will handle it
+    // The browser will automatically set Content-Type: multipart/form-data; boundary=...
   });
+  
+  console.log('Response status:', response.status);
+  console.log('Response headers:', Object.fromEntries(response.headers.entries()));
+  
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to upload attachment' }));
-    throw new Error(error.message);
+    console.error('Upload error:', error);
+    throw new Error(error.detail || error.message || 'Failed to upload attachment');
   }
   return response.json();
 }

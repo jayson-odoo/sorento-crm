@@ -372,22 +372,31 @@ export const MENU_SIDEBAR: MenuConfig = [
     title: 'Product Management',
     icon: Package,
     children: [
-      {
-        title: 'Products',
-        path: '/master-data-management/products',
-      },
-      {
-        title: 'Product Categories',
-        path: '/master-data-management/product-categories',
-      },
-      {
-        title: 'Brands',
-        path: '/master-data-management/brands',
-      },
-      {
-        title: 'Units of Measure',
-        path: '/master-data-management/units-of-measure',
-      },
+    {
+      title: 'Products',
+      children: [
+        {
+          title: 'All Products',
+          path: '/master-data-management/products',
+        },
+        {
+          title: 'Product Attachments',
+          path: '/master-data-management/product-attachments',
+        },
+      ],
+    },
+    {
+      title: 'Product Categories',
+      path: '/master-data-management/product-categories',
+    },
+    {
+      title: 'Brands',
+      path: '/master-data-management/brands',
+    },
+    {
+      title: 'Units of Measure',
+      path: '/master-data-management/units-of-measure',
+    },
     ],
   },
   {
@@ -448,7 +457,16 @@ export const MENU_SIDEBAR: MenuConfig = [
     children: [
       {
         title: 'Promotions',
-        path: '/marketing-management/promotions',
+        children: [
+          {
+            title: 'All Promotions',
+            path: '/marketing-management/promotions',
+          },
+          {
+            title: 'Promotion Attachments',
+            path: '/marketing-management/promotion-attachments',
+          },
+        ],
       },
       {
         title: 'Promotion Products',
@@ -936,22 +954,31 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     title: 'Product Management',
     icon: Package,
     children: [
-      {
-        title: 'Products',
-        path: '/master-data-management/products',
-      },
-      {
-        title: 'Product Categories',
-        path: '/master-data-management/product-categories',
-      },
-      {
-        title: 'Brands',
-        path: '/master-data-management/brands',
-      },
-      {
-        title: 'Units of Measure',
-        path: '/master-data-management/units-of-measure',
-      },
+    {
+      title: 'Products',
+      children: [
+        {
+          title: 'All Products',
+          path: '/master-data-management/products',
+        },
+        {
+          title: 'Product Attachments',
+          path: '/master-data-management/product-attachments',
+        },
+      ],
+    },
+    {
+      title: 'Product Categories',
+      path: '/master-data-management/product-categories',
+    },
+    {
+      title: 'Brands',
+      path: '/master-data-management/brands',
+    },
+    {
+      title: 'Units of Measure',
+      path: '/master-data-management/units-of-measure',
+    },
     ],
   },
   {
@@ -1012,7 +1039,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     children: [
       {
         title: 'Promotions',
-        path: '/marketing-management/promotions',
+        children: [
+          {
+            title: 'All Promotions',
+            path: '/marketing-management/promotions',
+          },
+          {
+            title: 'Promotion Attachments',
+            path: '/marketing-management/promotion-attachments',
+          },
+        ],
       },
       {
         title: 'Promotion Products',

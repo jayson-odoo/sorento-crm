@@ -161,53 +161,92 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  <div className="flex items-center gap-4">
-                    <div className="flex flex-col items-center">
-                      <div className="size-8 rounded-full bg-primary flex items-center justify-center text-white font-bold">
-                        1
-                      </div>
-                      <div className="h-12 w-0.5 bg-border mt-2"></div>
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium">Tier {tracking.current_tier}</p>
-                      <p className="text-sm text-muted-foreground">
-                        Started: {formatDateTime(new Date(tracking.current_tier_started_at))}
-                      </p>
-                      {tracking.escalated_at && (
-                        <p className="text-sm text-muted-foreground">
-                          Escalated: {formatDateTime(new Date(tracking.escalated_at))}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  {tracking.escalation_logs && tracking.escalation_logs.length > 0 && (
-                    <>
-                      {tracking.escalation_logs.map((log, index) => {
-                        const isEscalation = log.from_tier !== log.to_tier;
-                        return (
-                          <div key={log.id} className="flex items-center gap-4">
-                            <div className="flex flex-col items-center">
-                              <div className={`size-8 rounded-full flex items-center justify-center text-white font-bold ${isEscalation ? 'bg-orange-500' : 'bg-blue-500'}`}>
-                                {log.to_tier}
-                              </div>
-                              {index < tracking.escalation_logs!.length - 1 && (
-                                <div className="h-12 w-0.5 bg-border mt-2"></div>
-                              )}
-                            </div>
-                            <div className="flex-1">
-                              <p className="font-medium">
-                                {isEscalation ? `Escalated to Tier ${log.to_tier}` : `Assigned to Tier ${log.to_tier}`}
-                              </p>
-                              <p className="text-sm text-muted-foreground">
-                                {formatDateTime(new Date(log.escalated_at))}
-                              </p>
-                              <p className="text-sm text-muted-foreground">Reason: {log.reason}</p>
-                            </div>
+                  {(() => {
+                    // Build timeline items from escalation logs and current tier
+                    const timelineItems: Array<{
+                      tier: number;
+                      startedAt: Date;
+                      isEscalation: boolean;
+                      reason?: string;
+                      isCurrent: boolean;
+                    }> = [];
+                    
+                    // Determine initial tier
+                    const initialTier = tracking.escalation_logs && tracking.escalation_logs.length > 0
+                      ? tracking.escalation_logs[0].from_tier
+                      : tracking.current_tier;
+                    
+                    // Check if current tier matches the last escalation log
+                    const lastLog = tracking.escalation_logs && tracking.escalation_logs.length > 0
+                      ? tracking.escalation_logs[tracking.escalation_logs.length - 1]
+                      : null;
+                    const isCurrentTierInLogs = lastLog && lastLog.to_tier === tracking.current_tier;
+                    
+                    // Add initial tier (only if there are escalation logs, otherwise it's handled below)
+                    if (tracking.escalation_logs && tracking.escalation_logs.length > 0) {
+                      timelineItems.push({
+                        tier: initialTier,
+                        startedAt: new Date(tracking.initiated_at),
+                        isEscalation: false,
+                        isCurrent: false,
+                      });
+                    }
+                    
+                    // Add escalation logs
+                    if (tracking.escalation_logs && tracking.escalation_logs.length > 0) {
+                      tracking.escalation_logs.forEach((log, index) => {
+                        const isLast = index === tracking.escalation_logs!.length - 1;
+                        timelineItems.push({
+                          tier: log.to_tier,
+                          startedAt: new Date(log.escalated_at),
+                          isEscalation: log.from_tier !== log.to_tier,
+                          reason: log.reason,
+                          isCurrent: isLast && log.to_tier === tracking.current_tier,
+                        });
+                      });
+                    } else {
+                      // If no escalation logs, show current tier as initial tier
+                      timelineItems.push({
+                        tier: tracking.current_tier,
+                        startedAt: new Date(tracking.current_tier_started_at),
+                        isEscalation: false,
+                        isCurrent: true,
+                      });
+                    }
+                    
+                    return timelineItems.map((item, index) => (
+                      <div key={index} className="flex items-center gap-4">
+                        <div className="flex flex-col items-center">
+                          <div className={`size-8 rounded-full flex items-center justify-center text-white font-bold ${
+                            item.isCurrent 
+                              ? 'bg-primary' 
+                              : item.isEscalation 
+                                ? 'bg-orange-500' 
+                                : 'bg-blue-500'
+                          }`}>
+                            {item.tier}
                           </div>
-                        );
-                      })}
-                    </>
-                  )}
+                          {index < timelineItems.length - 1 && (
+                            <div className="h-12 w-0.5 bg-border mt-2"></div>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-medium">
+                            {item.isEscalation 
+                              ? `Escalated to Tier ${item.tier}${item.isCurrent ? ' (Current)' : ''}` 
+                              : `Tier ${item.tier}${item.isCurrent ? ' (Current)' : ''}`
+                            }
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {item.isEscalation ? 'Escalated' : 'Started'}: {formatDateTime(item.startedAt)}
+                          </p>
+                          {item.reason && (
+                            <p className="text-sm text-muted-foreground">Reason: {item.reason}</p>
+                          )}
+                        </div>
+                      </div>
+                    ));
+                  })()}
                 </div>
               </CardContent>
             </Card>

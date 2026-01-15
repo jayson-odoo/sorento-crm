@@ -83,61 +83,151 @@ export async function apiFetch(
               
               if (token) {
                 console.debug('JWT token extracted successfully');
-                init = {
-                  ...init,
-                  credentials: 'include' as RequestCredentials,
-                  headers: {
-                    ...init?.headers,
+                // Don't set Content-Type for FormData - browser needs to set it with boundary
+                const isFormData = init?.body instanceof FormData;
+                
+                if (isFormData) {
+                  // For FormData, we MUST NOT set Content-Type header
+                  // Browser will automatically set it with boundary when it sees FormData body
+                  // However, we can still add other headers like Authorization
+                  console.debug('FormData detected - preserving browser Content-Type handling');
+                  
+                  const currentInit = init || {};
+                  
+                  // Create a new Headers object (don't copy Content-Type if it exists)
+                  const headers = new Headers();
+                  
+                  // Only copy non-Content-Type headers from existing init
+                  if (currentInit.headers) {
+                    if (currentInit.headers instanceof Headers) {
+                      currentInit.headers.forEach((value, key) => {
+                        // Explicitly skip Content-Type - browser must set it
+                        if (key.toLowerCase() !== 'content-type') {
+                          headers.set(key, value);
+                        }
+                      });
+                    } else if (Array.isArray(currentInit.headers)) {
+                      currentInit.headers.forEach(([key, value]) => {
+                        if (key.toLowerCase() !== 'content-type') {
+                          headers.set(key, value);
+                        }
+                      });
+                    } else {
+                      // Plain object
+                      Object.entries(currentInit.headers as Record<string, string>).forEach(([key, value]) => {
+                        if (key.toLowerCase() !== 'content-type') {
+                          headers.set(key, value);
+                        }
+                      });
+                    }
+                  }
+                  
+                  // Add Authorization header
+                  headers.set('Authorization', `Bearer ${token}`);
+                  
+                  // Important: Don't set Content-Type - let browser handle it
+                  // When fetch sees FormData body, it will automatically set:
+                  // Content-Type: multipart/form-data; boundary=...
+                  
+                  init = {
+                    ...currentInit,
+                    credentials: 'include' as RequestCredentials,
+                    headers: headers, // Headers object without Content-Type
+                  };
+                  
+                  console.debug('FormData request prepared - Content-Type will be set by browser');
+                } else {
+                  // For non-FormData, convert headers to plain object
+                  const existingHeaders: Record<string, string> = {};
+                  if (init?.headers) {
+                    if (init.headers instanceof Headers) {
+                      init.headers.forEach((value, key) => {
+                        existingHeaders[key] = value;
+                      });
+                    } else if (Array.isArray(init.headers)) {
+                      init.headers.forEach(([key, value]) => {
+                        existingHeaders[key] = value;
+                      });
+                    } else {
+                      Object.assign(existingHeaders, init.headers);
+                    }
+                  }
+                  
+                  const headers: Record<string, string> = {
+                    ...existingHeaders,
                     'Authorization': `Bearer ${token}`,
-                    'Content-Type': init?.headers?.['Content-Type'] || 'application/json',
-                  },
-                };
+                  };
+                  if (!headers['Content-Type'] && !headers['content-type']) {
+                    headers['Content-Type'] = 'application/json';
+                  }
+                  init = {
+                    ...init,
+                    credentials: 'include' as RequestCredentials,
+                    headers,
+                  };
+                }
               } else {
                 console.warn('Token endpoint returned no token', data);
                 // Fallback: send cookies if token extraction fails
+                const isFormData = init?.body instanceof FormData;
+                const headers: Record<string, string> = {
+                  ...(init?.headers as Record<string, string>),
+                };
+                if (!isFormData && !headers['Content-Type']) {
+                  headers['Content-Type'] = 'application/json';
+                }
                 init = {
                   ...init,
                   credentials: 'include' as RequestCredentials,
-                  headers: {
-                    ...init?.headers,
-                    'Content-Type': init?.headers?.['Content-Type'] || 'application/json',
-                  },
+                  headers,
                 };
               }
             } else {
               const errorData = await tokenResponse.json().catch(() => ({}));
               console.warn('Token endpoint failed', tokenResponse.status, errorData);
               // Fallback: send cookies if token endpoint fails
+              const isFormData = init?.body instanceof FormData;
+              const headers: Record<string, string> = {
+                ...(init?.headers as Record<string, string>),
+              };
+              if (!isFormData && !headers['Content-Type']) {
+                headers['Content-Type'] = 'application/json';
+              }
               init = {
                 ...init,
                 credentials: 'include' as RequestCredentials,
-                headers: {
-                  ...init?.headers,
-                  'Content-Type': init?.headers?.['Content-Type'] || 'application/json',
-                },
+                headers,
               };
             }
           } catch (e) {
             console.error('Failed to get token for API call', e);
             // Fallback: send cookies
+            const isFormData = init?.body instanceof FormData;
+            const headers: Record<string, string> = {
+              ...(init?.headers as Record<string, string>),
+            };
+            if (!isFormData && !headers['Content-Type']) {
+              headers['Content-Type'] = 'application/json';
+            }
             init = {
               ...init,
               credentials: 'include' as RequestCredentials,
-              headers: {
-                ...init?.headers,
-                'Content-Type': init?.headers?.['Content-Type'] || 'application/json',
-              },
+              headers,
             };
           }
         } else {
           // Server-side: cookies will be forwarded automatically
+          const isFormData = init?.body instanceof FormData;
+          const headers: Record<string, string> = {
+            ...(init?.headers as Record<string, string>),
+          };
+          if (!isFormData && !headers['Content-Type']) {
+            headers['Content-Type'] = 'application/json';
+          }
           init = {
             ...init,
             credentials: 'include' as RequestCredentials,
-            headers: {
-              ...init?.headers,
-              'Content-Type': init?.headers?.['Content-Type'] || 'application/json',
-            },
+            headers,
           };
         }
       } else {

@@ -43,6 +43,18 @@ export interface PackingList {
     supplier_code: string;
     supplier_name: string;
   };
+  attachment?: {
+    id: string;
+    original_filename: string;
+    stored_filename: string;
+    file_path: string;
+    file_size_bytes: number | null;
+    mime_type: string | null;
+    attachment_type?: {
+      id: string;
+      type_name: string;
+    } | null;
+  } | null;
   lines_count?: number;
   spo_allocations_count?: number;
 }

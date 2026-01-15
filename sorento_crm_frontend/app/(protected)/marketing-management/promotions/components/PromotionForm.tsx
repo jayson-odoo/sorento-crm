@@ -26,9 +26,11 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useCreatePromotion, useUpdatePromotion, usePromotion } from '../hooks/usePromotions';
 import { PromotionSchema, type PromotionSchemaType } from '../forms/promotion-schema';
 import type { PromotionFormData } from '../types/promotion.types';
+import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 
 interface PromotionFormProps {
   promotionId?: string;
@@ -129,11 +131,20 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>{isEditMode ? 'Edit Promotion' : 'Create Promotion'}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
+        <Tabs defaultValue="basic" className="w-full">
+          <TabsList>
+            <TabsTrigger value="basic">Basic Information</TabsTrigger>
+            {isEditMode && (
+              <TabsTrigger value="attachments">Attachments</TabsTrigger>
+            )}
+          </TabsList>
+
+          <TabsContent value="basic">
+            <Card>
+              <CardHeader>
+                <CardTitle>{isEditMode ? 'Edit Promotion' : 'Create Promotion'}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormField
                 control={form.control}
@@ -275,36 +286,44 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
               )}
             />
 
-            <div className="flex justify-end gap-4 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  if (onSuccess) {
-                    onSuccess();
-                  } else {
-                    router.push('/marketing-management/promotions');
-                  }
-                }}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isLoading}>
-                {isLoading ? (
-                  <>
-                    <LoaderCircleIcon className="size-4 animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Save className="size-4" />
-                    {isEditMode ? 'Update Promotion' : 'Create Promotion'}
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+                <div className="flex justify-end gap-4 pt-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      if (onSuccess) {
+                        onSuccess();
+                      } else {
+                        router.push('/marketing-management/promotions');
+                      }
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={isLoading}>
+                    {isLoading ? (
+                      <>
+                        <LoaderCircleIcon className="size-4 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="size-4" />
+                        {isEditMode ? 'Update Promotion' : 'Create Promotion'}
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {isEditMode && (
+            <TabsContent value="attachments">
+              <PromotionAttachmentsTab promotionId={promotionId} isEditMode={true} />
+            </TabsContent>
+          )}
+        </Tabs>
       </form>
     </Form>
   );

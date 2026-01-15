@@ -252,8 +252,8 @@ class StockInquiry(Base):
     brand = Column(Text, nullable=True)
     additional_remark = Column(Text, nullable=True)
     purchasing_response = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=True)
     
     __table_args__ = (
         Index("ix_stock_inquiries_product_code", "product_code"),

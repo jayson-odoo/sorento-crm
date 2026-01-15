@@ -1,8 +1,9 @@
 """Product schemas."""
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import datetime
 from decimal import Decimal
+import uuid
 
 
 class ProductCategoryBase(BaseModel):
@@ -153,6 +154,16 @@ class ProductCategorySimple(BaseModel):
         from_attributes = True
 
 
+class ProductSimple(BaseModel):
+    """Simple product reference for ProductAttachment."""
+    id: str
+    product_code: str
+    product_name: str
+    
+    class Config:
+        from_attributes = True
+
+
 class BrandSimple(BaseModel):
     id: str
     brand_code: str
@@ -180,6 +191,75 @@ class ProductResponse(ProductBase):
     category: Optional[ProductCategorySimple] = None
     brand: Optional[BrandSimple] = None
     base_uom: Optional[UnitOfMeasureSimple] = None
+    
+    class Config:
+        from_attributes = True
+
+
+# Import Attachment schemas for ProductAttachment
+from app.schemas.resources import AttachmentResponse, AttachmentTypeSimple
+
+
+class AttachmentSimple(BaseModel):
+    """Simple attachment reference for ProductAttachment."""
+    id: str
+    original_filename: str
+    stored_filename: str
+    file_path: str
+    file_size_bytes: Optional[int] = None
+    mime_type: Optional[str] = None
+    uploaded_at: datetime
+    attachment_type: Optional[AttachmentTypeSimple] = None
+    
+    @field_validator('id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v)
+    
+    class Config:
+        from_attributes = True
+
+
+class ProductAttachmentBase(BaseModel):
+    product_id: str
+    attachment_id: str
+    is_primary: Optional[bool] = False
+    sort_order: Optional[int] = None
+
+
+class ProductAttachmentCreate(ProductAttachmentBase):
+    pass
+
+
+class ProductAttachmentUpdate(BaseModel):
+    is_primary: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+class ProductAttachmentResponse(ProductAttachmentBase):
+    id: str
+    created_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    synced_to_excel: Optional[bool] = False
+    last_synced_to_excel: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    product: Optional[ProductSimple] = None
+    attachment: Optional[AttachmentSimple] = None
+    
+    @field_validator('id', 'product_id', 'attachment_id', 'created_by', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v)
     
     class Config:
         from_attributes = True

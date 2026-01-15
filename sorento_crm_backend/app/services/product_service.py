@@ -3,10 +3,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 from typing import Optional, List
 from decimal import Decimal
-from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
+from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
+from app.models.resources import Attachment, AttachmentType
 from app.schemas.product import (
     ProductCreate, ProductUpdate, ProductCategoryCreate, ProductCategoryUpdate,
-    BrandCreate, BrandUpdate, UnitOfMeasureCreate, UnitOfMeasureUpdate
+    BrandCreate, BrandUpdate, UnitOfMeasureCreate, UnitOfMeasureUpdate,
+    ProductAttachmentCreate, ProductAttachmentUpdate
 )
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.schemas.common import PaginationResponse
@@ -387,3 +389,131 @@ class UnitOfMeasureService:
         self.db.commit()
         self.db.refresh(uom)
         return uom
+
+
+class ProductAttachmentService:
+    """Service for product attachment operations."""
+    
+    def __init__(self, db: Session):
+        self.db = db
+    
+    def list_product_attachments(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        sort_field: str = "created_at",
+        sort_dir: str = "asc",
+        product_id: Optional[str] = None,
+        attachment_id: Optional[str] = None
+    ):
+        """List product attachments with filtering and pagination."""
+        from sqlalchemy.orm import joinedload
+        
+        q = self.db.query(ProductAttachment).options(
+            joinedload(ProductAttachment.product),
+            joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
+        )
+        
+        if product_id:
+            q = q.filter(ProductAttachment.product_id == product_id)
+        
+        if attachment_id:
+            q = q.filter(ProductAttachment.attachment_id == attachment_id)
+        
+        sort_map = {
+            "created_at": ProductAttachment.created_at,
+            "sort_order": ProductAttachment.sort_order,
+            "is_primary": ProductAttachment.is_primary,
+        }
+        sort_column = sort_map.get(sort_field, ProductAttachment.created_at)
+        if sort_dir == "desc":
+            q = q.order_by(sort_column.desc())
+        else:
+            q = q.order_by(sort_column.asc())
+        
+        total = q.count()
+        offset = (page - 1) * limit
+        product_attachments = q.offset(offset).limit(limit).all()
+        
+        return {
+            "data": product_attachments,
+            "pagination": {"total": total, "page": page, "limit": limit},
+            "empty": total == 0
+        }
+    
+    def get_product_attachment(self, product_attachment_id: str):
+        """Get a product attachment by ID."""
+        from sqlalchemy.orm import joinedload
+        product_attachment = self.db.query(ProductAttachment).options(
+            joinedload(ProductAttachment.product),
+            joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
+        ).filter(ProductAttachment.id == product_attachment_id).first()
+        if not product_attachment:
+            raise handle_not_found("Product Attachment", product_attachment_id)
+        return product_attachment
+    
+    def create_product_attachment(self, product_attachment_data: ProductAttachmentCreate, created_by: Optional[str] = None):
+        """Create a new product attachment relationship."""
+        # Check if relationship already exists
+        existing = self.db.query(ProductAttachment).filter(
+            ProductAttachment.product_id == product_attachment_data.product_id,
+            ProductAttachment.attachment_id == product_attachment_data.attachment_id
+        ).first()
+        if existing:
+            raise handle_conflict("Product attachment relationship already exists.")
+        
+        attachment_dict = product_attachment_data.model_dump()
+        if created_by:
+            attachment_dict["created_by"] = created_by
+        
+        product_attachment = ProductAttachment(**attachment_dict)
+        self.db.add(product_attachment)
+        self.db.commit()
+        self.db.refresh(product_attachment)
+        
+        # Reload with relationships
+        from sqlalchemy.orm import joinedload
+        return self.db.query(ProductAttachment).options(
+            joinedload(ProductAttachment.product),
+            joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
+        ).filter(ProductAttachment.id == product_attachment.id).first()
+    
+    def update_product_attachment(self, product_attachment_id: str, product_attachment_data: ProductAttachmentUpdate):
+        """Update a product attachment relationship."""
+        product_attachment = self.get_product_attachment(product_attachment_id)
+        
+        update_data = product_attachment_data.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(product_attachment, key, value)
+        
+        from datetime import datetime
+        product_attachment.updated_at = datetime.now()
+        
+        self.db.commit()
+        self.db.refresh(product_attachment)
+        
+        # Reload with relationships
+        from sqlalchemy.orm import joinedload
+        return self.db.query(ProductAttachment).options(
+            joinedload(ProductAttachment.product),
+            joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
+        ).filter(ProductAttachment.id == product_attachment.id).first()
+    
+    def delete_product_attachment(self, product_attachment_id: str):
+        """Delete a product attachment relationship."""
+        product_attachment = self.get_product_attachment(product_attachment_id)
+        self.db.delete(product_attachment)
+        self.db.commit()
+        return {"message": "Product attachment deleted successfully"}
+    
+    def get_product_attachments_by_product(self, product_id: str):
+        """Get all attachments for a specific product."""
+        from sqlalchemy.orm import joinedload
+        product_attachments = self.db.query(ProductAttachment).options(
+            joinedload(ProductAttachment.product),
+            joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
+        ).filter(ProductAttachment.product_id == product_id).order_by(
+            ProductAttachment.sort_order.asc().nulls_last(),
+            ProductAttachment.created_at.asc()
+        ).all()
+        return product_attachments

@@ -17,7 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { getProductSuppliersByProductId, createProductSupplier, deleteProductSupplier } from '../../../procurement-management/product-suppliers/services/productSupplierService';
-import { useSuppliers } from '../../../procurement-management/suppliers/hooks/useSuppliers';
+import { useSupplierSelectQuery } from '../../../procurement-management/suppliers/hooks/useSupplierSelectQuery';
 import { toast } from 'sonner';
 import type { ProductSupplier } from '../../../procurement-management/product-suppliers/types/productSupplier.types';
 
@@ -45,13 +45,7 @@ export default function ProductSuppliersSection({
   });
 
   // Fetch all suppliers for the dropdown
-  const { data: suppliersData } = useSuppliers({
-    pageIndex: 0,
-    pageSize: 1000,
-    sorting: [],
-    searchQuery: '',
-  });
-  const suppliers = suppliersData?.data || [];
+  const { data: suppliers = [] } = useSupplierSelectQuery();
 
   // Create mutation
   const createMutation = useMutation({

@@ -17,15 +17,25 @@ async def get_stock_inquiries(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
+    sort: Optional[str] = Query("id"),
+    dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get stock inquiries with pagination and search."""
     try:
         service = StockInquiryService(db)
-        result = service.list_inquiries(page=page, limit=limit, query=query)
+        # Handle empty strings or None values
+        sort_field = (sort and sort.strip()) or "created_at"
+        sort_dir = (dir and dir.strip()) or "desc"
+        result = service.list_inquiries(page=page, limit=limit, query=query, sort_field=sort_field, sort_dir=sort_dir)
         return result
     except Exception as e:
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in get_stock_inquiries: {str(e)}")
+        logger.error(traceback.format_exc())
         raise handle_internal_error(str(e))
 
 

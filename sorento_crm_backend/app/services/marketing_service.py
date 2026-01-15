@@ -2,10 +2,12 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional
-from app.models.marketing import Promotion, PromotionProduct, CampaignType, MarketingCampaign
+from app.models.marketing import Promotion, PromotionProduct, PromotionAttachment, CampaignType, MarketingCampaign
 from app.models.product import Product
+from app.models.resources import Attachment, AttachmentType
 from app.schemas.marketing import (
     PromotionCreate, PromotionUpdate, PromotionProductCreate, PromotionProductUpdate,
+    PromotionAttachmentCreate, PromotionAttachmentUpdate,
     CampaignTypeCreate, CampaignTypeUpdate, MarketingCampaignCreate, MarketingCampaignUpdate
 )
 from app.services.error_handler import handle_not_found, handle_conflict
@@ -351,3 +353,125 @@ class MarketingCampaignService:
         self.db.commit()
         self.db.refresh(campaign)
         return campaign
+
+
+class PromotionAttachmentService:
+    """Service for promotion attachment operations."""
+    
+    def __init__(self, db: Session):
+        self.db = db
+    
+    def list_promotion_attachments(self, page: int = 1, limit: int = 50, sort_field: str = "created_at", sort_dir: str = "asc", promotion_id: Optional[str] = None, attachment_id: Optional[str] = None):
+        """List promotion attachments with pagination and filtering."""
+        from sqlalchemy.orm import joinedload
+        from sqlalchemy import or_
+        
+        q = self.db.query(PromotionAttachment).options(
+            joinedload(PromotionAttachment.promotion),
+            joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
+        )
+        
+        if promotion_id:
+            q = q.filter(PromotionAttachment.promotion_id == promotion_id)
+        if attachment_id:
+            q = q.filter(PromotionAttachment.attachment_id == attachment_id)
+        
+        # Sorting
+        sort_map = {
+            "created_at": PromotionAttachment.created_at,
+            "sort_order": PromotionAttachment.sort_order,
+        }
+        sort_column = sort_map.get(sort_field, PromotionAttachment.created_at)
+        if sort_dir == "desc":
+            q = q.order_by(sort_column.desc())
+        else:
+            q = q.order_by(sort_column.asc())
+        
+        total = q.count()
+        offset = (page - 1) * limit
+        promotion_attachments = q.offset(offset).limit(limit).all()
+        
+        from app.schemas.common import PaginationResponse
+        
+        return {
+            "data": promotion_attachments,
+            "pagination": PaginationResponse(total=total, page=page, limit=limit),
+            "empty": total == 0
+        }
+    
+    def get_promotion_attachment(self, promotion_attachment_id: str):
+        """Get a promotion attachment by ID."""
+        from sqlalchemy.orm import joinedload
+        promotion_attachment = self.db.query(PromotionAttachment).options(
+            joinedload(PromotionAttachment.promotion),
+            joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
+        ).filter(PromotionAttachment.id == promotion_attachment_id).first()
+        if not promotion_attachment:
+            raise handle_not_found("Promotion Attachment", promotion_attachment_id)
+        return promotion_attachment
+    
+    def create_promotion_attachment(self, promotion_attachment_data: PromotionAttachmentCreate, created_by: Optional[str] = None):
+        """Create a new promotion attachment relationship."""
+        # Check if relationship already exists
+        existing = self.db.query(PromotionAttachment).filter(
+            PromotionAttachment.promotion_id == promotion_attachment_data.promotion_id,
+            PromotionAttachment.attachment_id == promotion_attachment_data.attachment_id
+        ).first()
+        if existing:
+            raise handle_conflict("Promotion attachment relationship already exists.")
+        
+        attachment_dict = promotion_attachment_data.model_dump()
+        if created_by:
+            attachment_dict["created_by"] = created_by
+        
+        promotion_attachment = PromotionAttachment(**attachment_dict)
+        self.db.add(promotion_attachment)
+        self.db.commit()
+        self.db.refresh(promotion_attachment)
+        
+        # Reload with relationships
+        from sqlalchemy.orm import joinedload
+        return self.db.query(PromotionAttachment).options(
+            joinedload(PromotionAttachment.promotion),
+            joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
+        ).filter(PromotionAttachment.id == promotion_attachment.id).first()
+    
+    def update_promotion_attachment(self, promotion_attachment_id: str, promotion_attachment_data: PromotionAttachmentUpdate):
+        """Update a promotion attachment relationship."""
+        promotion_attachment = self.get_promotion_attachment(promotion_attachment_id)
+        
+        update_data = promotion_attachment_data.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(promotion_attachment, key, value)
+        
+        from datetime import datetime
+        promotion_attachment.updated_at = datetime.now()
+        
+        self.db.commit()
+        self.db.refresh(promotion_attachment)
+        
+        # Reload with relationships
+        from sqlalchemy.orm import joinedload
+        return self.db.query(PromotionAttachment).options(
+            joinedload(PromotionAttachment.promotion),
+            joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
+        ).filter(PromotionAttachment.id == promotion_attachment.id).first()
+    
+    def delete_promotion_attachment(self, promotion_attachment_id: str):
+        """Delete a promotion attachment relationship."""
+        promotion_attachment = self.get_promotion_attachment(promotion_attachment_id)
+        self.db.delete(promotion_attachment)
+        self.db.commit()
+        return {"message": "Promotion attachment deleted successfully"}
+    
+    def get_promotion_attachments_by_promotion(self, promotion_id: str):
+        """Get all attachments for a specific promotion."""
+        from sqlalchemy.orm import joinedload
+        promotion_attachments = self.db.query(PromotionAttachment).options(
+            joinedload(PromotionAttachment.promotion),
+            joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
+        ).filter(PromotionAttachment.promotion_id == promotion_id).order_by(
+            PromotionAttachment.sort_order.asc().nulls_last(),
+            PromotionAttachment.created_at.asc()
+        ).all()
+        return promotion_attachments

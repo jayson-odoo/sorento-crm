@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getAttachments, uploadAttachment, deleteAttachment, restoreAttachment, downloadAttachment, getAttachmentMetadata, checkDuplicateByHash } from '../services/attachmentService';
+import { apiFetch } from '@/lib/api';
+import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 
 export function useAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; upload_date_from?: string; upload_date_to?: string; is_deleted?: boolean; virus_status?: string }) {
   return useQuery({
@@ -17,13 +19,27 @@ export function useAttachments(params: DataGridApiFetchParams & { entity_type?: 
 export function useUploadAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ file, entityType, entityId, description }: { file: File; entityType: string; entityId: string; description?: string }) =>
-      uploadAttachment(file, entityType, entityId, description),
+    mutationFn: ({ file, attachmentTypeId, entityType, entityId }: { file: File; attachmentTypeId: string; entityType?: string; entityId?: string }) =>
+      uploadAttachment(file, attachmentTypeId, entityType, entityId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
       toast.success('File uploaded successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to upload file'),
+  });
+}
+
+export function useAttachmentTypesList() {
+  return useQuery({
+    queryKey: ['attachment-types-list'],
+    queryFn: async () => {
+      const response = await apiFetch('/api/v1/resource-management/attachment-types');
+      if (!response.ok) throw new Error('Failed to fetch attachment types');
+      const data = await response.json();
+      return (data.data || []) as AttachmentType[];
+    },
+    staleTime: 1000 * 60 * 5, // 5 minutes
+    gcTime: 1000 * 60 * 60,
   });
 }
 

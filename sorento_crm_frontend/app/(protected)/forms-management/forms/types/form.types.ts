@@ -9,6 +9,18 @@ export interface Form {
   created_at: Date;
   updated_at: Date;
   attachment_id?: string | null;
+  attachment?: {
+    id: string;
+    original_filename: string;
+    stored_filename: string;
+    file_path: string;
+    file_size_bytes: number | null;
+    mime_type: string | null;
+    attachment_type?: {
+      id: string;
+      type_name: string;
+    } | null;
+  } | null;
 }
 
 export interface FormSection {
@@ -44,6 +56,7 @@ export interface FormFormData {
   purpose?: string;
   language: string;
   is_active: boolean;
+  attachment_id?: string | null;
 }
 
 export interface FormVersion {

@@ -34,6 +34,7 @@ import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-ca
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import { useUOMSelectQuery } from '../../shared/hooks/use-uom-select-query';
 import ProductSuppliersSection from './ProductSuppliersSection';
+import ProductAttachmentsTab from './ProductAttachmentsTab';
 
 interface ProductFormProps {
   productId?: string;
@@ -80,65 +81,46 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
   // Track if form has been initialized to prevent multiple resets
   const [formInitialized, setFormInitialized] = useState(false);
 
-  // Load product data when editing - wait for all select options to load
+  // Load product data when editing - initialize form as soon as product data is available
   useEffect(() => {
-    if (
-      product &&
-      isEditMode &&
-      categories &&
-      categories.length > 0 &&
-      brands &&
-      brands.length > 0 &&
-      uoms &&
-      uoms.length > 0 &&
-      !formInitialized
-    ) {
+    if (product && isEditMode && !formInitialized) {
       // Ensure values are strings for proper matching
       const categoryId = String(product.category_id || '');
       const brandId = product.brand_id ? String(product.brand_id) : null;
       const uomId = String(product.base_uom_id || '');
 
-      // Verify that the selected values exist in the options (or will be added via fallback)
-      // This ensures SelectValue can find the matching SelectItem
-      const categoryExists = categories.some((cat) => cat.id === categoryId) || product.category;
-      const brandExists = !brandId || brands.some((brand) => brand.id === brandId) || product.brand;
-      const uomExists = uoms.some((uom) => uom.id === uomId) || product.base_uom;
+      // Initialize form immediately with product data
+      // Select components will handle values even if options haven't loaded yet
+      const timeoutId = setTimeout(() => {
+        form.reset({
+          product_code: product.product_code,
+          product_name: product.product_name,
+          description: product.description || '',
+          category_id: categoryId,
+          brand_id: brandId,
+          item_type: product.item_type || null,
+          is_active: product.is_active,
+          list_price: product.list_price,
+          cost_price: product.cost_price || null,
+          invoice_price: product.invoice_price || null,
+          weight: product.weight || null,
+          dimensions_length: product.dimensions_length || null,
+          dimensions_width: product.dimensions_width || null,
+          dimensions_height: product.dimensions_height || null,
+          warranty_months: product.warranty_months || null,
+          has_serial_tracking: product.has_serial_tracking,
+          has_batch_tracking: product.has_batch_tracking,
+          reorder_level: product.reorder_level,
+          reorder_quantity: product.reorder_quantity,
+          base_uom_id: uomId,
+        });
+        
+        setFormInitialized(true);
+      }, 0);
 
-      // Only reset if we can guarantee the selected items will be available
-      if (categoryExists && brandExists && uomExists) {
-        // Use setTimeout to ensure SelectContent items are rendered before form reset
-        // This is especially important when navigating from list view
-        const timeoutId = setTimeout(() => {
-          form.reset({
-            product_code: product.product_code,
-            product_name: product.product_name,
-            description: product.description || '',
-            category_id: categoryId,
-            brand_id: brandId,
-            item_type: product.item_type || null,
-            is_active: product.is_active,
-            list_price: product.list_price,
-            cost_price: product.cost_price || null,
-            invoice_price: product.invoice_price || null,
-            weight: product.weight || null,
-            dimensions_length: product.dimensions_length || null,
-            dimensions_width: product.dimensions_width || null,
-            dimensions_height: product.dimensions_height || null,
-            warranty_months: product.warranty_months || null,
-            has_serial_tracking: product.has_serial_tracking,
-            has_batch_tracking: product.has_batch_tracking,
-            reorder_level: product.reorder_level,
-            reorder_quantity: product.reorder_quantity,
-            base_uom_id: uomId,
-          });
-          
-          setFormInitialized(true);
-        }, 0);
-
-        return () => clearTimeout(timeoutId);
-      }
+      return () => clearTimeout(timeoutId);
     }
-  }, [product, isEditMode, categories, brands, uoms, form, formInitialized]);
+  }, [product, isEditMode, form, formInitialized]);
 
   // Reset formInitialized when productId changes
   useEffect(() => {
@@ -814,17 +796,7 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
 
           {/* Tab 6: Attachments */}
           <TabsContent value="attachments">
-            <Card>
-              <CardHeader>
-                <CardTitle>Attachments</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {/* TODO: FileUploadZone component (to be created in Resource Management module) */}
-                <div className="text-sm text-muted-foreground">
-                  File upload zone will be displayed here
-                </div>
-              </CardContent>
-            </Card>
+            <ProductAttachmentsTab productId={productId} isEditMode={isEditMode} />
           </TabsContent>
         </Tabs>
 

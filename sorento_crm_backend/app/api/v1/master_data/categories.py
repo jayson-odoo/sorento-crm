@@ -1,7 +1,7 @@
 """Product categories API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.product_service import ProductCategoryService
@@ -44,6 +44,32 @@ async def get_categories(
         service = ProductCategoryService(db)
         result = service.list_categories(page=page, limit=limit, query=query)
         return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/select", response_model=List[ProductCategoryResponse])
+async def get_categories_select(
+    query: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get product categories for select dropdowns."""
+    try:
+        from sqlalchemy import or_
+        from app.models.product import ProductCategory
+        q = db.query(ProductCategory).filter(ProductCategory.is_active == True)
+        
+        if query:
+            q = q.filter(
+                or_(
+                    ProductCategory.category_code.ilike(f"%{query}%"),
+                    ProductCategory.category_name.ilike(f"%{query}%")
+                )
+            )
+        
+        categories = q.limit(100).all()
+        return categories
     except Exception as e:
         raise handle_internal_error(str(e))
 

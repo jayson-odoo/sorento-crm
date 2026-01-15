@@ -1,7 +1,8 @@
 """FastAPI application entry point."""
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 import logging
 from app.config import settings
 from app.api.v1 import api_router
@@ -44,6 +45,18 @@ async def app_exception_handler(request, exc: AppException):
     return JSONResponse(
         status_code=exc.status_code,
         content=exc.detail
+    )
+
+# Validation error handler to see detailed errors
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    validation_logger = logging.getLogger(__name__)
+    validation_logger.error(f"Validation error: {exc.errors()}")
+    validation_logger.error(f"Request URL: {request.url}")
+    validation_logger.error(f"Request method: {request.method}")
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors()}
     )
 
 # Include API routes

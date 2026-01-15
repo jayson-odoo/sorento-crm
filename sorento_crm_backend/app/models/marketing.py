@@ -1,11 +1,16 @@
 """Marketing management models."""
 import enum
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Integer, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 import uuid
+
+# Forward references for relationships
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.models.resources import Attachment
 
 
 class CampaignStatus(str, enum.Enum):
@@ -31,6 +36,7 @@ class Promotion(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     promotion_products = relationship("PromotionProduct", back_populates="promotion")
+    promotion_attachments = relationship("PromotionAttachment", back_populates="promotion")
     
     __table_args__ = (
         Index("ix_promotions_is_active", "is_active"),
@@ -59,6 +65,30 @@ class PromotionProduct(Base):
         Index("ix_promotion_products_promotion_id", "promotion_id"),
         Index("ix_promotion_products_product_id", "product_id"),
         Index("uq_promotion_products_promotion_id_product_id", "promotion_id", "product_id", unique=True),
+    )
+
+
+class PromotionAttachment(Base):
+    __tablename__ = "promotion_attachments"
+    
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    promotion_id = Column(UUID(as_uuid=False), ForeignKey("promotions.id", ondelete="CASCADE"), nullable=False)
+    attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="CASCADE"), nullable=False)
+    is_primary = Column(Boolean, default=False, nullable=False)
+    sort_order = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    synced_to_excel = Column(Boolean, default=False, nullable=False)
+    last_synced_to_excel = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+    
+    promotion = relationship("Promotion", back_populates="promotion_attachments")
+    attachment = relationship("Attachment", foreign_keys=[attachment_id])
+    
+    __table_args__ = (
+        Index("ix_promotion_attachments_promotion_id", "promotion_id"),
+        Index("ix_promotion_attachments_attachment_id", "attachment_id"),
+        Index("uq_promotion_attachment", "promotion_id", "attachment_id", unique=True),
     )
 
 

@@ -8,6 +8,7 @@ from app.models.procurement import (
     PickingHeader, PickingLine, StockInquiry
 )
 from app.models.product import Product
+from app.models.resources import Attachment
 from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
@@ -156,7 +157,10 @@ class InboundShipmentService:
     
     def get_shipment(self, shipment_id: str):
         """Get a shipment by ID."""
-        shipment = self.db.query(InboundShipment).filter(InboundShipment.id == shipment_id).first()
+        from sqlalchemy.orm import joinedload
+        shipment = self.db.query(InboundShipment).options(
+            joinedload(InboundShipment.attachment).joinedload(Attachment.attachment_type)
+        ).filter(InboundShipment.id == shipment_id).first()
         if not shipment:
             raise handle_not_found("Inbound Shipment", shipment_id)
         return shipment
@@ -415,7 +419,7 @@ class StockInquiryService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_inquiries(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
+    def list_inquiries(self, page: int = 1, limit: int = 50, query: Optional[str] = None, sort_field: str = "created_at", sort_dir: str = "desc"):
         """List stock inquiries."""
         q = self.db.query(StockInquiry)
         
@@ -428,13 +432,44 @@ class StockInquiryService:
                 )
             )
         
+        # Normalize sort parameters - default to id since created_at may not exist in DB
+        if sort_field and isinstance(sort_field, str):
+            sort_field = sort_field.strip().lower() or "id"
+        else:
+            sort_field = "id"
+        
+        if sort_dir and isinstance(sort_dir, str):
+            sort_dir = sort_dir.strip().lower() or "desc"
+        else:
+            sort_dir = "desc"
+        
+        sort_map = {
+            "id": StockInquiry.id,
+            "product_code": StockInquiry.product_code,
+            "delivery_date": StockInquiry.delivery_date,
+        }
+        # Only use created_at/updated_at if explicitly requested and column exists
+        # For now, default to id to avoid database errors
+        sort_column = sort_map.get(sort_field, StockInquiry.id)
+        
+        # Ensure sort_dir is either "asc" or "desc"
+        if sort_dir not in ["asc", "desc"]:
+            sort_dir = "desc"
+        
+        if sort_dir == "desc":
+            q = q.order_by(sort_column.desc())
+        else:
+            q = q.order_by(sort_column.asc())
+        
         total = q.count()
         offset = (page - 1) * limit
         inquiries = q.offset(offset).limit(limit).all()
         
+        from app.schemas.common import PaginationResponse
+        
         return {
             "data": inquiries,
-            "pagination": {"total": total, "page": page, "limit": limit},
+            "pagination": PaginationResponse(total=total, page=page, limit=limit),
             "empty": total == 0
         }
     

@@ -67,7 +67,10 @@ class AttachmentService:
         entity_id: Optional[str] = None
     ):
         """List attachments."""
-        q = self.db.query(Attachment).filter(Attachment.is_deleted == False)
+        from sqlalchemy.orm import joinedload
+        q = self.db.query(Attachment).options(
+            joinedload(Attachment.attachment_type)
+        ).filter(Attachment.is_deleted == False)
         
         if entity_type:
             q = q.filter(Attachment.entity_type == entity_type)
@@ -80,27 +83,46 @@ class AttachmentService:
         offset = (page - 1) * limit
         attachments = q.offset(offset).limit(limit).all()
         
+        from app.schemas.common import PaginationResponse
+        
         return {
             "data": attachments,
-            "pagination": {"total": total, "page": page, "limit": limit},
+            "pagination": PaginationResponse(total=total, page=page, limit=limit),
             "empty": total == 0
         }
     
     def get_attachment(self, attachment_id: str):
         """Get an attachment by ID."""
-        attachment = self.db.query(Attachment).filter(Attachment.id == attachment_id).first()
+        from sqlalchemy.orm import joinedload
+        attachment = self.db.query(Attachment).options(
+            joinedload(Attachment.attachment_type)
+        ).filter(Attachment.id == attachment_id).first()
         if not attachment:
             raise handle_not_found("Attachment", attachment_id)
         return attachment
     
     def create_attachment(self, attachment_data: AttachmentCreate, uploaded_by: str):
         """Create a new attachment."""
+        from sqlalchemy.orm import joinedload
+        import uuid as uuid_module
+        
         attachment_dict = attachment_data.model_dump()
-        attachment_dict["uploaded_by"] = uploaded_by
+        # Ensure uploaded_by is a string (convert UUID if needed)
+        if isinstance(uploaded_by, uuid_module.UUID):
+            attachment_dict["uploaded_by"] = str(uploaded_by)
+        else:
+            attachment_dict["uploaded_by"] = str(uploaded_by) if uploaded_by else None
+        
         attachment = Attachment(**attachment_dict)
         self.db.add(attachment)
         self.db.commit()
         self.db.refresh(attachment)
+        
+        # Reload with relationship
+        attachment = self.db.query(Attachment).options(
+            joinedload(Attachment.attachment_type)
+        ).filter(Attachment.id == attachment.id).first()
+        
         return attachment
     
     def update_attachment(self, attachment_id: str, attachment_data: AttachmentUpdate):
@@ -124,3 +146,45 @@ class AttachmentService:
         attachment.deleted_by = deleted_by
         self.db.commit()
         return {"message": "Attachment deleted successfully"}
+    
+    def get_file_content(self, attachment_id: str) -> bytes:
+        """
+        Retrieve file content from S3 for an attachment.
+        
+        Args:
+            attachment_id: ID of the attachment
+        
+        Returns:
+            File content as bytes
+        
+        Raises:
+            Exception: If attachment not found or file retrieval fails
+        """
+        attachment = self.get_attachment(attachment_id)
+        
+        if not attachment.file_path:
+            raise Exception("Attachment has no file path")
+        
+        from app.services.s3_service import S3Service
+        from urllib.parse import urlparse
+        
+        s3_service = S3Service()
+        
+        try:
+            # Extract S3 key from URL if it's a full URL
+            # Format: https://bucket.s3.region.amazonaws.com/key
+            # Or: https://bucket.s3.amazonaws.com/key
+            file_path = attachment.file_path
+            if file_path.startswith("https://"):
+                # Parse URL to extract key
+                parsed = urlparse(file_path)
+                # Path will be like /key, so remove leading /
+                s3_key = parsed.path.lstrip("/")
+            else:
+                # Already a key
+                s3_key = file_path
+            
+            file_content = s3_service.download_file(s3_key)
+            return file_content
+        except Exception as e:
+            raise Exception(f"Failed to retrieve file from S3: {str(e)}")

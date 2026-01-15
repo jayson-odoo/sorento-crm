@@ -100,6 +100,44 @@ class SLAPolicySimple(BaseModel):
         from_attributes = True
 
 
+class ConversationSLAEscalationLogResponse(BaseModel):
+    """Escalation log response schema."""
+    id: str
+    sla_tracking_id: str
+    from_tier: int
+    to_tier: int
+    escalated_at: datetime
+    reason: str
+    assigned_to: Optional[str] = None
+    due_at: datetime
+    reminder_count: int = 0
+    last_reminder_at: Optional[datetime] = None
+    created_at: datetime
+    
+    @field_validator('sla_tracking_id', mode='before')
+    @classmethod
+    def convert_uuid(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v) if v else None
+    
+    @field_validator('assigned_to', mode='before')
+    @classmethod
+    def convert_text_field(cls, v):
+        """Convert UUID objects to strings for text fields."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v) if v else None
+    
+    class Config:
+        from_attributes = True
+
+
 class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     id: str
     created_at: datetime
@@ -107,6 +145,7 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     synced_to_excel: bool = False
     last_synced_to_excel: Optional[datetime] = None
     policy: Optional[SLAPolicySimple] = None
+    escalation_logs: Optional[list[ConversationSLAEscalationLogResponse]] = []
     
     @field_validator('policy_id', mode='before')
     @classmethod

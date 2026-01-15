@@ -153,6 +153,21 @@ class InboundShipmentUpdate(BaseModel):
     total_items_shipped: Optional[int] = None
     total_cartons: Optional[int] = None
     notes: Optional[str] = None
+    attachment_id: Optional[str] = None
+
+
+class AttachmentSimple(BaseModel):
+    """Simple attachment reference for InboundShipment."""
+    id: str
+    original_filename: str
+    stored_filename: str
+    file_path: str
+    file_size_bytes: Optional[int] = None
+    mime_type: Optional[str] = None
+    attachment_type: Optional[dict] = None
+    
+    class Config:
+        from_attributes = True
 
 
 class InboundShipmentResponse(InboundShipmentBase):
@@ -163,6 +178,7 @@ class InboundShipmentResponse(InboundShipmentBase):
     synced_to_excel: bool = False
     last_synced_to_excel: Optional[datetime] = None
     supplier: Optional[SupplierSimple] = None
+    attachment: Optional[AttachmentSimple] = None
     shipment_lines: Optional[List[InboundShipmentLineResponse]] = None
     lines_count: Optional[int] = 0
     spo_allocations_count: Optional[int] = 0
@@ -363,8 +379,8 @@ class StockInquiryUpdate(BaseModel):
 
 class StockInquiryResponse(StockInquiryBase):
     id: str
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True

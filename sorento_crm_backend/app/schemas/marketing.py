@@ -1,8 +1,9 @@
 """Marketing management schemas."""
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import datetime
 from decimal import Decimal
+import uuid
 
 
 class PromotionBase(BaseModel):
@@ -182,6 +183,75 @@ class MarketingCampaignResponse(MarketingCampaignBase):
     created_at: datetime
     updated_at: datetime
     campaign_type: Optional[CampaignTypeSimple] = None
+    
+    class Config:
+        from_attributes = True
+
+
+# Import Attachment schemas for PromotionAttachment
+from app.schemas.resources import AttachmentTypeSimple
+
+
+class AttachmentSimple(BaseModel):
+    """Simple attachment reference for PromotionAttachment."""
+    id: str
+    original_filename: str
+    stored_filename: str
+    file_path: str
+    file_size_bytes: Optional[int] = None
+    mime_type: Optional[str] = None
+    uploaded_at: datetime
+    attachment_type: Optional[AttachmentTypeSimple] = None
+    
+    @field_validator('id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v)
+    
+    class Config:
+        from_attributes = True
+
+
+class PromotionAttachmentBase(BaseModel):
+    promotion_id: str
+    attachment_id: str
+    is_primary: Optional[bool] = False
+    sort_order: Optional[int] = None
+
+
+class PromotionAttachmentCreate(PromotionAttachmentBase):
+    pass
+
+
+class PromotionAttachmentUpdate(BaseModel):
+    is_primary: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+class PromotionAttachmentResponse(PromotionAttachmentBase):
+    id: str
+    created_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    synced_to_excel: Optional[bool] = False
+    last_synced_to_excel: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    promotion: Optional[PromotionSimple] = None
+    attachment: Optional[AttachmentSimple] = None
+    
+    @field_validator('id', 'promotion_id', 'attachment_id', 'created_by', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v)
     
     class Config:
         from_attributes = True

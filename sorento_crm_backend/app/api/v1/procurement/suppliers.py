@@ -1,7 +1,7 @@
 """Suppliers API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.procurement_service import SupplierService
@@ -33,6 +33,32 @@ async def get_suppliers(
             sort_dir=dir or "asc"
         )
         return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/select", response_model=List[SupplierResponse])
+async def get_suppliers_select(
+    query: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get suppliers for select dropdowns."""
+    try:
+        from sqlalchemy import or_
+        from app.models.procurement import Supplier
+        q = db.query(Supplier).filter(Supplier.is_active == True)
+        
+        if query:
+            q = q.filter(
+                or_(
+                    Supplier.supplier_code.ilike(f"%{query}%"),
+                    Supplier.supplier_name.ilike(f"%{query}%")
+                )
+            )
+        
+        suppliers = q.limit(100).all()
+        return suppliers
     except Exception as e:
         raise handle_internal_error(str(e))
 

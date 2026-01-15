@@ -19,6 +19,8 @@ import { usePackingList, useDeletePackingList } from '../hooks/usePackingLists';
 import { formatDate } from '@/lib/helpers';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 import Link from 'next/link';
+import { Eye, Download } from 'lucide-react';
+import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 
 interface PackingListDetailProps {
   packingListId: string;
@@ -30,6 +32,23 @@ export default function PackingListDetail({
   const router = useRouter();
   const { data: packingList, isLoading } = usePackingList(packingListId);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const downloadMutation = useDownloadAttachment();
+
+  const handleDownload = async (attachmentId: string, filename: string) => {
+    try {
+      const blob = await downloadMutation.mutateAsync(attachmentId);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename || 'download';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error) {
+      // Error is handled by the mutation hook
+    }
+  };
 
   if (isLoading) {
     return (
@@ -233,6 +252,48 @@ export default function PackingListDetail({
             <CardTitle>Related Documents</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {packingList.attachment_id && packingList.attachment && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Attachment</p>
+                <div className="flex items-center gap-2 p-3 border rounded-lg">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">
+                      {packingList.attachment.original_filename || 'Unknown'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {packingList.attachment.attachment_type?.type_name || 'No type'} •{' '}
+                      {packingList.attachment.file_size_bytes
+                        ? `${(packingList.attachment.file_size_bytes / 1024).toFixed(2)} KB`
+                        : '-'}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (packingList.attachment?.file_path) {
+                          window.open(packingList.attachment.file_path, '_blank');
+                        }
+                      }}
+                    >
+                      <Eye className="size-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (packingList.attachment_id && packingList.attachment?.original_filename) {
+                          handleDownload(packingList.attachment_id, packingList.attachment.original_filename);
+                        }
+                      }}
+                    >
+                      <Download className="size-4" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
             {packingList.spo_allocations_count !== undefined &&
               packingList.spo_allocations_count > 0 && (
                 <div>

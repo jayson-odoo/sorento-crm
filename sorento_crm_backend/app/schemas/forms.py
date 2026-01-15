@@ -1,7 +1,9 @@
 """Forms management schemas."""
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, Any
 from datetime import datetime
+import uuid
+from app.schemas.resources import AttachmentTypeSimple
 
 
 class FormBase(BaseModel):
@@ -27,11 +29,37 @@ class FormUpdate(BaseModel):
     attachment_id: Optional[str] = None
 
 
+class AttachmentSimple(BaseModel):
+    """Simple attachment reference for Form."""
+    id: str
+    original_filename: str
+    stored_filename: str
+    file_path: str
+    file_size_bytes: Optional[int] = None
+    mime_type: Optional[str] = None
+    attachment_type: Optional[AttachmentTypeSimple] = None
+    
+    class Config:
+        from_attributes = True
+
+
 class FormResponse(FormBase):
     id: str
-    created_by: Optional[str] = None
+    # created_by column doesn't exist in database, removed from response
+    # created_by: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    attachment: Optional[AttachmentSimple] = None
+    
+    @field_validator('attachment_id', 'id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v) if v else None
     
     class Config:
         from_attributes = True
@@ -55,6 +83,16 @@ class FormSectionUpdate(BaseModel):
 class FormSectionResponse(FormSectionBase):
     id: str
     created_at: datetime
+    
+    @field_validator('form_id', 'id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v) if v else None
     
     class Config:
         from_attributes = True
@@ -99,6 +137,16 @@ class FormFieldResponse(FormFieldBase):
     id: str
     created_at: datetime
     
+    @field_validator('section_id', 'id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v) if v else None
+    
     class Config:
         from_attributes = True
 
@@ -119,6 +167,16 @@ class FormVersionResponse(FormVersionBase):
     id: str
     created_by: Optional[str] = None
     created_at: datetime
+    
+    @field_validator('form_id', 'id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v) if v else None
     
     class Config:
         from_attributes = True

@@ -1,7 +1,7 @@
 """Units of measure API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.product_service import UnitOfMeasureService
@@ -25,6 +25,32 @@ async def get_units_of_measure(
         service = UnitOfMeasureService(db)
         result = service.list_uoms(page=page, limit=limit, query=query)
         return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/select", response_model=List[UnitOfMeasureResponse])
+async def get_uoms_select(
+    query: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get units of measure for select dropdowns."""
+    try:
+        from sqlalchemy import or_
+        from app.models.product import UnitOfMeasure
+        q = db.query(UnitOfMeasure)
+        
+        if query:
+            q = q.filter(
+                or_(
+                    UnitOfMeasure.uom_code.ilike(f"%{query}%"),
+                    UnitOfMeasure.uom_name.ilike(f"%{query}%")
+                )
+            )
+        
+        uoms = q.limit(100).all()
+        return uoms
     except Exception as e:
         raise handle_internal_error(str(e))
 

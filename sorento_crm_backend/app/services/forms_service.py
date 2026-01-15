@@ -2,6 +2,7 @@
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.models.forms import Form, FormSection, FormField, FormVersion
+from app.models.resources import Attachment
 from app.schemas.forms import (
     FormCreate, FormUpdate, FormSectionCreate, FormSectionUpdate,
     FormFieldCreate, FormFieldUpdate, FormVersionCreate
@@ -15,10 +16,13 @@ class FormService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_forms(self, page: int = 1, limit: int = 50, query: Optional[str] = None, language: Optional[str] = None, status: Optional[str] = None):
+    def list_forms(self, page: int = 1, limit: int = 50, query: Optional[str] = None, language: Optional[str] = None, status: Optional[str] = None, sort_field: str = "updated_at", sort_dir: str = "desc"):
         """List forms."""
-        from sqlalchemy import or_
-        q = self.db.query(Form)
+        from sqlalchemy import or_, and_
+        from sqlalchemy.orm import joinedload
+        q = self.db.query(Form).options(
+            joinedload(Form.attachment).joinedload(Attachment.attachment_type)
+        )
         
         filters = []
         if query:
@@ -34,24 +38,56 @@ class FormService:
             filters.append(Form.is_active == (status == "active"))
         
         if filters:
-            from sqlalchemy import and_
             q = q.filter(and_(*filters))
         
-        q = q.order_by(Form.updated_at.desc())
+        # Normalize sort parameters
+        if sort_field and isinstance(sort_field, str):
+            sort_field = sort_field.strip().lower() or "updated_at"
+        else:
+            sort_field = "updated_at"
+        
+        if sort_dir and isinstance(sort_dir, str):
+            sort_dir = sort_dir.strip().lower() or "desc"
+        else:
+            sort_dir = "desc"
+        
+        sort_map = {
+            "id": Form.id,
+            "code": Form.code,
+            "name": Form.name,
+            "created_at": Form.created_at,
+            "updated_at": Form.updated_at,
+            "version": Form.version,
+        }
+        sort_column = sort_map.get(sort_field, Form.updated_at)
+        
+        # Ensure sort_dir is either "asc" or "desc"
+        if sort_dir not in ["asc", "desc"]:
+            sort_dir = "desc"
+        
+        if sort_dir == "desc":
+            q = q.order_by(sort_column.desc())
+        else:
+            q = q.order_by(sort_column.asc())
         
         total = q.count()
         offset = (page - 1) * limit
         forms = q.offset(offset).limit(limit).all()
         
+        from app.schemas.common import PaginationResponse
+        
         return {
             "data": forms,
-            "pagination": {"total": total, "page": page, "limit": limit},
+            "pagination": PaginationResponse(total=total, page=page, limit=limit),
             "empty": total == 0
         }
     
     def get_form(self, form_id: str):
         """Get a form by ID."""
-        form = self.db.query(Form).filter(Form.id == form_id).first()
+        from sqlalchemy.orm import joinedload
+        form = self.db.query(Form).options(
+            joinedload(Form.attachment).joinedload(Attachment.attachment_type)
+        ).filter(Form.id == form_id).first()
         if not form:
             raise handle_not_found("Form", form_id)
         return form
@@ -63,7 +99,8 @@ class FormService:
             raise handle_conflict("Form code already exists.")
         
         form_dict = form_data.model_dump()
-        form_dict["created_by"] = created_by
+        # created_by column doesn't exist in database, skip setting it
+        # form_dict["created_by"] = created_by
         form = Form(**form_dict)
         self.db.add(form)
         self.db.commit()

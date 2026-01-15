@@ -1,7 +1,8 @@
 """Resource management schemas."""
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import datetime
+import uuid
 
 
 class AttachmentTypeBase(BaseModel):
@@ -25,6 +26,16 @@ class AttachmentTypeUpdate(BaseModel):
 class AttachmentTypeResponse(AttachmentTypeBase):
     id: str
     created_at: datetime
+    
+    @field_validator('id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v)
     
     class Config:
         from_attributes = True
@@ -57,6 +68,16 @@ class AttachmentTypeSimple(BaseModel):
     type_name: str
     description: Optional[str] = None
     
+    @field_validator('id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v)
+    
     class Config:
         from_attributes = True
 
@@ -69,6 +90,18 @@ class AttachmentResponse(AttachmentBase):
     deleted_at: Optional[datetime] = None
     deleted_by: Optional[str] = None
     attachment_type: Optional[AttachmentTypeSimple] = None
+    
+    @field_validator('id', 'uploaded_by', 'deleted_by', 'attachment_type_id', 'entity_id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        if isinstance(v, str):
+            return v
+        return str(v)
     
     class Config:
         from_attributes = True
