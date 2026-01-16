@@ -1,0 +1,210 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: sorento_crm_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-sorento_crm}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - sorento_network
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./sorento_crm_backend
+      dockerfile: Dockerfile
+    container_name: sorento_crm_backend
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-sorento_crm}
+      DIRECT_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-sorento_crm}
+      
+      # JWT Authentication
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-please-use-strong-secret}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      
+      # API Server
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      
+      # CORS - Allow frontend origin
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:80,http://frontend}
+      
+      # Environment
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      DEBUG: ${DEBUG:-false}
+      
+      # Gunicorn workers (optional, defaults to 4 in Dockerfile)
+      WORKERS: ${WORKERS:-4}
+      
+      # AWS S3 (if used for attachments)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Mount for development (optional - comment out for production)
+      # - ./sorento_crm_backend/app:/app/app:ro
+      - backend_logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - sorento_network
+    # Run migrations and start server
+    # Note: In production, you might want to run migrations separately
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for database to be ready...' &&
+        until pg_isready -h db -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-sorento_crm}; do 
+          echo 'Database not ready, waiting...' && 
+          sleep 2; 
+        done &&
+        echo 'Database is ready!' &&
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Starting FastAPI server with Gunicorn...' &&
+        exec gunicorn app.main:app \
+          --workers $${WORKERS:-4} \
+          --worker-class uvicorn.workers.UvicornWorker \
+          --bind 0.0.0.0:8000 \
+          --timeout 120 \
+          --keep-alive 5 \
+          --access-logfile - \
+          --error-logfile - \
+          --log-level info
+      "
+
+  # Next.js Frontend (served via Nginx)
+  frontend:
+    build:
+      context: ./sorento_crm_frontend
+      dockerfile: Dockerfile
+      args:
+        # Build-time args (if needed)
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
+    container_name: sorento_crm_frontend
+    environment:
+      # API URL for frontend to connect to backend
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - sorento_network
+
+networks:
+  sorento_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  backend_logs:
+    driver: local
+
+# ============================================================================
+# DEPLOYMENT INSTRUCTIONS
+# ============================================================================
+#
+# 1. BUILD AND RUN LOCALLY:
+#    ----------------------
+#    docker compose build
+#    docker compose up -d
+#
+#    Or to see logs:
+#    docker compose up
+#
+# 2. ACCESS THE APPLICATION:
+#    -----------------------
+#    Frontend UI:        http://localhost
+#    FastAPI Swagger:    http://localhost:8000/docs
+#    FastAPI ReDoc:      http://localhost:8000/redoc
+#    API Health Check:   http://localhost:8000/health
+#
+# 3. ENVIRONMENT VARIABLES:
+#    ---------------------
+#    Create a .env file in the root directory (sorento_crm/) with:
+#
+#    # Database
+#    POSTGRES_USER=postgres
+#    POSTGRES_PASSWORD=postgres
+#    POSTGRES_DB=sorento_crm
+#    POSTGRES_PORT=5432
+#
+#    # Backend
+#    JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+#    JWT_ALGORITHM=HS256
+#    CORS_ORIGINS=http://localhost,http://localhost:80
+#    ENVIRONMENT=production
+#    DEBUG=false
+#    WORKERS=4
+#
+#    # Frontend
+#    NEXT_PUBLIC_API_URL=http://localhost:8000
+#
+#    # Ports (optional, defaults shown)
+#    FRONTEND_PORT=80
+#    BACKEND_PORT=8000
+#
+#    # AWS S3 (if using file attachments)
+#    AWS_ACCESS_KEY_ID=your-access-key
+#    AWS_SECRET_ACCESS_KEY=your-secret-key
+#    AWS_REGION=us-east-1
+#    AWS_S3_BUCKET=your-bucket-name
+#
+# 4. DATABASE MIGRATIONS:
+#    -------------------
+#    Migrations run automatically on backend startup.
+#    To run manually:
+#    docker compose exec backend alembic upgrade head
+#
+# 5. VIEWING LOGS:
+#    -------------
+#    All services:       docker compose logs -f
+#    Backend only:       docker compose logs -f backend
+#    Frontend only:      docker compose logs -f frontend
+#    Database only:     docker compose logs -f db
+#
+# 6. STOPPING SERVICES:
+#    -----------------
+#    docker compose down
+#
+#    To remove volumes (WARNING: deletes database data):
+#    docker compose down -v
+#
+# 7. REBUILDING AFTER CODE CHANGES:
+#    -------------------------------
+#    docker compose build --no-cache
+#    docker compose up -d
+#
+# 8. PRODUCTION CONSIDERATIONS:
+#    --------------------------
+#    - Change JWT_SECRET to a strong random value
+#    - Set DEBUG=false
+#    - Use environment-specific CORS_ORIGINS
+#    - Configure proper database backups
+#    - Set up SSL/TLS (use reverse proxy like Traefik or Nginx)
+#    - Adjust WORKERS based on server CPU cores: (2 x cores) + 1
+#    - Monitor logs and set up log aggregation
+#    - Use Docker secrets or external secret management for sensitive data
