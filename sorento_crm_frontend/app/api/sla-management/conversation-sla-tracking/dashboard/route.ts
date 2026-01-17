@@ -28,14 +28,14 @@ export async function GET(req: NextRequest) {
     });
 
     const totalTrackings = allTrackings.length;
-    const resolvedCount = allTrackings.filter((t) => t.isResolved).length;
-    const pendingCount = allTrackings.filter((t) => !t.isResolved && !t.escalatedAt).length;
-    const escalatedCount = allTrackings.filter((t) => t.escalatedAt).length;
+    const resolvedCount = allTrackings.filter((t: { isResolved: boolean }) => t.isResolved).length;
+    const pendingCount = allTrackings.filter((t: { isResolved: boolean; escalatedAt: Date | null }) => !t.isResolved && !t.escalatedAt).length;
+    const escalatedCount = allTrackings.filter((t: { escalatedAt: Date | null }) => t.escalatedAt).length;
 
     // Calculate average resolution time (in hours)
-    const resolvedTrackings = allTrackings.filter((t) => t.isResolved && t.resolutionDuration);
+    const resolvedTrackings = allTrackings.filter((t: any) => t.isResolved && t.resolutionDuration);
     const averageResolutionTime = resolvedTrackings.length > 0
-      ? resolvedTrackings.reduce((sum, t) => sum + Number(t.resolutionDuration || 0), 0) / resolvedTrackings.length
+      ? resolvedTrackings.reduce((sum: number, t: any) => sum + Number(t.resolutionDuration || 0), 0) / resolvedTrackings.length
       : 0;
 
     // Calculate escalation rate
@@ -45,19 +45,19 @@ export async function GET(req: NextRequest) {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     
-    const recentTrackings = allTrackings.filter((t) => new Date(t.initiatedAt) >= thirtyDaysAgo);
+    const recentTrackings = allTrackings.filter((t: { initiatedAt: Date }) => new Date(t.initiatedAt) >= thirtyDaysAgo);
     const responseTimeTrends = Array.from({ length: 30 }, (_, i) => {
       const date = new Date();
       date.setDate(date.getDate() - (29 - i));
       const dateStr = date.toISOString().split('T')[0];
       
-      const dayTrackings = recentTrackings.filter((t) => {
+      const dayTrackings = recentTrackings.filter((t: { initiatedAt: Date }) => {
         const trackingDate = new Date(t.initiatedAt).toISOString().split('T')[0];
         return trackingDate === dateStr;
       });
       
       const avgResponseTime = dayTrackings.length > 0
-        ? dayTrackings.reduce((sum, t) => {
+        ? dayTrackings.reduce((sum: number, t: any) => {
             const duration = t.resolutionDuration ? Number(t.resolutionDuration) : 0;
             return sum + duration;
           }, 0) / dayTrackings.length
@@ -70,7 +70,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Escalation rates by tier
-    const escalationByTier = allTrackings.reduce((acc, t) => {
+    const escalationByTier = allTrackings.reduce((acc: Record<string, number>, t: any) => {
       if (t.escalatedAt) {
         acc[t.currentTier] = (acc[t.currentTier] || 0) + 1;
       }

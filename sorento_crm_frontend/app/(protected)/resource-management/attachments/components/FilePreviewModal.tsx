@@ -16,7 +16,7 @@ interface FilePreviewModalProps {
 export default function FilePreviewModal({ open, onOpenChange, attachment }: FilePreviewModalProps) {
   if (!attachment) return null;
 
-  const mimeType = attachment.mime_type;
+  const mimeType = attachment.mime_type || '';
   const isPDF = mimeType === 'application/pdf';
   const isImage = mimeType.startsWith('image/');
   const isExcel = mimeType.includes('spreadsheet') || attachment.original_filename.match(/\.(xls|xlsx)$/i);

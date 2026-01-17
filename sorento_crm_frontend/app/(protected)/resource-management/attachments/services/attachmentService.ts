@@ -37,9 +37,9 @@ export async function uploadAttachment(
 
   // Debug: Log FormData contents
   console.log('FormData entries:');
-  for (const [key, value] of formData.entries()) {
+  Array.from(formData.entries()).forEach(([key, value]) => {
     console.log(`  ${key}:`, value instanceof File ? `File(${value.name}, ${value.size} bytes)` : value);
-  }
+  });
 
   // For FormData, we need to ensure no Content-Type is set
   // The apiFetch function should handle this, but let's be explicit

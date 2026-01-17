@@ -8,6 +8,7 @@ export interface Customer {
   created_at: Date;
   updated_at?: Date | null;
   created_by?: string | null;
+  orders_count?: number;
 }
 
 export interface CustomerFormData {

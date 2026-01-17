@@ -74,7 +74,7 @@ export default function PromotionAttachmentsList() {
         size: 100,
         cell: ({ row }) => (
           row.original.is_primary ? (
-            <Badge variant="default">Primary</Badge>
+            <Badge variant="primary">Primary</Badge>
           ) : (
             <Badge variant="outline">Secondary</Badge>
           )
@@ -108,8 +108,19 @@ export default function PromotionAttachmentsList() {
     manualFiltering: true,
   });
 
+  const handleRowClick = (row: PromotionAttachment) => {
+    if (row.promotion_id) {
+      router.push(`/marketing-management/promotions/${row.promotion_id}`);
+    }
+  };
+
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid 
+      table={table} 
+      recordCount={data?.pagination.total || 0} 
+      isLoading={isLoading}
+      onRowClick={handleRowClick}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">
@@ -134,13 +145,7 @@ export default function PromotionAttachmentsList() {
         </CardHeader>
         <CardTable>
           <ScrollArea>
-            <DataGridTable
-              onRowClick={(row) => {
-                if (row.original.promotion_id) {
-                  router.push(`/marketing-management/promotions/${row.original.promotion_id}`);
-                }
-              }}
-            />
+            <DataGridTable />
             <ScrollBar orientation="horizontal" />
           </ScrollArea>
         </CardTable>

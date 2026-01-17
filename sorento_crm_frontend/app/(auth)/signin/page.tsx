@@ -52,8 +52,13 @@ export default function Page() {
       });
 
       if (response?.error) {
-        const errorData = JSON.parse(response.error);
-        setError(errorData.message);
+        try {
+          const errorData = JSON.parse(response.error);
+          setError(errorData.message || response.error);
+        } catch {
+          // If error is not JSON, use it directly (might be a Prisma error or other non-JSON error)
+          setError(response.error || 'An error occurred during sign in.');
+        }
       } else {
         router.push('/');
       }

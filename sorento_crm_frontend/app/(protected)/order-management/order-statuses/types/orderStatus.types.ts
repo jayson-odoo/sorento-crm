@@ -6,6 +6,7 @@ export interface OrderStatus {
   sequence: number;
   is_final_status: boolean;
   created_at: Date;
+  orders_count?: number;
 }
 
 export interface OrderStatusFormData {

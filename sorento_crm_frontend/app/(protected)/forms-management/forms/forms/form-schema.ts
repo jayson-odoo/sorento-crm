@@ -14,7 +14,7 @@ export const FormSchema = z.object({
     .max(255, { message: 'Form name must not exceed 255 characters.' }),
   purpose: z.string().max(2000, { message: 'Purpose must not exceed 2000 characters.' }).optional().nullable(),
   language: z.string().min(2, { message: 'Language is required.' }).max(10, { message: 'Language code must not exceed 10 characters.' }),
-  is_active: z.boolean().default(false),
+  is_active: z.boolean(),
   attachment_id: z.string().uuid().optional().nullable(),
 });
 

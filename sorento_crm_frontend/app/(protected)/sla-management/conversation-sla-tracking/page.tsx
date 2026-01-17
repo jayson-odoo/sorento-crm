@@ -15,7 +15,7 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import ConversationSLATrackingList from './components/ConversationSLATrackingList';
-import SLATrackingDashboard from './components/SLATrackingDashboard';
+import SLATrackingDashboard from './components/SLATrackingDashboardWrapper';
 
 export const metadata: Metadata = {
   title: 'Conversation SLA Tracking',

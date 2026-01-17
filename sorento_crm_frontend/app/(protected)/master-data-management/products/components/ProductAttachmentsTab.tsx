@@ -95,7 +95,7 @@ export default function ProductAttachmentsTab({
                 >
                   <div className="flex items-center gap-3 flex-1">
                     {pa.is_primary && (
-                      <Badge variant="default">Primary</Badge>
+                      <Badge variant="primary">Primary</Badge>
                     )}
                     <div className="flex-1">
                       <p className="font-medium text-sm">
@@ -322,7 +322,7 @@ function LinkAttachmentDialog({ open, onOpenChange, productId }: LinkAttachmentD
                 <SelectContent>
                   {availableAttachments.map((attachment) => (
                     <SelectItem key={attachment.id} value={attachment.id}>
-                      {attachment.original_filename} ({attachment.attachment_type?.type_name || 'No type'})
+                      {attachment.original_filename}
                     </SelectItem>
                   ))}
                   {availableAttachments.length === 0 && (

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
-import type { UnitOfMeasure } from '../../products/types/product.types';
+import type { UnitOfMeasure } from '@/app/(protected)/master-data-management/products/types/product.types';
 
 export const useUOMSelectQuery = () => {
   const fetchUOMList = async (): Promise<UnitOfMeasure[]> => {

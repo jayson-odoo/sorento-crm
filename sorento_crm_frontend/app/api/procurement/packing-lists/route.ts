@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { prisma } from '@/lib/prisma';
+import type { Prisma } from '@prisma/client';
 import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
 
 /**
@@ -144,7 +145,29 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedShipments = shipments.map((shipment) => ({
+    const transformedShipments = shipments.map((shipment: {
+      id: string;
+      shipmentNumber: string;
+      supplierId: string;
+      shipmentDate: Date;
+      expectedArrivalDate: Date | null;
+      actualArrivalDate: Date | null;
+      billOfLadingNumber: string | null;
+      shippingContainerNumber: string | null;
+      invoiceNumber: string | null;
+      shipmentStatus: string;
+      totalItemsShipped: number | null;
+      totalCartons: number | null;
+      notes: string | null;
+      createdAt: Date;
+      createdBy: string | null;
+      updatedAt: Date | null;
+      attachmentId: string | null;
+      syncedToExcel: boolean;
+      lastSyncedToExcel: Date | null;
+      supplier: { id: string; supplierCode: string; supplierName: string } | null;
+      _count?: { shipmentLines: number; spoAllocations: number };
+    }) => ({
       ...transformPackingList(shipment),
       lines_count: shipment._count?.shipmentLines || 0,
       spo_allocations_count: shipment._count?.spoAllocations || 0,
@@ -182,7 +205,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     // Create shipment with lines in a transaction
-    const shipment = await prisma.$transaction(async (tx) => {
+    const shipment = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const newShipment = await tx.inboundShipment.create({
         data: {
           shipmentNumber: body.shipment_number,

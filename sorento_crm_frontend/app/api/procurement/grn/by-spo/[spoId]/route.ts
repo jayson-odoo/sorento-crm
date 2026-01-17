@@ -59,9 +59,7 @@ export async function GET(
     });
 
     // Get unique GRN headers
-    const grnIds = [
-      ...new Set(pickingLines.map((line) => line.pickingHeaderId)),
-    ];
+    const grnIds = Array.from(new Set(pickingLines.map((line: { pickingHeaderId: string }) => line.pickingHeaderId)));
 
     const grns = await prisma.pickingHeader.findMany({
       where: {

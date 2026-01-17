@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { prisma } from '@/lib/prisma';
+import type { Prisma } from '@prisma/client';
 import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
 
 /**
@@ -151,7 +152,7 @@ export async function PUT(
     const body = await request.json();
 
     // Update shipment and lines in a transaction
-    const shipment = await prisma.$transaction(async (tx) => {
+    const shipment = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Update header
       await tx.inboundShipment.update({
         where: { id },

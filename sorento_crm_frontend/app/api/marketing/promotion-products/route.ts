@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { prisma } from '@/lib/prisma';
 import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
+import { Decimal } from '@prisma/client/runtime/library';
 
 export async function GET(req: NextRequest) {
   try {
@@ -84,8 +85,30 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend and calculate discounts
-    const transformedPromotionProducts = promotionProducts.map((pp) => {
-      const listPrice = pp.product?.listPrice || 0;
+    const transformedPromotionProducts = promotionProducts.map((pp: {
+      id: string;
+      promotionId: string;
+      productId: string;
+      createdAt: Date;
+      updatedAt: Date | null;
+      promotion: {
+        id: string;
+        promoCode: string;
+        name: string;
+        promoType: string;
+        startDate: Date;
+        endDate: Date;
+        isActive: boolean;
+      } | null;
+      product: {
+        id: string;
+        productCode: string;
+        productName: string;
+        listPrice: Decimal;
+        categoryId: string;
+      } | null;
+    }) => {
+      const listPrice = pp.product?.listPrice ? Number(pp.product.listPrice) : 0;
       // Note: promotionPrice field doesn't exist in Prisma schema yet
       // Using listPrice as fallback until schema is updated
       const promoPrice = listPrice; // pp.promotionPrice || listPrice;

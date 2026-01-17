@@ -59,9 +59,9 @@ export default function SPOAllocationsList() {
       case 'pending':
         return 'secondary';
       case 'partial_received':
-        return 'default';
+        return 'primary';
       case 'fully_received':
-        return 'default';
+        return 'primary';
       case 'rejected':
         return 'destructive';
       default:

@@ -27,6 +27,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateUOM, useUpdateUOM, useUOM } from '../hooks/useUOM';
 import { UOMSchema, type UOMSchemaType } from '../forms/uom-schema';
+import type { UOMFormData } from '../types/uom.types';
 import { useUOMSelectQuery } from '../../shared/hooks/use-uom-select-query';
 
 interface UOMFormProps {
@@ -69,10 +70,19 @@ export default function UOMForm({ uomId, onSuccess }: UOMFormProps) {
 
   const onSubmit = async (data: UOMSchemaType) => {
     try {
+      // Convert null to undefined for form data
+      const formData: UOMFormData = {
+        uom_code: data.uom_code,
+        uom_name: data.uom_name,
+        description: data.description ?? undefined,
+        base_uom_id: data.base_uom_id ?? undefined,
+        conversion_factor: data.conversion_factor ?? undefined,
+      };
+      
       if (isEditMode && uomId) {
-        await updateMutation.mutateAsync({ id: uomId, data });
+        await updateMutation.mutateAsync({ id: uomId, data: formData });
       } else {
-        await createMutation.mutateAsync(data);
+        await createMutation.mutateAsync(formData);
       }
       if (onSuccess) {
         onSuccess();

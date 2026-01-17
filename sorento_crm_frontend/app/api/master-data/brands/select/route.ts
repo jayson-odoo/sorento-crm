@@ -34,7 +34,7 @@ export async function GET() {
     });
 
     // Transform to snake_case for consistency with other API endpoints
-    const transformedBrands = brands.map((brand) => ({
+    const transformedBrands = brands.map((brand: { id: string; brandCode: string; brandName: string }) => ({
       id: brand.id,
       brand_code: brand.brandCode,
       brand_name: brand.brandName,

@@ -1,9 +1,11 @@
-import { $Enums } from '@prisma/client';
 import { SystemSetting } from './system';
 
 // Enums
-export const UserStatus = $Enums.UserStatus;
-export type UserStatus = $Enums.UserStatus;
+export enum UserStatus {
+  INACTIVE = 'INACTIVE',
+  ACTIVE = 'ACTIVE',
+  BLOCKED = 'BLOCKED',
+}
 
 // Models
 export interface User {

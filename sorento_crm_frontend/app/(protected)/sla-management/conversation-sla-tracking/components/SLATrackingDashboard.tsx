@@ -3,7 +3,10 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ApexOptions } from 'apexcharts';
-import ApexChart from 'react-apexcharts';
+import dynamic from 'next/dynamic';
+
+// Dynamically import ApexChart with SSR disabled to avoid window is not defined errors
+const ApexChart = dynamic(() => import('react-apexcharts').then((mod) => mod.default), { ssr: false });
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useSLATrackingDashboardMetrics } from '../hooks/useConversationSLATracking';

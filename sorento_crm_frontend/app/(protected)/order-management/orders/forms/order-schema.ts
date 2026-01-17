@@ -14,24 +14,20 @@ export const OrderSchema = z.object({
   shipping_address_id: z.string().optional().nullable(),
   subtotal_amount: z
     .number()
-    .min(0, { message: 'Subtotal amount cannot be negative.' })
-    .default(0),
+    .min(0, { message: 'Subtotal amount cannot be negative.' }),
   discount_amount: z
     .number()
     .min(0, { message: 'Discount amount cannot be negative.' })
-    .default(0)
     .optional()
     .nullable(),
   tax_amount: z
     .number()
     .min(0, { message: 'Tax amount cannot be negative.' })
-    .default(0)
     .optional()
     .nullable(),
   total_amount: z
     .number()
-    .min(0, { message: 'Total amount cannot be negative.' })
-    .default(0),
+    .min(0, { message: 'Total amount cannot be negative.' }),
   remarks: z.string().max(2000, { message: 'Remarks must not exceed 2000 characters.' }).optional().nullable(),
 }).refine((data) => {
   // Calculate total if not provided

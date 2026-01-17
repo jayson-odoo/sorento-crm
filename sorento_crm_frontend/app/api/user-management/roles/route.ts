@@ -82,9 +82,9 @@ export async function GET(request: Request) {
         : [];
 
     // Map permissions into a more straightforward structure
-    const formattedRoles = roles.map((role) => ({
+    const formattedRoles = roles.map((role: any) => ({
       ...role,
-      permissions: role.permissions?.map((rp) => rp.permission),
+      permissions: role.permissions?.map((rp: { permission: { id: string; code: string; name: string } }) => rp.permission),
     }));
 
     return NextResponse.json({

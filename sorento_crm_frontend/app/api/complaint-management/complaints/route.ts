@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { prisma } from '@/lib/prisma';
+import type { Prisma } from '@prisma/client';
 import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
 
 /**
@@ -128,7 +129,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
 
-    const complaint = await prisma.$transaction(async (tx) => {
+    const complaint = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const newComplaint = await tx.complaint.create({
         data: {
           deliveryOrderNumber: body.delivery_order_number || null,

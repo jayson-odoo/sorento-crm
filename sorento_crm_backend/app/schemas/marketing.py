@@ -1,4 +1,6 @@
 """Marketing management schemas."""
+from __future__ import annotations
+
 from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import datetime
@@ -35,7 +37,7 @@ class PromotionResponse(PromotionBase):
     created_at: datetime
     updated_at: datetime
     products_count: Optional[int] = 0
-    products: Optional[list[PromotionProductResponse]] = None
+    products: Optional[list["PromotionProductResponse"]] = None
     
     class Config:
         from_attributes = True

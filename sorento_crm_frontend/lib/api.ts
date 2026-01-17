@@ -1,5 +1,4 @@
 import { NextRequest } from 'next/server';
-import { getSession } from 'next-auth/react';
 
 /**
  * apiFetch - universal fetch for dev/prod that prefixes API calls with the correct base URL
@@ -14,7 +13,8 @@ export async function apiFetch(
   init?: RequestInit,
 ): Promise<Response> {
   let url = input;
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  // Use empty string for relative paths (nginx will proxy), or explicit URL for direct backend access
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
   // If input is a string and is a relative API path

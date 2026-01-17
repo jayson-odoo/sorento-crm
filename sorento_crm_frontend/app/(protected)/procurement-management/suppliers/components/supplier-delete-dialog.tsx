@@ -72,7 +72,7 @@ const SupplierDeleteDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Confirm Delete</DialogTitle>
         </DialogHeader>

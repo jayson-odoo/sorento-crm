@@ -144,7 +144,7 @@ const UserProfileEditDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Edit User Details</DialogTitle>
         </DialogHeader>

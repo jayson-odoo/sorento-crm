@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCampaign } from '../../hooks/useCampaigns';
 import { formatDate } from '@/lib/helpers';
-import BudgetTracker from './components/BudgetTracker';
+import BudgetTracker from './BudgetTracker';
 
 interface CampaignDashboardProps {
   campaignId: string;

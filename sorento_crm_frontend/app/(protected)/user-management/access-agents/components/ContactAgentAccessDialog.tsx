@@ -100,8 +100,8 @@ export default function ContactAgentAccessDialog({
           data: {
             respond_contact_id: data.respond_contact_id,
             is_allowed: data.is_allowed,
-            valid_from: data.valid_from,
-            valid_to: data.valid_to,
+            valid_from: data.valid_from ?? undefined,
+            valid_to: data.valid_to ?? undefined,
           },
         });
       } else {
@@ -111,8 +111,8 @@ export default function ContactAgentAccessDialog({
             respond_contact_id: data.respond_contact_id,
             agent_id: accessAgentId,
             is_allowed: data.is_allowed,
-            valid_from: data.valid_from,
-            valid_to: data.valid_to,
+            valid_from: data.valid_from ?? undefined,
+            valid_to: data.valid_to ?? undefined,
           },
         });
       }

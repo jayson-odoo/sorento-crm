@@ -54,13 +54,13 @@ export default function PackingListsList() {
       case 'in_transit':
         return 'secondary';
       case 'arrived_at_port':
-        return 'default';
+        return 'primary';
       case 'at_warehouse':
-        return 'default';
+        return 'primary';
       case 'partially_received':
-        return 'default';
+        return 'primary';
       case 'fully_received':
-        return 'default';
+        return 'primary';
       case 'closed':
         return 'secondary';
       default:

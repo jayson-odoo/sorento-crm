@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedCustomers = customers.map((customer) => ({
+    const transformedCustomers = customers.map((customer: { id: string; customerCode: string; customerName: string }) => ({
       id: customer.id,
       customer_code: customer.customerCode,
       customer_name: customer.customerName,

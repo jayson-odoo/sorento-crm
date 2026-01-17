@@ -74,7 +74,7 @@ export default function ProductAttachmentsList() {
         size: 100,
         cell: ({ row }) => (
           row.original.is_primary ? (
-            <Badge variant="default">Primary</Badge>
+            <Badge variant="primary">Primary</Badge>
           ) : (
             <Badge variant="outline">Secondary</Badge>
           )
@@ -108,8 +108,19 @@ export default function ProductAttachmentsList() {
     manualFiltering: true,
   });
 
+  const handleRowClick = (row: ProductAttachment) => {
+    if (row.product_id) {
+      router.push(`/master-data-management/products/${row.product_id}`);
+    }
+  };
+
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid 
+      table={table} 
+      recordCount={data?.pagination.total || 0} 
+      isLoading={isLoading}
+      onRowClick={handleRowClick}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">
@@ -134,13 +145,7 @@ export default function ProductAttachmentsList() {
         </CardHeader>
         <CardTable>
           <ScrollArea>
-            <DataGridTable
-              onRowClick={(row) => {
-                if (row.original.product_id) {
-                  router.push(`/master-data-management/products/${row.original.product_id}`);
-                }
-              }}
-            />
+            <DataGridTable />
             <ScrollBar orientation="horizontal" />
           </ScrollArea>
         </CardTable>

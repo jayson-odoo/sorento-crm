@@ -1,4 +1,4 @@
-import type { Brand } from '../../products/types/product.types';
+import type { Brand } from '@/app/(protected)/master-data-management/products/types/product.types';
 
 export type { Brand };
 

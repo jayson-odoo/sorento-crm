@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const statuses = await prisma.complaintStatus.findMany({
+    const statuses = await (prisma as any).complaintStatus.findMany({
       where: {
         isActive: true,
       },
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedStatuses = statuses.map((status) => ({
+    const transformedStatuses = statuses.map((status: any) => ({
       id: status.id,
       status_code: status.statusCode,
       status_name: status.statusName,

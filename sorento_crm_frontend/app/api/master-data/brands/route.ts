@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedBrands = brands.map((brand) => ({
+    const transformedBrands = brands.map((brand: { id: string; brandCode: string; brandName: string; manufacturer: string | null; website: string | null; description: string | null; logoUrl: string | null; isActive: boolean; createdAt: Date; updatedAt: Date | null; createdBy: string | null }) => ({
       id: brand.id,
       brand_code: brand.brandCode,
       brand_name: brand.brandName,

@@ -27,7 +27,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateComplaint, useUpdateComplaint, useComplaint } from '../hooks/useComplaints';
 import { ComplaintSchema, type ComplaintSchemaType } from '../forms/complaint-schema';
-import type { ComplaintFormData } from '../types/complaint.types';
+import type { ComplaintFormData, ComplaintAttachment } from '../types/complaint.types';
 
 interface ComplaintFormProps {
   complaintId?: string;
@@ -103,6 +103,21 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
 
   const onSubmit = async (data: ComplaintSchemaType) => {
     try {
+      // Transform attachments to match ComplaintAttachment type
+      // Filter out attachments that don't have required fields (id, complaint_id, uploaded_at)
+      const validAttachments = (data.attachments || [])
+        .filter((att): att is ComplaintAttachment => 
+          !!att.id && !!att.complaint_id && !!att.uploaded_at
+        )
+        .map((att) => ({
+          id: att.id!,
+          complaint_id: att.complaint_id!,
+          file_name: att.file_name ?? null,
+          file_url: att.file_url ?? null,
+          file_size_bytes: att.file_size_bytes ?? null,
+          uploaded_at: att.uploaded_at!,
+        }));
+
       const formData: ComplaintFormData = {
         delivery_order_number: data.delivery_order_number || undefined,
         complaint_date: data.complaint_date || undefined,
@@ -120,7 +135,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         contact_number: data.contact_number || undefined,
         customer_address: data.customer_address || undefined,
         project_title: data.project_title || undefined,
-        attachments: data.attachments || [],
+        attachments: validAttachments.length > 0 ? validAttachments : undefined,
       };
 
       if (isEditMode && complaintId) {

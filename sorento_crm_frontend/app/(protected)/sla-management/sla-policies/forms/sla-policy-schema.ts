@@ -13,7 +13,7 @@ export const SLAPolicySchema = z.object({
     .min(3, { message: 'SLA policy name must be at least 3 characters long.' })
     .max(255, { message: 'SLA policy name must not exceed 255 characters.' }),
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
-  is_active: z.boolean().default(true),
+  is_active: z.boolean(),
 });
 
 export type SLAPolicySchemaType = z.infer<typeof SLAPolicySchema>;

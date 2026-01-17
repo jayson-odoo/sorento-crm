@@ -36,7 +36,7 @@ const StorageZoneSchema = z.object({
   zone_name: z.string().max(150).optional().nullable(),
   zone_type: z.enum(['shelf', 'rack', 'bin', 'pallet']),
   capacity: z.number().int().positive('Capacity must be a positive number'),
-  is_active: z.boolean().default(true),
+  is_active: z.boolean(),
 });
 
 interface StorageZoneFormProps {

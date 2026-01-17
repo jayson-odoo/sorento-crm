@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedOrderStatuses = orderStatuses.map((os) => ({
+    const transformedOrderStatuses = orderStatuses.map((os: { id: string; statusCode: string; statusName: string }) => ({
       id: os.id,
       status_code: os.statusCode,
       status_name: os.statusName,

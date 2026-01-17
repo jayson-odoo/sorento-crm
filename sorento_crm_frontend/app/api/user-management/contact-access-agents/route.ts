@@ -6,7 +6,20 @@ import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
 /**
  * Transform Prisma contact agent access to frontend expected format (snake_case)
  */
-function transformContactAgentAccess(access: any) {
+function transformContactAgentAccess(access: {
+  id: string;
+  respondContactId: string;
+  agentId: string;
+  agent?: { code: string; name: string } | null;
+  isAllowed: boolean;
+  validFrom: Date | null;
+  validTo: Date | null;
+  createdAt: Date;
+  createdBy: string | null;
+  syncedToExcel: boolean;
+  lastSyncedToExcel: Date | null;
+  updatedAt: Date | null;
+}) {
   return {
     id: access.id,
     respond_contact_id: access.respondContactId,
@@ -45,7 +58,17 @@ export async function GET(req: NextRequest) {
     const contactId = searchParams.get('contact_id') || null;
 
     // Build where clause with filters
-    const whereClause: any = {
+    const whereClause: {
+      agentId?: string;
+      respondContactId?: { contains: string; mode: 'insensitive' } | string;
+      OR?: Array<{
+        respondContactId?: { contains: string; mode: 'insensitive' };
+        agent?: {
+          code?: { contains: string; mode: 'insensitive' };
+          name?: { contains: string; mode: 'insensitive' };
+        };
+      }>;
+    } = {
       ...(agentId && agentId !== 'all' ? { agentId } : {}),
       ...(contactId ? { respondContactId: { contains: contactId, mode: 'insensitive' } } : {}),
       ...(query

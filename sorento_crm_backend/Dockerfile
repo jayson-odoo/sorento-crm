@@ -24,18 +24,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python packages from builder
-COPY --from=builder /root/.local /root/.local
+# Create non-root user for security (before copying packages)
+RUN useradd -m -u 1000 appuser
+
+# Copy Python packages from builder to user's home directory
+COPY --from=builder /root/.local /home/appuser/.local
+
+# Set ownership and permissions
+RUN chown -R appuser:appuser /home/appuser/.local && \
+    chmod -R +x /home/appuser/.local/bin
 
 # Make sure scripts in .local are usable
-ENV PATH=/root/.local/bin:$PATH
+ENV PATH=/home/appuser/.local/bin:$PATH
 
 # Copy application code
 COPY . .
+RUN chown -R appuser:appuser /app
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
+# Make start.sh executable
+RUN chmod +x start.sh
 
 USER appuser
 
@@ -46,16 +53,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Default command (can be overridden in docker-compose.yml)
-# Use Gunicorn with Uvicorn workers for production
-# Adjust workers based on CPU cores: (2 x CPU cores) + 1
-# For production, set WORKERS env var or use default of 4
-CMD ["gunicorn", "app.main:app", \
-     "--workers", "4", \
-     "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000", \
-     "--timeout", "120", \
-     "--keep-alive", "5", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-", \
-     "--log-level", "info"]
+# Use the startup script as entrypoint
+ENTRYPOINT ["/bin/sh", "/app/start.sh"]

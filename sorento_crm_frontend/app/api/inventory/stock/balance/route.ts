@@ -35,7 +35,26 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform Prisma response (camelCase) to frontend expected format (snake_case)
-    const transformedStock = stock.map((item) => {
+    const transformedStock = stock.map((item: {
+      id: string;
+      productId: string;
+      warehouseId: string;
+      quantityOnHand: number;
+      quantityReserved: number;
+      reorderPoint: number | null;
+      createdAt: Date;
+      updatedAt: Date | null;
+      product: {
+        id: string;
+        productCode: string;
+        productName: string;
+        baseUomId: string;
+        reorderLevel: number | null;
+        category?: { id: string; categoryName: string } | null;
+        baseUom?: { id: string; uomName: string } | null;
+      } | null;
+      warehouse: { id: string; warehouseName: string } | null;
+    }) => {
       // Calculate status based on quantity and reorder level
       // Use reorderPoint from stock if available, otherwise fall back to product reorderLevel
       const reorderLevel = item.reorderPoint ?? item.product?.reorderLevel ?? 0;
@@ -71,7 +90,7 @@ export async function GET(req: NextRequest) {
           id: item.warehouse.id,
           warehouse_name: item.warehouse.warehouseName,
         } : undefined,
-        available: item.quantityAvailable,
+        available: item.quantityOnHand - item.quantityReserved,
         status,
       };
     });

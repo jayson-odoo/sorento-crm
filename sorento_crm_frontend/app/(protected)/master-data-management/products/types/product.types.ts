@@ -85,6 +85,7 @@ export interface UnitOfMeasure {
   id: string;
   uom_code: string;
   uom_name: string;
+  description?: string | null;
   base_uom_id?: string | null;
   conversion_factor?: number | null;
   is_active: boolean;

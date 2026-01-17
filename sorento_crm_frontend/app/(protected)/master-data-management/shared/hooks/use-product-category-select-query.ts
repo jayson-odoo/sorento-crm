@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
-import type { ProductCategory } from '../../products/types/product.types';
+import type { ProductCategory } from '@/app/(protected)/master-data-management/products/types/product.types';
 
 export const useProductCategorySelectQuery = () => {
   const fetchCategoryList = async (): Promise<ProductCategory[]> => {

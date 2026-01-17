@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
-import type { Brand } from '../../products/types/product.types';
+import type { Brand } from '@/app/(protected)/master-data-management/products/types/product.types';
 
 export const useBrandSelectQuery = () => {
   const fetchBrandList = async (): Promise<Brand[]> => {

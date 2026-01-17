@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Handle sorting logic
-    const orderBy = { [sortField]: sortDirection as Prisma.SortOrder };
+    const orderBy = { [sortField]: sortDirection as 'asc' | 'desc' };
 
     // Fetch activity logs for the current user with filters, pagination, and sorting
     const logs = await prisma.systemLog.findMany({

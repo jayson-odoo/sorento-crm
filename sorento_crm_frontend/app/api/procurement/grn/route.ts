@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { prisma } from '@/lib/prisma';
+import type { Prisma } from '@prisma/client';
 import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
 
 /**
@@ -173,7 +174,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
 
     // Create GRN header with lines in a transaction
-    const grn = await prisma.$transaction(async (tx) => {
+    const grn = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const newGRN = await tx.pickingHeader.create({
         data: {
           pickingNumber: body.picking_number,

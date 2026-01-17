@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedPromotions = promotions.map((p) => ({
+    const transformedPromotions = promotions.map((p: { id: string; promoCode: string; name: string; promoType: string; description: string | null; startDate: Date; endDate: Date; isActive: boolean; createdAt: Date; updatedAt: Date; createdBy: string | null; _count?: { promotionProducts: number } }) => ({
       id: p.id,
       promo_code: p.promoCode,
       name: p.name,

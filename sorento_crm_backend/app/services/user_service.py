@@ -110,6 +110,19 @@ class UserRoleService:
     def __init__(self, db: Session):
         self.db = db
     
+    def get_all_roles(self, query: Optional[str] = None):
+        """Get all roles for select dropdowns (no pagination)."""
+        q = self.db.query(UserRole).filter(UserRole.is_trashed == False)
+        
+        if query:
+            q = q.filter(
+                (UserRole.name.ilike(f"%{query}%")) |
+                (UserRole.slug.ilike(f"%{query}%"))
+            )
+        
+        roles = q.order_by(UserRole.name).all()
+        return roles
+    
     def list_roles(self, page: int = 1, limit: int = 50):
         """List user roles."""
         q = self.db.query(UserRole)

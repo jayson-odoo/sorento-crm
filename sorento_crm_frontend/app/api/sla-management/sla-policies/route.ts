@@ -80,7 +80,16 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedPolicies = policies.map((policy) => ({
+    const transformedPolicies = policies.map((policy: {
+      id: string;
+      code: string;
+      name: string;
+      description: string | null;
+      isActive: boolean;
+      createdAt: Date;
+      updatedAt: Date | null;
+      _count?: { tiers: number; tracking: number };
+    }) => ({
       ...transformSLAPolicy(policy),
       tiers_count: policy._count?.tiers || 0,
       tracking_count: policy._count?.tracking || 0,

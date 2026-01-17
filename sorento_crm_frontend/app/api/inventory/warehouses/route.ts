@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedWarehouses = warehouses.map((w) => ({
+    const transformedWarehouses = warehouses.map((w: { id: string; warehouseCode: string; warehouseName: string; location: string | null; managerId: string | null; isActive: boolean; createdAt: Date; updatedAt: Date | null; _count?: { storageZones: number } }) => ({
       id: w.id,
       warehouse_code: w.warehouseCode,
       warehouse_name: w.warehouseName,

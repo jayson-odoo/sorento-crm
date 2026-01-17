@@ -35,7 +35,7 @@ export async function GET() {
     });
 
     // Transform to snake_case for consistency with other API endpoints
-    const transformedCategories = categories.map((cat) => ({
+    const transformedCategories = categories.map((cat: { id: string; categoryCode: string; categoryName: string; parentCategoryId: string | null }) => ({
       id: cat.id,
       category_code: cat.categoryCode,
       category_name: cat.categoryName,

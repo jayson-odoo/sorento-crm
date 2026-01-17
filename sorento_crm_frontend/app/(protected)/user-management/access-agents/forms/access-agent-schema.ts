@@ -14,7 +14,7 @@ export const AccessAgentSchema = z.object({
     .max(255, { message: 'Access agent name must not exceed 255 characters.' }),
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
   pic_respond_user_id: z.string().optional().nullable(),
-  is_active: z.boolean().default(true),
+  is_active: z.boolean(),
 });
 
 export type AccessAgentSchemaType = z.infer<typeof AccessAgentSchema>;
@@ -22,7 +22,7 @@ export type AccessAgentSchemaType = z.infer<typeof AccessAgentSchema>;
 export const ContactAgentAccessSchema = z.object({
   respond_contact_id: z.string().min(1, { message: 'Respond contact ID is required.' }),
   agent_id: z.string().min(1, { message: 'Agent ID is required.' }),
-  is_allowed: z.boolean().default(true),
+  is_allowed: z.boolean(),
   valid_from: z.date().optional().nullable(),
   valid_to: z.date().optional().nullable(),
 }).refine((data) => {

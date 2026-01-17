@@ -58,11 +58,11 @@ export default function GRNList() {
       case 'draft':
         return 'secondary';
       case 'submitted':
-        return 'default';
+        return 'primary';
       case 'approved':
-        return 'default';
+        return 'primary';
       case 'posted':
-        return 'default';
+        return 'primary';
       case 'rejected':
         return 'destructive';
       case 'closed':
@@ -77,11 +77,11 @@ export default function GRNList() {
       case 'pending':
         return 'secondary';
       case 'passed':
-        return 'default';
+        return 'primary';
       case 'failed':
         return 'destructive';
       case 'partial_pass':
-        return 'default';
+        return 'primary';
       default:
         return 'secondary';
     }

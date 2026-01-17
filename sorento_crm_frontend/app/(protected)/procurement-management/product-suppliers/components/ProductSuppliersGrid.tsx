@@ -14,7 +14,7 @@ import { Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid, DataGridApiResponse, type DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -22,7 +22,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { ProductSupplier } from '../types/productSupplier.types';
-import { getProductSuppliers, type DataGridApiFetchParams } from '../services/productSupplierService';
+import { getProductSuppliers } from '../services/productSupplierService';
 import { useQuery } from '@tanstack/react-query';
 
 export default function ProductSuppliersGrid() {

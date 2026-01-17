@@ -1,4 +1,4 @@
-import type { Product } from '../../master-data-management/products/types/product.types';
+import type { Product } from '@/app/(protected)/master-data-management/products/types/product.types';
 
 export type PromotionType = 'price_override' | 'discount_percent' | 'discount_amount' | 'bundle' | 'other';
 

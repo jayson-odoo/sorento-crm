@@ -16,9 +16,8 @@ export const OrderStatusSchema = z.object({
   sequence: z
     .number()
     .int({ message: 'Sequence must be a whole number.' })
-    .min(0, { message: 'Sequence cannot be negative.' })
-    .default(0),
-  is_final_status: z.boolean().default(false),
+    .min(0, { message: 'Sequence cannot be negative.' }),
+  is_final_status: z.boolean(),
 });
 
 export type OrderStatusSchemaType = z.infer<typeof OrderStatusSchema>;

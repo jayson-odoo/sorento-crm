@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { prisma } from '@/lib/prisma';
 import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
+import { Decimal } from '@prisma/client/runtime/library';
 
 export async function GET(
   request: Request,
@@ -43,7 +44,21 @@ export async function GET(
     });
 
     // Transform to snake_case for frontend
-    const transformedProducts = promotionProducts.map((pp) => ({
+    const transformedProducts = promotionProducts.map((pp: {
+      id: string;
+      promotionId: string;
+      productId: string;
+      promotionPrice: Decimal | null;
+      discountAmount: Decimal | null;
+      discountPercent: Decimal | null;
+      product: {
+        id: string;
+        productCode: string;
+        productName: string;
+        listPrice: Decimal;
+        category: { id: string; categoryCode: string; categoryName: string } | null;
+      } | null;
+    }) => ({
       id: pp.id,
       promotion_id: pp.promotionId,
       product_id: pp.productId,

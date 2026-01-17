@@ -20,6 +20,7 @@ export async function POST(
     const { id } = await params;
     const body = await request.json();
 
+    const quantityDiscrepancy = (body.quantity_expected || 0) - (body.quantity_picked || 0);
     const line = await prisma.pickingLine.create({
       data: {
         pickingHeaderId: id,
@@ -27,6 +28,7 @@ export async function POST(
         productId: body.product_id,
         quantityExpected: body.quantity_expected,
         quantityPicked: body.quantity_picked,
+        quantityDiscrepancy: quantityDiscrepancy,
         uomId: body.uom_id || null,
         pickedCondition: body.picked_condition || 'good',
         conditionRemarks: body.condition_remarks || null,
@@ -72,17 +74,17 @@ export async function POST(
         line_total: line.lineTotal ? Number(line.lineTotal) : null,
         source_warehouse_id: line.sourceWarehouseId,
         destination_warehouse_id: line.destinationWarehouseId,
-        product: line.product
+        product: (line as any).product
           ? {
-              id: line.product.id,
-              product_code: line.product.productCode,
-              product_name: line.product.productName,
+              id: (line as any).product.id,
+              product_code: (line as any).product.productCode,
+              product_name: (line as any).product.productName,
             }
           : undefined,
-        spo_allocation: line.spoAllocation
+        spo_allocation: (line as any).spoAllocation
           ? {
-              id: line.spoAllocation.id,
-              spo_number: line.spoAllocation.spoNumber,
+              id: (line as any).spoAllocation.id,
+              spo_number: (line as any).spoAllocation.spoNumber,
             }
           : undefined,
       },
@@ -173,17 +175,17 @@ export async function PUT(
       line_total: line.lineTotal ? Number(line.lineTotal) : null,
       source_warehouse_id: line.sourceWarehouseId,
       destination_warehouse_id: line.destinationWarehouseId,
-      product: line.product
+      product: (line as any).product
         ? {
-            id: line.product.id,
-            product_code: line.product.productCode,
-            product_name: line.product.productName,
+            id: (line as any).product.id,
+            product_code: (line as any).product.productCode,
+            product_name: (line as any).product.productName,
           }
         : undefined,
-      spo_allocation: line.spoAllocation
+      spo_allocation: (line as any).spoAllocation
         ? {
-            id: line.spoAllocation.id,
-            spo_number: line.spoAllocation.spoNumber,
+            id: (line as any).spoAllocation.id,
+            spo_number: (line as any).spoAllocation.spoNumber,
           }
         : undefined,
     });

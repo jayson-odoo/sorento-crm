@@ -293,7 +293,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                                 onClick={() => handleEditProduct({
                                   id: pp.id,
                                   product_id: pp.product_id,
-                                  promotion_price: pp.promotion_price,
+                                  promotion_price: pp.promotion_price ?? null,
                                 })}
                               >
                                 <Edit className="size-4" />
@@ -328,7 +328,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
 
       {/* Delete Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent showCloseButton={false}>
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Confirm Delete</DialogTitle>
             <DialogDescription>
@@ -361,7 +361,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
 
       {/* Add Product Dialog */}
       <Dialog open={addProductDialogOpen} onOpenChange={setAddProductDialogOpen}>
-        <DialogContent showCloseButton={false}>
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Product to Promotion</DialogTitle>
             <DialogDescription>
@@ -427,7 +427,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
 
       {/* Edit Product Price Dialog */}
       <Dialog open={editProductDialogOpen} onOpenChange={setEditProductDialogOpen}>
-        <DialogContent showCloseButton={false}>
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit Promotion Price</DialogTitle>
             <DialogDescription>

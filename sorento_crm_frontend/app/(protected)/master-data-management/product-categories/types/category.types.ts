@@ -1,4 +1,4 @@
-import type { ProductCategory } from '../../products/types/product.types';
+import type { ProductCategory } from '@/app/(protected)/master-data-management/products/types/product.types';
 
 export type { ProductCategory };
 

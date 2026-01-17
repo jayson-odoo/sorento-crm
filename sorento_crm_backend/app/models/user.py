@@ -17,13 +17,13 @@ class UserStatus(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
     
-    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     email = Column(String, unique=True, nullable=False, index=True)
     password = Column(String, nullable=True)
     country = Column(String, nullable=True)
     timezone = Column(String, nullable=True)
     name = Column(String, nullable=True)
-    role_id = Column(UUID(as_uuid=False), ForeignKey("user_roles.id"), nullable=False)
+    role_id = Column(String, ForeignKey("user_roles.id"), nullable=False)
     status = Column(String, default=UserStatus.INACTIVE.value, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -31,7 +31,7 @@ class User(Base):
     email_verified_at = Column(DateTime(timezone=True), nullable=True)
     is_trashed = Column(Boolean, default=False, nullable=False)
     avatar = Column(String, nullable=True)
-    invited_by_user_id = Column(UUID(as_uuid=False), nullable=True)
+    invited_by_user_id = Column(String, nullable=True)
     is_protected = Column(Boolean, default=False, nullable=False)
     
     role = relationship("UserRole", back_populates="users")
@@ -47,12 +47,12 @@ class User(Base):
 class UserRole(Base):
     __tablename__ = "user_roles"
     
-    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     slug = Column(String, unique=True, nullable=False)
     name = Column(String, unique=True, nullable=False)
     description = Column(Text, nullable=True)
     is_trashed = Column(Boolean, default=False, nullable=False)
-    created_by_user_id = Column(UUID(as_uuid=False), nullable=True)
+    created_by_user_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     is_protected = Column(Boolean, default=False, nullable=False)
     is_default = Column(Boolean, default=False, nullable=False)
@@ -64,11 +64,11 @@ class UserRole(Base):
 class UserPermission(Base):
     __tablename__ = "user_permissions"
     
-    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     slug = Column(String, unique=True, nullable=False)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
-    created_by_user_id = Column(UUID(as_uuid=False), nullable=True)
+    created_by_user_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     
     roles = relationship("UserRolePermission", back_populates="permission")
@@ -77,9 +77,9 @@ class UserPermission(Base):
 class UserRolePermission(Base):
     __tablename__ = "user_role_permissions"
     
-    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    role_id = Column(UUID(as_uuid=False), ForeignKey("user_roles.id", ondelete="CASCADE"), nullable=False)
-    permission_id = Column(UUID(as_uuid=False), ForeignKey("user_permissions.id", ondelete="CASCADE"), nullable=False)
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    role_id = Column(String, ForeignKey("user_roles.id", ondelete="CASCADE"), nullable=False)
+    permission_id = Column(String, ForeignKey("user_permissions.id", ondelete="CASCADE"), nullable=False)
     assigned_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     
     role = relationship("UserRole", back_populates="permissions")
@@ -93,8 +93,8 @@ class UserRolePermission(Base):
 class SystemLog(Base):
     __tablename__ = "system_logs"
     
-    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     entity_id = Column(String, nullable=True)
     entity_type = Column(String, nullable=True)

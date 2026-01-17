@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedForms = forms.map((f) => ({
+    const transformedForms = forms.map((f: { id: string; code: string; name: string; purpose: string | null; language: string; version: number; isActive: boolean; createdAt: Date; updatedAt: Date; attachmentId: string | null; createdBy: string | null }) => ({
       id: f.id,
       code: f.code,
       name: f.name,

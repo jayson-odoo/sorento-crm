@@ -38,7 +38,7 @@ export default function AttachmentDeleteDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Confirm Delete</DialogTitle>
         </DialogHeader>

@@ -138,7 +138,7 @@ const PermissionEditDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>
             {permission ? 'Edit Permission' : 'Add Permission'}

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { getClientIP } from '@/lib/api';
 import { prisma } from '@/lib/prisma';
+import type { Prisma } from '@prisma/client';
 import { systemLog } from '@/services/system-log';
 import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
 
@@ -31,7 +32,7 @@ export async function PATCH(
     }
 
     // Use a transaction to insert multiple records atomically
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const user = await prisma.user.update({
         where: { id, isProtected: false },
         data: { isTrashed: false },

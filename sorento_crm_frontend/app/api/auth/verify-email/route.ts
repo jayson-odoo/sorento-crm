@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import type { Prisma } from '@prisma/client';
 
 export async function POST(req: NextRequest) {
   const { token } = await req.json();
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
 
   try {
     // Use a transaction so that the user update and token deletion occur together.
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.user.update({
         where: { id: verificationToken.identifier },
         data: { status: 'ACTIVE', emailVerifiedAt: new Date() },

@@ -904,6 +904,32 @@ model ComplaintAttachment {
   @@map("complaint_attachments")
 }
 
+model ComplaintCategory {
+  id            String   @id @default(uuid())
+  categoryCode  String   @unique @map("category_code") @db.VarChar(50)
+  categoryName  String   @map("category_name") @db.VarChar(150)
+  description   String?  @db.Text
+  severity      String?  @db.VarChar(50)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("complaint_categories")
+}
+
+model ComplaintStatus {
+  id            String   @id @default(uuid())
+  statusCode    String   @unique @map("status_code") @db.VarChar(50)
+  statusName    String   @map("status_name") @db.VarChar(150)
+  description   String?  @db.Text
+  sequence      Int      @default(0)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("complaint_statuses")
+}
+
 // ============================================
 // Procurement - Packing Lists
 // ============================================

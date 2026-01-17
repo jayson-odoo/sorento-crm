@@ -7,8 +7,8 @@ services:
     container_name: sorento_crm_db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-sorento_crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-root}
+      POSTGRES_DB: ${POSTGRES_DB:-sorento_ai_automation}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -29,12 +29,15 @@ services:
       dockerfile: Dockerfile
     container_name: sorento_crm_backend
     environment:
-      # Database
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/sorento_crm}
-      DIRECT_URL: ${DIRECT_URL:-postgresql://postgres:postgres@db:5432/sorento_crm}
+      # Database - use environment variables to ensure password matches
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-root}
+      POSTGRES_DB: ${POSTGRES_DB:-sorento_ai_automation}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-root}@72.62.195.20:5432/${POSTGRES_DB:-sorento_ai_automation}
+      DIRECT_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-root}@72.62.195.20:5432/${POSTGRES_DB:-sorento_ai_automation}
       
       # JWT Authentication
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:-3f1c6d1f5e9b4d8c1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d5e6f7081}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       
       # API Server
@@ -49,10 +52,10 @@ services:
       DEBUG: ${DEBUG:-false}
       
       # AWS S3 (if used for file storage)
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_REGION: ${AWS_REGION:-}
-      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-AKIA3JCS3CX6TEDK3B4G}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-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}
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-sorento-demo-bucket}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     depends_on:
@@ -65,24 +68,7 @@ services:
     restart: unless-stopped
     networks:
       - sorento_network
-    command: >
-      sh -c "
-        echo 'Waiting for database to be ready...' &&
-        until pg_isready -h db -U ${POSTGRES_USER:-postgres}; do
-          sleep 2
-        done &&
-        echo 'Running database migrations...' &&
-        alembic upgrade head &&
-        echo 'Starting FastAPI server...' &&
-        gunicorn app.main:app \
-          --workers 4 \
-          --worker-class uvicorn.workers.UvicornWorker \
-          --bind 0.0.0.0:8000 \
-          --timeout 120 \
-          --keep-alive 5 \
-          --access-logfile - \
-          --error-logfile -
-      "
+    # use the image's ENTRYPOINT (/start.sh) – no long inline sh -c here
 
   # Next.js Frontend (served by Nginx)
   frontend:
@@ -91,12 +77,22 @@ services:
       dockerfile: Dockerfile
     container_name: sorento_crm_frontend
     environment:
-      # API URL - points to backend service
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
+      # Database - Next.js needs direct DB access for NextAuth with PrismaAdapter
+      # Use external database by default, or override with DATABASE_URL env var
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:root@72.62.195.20:5432/sorento_ai_automation?schema=public}
+      DIRECT_URL: ${DIRECT_URL:-${DATABASE_URL:-postgresql://postgres:root@72.62.195.20:5432/sorento_ai_automation?schema=public}}
+      # API URL - empty for client-side (goes through nginx proxy), or full URL for server-side
+      # Client-side requests will use relative paths that nginx proxies to backend
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
       NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-}
+      # NextAuth secret (must match JWT_SECRET if sharing tokens with backend)
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-${JWT_SECRET:-3f1c6d1f5e9b4d8c1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d5e6f7081}}
+      # NextAuth URL for callbacks
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost}
     ports:
       - "${FRONTEND_PORT:-80}:80"
     depends_on:
+      - db
       - backend
     restart: unless-stopped
     networks:
@@ -111,112 +107,3 @@ volumes:
 networks:
   sorento_network:
     driver: bridge
-
-# ============================================================================
-# DEPLOYMENT INSTRUCTIONS
-# ============================================================================
-#
-# 1. BUILD AND START SERVICES
-#    -------------------------
-#    Build all services:
-#      docker compose build
-#
-#    Start all services in detached mode:
-#      docker compose up -d
-#
-#    View logs:
-#      docker compose logs -f
-#
-#    Stop services:
-#      docker compose down
-#
-#    Stop and remove volumes (WARNING: deletes database data):
-#      docker compose down -v
-#
-#
-# 2. ACCESS URLS
-#    -----------
-#    Frontend UI:        http://localhost
-#    Backend API:        http://localhost:8000
-#    API Documentation: http://localhost:8000/docs (Swagger UI)
-#    API ReDoc:          http://localhost:8000/redoc
-#    Health Check:       http://localhost:8000/health
-#
-#
-# 3. ENVIRONMENT VARIABLES
-#    ---------------------
-#    Create a .env file in the root directory (sorento_crm/) with:
-#
-#    # Database
-#    POSTGRES_USER=postgres
-#    POSTGRES_PASSWORD=postgres
-#    POSTGRES_DB=sorento_crm
-#    POSTGRES_PORT=5432
-#
-#    # Backend
-#    DATABASE_URL=postgresql://postgres:postgres@db:5432/sorento_crm
-#    DIRECT_URL=postgresql://postgres:postgres@db:5432/sorento_crm
-#    JWT_SECRET=your-secret-key-change-in-production
-#    JWT_ALGORITHM=HS256
-#    CORS_ORIGINS=http://localhost,http://frontend
-#    ENVIRONMENT=production
-#    DEBUG=false
-#
-#    # Frontend
-#    NEXT_PUBLIC_API_URL=http://localhost:8000
-#    NEXT_PUBLIC_BASE_PATH=
-#
-#    # Ports (optional, defaults shown)
-#    FRONTEND_PORT=80
-#    BACKEND_PORT=8000
-#
-#    # AWS S3 (if using file storage)
-#    AWS_ACCESS_KEY_ID=your-access-key
-#    AWS_SECRET_ACCESS_KEY=your-secret-key
-#    AWS_REGION=us-east-1
-#    AWS_S3_BUCKET=your-bucket-name
-#
-#
-# 4. DATABASE MIGRATIONS
-#    -------------------
-#    Migrations run automatically on backend startup.
-#    To run manually:
-#      docker compose exec backend alembic upgrade head
-#
-#
-# 5. TROUBLESHOOTING
-#    ---------------
-#    Check service status:
-#      docker compose ps
-#
-#    View backend logs:
-#      docker compose logs backend
-#
-#    View frontend logs:
-#      docker compose logs frontend
-#
-#    View database logs:
-#      docker compose logs db
-#
-#    Access backend shell:
-#      docker compose exec backend sh
-#
-#    Access database:
-#      docker compose exec db psql -U postgres -d sorento_crm
-#
-#    Rebuild after code changes:
-#      docker compose build --no-cache
-#      docker compose up -d
-#
-#
-# 6. PRODUCTION CONSIDERATIONS
-#    -------------------------
-#    - Change JWT_SECRET to a strong random value
-#    - Set DEBUG=false
-#    - Use environment-specific CORS_ORIGINS
-#    - Configure proper database backups
-#    - Set up SSL/TLS (use reverse proxy like Traefik or Nginx)
-#    - Configure resource limits (memory, CPU)
-#    - Use secrets management for sensitive data
-#    - Enable database connection pooling
-#    - Monitor logs and set up alerting

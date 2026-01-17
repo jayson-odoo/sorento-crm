@@ -26,9 +26,8 @@ export const SupplierSchema = z.object({
     .number()
     .int({ message: 'Payment terms must be a whole number.' })
     .min(0, { message: 'Payment terms cannot be negative.' })
-    .max(365, { message: 'Payment terms cannot exceed 365 days.' })
-    .default(30),
-  is_active: z.boolean().default(true),
+    .max(365, { message: 'Payment terms cannot exceed 365 days.' }),
+  is_active: z.boolean(),
 });
 
 export type SupplierSchemaType = z.infer<typeof SupplierSchema>;

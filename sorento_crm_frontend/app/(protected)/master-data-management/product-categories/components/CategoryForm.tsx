@@ -38,8 +38,8 @@ const CategorySchema = z.object({
   category_name: z.string().min(1, 'Category name is required').max(150),
   description: z.string().max(500).optional().nullable(),
   parent_category_id: z.string().uuid().optional().nullable(),
-  is_active: z.boolean().default(true),
-  display_order: z.number().int().min(0).default(0),
+  is_active: z.boolean(),
+  display_order: z.number().int().min(0),
 });
 
 interface CategoryFormProps {
@@ -54,7 +54,7 @@ export default function CategoryForm({ open, onOpenChange, categoryId }: Categor
   const createMutation = useCreateCategory();
   const updateMutation = useUpdateCategory();
 
-  const form = useForm<CategoryFormData>({
+  const form = useForm<z.infer<typeof CategorySchema>>({
     resolver: zodResolver(CategorySchema),
     defaultValues: {
       category_code: '',
@@ -90,12 +90,22 @@ export default function CategoryForm({ open, onOpenChange, categoryId }: Categor
     }
   }, [open, form, categoryId, category]);
 
-  const onSubmit = async (data: CategoryFormData) => {
+  const onSubmit = async (data: z.infer<typeof CategorySchema>) => {
     try {
+      // Convert null to undefined for form data
+      const formData: CategoryFormData = {
+        category_code: data.category_code,
+        category_name: data.category_name,
+        description: data.description ?? undefined,
+        parent_category_id: data.parent_category_id ?? undefined,
+        is_active: data.is_active,
+        display_order: data.display_order,
+      };
+      
       if (categoryId) {
-        await updateMutation.mutateAsync({ id: categoryId, data });
+        await updateMutation.mutateAsync({ id: categoryId, data: formData });
       } else {
-        await createMutation.mutateAsync(data);
+        await createMutation.mutateAsync(formData);
       }
       onOpenChange(false);
       form.reset();

@@ -23,19 +23,16 @@ export const ComplaintSchema = z.object({
   contact_number: z.string().max(255).optional().nullable(),
   customer_address: z.string().max(2000).optional().nullable(),
   project_title: z.string().max(255).optional().nullable(),
-  attachments: z
-    .array(
-      z.object({
-        id: z.string().optional(),
-        complaint_id: z.string().optional(),
-        file_name: z.string().optional().nullable(),
-        file_url: z.string().optional().nullable(),
-        file_size_bytes: z.number().optional().nullable(),
-        uploaded_at: z.date().optional(),
-      }),
-    )
-    .optional()
-    .default([]),
+  attachments: z.array(
+    z.object({
+      id: z.string().optional(),
+      complaint_id: z.string().optional(),
+      file_name: z.string().optional().nullable(),
+      file_url: z.string().optional().nullable(),
+      file_size_bytes: z.number().optional().nullable(),
+      uploaded_at: z.date().optional(),
+    }),
+  ),
 });
 
 export type ComplaintSchemaType = z.infer<typeof ComplaintSchema>;

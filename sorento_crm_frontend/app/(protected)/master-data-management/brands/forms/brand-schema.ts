@@ -16,7 +16,7 @@ export const BrandSchema = z.object({
   website: z.string().url({ message: 'Website must be a valid URL.' }).optional().nullable().or(z.literal('')),
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
   logo_url: z.string().url({ message: 'Logo URL must be a valid URL.' }).optional().nullable().or(z.literal('')),
-  is_active: z.boolean().default(true),
+  is_active: z.boolean(),
 });
 
 export type BrandSchemaType = z.infer<typeof BrandSchema>;

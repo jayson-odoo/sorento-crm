@@ -42,7 +42,24 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedAttachments = attachments.map((a) => ({
+    const transformedAttachments = attachments.map((a: {
+      id: string;
+      attachmentTypeId: string | null;
+      originalFilename: string;
+      storedFilename: string;
+      filePath: string;
+      fileSizeBytes: number | null;
+      mimeType: string | null;
+      fileHash: string | null;
+      entityType: string | null;
+      entityId: string | null;
+      uploadedBy: string | null;
+      uploadedAt: Date;
+      isDeleted: boolean;
+      deletedAt: Date | null;
+      deletedBy: string | null;
+      attachmentType: { id: string; typeName: string; description: string | null } | null;
+    }) => ({
       id: a.id,
       attachment_type_id: a.attachmentTypeId,
       original_filename: a.originalFilename,

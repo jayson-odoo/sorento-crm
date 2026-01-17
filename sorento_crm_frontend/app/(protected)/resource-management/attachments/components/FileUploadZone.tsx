@@ -8,6 +8,7 @@ import { Progress } from '@/components/ui/progress';
 import { useUploadAttachment } from '../hooks/useAttachments';
 
 interface FileUploadZoneProps {
+  attachmentTypeId: string;
   entityType: string;
   entityId: string;
   acceptedTypes?: string;
@@ -17,6 +18,7 @@ interface FileUploadZoneProps {
 }
 
 export default function FileUploadZone({
+  attachmentTypeId,
   entityType,
   entityId,
   acceptedTypes = '*',
@@ -87,6 +89,7 @@ export default function FileUploadZone({
         // TODO: Implement progress tracking
         await uploadMutation.mutateAsync({
           file,
+          attachmentTypeId,
           entityType,
           entityId,
         });

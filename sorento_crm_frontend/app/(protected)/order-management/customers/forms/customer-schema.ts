@@ -14,7 +14,7 @@ export const CustomerSchema = z.object({
     .max(255, { message: 'Customer name must not exceed 255 characters.' }),
   email: z.string().email({ message: 'Invalid email address.' }).optional().nullable().or(z.literal('')),
   phone_number: z.string().max(50, { message: 'Phone number must not exceed 50 characters.' }).optional().nullable(),
-  is_active: z.boolean().default(true),
+  is_active: z.boolean(),
 });
 
 export type CustomerSchemaType = z.infer<typeof CustomerSchema>;

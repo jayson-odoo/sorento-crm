@@ -1,4 +1,4 @@
-import type { Product, Supplier } from '../../products/types/product.types';
+import type { Product, Supplier } from '@/app/(protected)/master-data-management/products/types/product.types';
 
 export interface ProductSupplier {
   id: string;

@@ -21,6 +21,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateBrand, useUpdateBrand, useBrand } from '../hooks/useBrands';
 import { BrandSchema, type BrandSchemaType } from '../forms/brand-schema';
+import type { BrandFormData } from '../types/brand.types';
 
 interface BrandFormProps {
   brandId?: string;
@@ -65,10 +66,21 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
 
   const onSubmit = async (data: BrandSchemaType) => {
     try {
+      // Convert null to undefined for form data
+      const formData: BrandFormData = {
+        brand_code: data.brand_code,
+        brand_name: data.brand_name,
+        manufacturer: data.manufacturer ?? undefined,
+        website: data.website ?? undefined,
+        description: data.description ?? undefined,
+        logo_url: data.logo_url ?? undefined,
+        is_active: data.is_active,
+      };
+      
       if (isEditMode && brandId) {
-        await updateMutation.mutateAsync({ id: brandId, data });
+        await updateMutation.mutateAsync({ id: brandId, data: formData });
       } else {
-        await createMutation.mutateAsync(data);
+        await createMutation.mutateAsync(formData);
       }
       if (onSuccess) {
         onSuccess();

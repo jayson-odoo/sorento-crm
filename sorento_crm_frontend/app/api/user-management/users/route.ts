@@ -53,17 +53,17 @@ export async function GET(req: NextRequest) {
     });
 
     // Set order logic
-    const sortMap: Record<string, Prisma.UserOrderByWithRelationInput> = {
-      name: { name: sortDirection as Prisma.SortOrder },
-      role_name: { role: { name: sortDirection as Prisma.SortOrder } },
-      status: { status: sortDirection as Prisma.SortOrder },
-      createdAt: { createdAt: sortDirection as Prisma.SortOrder },
-      lastSignInAt: { lastSignInAt: sortDirection as Prisma.SortOrder },
+    const sortMap: Record<string, any> = {
+      name: { name: sortDirection as 'asc' | 'desc' },
+      role_name: { role: { name: sortDirection as 'asc' | 'desc' } },
+      status: { status: sortDirection as 'asc' | 'desc' },
+      createdAt: { createdAt: sortDirection as 'asc' | 'desc' },
+      lastSignInAt: { lastSignInAt: sortDirection as 'asc' | 'desc' },
     };
 
     // Default to createdAt sorting if no valid field is found
     const orderBy = sortMap[sortField] || {
-      createdAt: sortDirection as Prisma.SortOrder,
+      createdAt: sortDirection as 'asc' | 'desc',
     };
 
     // Fetch users with filters
@@ -170,7 +170,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Use a transaction to insert multiple records atomically
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       // Create a user
       const user = await tx.user.create({
         data: {

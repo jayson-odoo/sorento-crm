@@ -4,6 +4,7 @@ from typing import Optional, List
 from datetime import datetime, date
 from decimal import Decimal
 import uuid
+from app.schemas.resources import AttachmentTypeSimple
 
 
 class SupplierBase(BaseModel):
@@ -164,7 +165,7 @@ class AttachmentSimple(BaseModel):
     file_path: str
     file_size_bytes: Optional[int] = None
     mime_type: Optional[str] = None
-    attachment_type: Optional[dict] = None
+    attachment_type: Optional[AttachmentTypeSimple] = None
     
     class Config:
         from_attributes = True

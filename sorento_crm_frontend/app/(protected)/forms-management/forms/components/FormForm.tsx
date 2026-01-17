@@ -270,7 +270,7 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
                         <SelectTrigger>
                           <SelectValue placeholder="Select an attachment or leave empty">
                             {selectedAttachment
-                              ? `${selectedAttachment.original_filename} (${selectedAttachment.attachment_type?.type_name || 'No type'})`
+                              ? selectedAttachment.original_filename
                               : 'No attachment selected'}
                           </SelectValue>
                         </SelectTrigger>
@@ -289,7 +289,7 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
                         )}
                         {attachments.map((attachment) => (
                           <SelectItem key={attachment.id} value={attachment.id}>
-                            {attachment.original_filename} ({attachment.attachment_type?.type_name || 'No type'})
+                            {attachment.original_filename}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -300,7 +300,6 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
                           <div className="flex-1">
                             <p className="font-medium text-sm">{selectedAttachment.original_filename}</p>
                             <p className="text-xs text-muted-foreground">
-                              {selectedAttachment.attachment_type?.type_name || 'No type'} •{' '}
                               {selectedAttachment.file_size_bytes
                                 ? `${(selectedAttachment.file_size_bytes / 1024).toFixed(2)} KB`
                                 : '-'} •{' '}

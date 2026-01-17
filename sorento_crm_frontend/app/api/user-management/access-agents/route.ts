@@ -6,7 +6,18 @@ import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
 /**
  * Transform Prisma access agent to frontend expected format (snake_case)
  */
-function transformAccessAgent(agent: any) {
+function transformAccessAgent(agent: {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  syncedToExcel: boolean;
+  lastSyncedToExcel: Date | null;
+  picRespondUserId: string | null;
+}) {
   return {
     id: agent.id,
     code: agent.code,
@@ -41,7 +52,14 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get('status') || 'all';
 
     // Build where clause with filters
-    const whereClause: any = {
+    const whereClause: {
+      isActive?: boolean;
+      OR?: Array<{
+        code?: { contains: string; mode: 'insensitive' };
+        name?: { contains: string; mode: 'insensitive' };
+        description?: { contains: string; mode: 'insensitive' };
+      }>;
+    } = {
       ...(status && status !== 'all'
         ? { isActive: status === 'active' }
         : {}),
@@ -82,7 +100,19 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedAgents = agents.map((agent) => ({
+    const transformedAgents = agents.map((agent: {
+      id: string;
+      code: string;
+      name: string;
+      description: string | null;
+      isActive: boolean;
+      createdAt: Date;
+      updatedAt: Date;
+      syncedToExcel: boolean;
+      lastSyncedToExcel: Date | null;
+      picRespondUserId: string | null;
+      _count?: { contactAccesses: number };
+    }) => ({
       ...transformAccessAgent(agent),
       contact_accesses_count: agent._count?.contactAccesses || 0,
     }));

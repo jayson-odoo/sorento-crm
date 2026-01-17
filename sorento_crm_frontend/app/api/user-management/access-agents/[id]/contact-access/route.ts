@@ -6,7 +6,19 @@ import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
 /**
  * Transform Prisma contact agent access to frontend expected format (snake_case)
  */
-function transformContactAgentAccess(access: any) {
+function transformContactAgentAccess(access: {
+  id: string;
+  respondContactId: string;
+  agentId: string;
+  isAllowed: boolean;
+  validFrom: Date | null;
+  validTo: Date | null;
+  createdAt: Date;
+  createdBy: string | null;
+  syncedToExcel: boolean;
+  lastSyncedToExcel: Date | null;
+  updatedAt: Date | null;
+}) {
   return {
     id: access.id,
     respond_contact_id: access.respondContactId,

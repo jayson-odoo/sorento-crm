@@ -38,7 +38,7 @@ export async function GET() {
       uom_code: uom.uomCode,
       uom_name: uom.uomName,
       base_uom_id: uom.baseUomId,
-      conversion_factor: uom.conversionFactor,
+      conversion_factor: uom.conversionFactor ? Number(uom.conversionFactor) : null,
     }));
 
     return NextResponse.json(transformedUOMs);

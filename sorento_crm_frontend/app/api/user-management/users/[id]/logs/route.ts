@@ -60,8 +60,8 @@ export async function GET(
     // Handle sorting logic
     const orderBy =
       sortField === 'user_name'
-        ? { user: { name: sortDirection as Prisma.SortOrder } } // Sort by user name
-        : { [sortField]: sortDirection as Prisma.SortOrder }; // Default sorting
+        ? { user: { name: sortDirection as 'asc' | 'desc' } } // Sort by user name
+        : { [sortField]: sortDirection as 'asc' | 'desc' }; // Default sorting
 
     // Fetch activity logs with filters, pagination, and sorting
     const logs = await prisma.systemLog.findMany({

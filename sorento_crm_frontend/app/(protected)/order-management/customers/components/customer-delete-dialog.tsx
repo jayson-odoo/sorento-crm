@@ -48,7 +48,7 @@ const CustomerDeleteDialog = ({
 
   return (
     <AlertDialog open={open} onOpenChange={closeDialog}>
-      <AlertDialogContent showCloseButton={false}>
+      <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
           <AlertDialogDescription>

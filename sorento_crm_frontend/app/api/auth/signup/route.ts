@@ -88,7 +88,10 @@ export async function POST(req: NextRequest) {
         await prisma.verificationToken.deleteMany({
           where: { identifier: existingUser.id },
         });
-        await sendVerificationEmail(existingUser);
+        await sendVerificationEmail({
+          ...existingUser,
+          status: existingUser.status as UserStatus,
+        } as User);
         return NextResponse.json(
           { message: 'Verification email resent. Please check your email.' },
           { status: 200 },
@@ -126,7 +129,10 @@ export async function POST(req: NextRequest) {
     });
 
     // Send the verification email.
-    await sendVerificationEmail(user);
+    await sendVerificationEmail({
+      ...user,
+      status: user.status as UserStatus,
+    } as User);
 
     return NextResponse.json(
       {

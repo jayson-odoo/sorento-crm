@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const categories = await prisma.complaintCategory.findMany({
+    const categories = await (prisma as any).complaintCategory.findMany({
       where: {
         isActive: true,
       },
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedCategories = categories.map((category) => ({
+    const transformedCategories = categories.map((category: any) => ({
       id: category.id,
       category_code: category.categoryCode,
       category_name: category.categoryName,

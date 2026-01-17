@@ -89,7 +89,7 @@ const ChangeEmailDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent>
         <CardHeader className="py-5">
           <CardHeading>
             <CardTitle>Change Email</CardTitle>

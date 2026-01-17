@@ -18,7 +18,7 @@ export const PromotionSchema = z.object({
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
   start_date: z.date({ required_error: 'Start date is required.' }),
   end_date: z.date({ required_error: 'End date is required.' }),
-  is_active: z.boolean().default(true),
+  is_active: z.boolean(),
 }).refine((data) => data.end_date >= data.start_date, {
   message: 'End date must be after start date.',
   path: ['end_date'],

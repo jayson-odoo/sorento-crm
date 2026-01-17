@@ -80,7 +80,18 @@ export async function GET(req: NextRequest) {
     });
 
     // Transform to snake_case for frontend
-    const transformedCustomers = customers.map((customer) => ({
+    const transformedCustomers = customers.map((customer: {
+      id: string;
+      customerCode: string;
+      customerName: string;
+      email: string | null;
+      phoneNumber: string | null;
+      isActive: boolean;
+      createdAt: Date;
+      updatedAt: Date | null;
+      createdBy: string | null;
+      _count?: { orders: number };
+    }) => ({
       ...transformCustomer(customer),
       orders_count: customer._count?.orders || 0,
     }));
