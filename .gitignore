@@ -5,3 +5,4 @@ sorento_crm_frontend/node_modules/*
 .env.test.local
 .env.production.local
 .DS_Store
+.gz
