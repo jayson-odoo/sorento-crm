@@ -1,4 +1,5 @@
 sorento_crm_frontend/node_modules/*
+sorento_crm_backend/.next/*
 .env
 .env.local
 .env.development.local
