@@ -502,6 +502,16 @@ export const MENU_SIDEBAR: MenuConfig = [
       },
     ],
   },
+  {
+    title: 'Integration Management',
+    icon: Plug,
+    children: [
+      {
+        title: 'Integration Logs',
+        path: '/integration-management/integration-logs',
+      },
+    ],
+  },
   // Hidden: Store - Client
   // {
   //   title: 'Store - Client',
@@ -1081,6 +1091,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Attachment Types',
         path: '/resource-management/attachment-types',
+      },
+    ],
+  },
+  {
+    title: 'Integration Management',
+    icon: Plug,
+    children: [
+      {
+        title: 'Integration Logs',
+        path: '/integration-management/integration-logs',
       },
     ],
   },

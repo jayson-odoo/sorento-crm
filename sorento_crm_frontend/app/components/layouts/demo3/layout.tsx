@@ -70,3 +70,4 @@ export function Demo3Layout({ children }: { children: ReactNode }) {
     </>
   );
 }
+export default Demo3Layout;

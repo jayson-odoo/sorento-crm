@@ -296,6 +296,7 @@ class PickingLineResponse(PickingLineBase):
     picking_header_id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
+    product: Optional[ProductSimple] = None
     
     class Config:
         from_attributes = True

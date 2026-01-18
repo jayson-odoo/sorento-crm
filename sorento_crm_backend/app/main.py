@@ -39,12 +39,33 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Global exception handler
+# Global exception handler for AppException
 @app.exception_handler(AppException)
 async def app_exception_handler(request, exc: AppException):
     return JSONResponse(
         status_code=exc.status_code,
         content=exc.detail
+    )
+
+# Global exception handler for all unhandled exceptions
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch all unhandled exceptions and log them."""
+    error_logger = logging.getLogger(__name__)
+    import traceback
+    error_traceback = traceback.format_exc()
+    error_logger.error(f"Unhandled exception: {type(exc).__name__}: {str(exc)}")
+    error_logger.error(f"Request URL: {request.url}")
+    error_logger.error(f"Request method: {request.method}")
+    error_logger.error(f"Traceback:\n{error_traceback}")
+    
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "message": "Internal server error",
+            "detail": str(exc),
+            "type": type(exc).__name__
+        }
     )
 
 # Validation error handler to see detailed errors
@@ -61,6 +82,31 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
+
+# Initialize scheduler for background tasks
+scheduler = None
+
+@app.on_event("startup")
+async def startup_event():
+    """Startup event: initialize scheduler."""
+    global scheduler
+    try:
+        from app.scheduler.integration_scheduler import start_scheduler
+        scheduler = start_scheduler()
+        logging.info("Background scheduler started successfully")
+    except Exception as e:
+        logging.error(f"Failed to start scheduler: {str(e)}", exc_info=True)
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Shutdown event: stop scheduler."""
+    global scheduler
+    if scheduler:
+        try:
+            scheduler.shutdown()
+            logging.info("Background scheduler stopped")
+        except Exception as e:
+            logging.error(f"Error stopping scheduler: {str(e)}", exc_info=True)
 
 
 @app.get("/")

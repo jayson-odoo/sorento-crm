@@ -102,3 +102,4 @@ export function Demo8Layout({ children }: { children: ReactNode }) {
     </>
   );
 }
+export default Demo8Layout;

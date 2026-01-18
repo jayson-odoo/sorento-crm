@@ -65,3 +65,6 @@ export function Demo1Layout({ children }: { children: ReactNode }) {
     </>
   );
 }
+
+// Export as default for type constraints
+export default Demo1Layout;

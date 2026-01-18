@@ -11,6 +11,7 @@ from app.api.v1 import (
     sla,
     resources,
     user_management,
+    integrations,
     test_auth,
 )
 
@@ -27,4 +28,5 @@ api_router.include_router(complaints.router, prefix="/complaint-management", tag
 api_router.include_router(sla.router, prefix="/sla-management", tags=["sla"])
 api_router.include_router(resources.router, prefix="/resource-management", tags=["resources"])
 api_router.include_router(user_management.router, prefix="/user-management", tags=["user-management"])
+api_router.include_router(integrations.logs.router, prefix="/integrations/logs", tags=["integrations"])
 api_router.include_router(test_auth.router, tags=["test"])

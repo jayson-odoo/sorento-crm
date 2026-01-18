@@ -1,6 +1,7 @@
 """Attachment types API routes."""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
+from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.resources_service import AttachmentTypeService
@@ -13,18 +14,25 @@ router = APIRouter()
 
 @router.get("/", response_model=ListResponse[AttachmentTypeResponse])
 async def get_attachment_types(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    query: Optional[str] = Query(None),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query("desc", regex="^(asc|desc)$"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get all attachment types."""
+    """Get attachment types with pagination and filtering."""
     try:
         service = AttachmentTypeService(db)
-        types = service.list_types()
-        return {
-            "data": types,
-            "pagination": {"total": len(types), "page": 1, "limit": len(types)},
-            "empty": len(types) == 0
-        }
+        result = service.list_types(
+            page=page,
+            limit=limit,
+            query=query,
+            sort=sort,
+            dir=dir
+        )
+        return result
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -90,7 +98,7 @@ async def delete_attachment_type(
     """Delete an attachment type."""
     try:
         service = AttachmentTypeService(db)
-        # Implement delete logic
+        service.delete_type(type_id)
         return {"message": "Attachment type deleted successfully"}
     except HTTPException:
         raise

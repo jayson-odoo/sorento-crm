@@ -221,7 +221,10 @@ class SPOAllocationService:
         sort_dir: str = "asc"
     ):
         """List SPO allocations."""
-        q = self.db.query(SPOAllocation)
+        from sqlalchemy.orm import joinedload
+        q = self.db.query(SPOAllocation).options(
+            joinedload(SPOAllocation.product)
+        )
         
         filters = []
         
@@ -270,7 +273,10 @@ class SPOAllocationService:
     
     def get_allocation(self, allocation_id: str):
         """Get an SPO allocation by ID."""
-        allocation = self.db.query(SPOAllocation).filter(SPOAllocation.id == allocation_id).first()
+        from sqlalchemy.orm import joinedload
+        allocation = self.db.query(SPOAllocation).options(
+            joinedload(SPOAllocation.product)
+        ).filter(SPOAllocation.id == allocation_id).first()
         if not allocation:
             raise handle_not_found("SPO Allocation", allocation_id)
         return allocation
@@ -324,7 +330,10 @@ class PickingHeaderService:
         sort_dir: str = "asc"
     ):
         """List GRNs (picking headers with type 'goods_received')."""
-        q = self.db.query(PickingHeader).filter(PickingHeader.picking_type == "goods_received")
+        from sqlalchemy.orm import selectinload
+        q = self.db.query(PickingHeader).options(
+            selectinload(PickingHeader.picking_lines).joinedload(PickingLine.product)
+        ).filter(PickingHeader.picking_type == "goods_received")
         
         filters = []
         
@@ -364,7 +373,10 @@ class PickingHeaderService:
     
     def get_grn(self, grn_id: str):
         """Get a GRN by ID."""
-        grn = self.db.query(PickingHeader).filter(
+        from sqlalchemy.orm import selectinload, joinedload
+        grn = self.db.query(PickingHeader).options(
+            selectinload(PickingHeader.picking_lines).joinedload(PickingLine.product)
+        ).filter(
             PickingHeader.id == grn_id,
             PickingHeader.picking_type == "goods_received"
         ).first()

@@ -14,10 +14,47 @@ class AttachmentTypeService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_types(self):
-        """List all attachment types."""
-        types = self.db.query(AttachmentType).all()
-        return types
+    def list_types(self, page: int = 1, limit: int = 50, query: Optional[str] = None, sort: Optional[str] = None, dir: str = "desc"):
+        """List attachment types with pagination and filtering."""
+        from app.schemas.common import PaginationResponse
+        
+        q = self.db.query(AttachmentType)
+        
+        # Apply search filter
+        if query:
+            q = q.filter(
+                (AttachmentType.type_name.ilike(f"%{query}%")) |
+                (AttachmentType.description.ilike(f"%{query}%"))
+            )
+        
+        # Apply sorting
+        sort_column = None
+        if sort:
+            if sort == "type_name":
+                sort_column = AttachmentType.type_name
+            elif sort == "created_at":
+                sort_column = AttachmentType.created_at
+            elif sort == "max_file_size_mb":
+                sort_column = AttachmentType.max_file_size_mb
+        
+        if sort_column:
+            if dir == "desc":
+                q = q.order_by(sort_column.desc())
+            else:
+                q = q.order_by(sort_column.asc())
+        else:
+            # Default sorting by created_at desc
+            q = q.order_by(AttachmentType.created_at.desc())
+        
+        total = q.count()
+        offset = (page - 1) * limit
+        types = q.offset(offset).limit(limit).all()
+        
+        return {
+            "data": types,
+            "pagination": PaginationResponse(total=total, page=page, limit=limit),
+            "empty": total == 0
+        }
     
     def get_type(self, type_id: str):
         """Get an attachment type by ID."""
@@ -45,11 +82,27 @@ class AttachmentTypeService:
         attachment_type = self.get_type(type_id)
         
         update_data = type_data.model_dump(exclude_unset=True)
+        
+        # Check for name uniqueness if type_name is being updated
+        if "type_name" in update_data and update_data["type_name"] != attachment_type.type_name:
+            existing = self.db.query(AttachmentType).filter(
+                AttachmentType.type_name == update_data["type_name"]
+            ).first()
+            if existing:
+                raise handle_conflict("Attachment type name already exists.")
+        
         for key, value in update_data.items():
             setattr(attachment_type, key, value)
         
         self.db.commit()
         self.db.refresh(attachment_type)
+        return attachment_type
+    
+    def delete_type(self, type_id: str):
+        """Delete an attachment type."""
+        attachment_type = self.get_type(type_id)
+        self.db.delete(attachment_type)
+        self.db.commit()
         return attachment_type
 
 

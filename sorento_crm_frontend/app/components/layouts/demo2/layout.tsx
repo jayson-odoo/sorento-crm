@@ -93,3 +93,4 @@ export function Demo2Layout({ children }: { children: ReactNode }) {
     </>
   );
 }
+export default Demo2Layout;

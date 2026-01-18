@@ -12,6 +12,7 @@ from app.models.complaints import Complaint, ComplaintAttachment
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEscalationLog
 from app.models.resources import Attachment, AttachmentType
 from app.models.access import AccessAgent, ContactAgentAccess
+from app.models.integration import IntegrationLog
 
 __all__ = [
     "User",
@@ -57,4 +58,5 @@ __all__ = [
     "AttachmentType",
     "AccessAgent",
     "ContactAgentAccess",
+    "IntegrationLog",
 ]

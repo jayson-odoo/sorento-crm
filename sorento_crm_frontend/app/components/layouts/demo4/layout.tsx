@@ -103,3 +103,4 @@ export function Demo4Layout({ children }: { children: ReactNode }) {
     </>
   );
 }
+export default Demo4Layout;

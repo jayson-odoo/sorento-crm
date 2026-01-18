@@ -1,14 +1,18 @@
 """Attachments API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Form, Response, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Form, Response, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
 import uuid
 import hashlib
 import logging
+import os
+import json
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.resources_service import AttachmentService, AttachmentTypeService
+from app.services.integration_service import IntegrationLogService
 from app.schemas.resources import AttachmentCreate, AttachmentUpdate, AttachmentResponse
+from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
@@ -60,6 +64,7 @@ async def get_attachment(
 @router.post("/", response_model=AttachmentResponse, status_code=status.HTTP_201_CREATED)
 async def create_attachment(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     attachment_type_id: str = Form(...),
     entity_type: Optional[str] = Form(None),
@@ -152,6 +157,66 @@ async def create_attachment(
         
         service = AttachmentService(db)
         attachment = service.create_attachment(attachment_data, current_user["id"])
+        
+        # Create integration log for n8n webhook after successful S3 upload and attachment creation
+        try:
+            n8n_webhook_url = os.getenv("N8N_WEBHOOK_URL", "").strip()
+            if n8n_webhook_url:
+                integration_service = IntegrationLogService(db)
+                
+                # Create integration log with pending status first
+                integration_log_data = IntegrationLogCreate(
+                    integration_channel="n8n",
+                    business_table="attachments",
+                    business_id=attachment.id,
+                    direction="outbound",
+                    endpoint=n8n_webhook_url,
+                    http_method="POST",
+                    created_by=current_user["id"],
+                    status="pending"
+                )
+                
+                integration_log = integration_service.create_integration_log(integration_log_data)
+                
+                # Prepare webhook payload with actual integration_log_id and attachment_type name
+                webhook_payload = {
+                    "integration_log_id": integration_log.id,
+                    "s3_url": s3_url,
+                    "attachment_id": attachment.id,
+                    "attachment_filename": attachment.stored_filename,
+                    "attachment_type": attachment_type.type_name if attachment_type else None
+                }
+                
+                # Update log with payload containing the correct integration_log_id
+                integration_log.request_payload = json.dumps(webhook_payload)
+                db.commit()
+                db.refresh(integration_log)
+                
+                # Send webhook asynchronously in background (non-blocking)
+                # Using threading to ensure true async execution
+                import threading
+                def send_webhook_async():
+                    try:
+                        # Get a new database session for background task
+                        from app.database import SessionLocal
+                        bg_db = SessionLocal()
+                        try:
+                            bg_service = IntegrationLogService(bg_db)
+                            bg_service.send_webhook_for_log(integration_log.id)
+                        finally:
+                            bg_db.close()
+                    except Exception as e:
+                        logger.error(f"Background webhook send failed for log {integration_log.id}: {str(e)}", exc_info=True)
+                
+                # Start background thread
+                thread = threading.Thread(target=send_webhook_async, daemon=True)
+                thread.start()
+                
+                logger.info(f"Created integration log {integration_log.id} for attachment {attachment.id}")
+        except Exception as e:
+            # Don't fail attachment upload if integration log creation fails
+            logger.error(f"Failed to create integration log for attachment {attachment.id}: {str(e)}", exc_info=True)
+        
         return attachment
     
     except HTTPException:

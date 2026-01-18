@@ -114,4 +114,4 @@ const Demo10Layout = ({ children }: { children: ReactNode }) => {
   );
 };
 
-export { Demo10Layout };
+export default Demo10Layout;

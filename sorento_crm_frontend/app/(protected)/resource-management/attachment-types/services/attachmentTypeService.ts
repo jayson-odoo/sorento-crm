@@ -31,7 +31,7 @@ export async function createAttachmentType(data: AttachmentTypeFormData): Promis
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to create attachment type' }));
-    throw new Error(error.message);
+    throw new Error(error.detail?.message || error.message || 'Failed to create attachment type');
   }
   return response.json();
 }
@@ -44,7 +44,7 @@ export async function updateAttachmentType(id: string, data: Partial<AttachmentT
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to update attachment type' }));
-    throw new Error(error.message);
+    throw new Error(error.detail?.message || error.message || 'Failed to update attachment type');
   }
   return response.json();
 }
@@ -53,6 +53,6 @@ export async function deleteAttachmentType(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/resource-management/attachment-types/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete attachment type' }));
-    throw new Error(error.message);
+    throw new Error(error.detail?.message || error.message || 'Failed to delete attachment type');
   }
 }
