@@ -1,10 +1,8 @@
 {
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/_not-found/page": "app/_not-found/page.js",
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/(protected)/procurement-management/packing-lists/[id]/page": "app/(protected)/procurement-management/packing-lists/[id]/page.js",
-  "/(protected)/procurement-management/packing-lists/page": "app/(protected)/procurement-management/packing-lists/page.js",
-  "/(protected)/procurement-management/grn/[id]/page": "app/(protected)/procurement-management/grn/[id]/page.js",
-  "/(protected)/procurement-management/grn/page": "app/(protected)/procurement-management/grn/page.js",
-  "/(protected)/procurement-management/spo-allocations/page": "app/(protected)/procurement-management/spo-allocations/page.js"
+  "/api/user-management/access-agents/[id]/contact-access/route": "app/api/user-management/access-agents/[id]/contact-access/route.js",
+  "/(protected)/user-management/users/page": "app/(protected)/user-management/users/page.js",
+  "/(protected)/user-management/users/[id]/page": "app/(protected)/user-management/users/[id]/page.js",
+  "/(protected)/user-management/users/[id]/logs/page": "app/(protected)/user-management/users/[id]/logs/page.js"
 }

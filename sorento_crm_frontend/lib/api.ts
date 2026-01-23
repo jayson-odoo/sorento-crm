@@ -82,9 +82,11 @@ export async function apiFetch(
       if (input.startsWith('/api/')) {
         // Routes that should stay in Next.js (not routed to FastAPI backend)
         // Check for contact-access routes (handled by Next.js with Prisma)
+        // Also exclude SLA policy tiers routes (handled by Next.js with Prisma)
         const isNextJsRoute = 
           input.includes('/contact-access') || 
-          input.includes('/contact-access-agents');
+          input.includes('/contact-access-agents') ||
+          input.includes('/sla-management/sla-policies/') && input.includes('/tiers');
 
         // Route business logic APIs to FastAPI backend
         const businessApiRoutes = [
@@ -124,7 +126,13 @@ export async function apiFetch(
         } else if (input.startsWith('/api/complaint-management/')) {
           url = `/api/v1/complaint-management${input.replace('/api/complaint-management', '')}`;
         } else if (input.startsWith('/api/sla-management/')) {
-          url = `/api/v1/sla-management${input.replace('/api/sla-management', '')}`;
+          // Exclude tiers routes - they stay in Next.js
+          if (input.includes('/sla-policies/') && input.includes('/tiers')) {
+            // Keep in Next.js - don't route to backend
+            url = input;
+          } else {
+            url = `/api/v1/sla-management${input.replace('/api/sla-management', '')}`;
+          }
         } else if (input.startsWith('/api/resource-management/')) {
           url = `/api/v1/resource-management${input.replace('/api/resource-management', '')}`;
         } else if (input.startsWith('/api/user-management/')) {
@@ -136,25 +144,30 @@ export async function apiFetch(
 
         // Prepend apiUrl to business API routes if set (for local development ONLY)
         // NEVER prepend HTTP URLs in production - always use relative paths
+        // Prepend apiUrl ONLY in local development
+        // In production with HTTPS, ALWAYS use relative paths (nginx handles proxying)
         if (apiUrl && typeof url === 'string' && url.startsWith('/api/v1/')) {
-          // Check if apiUrl is HTTP - if so, only use it in localhost development
           const isHttpUrl = apiUrl.startsWith('http://');
+          const isHttpsUrl = apiUrl.startsWith('https://');
           const isLocalhost = typeof window !== 'undefined' && (
             window.location.hostname === 'localhost' || 
             window.location.hostname === '127.0.0.1'
           );
+          const isProductionHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
           
-          // Only prepend HTTP URLs if we're in localhost development
-          // In production or if it's HTTPS, always use relative paths
-          if (isHttpUrl && !isLocalhost) {
-            // Don't prepend HTTP URL in production - use relative path instead
-            // This prevents mixed content issues on HTTPS pages
-            apiUrl = '';
-          } else if (apiUrl) {
-            // Safe to prepend (localhost HTTP or HTTPS URL)
+          // NEVER prepend URLs in production HTTPS - always use relative paths
+          if (isProductionHttps) {
+            // Force relative path in production to avoid mixed content
+            url = url; // Keep as-is (relative path like /api/v1/...)
+          } else if (isHttpUrl && !isLocalhost) {
+            // HTTP URL but not localhost = production HTTP, use relative path
+            url = url;
+          } else if (apiUrl && (isLocalhost || isHttpsUrl)) {
+            // Safe to prepend: either localhost or HTTPS URL
             const baseUrl = apiUrl.replace(/\/$/, '');
             url = `${baseUrl}${url}`;
           }
+          // else: leave url as relative path
         }
 
         // Extract JWT token from NextAuth and send in Authorization header

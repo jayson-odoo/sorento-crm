@@ -148,3 +148,15 @@ class OrderResponse(OrderBase):
     
     class Config:
         from_attributes = True
+
+
+class BulkImportRequest(BaseModel):
+    """Request schema for bulk import."""
+    orders: list[dict]  # List of order dictionaries from Excel
+
+
+class BulkImportResponse(BaseModel):
+    """Response schema for bulk import."""
+    created: int = 0
+    updated: int = 0
+    errors: list[str] = []

@@ -99,11 +99,11 @@ async def delete_grn(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete a GRN."""
+    """Delete a GRN (cascade will delete lines)."""
     try:
         service = PickingHeaderService(db)
-        # Implement delete logic
-        return {"message": "GRN deleted successfully"}
+        result = service.delete_grn(grn_id)
+        return result
     except HTTPException:
         raise
     except Exception as e:

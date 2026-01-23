@@ -1339,6 +1339,9 @@
   .h-56 {
     height: calc(var(--spacing) * 56);
   }
+  .h-64 {
+    height: calc(var(--spacing) * 64);
+  }
   .h-96 {
     height: calc(var(--spacing) * 96);
   }
@@ -5516,6 +5519,16 @@
         background-color: var(--muted);
         @supports (color: color-mix(in lab, red, red)) {
           background-color: color-mix(in oklab, var(--muted) 40%, transparent);
+        }
+      }
+    }
+  }
+  .hover\:bg-muted\/50 {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--muted);
+        @supports (color: color-mix(in lab, red, red)) {
+          background-color: color-mix(in oklab, var(--muted) 50%, transparent);
         }
       }
     }

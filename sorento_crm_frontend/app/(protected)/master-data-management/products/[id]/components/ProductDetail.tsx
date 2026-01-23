@@ -11,6 +11,7 @@ import { useProduct } from '../../hooks/useProducts';
 import { formatDate } from '@/lib/helpers';
 import { DataGrid } from '@/components/ui/data-grid';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
+import ProductStockTab from './ProductStockTab';
 
 interface ProductDetailProps {
   productId: string;
@@ -249,17 +250,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
             {/* Tab: Stock */}
             <TabsContent value="stock">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Stock Information</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {/* TODO: Stock by warehouse grid, low stock alerts, stock movement chart */}
-                  <div className="text-sm text-muted-foreground">
-                    Stock information will be displayed here
-                  </div>
-                </CardContent>
-              </Card>
+              <ProductStockTab productId={productId} />
             </TabsContent>
 
             {/* Tab: Attachments */}

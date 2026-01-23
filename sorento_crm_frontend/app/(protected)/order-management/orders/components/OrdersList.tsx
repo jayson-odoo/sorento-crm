@@ -11,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Download, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -25,12 +25,23 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useOrders } from '../hooks/useOrders';
 import type { Order } from '../types/order.types';
 import { formatDate } from '@/lib/helpers';
+import { TemplateDownloadDialog } from '@/components/template/TemplateDownloadDialog';
+import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
+import { exportOrders, bulkImportOrders } from '../services/orderService';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import type { ColumnOption } from '@/lib/excel-utils';
 
 export default function OrdersList() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [exportData, setExportData] = useState<Order[]>([]);
+  const [isLoadingExport, setIsLoadingExport] = useState(false);
 
   const { data, isLoading } = useOrders({
     pageIndex: pagination.pageIndex,
@@ -38,6 +49,47 @@ export default function OrdersList() {
     sorting,
     searchQuery,
   });
+
+  // Define column options for export
+  const columnOptions: ColumnOption[] = useMemo(() => [
+    { key: 'id', label: 'ID', selected: true },
+    { key: 'order_number', label: 'Order Number', selected: true },
+    { key: 'order_date', label: 'Order Date', selected: true },
+    { key: 'customer.customer_name', label: 'Customer Name', selected: true },
+    { key: 'order_status.status_name', label: 'Status', selected: true },
+    { key: 'promised_delivery_date', label: 'Promised Delivery Date', selected: true },
+    { key: 'total_amount', label: 'Total Amount', selected: true },
+    { key: 'subtotal_amount', label: 'Subtotal Amount', selected: false },
+    { key: 'discount_amount', label: 'Discount Amount', selected: false },
+    { key: 'tax_amount', label: 'Tax Amount', selected: false },
+    { key: 'remarks', label: 'Remarks', selected: false },
+  ], []);
+
+  const handleDownloadTemplate = async () => {
+    setIsLoadingExport(true);
+    try {
+      const allOrders = await exportOrders();
+      setExportData(allOrders);
+      setDownloadDialogOpen(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to load orders for export');
+    } finally {
+      setIsLoadingExport(false);
+    }
+  };
+
+  const handleUploadTemplate = async (data: any[]) => {
+    try {
+      const result = await bulkImportOrders(data);
+      toast.success(`Successfully imported: ${result.created} created, ${result.updated} updated`);
+      if (result.errors.length > 0) {
+        toast.warning(`${result.errors.length} error(s) occurred during import`);
+      }
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+    } catch (error) {
+      throw error; // Let the dialog handle the error display
+    }
+  };
 
   const handleRowClick = (row: Order) => {
     const orderId = row.id;
@@ -146,10 +198,20 @@ export default function OrdersList() {
               </Button>
             )}
           </div>
-          <Button onClick={() => router.push('/order-management/orders/new')}>
-            <Plus />
-            Create Order
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={handleDownloadTemplate} disabled={isLoadingExport}>
+              <Download className="size-4" />
+              Export
+            </Button>
+            <Button variant="outline" onClick={() => setUploadDialogOpen(true)}>
+              <Upload className="size-4" />
+              Import
+            </Button>
+            <Button onClick={() => router.push('/order-management/orders/new')}>
+              <Plus />
+              Create Order
+            </Button>
+          </div>
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -161,6 +223,18 @@ export default function OrdersList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+      <TemplateDownloadDialog
+        open={downloadDialogOpen}
+        onOpenChange={setDownloadDialogOpen}
+        data={exportData}
+        columns={columnOptions}
+        filename="orders_export.xlsx"
+      />
+      <TemplateUploadDialog
+        open={uploadDialogOpen}
+        onOpenChange={setUploadDialogOpen}
+        onUpload={handleUploadTemplate}
+      />
     </DataGrid>
   );
 }

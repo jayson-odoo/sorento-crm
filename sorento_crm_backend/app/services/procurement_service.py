@@ -423,6 +423,18 @@ class PickingHeaderService:
         self.db.commit()
         self.db.refresh(grn)
         return grn
+    
+    def delete_grn(self, grn_id: str):
+        """Delete a GRN and its lines."""
+        grn = self.get_grn(grn_id)
+        
+        # Explicitly delete picking lines first to avoid foreign key constraint issues
+        self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).delete()
+        
+        # Then delete the header
+        self.db.delete(grn)
+        self.db.commit()
+        return {"message": "GRN deleted successfully"}
 
 
 class StockInquiryService:

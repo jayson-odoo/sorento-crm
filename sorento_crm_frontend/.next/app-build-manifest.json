@@ -1,5 +1,20 @@
 {
   "pages": {
+    "/api/auth/token/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/auth/token/route.js"
+    ],
+    "/api/auth/[...nextauth]/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/auth/[...nextauth]/route.js"
+    ],
+    "/api/user-management/access-agents/[id]/contact-access/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/user-management/access-agents/[id]/contact-access/route.js"
+    ],
     "/layout": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -11,190 +26,25 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/layout.js"
     ],
-    "/(protected)/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/page.js"
-    ],
-    "/api/auth/[...nextauth]/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/auth/[...nextauth]/route.js"
-    ],
-    "/(protected)/forms-management/forms/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/forms-management/forms/page.js"
-    ],
-    "/api/auth/token/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/auth/token/route.js"
-    ],
-    "/(protected)/forms-management/forms/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/forms-management/forms/[id]/page.js"
-    ],
-    "/(protected)/complaint-management/complaints/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/complaint-management/complaints/page.js"
-    ],
-    "/(protected)/complaint-management/complaints/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/complaint-management/complaints/[id]/page.js"
-    ],
-    "/(protected)/user-management/access-agents/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/access-agents/page.js"
-    ],
-    "/(protected)/user-management/access-agents/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/access-agents/[id]/page.js"
-    ],
-    "/api/user-management/access-agents/[id]/contact-access/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/user-management/access-agents/[id]/contact-access/route.js"
-    ],
     "/(protected)/user-management/users/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/user-management/users/page.js"
     ],
-    "/(auth)/layout": [
+    "/(protected)/user-management/users/[id]/layout": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(auth)/layout.js"
+      "static/chunks/app/(protected)/user-management/users/[id]/layout.js"
     ],
-    "/(auth)/signin/page": [
+    "/(protected)/user-management/users/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(auth)/signin/page.js"
+      "static/chunks/app/(protected)/user-management/users/[id]/page.js"
     ],
-    "/(auth)/signup/page": [
+    "/(protected)/user-management/users/[id]/logs/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(auth)/signup/page.js"
-    ],
-    "/(protected)/master-data-management/products/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/page.js"
-    ],
-    "/(protected)/user-management/roles/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/roles/page.js"
-    ],
-    "/(protected)/user-management/permissions/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/permissions/page.js"
-    ],
-    "/(protected)/user-management/contact-access-agents/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/contact-access-agents/page.js"
-    ],
-    "/api/user-management/contact-access-agents/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/user-management/contact-access-agents/route.js"
-    ],
-    "/(protected)/sla-management/sla-policies/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/sla-management/sla-policies/page.js"
-    ],
-    "/(protected)/sla-management/sla-policies/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/sla-management/sla-policies/[id]/page.js"
-    ],
-    "/(protected)/sla-management/conversation-sla-tracking/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/sla-management/conversation-sla-tracking/page.js"
-    ],
-    "/(protected)/sla-management/conversation-sla-tracking/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js"
-    ],
-    "/(protected)/resource-management/attachments/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/resource-management/attachments/page.js"
-    ],
-    "/(protected)/master-data-management/products/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/[id]/page.js"
-    ],
-    "/(protected)/master-data-management/products/[id]/edit/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/[id]/edit/page.js"
-    ],
-    "/(protected)/integration-management/integration-logs/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/integration-management/integration-logs/page.js"
-    ],
-    "/(protected)/integration-management/integration-logs/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/integration-management/integration-logs/[id]/page.js"
-    ],
-    "/(protected)/inventory-management/stock/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/inventory-management/stock/page.js"
-    ],
-    "/(protected)/order-management/orders/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/order-management/orders/page.js"
-    ],
-    "/(protected)/order-management/orders/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/order-management/orders/[id]/page.js"
-    ],
-    "/(protected)/procurement-management/packing-lists/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/packing-lists/page.js"
-    ],
-    "/(protected)/procurement-management/packing-lists/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/packing-lists/[id]/page.js"
-    ],
-    "/(protected)/procurement-management/spo-allocations/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/spo-allocations/page.js"
-    ],
-    "/(protected)/procurement-management/grn/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/grn/page.js"
-    ],
-    "/(protected)/procurement-management/grn/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/grn/[id]/page.js"
-    ],
-    "/_not-found/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/_not-found/page.js"
+      "static/chunks/app/(protected)/user-management/users/[id]/logs/page.js"
     ]
   }
 }

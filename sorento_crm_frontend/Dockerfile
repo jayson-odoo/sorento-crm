@@ -4,26 +4,42 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files first for better layer caching
 COPY package*.json ./
 
-# Install dependencies (using npm ci for reproducible builds)
-RUN npm ci
+# Install dependencies with BuildKit cache mount for faster rebuilds
+# Use npm ci with aggressive caching and parallel installs
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline --no-audit --legacy-peer-deps
 
-# Copy application source
-COPY . .
+# Copy Prisma schema for client generation (changes infrequently)
+COPY prisma ./prisma
 
-# Generate Prisma client (required before build)
+# Generate Prisma client (cached unless schema changes)
 RUN npx prisma generate
+
+# Copy all source code (optimize by copying everything except node_modules)
+# Using a single COPY is actually faster than multiple COPYs due to layer optimization
+# The .dockerignore ensures only necessary files are copied
+COPY . .
 
 # Set build-time environment variable for API URL
 # Empty string means use relative paths (nginx will proxy)
 ARG NEXT_PUBLIC_API_URL=
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
-# Build the Next.js application
-# The output: 'standalone' in next.config.mjs creates a minimal production build
-RUN npm run build
+# Set Node.js options for faster builds
+# Increase memory and enable parallel garbage collection
+ENV NODE_OPTIONS="--max-old-space-size=4096 --max-semi-space-size=128"
+
+# Build the Next.js application with BuildKit cache mount
+# Caches .next/cache and node_modules/.cache between builds for faster incremental builds
+# Disable telemetry and set production mode for faster builds
+RUN --mount=type=cache,target=/app/.next/cache,sharing=locked \
+    --mount=type=cache,target=/app/node_modules/.cache,sharing=locked \
+    NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production \
+    npm run build
 
 # Stage 2: Production image with Node.js and Nginx
 FROM node:20-alpine

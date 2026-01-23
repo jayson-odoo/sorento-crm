@@ -13,8 +13,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cirnah-Xuspin-tafry1}
       POSTGRES_DB: ${POSTGRES_DB:-sorento_ai_automation}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-cirnah-Xuspin-tafry1}@72.62.195.20:5432/${POSTGRES_DB:-sorento_ai_automation}
-      DIRECT_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-cirnah-Xuspin-tafry1}@72.62.195.20:5432/${POSTGRES_DB:-sorento_ai_automation}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sorento_crm}:${POSTGRES_PASSWORD:-cirnah-Xuspin-tafry1}@72.62.195.19:5432/${POSTGRES_DB:-sorento_ai_automation}
+      DIRECT_URL: postgresql://${POSTGRES_USER:-sorento_crm}:${POSTGRES_PASSWORD:-cirnah-Xuspin-tafry1}@72.62.195.19:5432/${POSTGRES_DB:-sorento_ai_automation}
       
       # JWT Authentication
       JWT_SECRET: ${JWT_SECRET:-3f1c6d1f5e9b4d8c1a2b3c4d5e6f70819a2b3c4d5e6f70819a2b3c4d5e6f7081}
@@ -60,8 +60,8 @@ services:
     environment:
       # Database - Next.js needs direct DB access for NextAuth with PrismaAdapter
       # Use external database by default, or override with DATABASE_URL env var
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:cirnah-Xuspin-tafry1@72.62.195.20:5432/sorento_ai_automation?schema=public}
-      DIRECT_URL: ${DIRECT_URL:-${DATABASE_URL:-postgresql://postgres:cirnah-Xuspin-tafry1@72.62.195.20:5432/sorento_ai_automation?schema=public}}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:cirnah-Xuspin-tafry1@72.62.195.19:5432/sorento_ai_automation?schema=public}
+      DIRECT_URL: ${DIRECT_URL:-${DATABASE_URL:-postgresql://postgres:cirnah-Xuspin-tafry1@72.62.195.19:5432/sorento_ai_automation?schema=public}}
       # API URL - empty for client-side (goes through nginx proxy), or full URL for server-side
       # Client-side requests will use relative paths that nginx proxies to backend
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}

@@ -10,7 +10,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, Download, Eye, Trash2, Plus } from 'lucide-react';
+import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -21,7 +21,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAttachments, useDeleteAttachment, useDownloadAttachment } from '../hooks/useAttachments';
+import { useAttachments, useDeleteAttachment, useDownloadAttachment, useResubmitAttachmentWebhook } from '../hooks/useAttachments';
 import type { Attachment } from '../types/attachment.types';
 import { formatDate } from '@/lib/helpers';
 import AttachmentUploadDialog from './AttachmentUploadDialog';
@@ -44,6 +44,7 @@ export default function AttachmentBrowser() {
 
   const deleteMutation = useDeleteAttachment();
   const downloadMutation = useDownloadAttachment();
+  const resubmitMutation = useResubmitAttachmentWebhook();
 
   const handleDownload = async (attachment: Attachment) => {
     try {
@@ -66,6 +67,18 @@ export default function AttachmentBrowser() {
   const handleDelete = (attachment: Attachment) => {
     setSelectedAttachment(attachment);
     setDeleteDialogOpen(true);
+  };
+
+  const handleResubmit = async (attachment: Attachment) => {
+    // Prevent multiple simultaneous resubmits for the same attachment
+    if (resubmitMutation.isPending) {
+      return;
+    }
+    try {
+      await resubmitMutation.mutateAsync(attachment.id);
+    } catch (error) {
+      // Error is handled by the mutation hook (toast)
+    }
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -178,6 +191,18 @@ export default function AttachmentBrowser() {
             <Button 
               variant="ghost" 
               size="sm" 
+              title="Resubmit to n8n"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleResubmit(row.original);
+              }}
+              disabled={resubmitMutation.isPending || row.original.is_deleted}
+            >
+              <RefreshCw className={`size-4 ${resubmitMutation.isPending ? 'animate-spin' : ''}`} />
+            </Button>
+            <Button 
+              variant="ghost" 
+              size="sm" 
               title="Delete"
               onClick={(e) => {
                 e.stopPropagation();
@@ -190,11 +215,11 @@ export default function AttachmentBrowser() {
             <ChevronRight className="text-muted-foreground/70 size-3.5" />
           </div>
         ),
-        size: 180,
+        size: 220,
         enableHiding: false,
       },
     ],
-    [],
+    [deleteMutation.isPending, downloadMutation.isPending, resubmitMutation.isPending],
   );
 
   const table = useReactTable({

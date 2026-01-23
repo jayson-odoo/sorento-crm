@@ -293,7 +293,7 @@ export const MENU_SIDEBAR: MenuConfig = [
     icon: ShieldUser,
     children: [
       {
-        title: 'Users',
+        title: 'Administrative Users',
         path: '/user-management/users',
       },
       {
@@ -305,11 +305,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/user-management/permissions',
       },
       {
-        title: 'Access Agents',
+        title: 'AI Agents',
         path: '/user-management/access-agents',
       },
       {
-        title: 'Contact Access Agents',
+        title: 'Internal Users',
         path: '/user-management/contact-access-agents',
       },
       {
@@ -499,6 +499,10 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Attachment Types',
         path: '/resource-management/attachment-types',
+      },
+      {
+        title: 'Smart Linkage',
+        path: '/resource-management/smart-linkage',
       },
     ],
   },
@@ -885,7 +889,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     icon: ShieldUser,
     children: [
       {
-        title: 'Users',
+        title: 'Administrative Users',
         path: '/user-management/users',
       },
       {
@@ -897,11 +901,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/user-management/permissions',
       },
       {
-        title: 'Access Agents',
+        title: 'AI Agents',
         path: '/user-management/access-agents',
       },
       {
-        title: 'Contact Access Agents',
+        title: 'Internal Users',
         path: '/user-management/contact-access-agents',
       },
       {
@@ -1091,6 +1095,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Attachment Types',
         path: '/resource-management/attachment-types',
+      },
+      {
+        title: 'Smart Linkage',
+        path: '/resource-management/smart-linkage',
       },
     ],
   },
@@ -1505,7 +1513,7 @@ export const MENU_MEGA: MenuConfig = [
           {
             children: [
               {
-                title: 'Users',
+                title: 'Administrative Users',
                 path: '/user-management/users',
               },
               {

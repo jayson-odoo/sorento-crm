@@ -5,7 +5,7 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.order_service import OrderService
-from app.schemas.order import OrderCreate, OrderUpdate, OrderResponse
+from app.schemas.order import OrderCreate, OrderUpdate, OrderResponse, BulkImportRequest, BulkImportResponse
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
@@ -103,6 +103,26 @@ async def delete_order(
     try:
         service = OrderService(db)
         result = service.delete_order(order_id)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/bulk-import", response_model=BulkImportResponse, status_code=status.HTTP_200_OK)
+async def bulk_import_orders(
+    import_data: BulkImportRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk import orders from Excel data.
+    
+    Creates new orders or updates existing ones based on ID or order_number.
+    """
+    try:
+        service = OrderService(db)
+        result = service.bulk_import_orders(import_data.orders, current_user["id"])
         return result
     except HTTPException:
         raise

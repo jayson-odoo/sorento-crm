@@ -58,3 +58,55 @@ export async function deleteOrder(id: string): Promise<void> {
     throw new Error(error.message);
   }
 }
+
+/**
+ * Export all orders to Excel (fetches all data by paginating through all pages)
+ */
+export async function exportOrders(params?: { customer_id?: string; order_status_id?: string }): Promise<Order[]> {
+  const allOrders: Order[] = [];
+  let page = 1;
+  const limit = 100; // Backend maximum limit
+  let hasMore = true;
+
+  while (hasMore) {
+    const queryParams = new URLSearchParams({
+      page: String(page),
+      limit: String(limit),
+      ...(params?.customer_id ? { customer_id: params.customer_id } : {}),
+      ...(params?.order_status_id ? { order_status_id: params.order_status_id } : {}),
+    });
+
+    const response = await apiFetch(`/api/v1/order-management/orders?${queryParams.toString()}`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch orders for export');
+    }
+
+    const result = await response.json();
+    const orders = result.data || [];
+    allOrders.push(...orders);
+
+    // Check if there are more pages
+    const total = result.pagination?.total || 0;
+    const currentPageTotal = page * limit;
+    hasMore = currentPageTotal < total;
+    page++;
+  }
+
+  return allOrders;
+}
+
+/**
+ * Bulk import orders from Excel data
+ */
+export async function bulkImportOrders(data: any[]): Promise<{ created: number; updated: number; errors: string[] }> {
+  const response = await apiFetch('/api/v1/order-management/orders/bulk-import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orders: data }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to import orders' }));
+    throw new Error(error.message || 'Failed to import orders');
+  }
+  return response.json();
+}

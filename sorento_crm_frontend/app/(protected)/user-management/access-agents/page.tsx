@@ -17,8 +17,8 @@ import {
 import AccessAgentsList from './components/AccessAgentsList';
 
 export const metadata: Metadata = {
-  title: 'Access Agents',
-  description: 'Manage access agents.',
+  title: 'AI Agents',
+  description: 'Manage AI agents.',
 };
 
 export default async function AccessAgentsPage() {
@@ -27,7 +27,7 @@ export default async function AccessAgentsPage() {
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Access Agents</ToolbarTitle>
+            <ToolbarTitle>AI Agents</ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>

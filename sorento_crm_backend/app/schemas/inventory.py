@@ -153,3 +153,15 @@ class StockDashboardResponse(BaseModel):
     stock_by_category: list
     stock_movement_30_days: list
     low_stock_alerts: list
+
+
+class BulkImportStockRequest(BaseModel):
+    """Request schema for bulk import."""
+    stock: list[dict]  # List of stock dictionaries from Excel
+
+
+class BulkImportStockResponse(BaseModel):
+    """Response schema for bulk import."""
+    created: int = 0
+    updated: int = 0
+    errors: list[str] = []

@@ -24,7 +24,7 @@ interface SLAPolicyTiersTableProps {
 }
 
 export default function SLAPolicyTiersTable({ policyId }: SLAPolicyTiersTableProps) {
-  const { data: tiers, isLoading } = useSLAPolicyTiers(policyId);
+  const { data: tiers, isLoading, error } = useSLAPolicyTiers(policyId);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTier, setEditingTier] = useState<SLAPolicyTier | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -121,6 +121,13 @@ export default function SLAPolicyTiersTable({ policyId }: SLAPolicyTiersTablePro
       <CardContent>
         {isLoading ? (
           <div className="text-center py-8 text-muted-foreground">Loading tiers...</div>
+        ) : error ? (
+          <div className="text-center py-8">
+            <p className="text-destructive">Failed to load tiers</p>
+            <p className="text-sm text-muted-foreground mt-2">
+              {error instanceof Error ? error.message : 'An error occurred'}
+            </p>
+          </div>
         ) : (
           <DataGrid table={table} recordCount={tiers?.length || 0} isLoading={isLoading}>
             <ScrollArea>

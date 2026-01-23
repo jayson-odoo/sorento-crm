@@ -327,3 +327,54 @@ async def delete_attachment(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.post("/{attachment_id}/resubmit", status_code=status.HTTP_200_OK)
+async def resubmit_attachment_webhook(
+    attachment_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Resubmit attachment webhook to n8n without re-uploading the file."""
+    try:
+        # Verify attachment exists
+        attachment_service = AttachmentService(db)
+        attachment = attachment_service.get_attachment(attachment_id)
+        
+        # Find the integration log for this attachment
+        integration_service = IntegrationLogService(db)
+        logs_result = integration_service.list_integration_logs(
+            page=1,
+            limit=1,
+            business_table="attachments",
+            business_id=attachment_id,
+            integration_channel="n8n"
+        )
+        
+        if not logs_result.get("data") or len(logs_result["data"]) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No integration log found for this attachment. The attachment may not have been processed yet."
+            )
+        
+        # Get the most recent log
+        integration_log = logs_result["data"][0]
+        
+        # Resend the webhook
+        success, error_msg = integration_service.send_webhook_for_log(integration_log.id)
+        
+        if success:
+            return {
+                "message": "Webhook resubmitted successfully",
+                "integration_log_id": integration_log.id
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to resubmit webhook: {error_msg or 'Unknown error'}"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resubmitting attachment webhook: {str(e)}", exc_info=True)
+        raise handle_internal_error(str(e))

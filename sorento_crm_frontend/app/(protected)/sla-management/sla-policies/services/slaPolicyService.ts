@@ -58,43 +58,46 @@ export async function deleteSLAPolicy(id: string): Promise<void> {
   }
 }
 
-// SLA Policy Tier methods
+// SLA Policy Tier methods - These use Next.js API routes (not backend)
 export async function getSLAPolicyTiers(policyId: string): Promise<SLAPolicyTier[]> {
-  const response = await apiFetch(`/api/v1/sla-management/sla-policies/${policyId}/tiers`);
-  if (!response.ok) throw new Error('Failed to fetch SLA policy tiers');
+  const response = await apiFetch(`/api/sla-management/sla-policies/${policyId}/tiers`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to fetch SLA policy tiers' }));
+    throw new Error(error.message || 'Failed to fetch SLA policy tiers');
+  }
   return response.json();
 }
 
 export async function createSLAPolicyTier(policyId: string, data: SLAPolicyTierFormData): Promise<SLAPolicyTier> {
-  const response = await apiFetch(`/api/v1/sla-management/sla-policies/${policyId}/tiers`, {
+  const response = await apiFetch(`/api/sla-management/sla-policies/${policyId}/tiers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to create SLA policy tier' }));
-    throw new Error(error.message);
+    throw new Error(error.message || 'Failed to create SLA policy tier');
   }
   return response.json();
 }
 
 export async function updateSLAPolicyTier(policyId: string, tierId: string, data: Partial<SLAPolicyTierFormData>): Promise<SLAPolicyTier> {
-  const response = await apiFetch(`/api/v1/sla-management/sla-policies/${policyId}/tiers/${tierId}`, {
+  const response = await apiFetch(`/api/sla-management/sla-policies/${policyId}/tiers/${tierId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to update SLA policy tier' }));
-    throw new Error(error.message);
+    throw new Error(error.message || 'Failed to update SLA policy tier');
   }
   return response.json();
 }
 
 export async function deleteSLAPolicyTier(policyId: string, tierId: string): Promise<void> {
-  const response = await apiFetch(`/api/v1/sla-management/sla-policies/${policyId}/tiers/${tierId}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/sla-management/sla-policies/${policyId}/tiers/${tierId}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete SLA policy tier' }));
-    throw new Error(error.message);
+    throw new Error(error.message || 'Failed to delete SLA policy tier');
   }
 }

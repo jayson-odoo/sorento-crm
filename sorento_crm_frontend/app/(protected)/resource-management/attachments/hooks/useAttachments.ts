@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getAttachments, uploadAttachment, deleteAttachment, restoreAttachment, downloadAttachment, getAttachmentMetadata, checkDuplicateByHash } from '../services/attachmentService';
+import { getAttachments, uploadAttachment, deleteAttachment, restoreAttachment, downloadAttachment, getAttachmentMetadata, checkDuplicateByHash, resubmitAttachmentWebhook } from '../services/attachmentService';
 import { apiFetch } from '@/lib/api';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 
@@ -71,5 +71,16 @@ export function useDownloadAttachment() {
   return useMutation({
     mutationFn: (id: string) => downloadAttachment(id),
     onError: (error: Error) => toast.error(error.message || 'Failed to download attachment'),
+  });
+}
+
+export function useResubmitAttachmentWebhook() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => resubmitAttachmentWebhook(id),
+    onSuccess: () => {
+      toast.success('Webhook resubmitted successfully');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to resubmit webhook'),
   });
 }

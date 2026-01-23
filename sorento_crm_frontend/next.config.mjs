@@ -13,6 +13,18 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: false, // Keep this false to catch real TS errors
   },
+  // Build optimizations for faster Docker builds
+  swcMinify: true, // Use SWC minifier (faster than Terser)
+  compiler: {
+    removeConsole: process.env.NODE_ENV === 'production' ? {
+      exclude: ['error', 'warn'], // Keep errors and warnings in production
+    } : false,
+  },
+  // Optimize production builds
+  productionBrowserSourceMaps: false, // Disable source maps in production for faster builds
+  // Reduce build output size
+  poweredByHeader: false,
+  reactStrictMode: true,
   // Proxy API requests to FastAPI backend in development
   async rewrites() {
     // Only apply rewrites in development mode

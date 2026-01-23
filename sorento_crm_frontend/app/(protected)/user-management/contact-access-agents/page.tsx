@@ -17,8 +17,8 @@ import {
 import ContactAccessAgentsList from './components/ContactAccessAgentsList';
 
 export const metadata: Metadata = {
-  title: 'Contact Access Agents',
-  description: 'View contact access agents.',
+  title: 'Internal Users',
+  description: 'View internal users.',
 };
 
 export default async function ContactAccessAgentsPage() {
@@ -27,7 +27,7 @@ export default async function ContactAccessAgentsPage() {
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Contact Access Agents</ToolbarTitle>
+            <ToolbarTitle>Internal Users</ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>

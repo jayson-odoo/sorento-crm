@@ -97,3 +97,14 @@ export async function checkDuplicateByHash(hash: string): Promise<Attachment | n
   if (!response.ok) return null;
   return response.json();
 }
+
+export async function resubmitAttachmentWebhook(id: string): Promise<{ message: string; integration_log_id: string }> {
+  const response = await apiFetch(`/api/v1/resource-management/attachments/${id}/resubmit`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to resubmit webhook' }));
+    throw new Error(error.detail || error.message || 'Failed to resubmit webhook');
+  }
+  return response.json();
+}

@@ -17,8 +17,8 @@ import {
 import UserList from './components/user-list';
 
 export const metadata: Metadata = {
-  title: 'Users',
-  description: 'Manage users.',
+  title: 'Administrative Users',
+  description: 'Manage administrative users.',
 };
 
 export default async function Page() {
@@ -27,7 +27,7 @@ export default async function Page() {
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Users</ToolbarTitle>
+            <ToolbarTitle>Administrative Users</ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
