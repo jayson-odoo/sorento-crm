@@ -162,6 +162,14 @@ async def create_attachment(
         try:
             n8n_webhook_url = os.getenv("N8N_WEBHOOK_URL", "").strip()
             if n8n_webhook_url:
+                # Validate and fix URL - ensure it has http:// or https:// protocol
+                if not n8n_webhook_url.startswith(('http://', 'https://')):
+                    if n8n_webhook_url.startswith('//'):
+                        n8n_webhook_url = 'https:' + n8n_webhook_url
+                    elif '://' not in n8n_webhook_url:
+                        # Auto-add https:// if no protocol specified
+                        n8n_webhook_url = 'https://' + n8n_webhook_url
+                        logger.warning(f"N8N_WEBHOOK_URL missing protocol, auto-adding https://. Fixed URL: {n8n_webhook_url}")
                 integration_service = IntegrationLogService(db)
                 
                 # Create integration log with pending status first

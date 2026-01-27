@@ -40,10 +40,16 @@ export default function ContactAccessAgentsList() {
   const columns = useMemo<ColumnDef<ContactAccessAgent>[]>(
     () => [
       {
-        accessorKey: 'respond_contact_id',
-        header: ({ column }) => <DataGridColumnHeader title="Respond Contact ID" column={column} />,
+        accessorKey: 'respond_contact_phone',
+        header: ({ column }) => <DataGridColumnHeader title="Respond Contact Phone" column={column} />,
         size: 200,
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+      },
+      {
+        accessorKey: 'respond_contact_name',
+        header: ({ column }) => <DataGridColumnHeader title="Respond Contact Name" column={column} />,
+        size: 220,
+        meta: { skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
         accessorKey: 'agent_code',

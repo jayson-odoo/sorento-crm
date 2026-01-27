@@ -60,6 +60,21 @@ class StorageZoneResponse(StorageZoneBase):
         from_attributes = True
 
 
+class WarehouseSimple(BaseModel):
+    id: str
+    warehouse_name: str
+    
+    class Config:
+        from_attributes = True
+
+class StorageZoneTreeItem(StorageZoneResponse):
+    warehouse: Optional[WarehouseSimple] = None
+    children: Optional[list["StorageZoneTreeItem"]] = None
+
+    class Config:
+        from_attributes = True
+
+
 class StockBase(BaseModel):
     product_id: str
     warehouse_id: str
@@ -84,19 +99,29 @@ class StockUpdate(BaseModel):
     reorder_point: Optional[int] = None
 
 
+class StockLedgerResponse(BaseModel):
+    id: str
+    product_id: str
+    warehouse_id: str
+    transaction_type: str
+    quantity_change: int
+    previous_quantity: int
+    new_quantity: int
+    reference_type: Optional[str] = None
+    reference_id: Optional[str] = None
+    notes: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class ProductSimple(BaseModel):
     id: str
     product_code: str
     product_name: str
     reorder_level: Optional[int] = None
-    
-    class Config:
-        from_attributes = True
-
-
-class WarehouseSimple(BaseModel):
-    id: str
-    warehouse_name: str
     
     class Config:
         from_attributes = True

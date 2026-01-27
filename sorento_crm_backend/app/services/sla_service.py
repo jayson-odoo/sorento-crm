@@ -2,12 +2,13 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from typing import Optional
-from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking
+from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog
+from app.models.access import RespondContact
 from app.schemas.sla import (
     SLAPolicyCreate, SLAPolicyUpdate, SLAPolicyTierCreate, SLAPolicyTierUpdate,
-    ConversationSLATrackingCreate, ConversationSLATrackingUpdate
+    ConversationSLATrackingCreate, ConversationSLATrackingUpdate, ConversationSLAEventLogCreate
 )
-from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
 
 
 class SLAPolicyService:
@@ -173,6 +174,13 @@ class SLAPolicyTierService:
         self.db.commit()
         self.db.refresh(tier)
         return tier
+    
+    def delete_tier(self, tier_id: str):
+        """Delete a tier."""
+        tier = self.get_tier(tier_id)
+        self.db.delete(tier)
+        self.db.commit()
+        return {"message": "SLA policy tier deleted successfully"}
 
 
 class ConversationSLATrackingService:
@@ -184,7 +192,14 @@ class ConversationSLATrackingService:
     def list_tracking(self, page: int = 1, limit: int = 50, policy_id: Optional[str] = None):
         """List SLA tracking records."""
         from sqlalchemy.orm import joinedload
-        q = self.db.query(ConversationSLATracking).options(joinedload(ConversationSLATracking.policy))
+        from app.models.sla import ConversationSLAEventLog
+        # Eagerly load policy, contact, assigned_user, and event_logs with their assigned_user
+        q = self.db.query(ConversationSLATracking).options(
+            joinedload(ConversationSLATracking.policy),
+            joinedload(ConversationSLATracking.contact),
+            joinedload(ConversationSLATracking.assigned_user),
+            joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user)
+        )
         
         if policy_id:
             q = q.filter(ConversationSLATracking.policy_id == policy_id)
@@ -193,8 +208,102 @@ class ConversationSLATrackingService:
         offset = (page - 1) * limit
         tracking = q.offset(offset).limit(limit).all()
         
+        # Convert to dict for proper validation with relationships
+        result_data = []
+        for track in tracking:
+            # Get contact info from relationship
+            contact_phone = track.contact.phone_number if track.contact else None
+            contact_name = track.contact.name if track.contact else None
+            
+            # Get user info from relationship
+            assigned_user_name = track.assigned_user.name if track.assigned_user else None
+            assigned_user_email = track.assigned_user.email if track.assigned_user else None
+            
+            track_dict = {
+                "id": str(track.id),
+                "policy_id": str(track.policy_id),
+                "current_tier": track.current_tier,
+                "assigned_to": track.assigned_to,  # Keep for backward compatibility
+                "assigned_to_id": track.assigned_to_id,
+                "initiated_at": track.initiated_at,
+                "current_tier_started_at": track.current_tier_started_at,
+                "due_at": track.due_at,
+                "escalated_at": track.escalated_at,
+                "escalation_reason": track.escalation_reason,
+                "is_responded": track.is_responded,
+                "responded_at": track.responded_at,
+                "response_time": track.response_time,
+                "is_resolved": track.is_resolved,
+                "resolved_at": track.resolved_at,
+                "resolved_by": track.resolved_by,
+                "respond_contact_id": track.respond_contact_id,
+                "created_at": track.created_at,
+                "updated_at": track.updated_at,
+                "synced_to_excel": track.synced_to_excel,
+                "last_synced_to_excel": track.last_synced_to_excel,
+                "resolution_duration": track.resolution_duration,
+                "policy": {
+                    "id": str(track.policy.id),
+                    "code": track.policy.code,
+                    "name": track.policy.name
+                } if track.policy else None,
+                "policy_code": track.policy.code if track.policy else None,
+                "policy_name": track.policy.name if track.policy else None,
+                "contact": {
+                    "id": track.contact.id,
+                    "phone_number": track.contact.phone_number,
+                    "name": track.contact.name
+                } if track.contact else None,
+                "assigned_user": {
+                    "id": track.assigned_user.id,
+                    "email": track.assigned_user.email,
+                    "name": track.assigned_user.name
+                } if track.assigned_user else None,
+                "contact_phone": contact_phone,
+                "contact_name": contact_name,
+                "assigned_user_name": assigned_user_name,
+                "assigned_user_email": assigned_user_email,
+                "event_logs": []  # Initialize as empty
+            }
+            
+            # Try to load event_logs if relationship exists
+            try:
+                if hasattr(track, 'event_logs'):
+                    event_logs_list = list(track.event_logs) if track.event_logs else []
+                    track_dict["event_logs"] = [
+                        {
+                            "id": str(log.id),
+                            "sla_tracking_id": str(log.sla_tracking_id),
+                            "event_type": log.event_type,
+                            "from_tier": log.from_tier,
+                            "to_tier": log.to_tier,
+                            "event_at": log.event_at,
+                            "reason": log.reason,
+                            "assigned_to": log.assigned_to,  # Keep for backward compatibility
+                            "assigned_to_id": log.assigned_to_id,
+                            "due_at": log.due_at,
+                            "response_time": log.response_time,
+                            "resolution_time": log.resolution_time,
+                            "reminder_count": log.reminder_count,
+                            "last_reminder_at": log.last_reminder_at,
+                            "created_at": log.created_at,
+                            "assigned_user": {
+                                "id": log.assigned_user.id,
+                                "email": log.assigned_user.email,
+                                "name": log.assigned_user.name
+                            } if log.assigned_user else None,
+                            "assigned_user_name": log.assigned_user.name if log.assigned_user else None,
+                            "assigned_user_email": log.assigned_user.email if log.assigned_user else None,
+                        }
+                        for log in event_logs_list
+                    ]
+            except Exception:
+                track_dict["event_logs"] = []
+            
+            result_data.append(track_dict)
+        
         return {
-            "data": tracking,
+            "data": result_data,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
@@ -202,32 +311,66 @@ class ConversationSLATrackingService:
     def get_tracking(self, tracking_id: str):
         """Get a tracking record by ID."""
         from sqlalchemy.orm import joinedload
-        from app.models.sla import ConversationSLAEscalationLog
+        from app.models.sla import ConversationSLAEventLog
+        # Load tracking with all relationships, including user relationship for event logs
         tracking = self.db.query(ConversationSLATracking).options(
             joinedload(ConversationSLATracking.policy),
-            joinedload(ConversationSLATracking.escalation_logs)
+            joinedload(ConversationSLATracking.contact),
+            joinedload(ConversationSLATracking.assigned_user),
+            joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user)
         ).filter(
             ConversationSLATracking.id == tracking_id
         ).first()
         if not tracking:
             raise handle_not_found("SLA Tracking", tracking_id)
         
-        # Sort escalation logs by escalated_at chronologically
-        if tracking.escalation_logs:
-            tracking.escalation_logs.sort(key=lambda x: x.escalated_at)
+        # Sort event logs by event_at chronologically
+        if tracking.event_logs:
+            tracking.event_logs.sort(key=lambda x: x.event_at)
         
         return tracking
     
     def create_tracking(self, tracking_data: ConversationSLATrackingCreate):
         """Create a new tracking record."""
-        # Check unique constraint
-        existing = self.db.query(ConversationSLATracking).filter(
-            ConversationSLATracking.respond_contact_id == tracking_data.respond_contact_id
-        ).first()
-        if existing:
-            raise handle_conflict("Tracking already exists for this contact.")
-        
-        tracking = ConversationSLATracking(**tracking_data.model_dump())
+        tracking_dict = tracking_data.model_dump()
+        contact_phone_number = tracking_dict.pop("contact_phone_number", None)
+
+        if not tracking_dict.get("respond_contact_id") and contact_phone_number:
+            normalized_phone = contact_phone_number.strip()
+            contact = self.db.query(RespondContact).filter(
+                RespondContact.phone_number == normalized_phone
+            ).first()
+            if not contact:
+                raise handle_validation_error(
+                    f"Respond contact not found for phone number: {normalized_phone}"
+                )
+            tracking_dict["respond_contact_id"] = contact.id
+
+        if not tracking_dict.get("assigned_to_id") and tracking_dict.get("assigned_to"):
+            from app.models.user import User
+
+            assigned_to_value = str(tracking_dict["assigned_to"]).strip()
+            user = self.db.query(User).filter(
+                (User.respond_user_id == assigned_to_value) |
+                (User.id == assigned_to_value) |
+                (User.email == assigned_to_value)
+            ).first()
+            if not user:
+                raise handle_validation_error(
+                    f"User not found for respond_user_id: {assigned_to_value}"
+                )
+            tracking_dict["assigned_to_id"] = user.id
+
+        # Check unique constraint on respond_contact_id
+        if tracking_dict.get("respond_contact_id"):
+            existing = self.db.query(ConversationSLATracking).filter(
+                ConversationSLATracking.respond_contact_id == tracking_dict["respond_contact_id"]
+            ).first()
+            if existing:
+                raise handle_conflict("Tracking already exists for this contact.")
+
+        # If assigned_to_id is provided, use it; otherwise keep assigned_to for backward compatibility
+        tracking = ConversationSLATracking(**tracking_dict)
         self.db.add(tracking)
         self.db.commit()
         self.db.refresh(tracking)
@@ -238,12 +381,90 @@ class ConversationSLATrackingService:
         tracking = self.get_tracking(tracking_id)
         
         update_data = tracking_data.model_dump(exclude_unset=True)
+        if "assigned_to_id" not in update_data and update_data.get("assigned_to"):
+            from app.models.user import User
+
+            assigned_to_value = str(update_data["assigned_to"]).strip()
+            user = self.db.query(User).filter(
+                (User.respond_user_id == assigned_to_value) |
+                (User.id == assigned_to_value) |
+                (User.email == assigned_to_value)
+            ).first()
+            if not user:
+                raise handle_validation_error(
+                    f"User not found for respond_user_id: {assigned_to_value}"
+                )
+            update_data["assigned_to_id"] = user.id
         for key, value in update_data.items():
             setattr(tracking, key, value)
         
         self.db.commit()
         self.db.refresh(tracking)
         return tracking
+
+    def create_event_log(self, event_data: ConversationSLAEventLogCreate):
+        """Create an SLA event log entry."""
+        from app.models.user import User
+        
+        log_dict = event_data.model_dump(exclude_unset=True)
+        
+        # If assigned_to_id is not provided but assigned_to is, try to find the user
+        if not log_dict.get("assigned_to_id") and log_dict.get("assigned_to"):
+            assigned_to_value = log_dict["assigned_to"]
+            # Try to find user by ID, respond_user_id, or email
+            user = self.db.query(User).filter(
+                (User.id == assigned_to_value) |
+                (User.respond_user_id == assigned_to_value) |
+                (User.email == assigned_to_value)
+            ).first()
+            if user:
+                log_dict["assigned_to_id"] = user.id
+        
+        if not log_dict.get("event_at"):
+            log_dict["event_at"] = func.now()
+        
+        log = ConversationSLAEventLog(**log_dict)
+        self.db.add(log)
+        self.db.commit()
+        self.db.refresh(log)
+        return log
+    
+    def list_event_logs(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        tracking_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+        assigned_to: Optional[str] = None
+    ):
+        """List SLA event logs with filtering."""
+        from sqlalchemy.orm import joinedload
+        from app.schemas.common import ListResponse
+        from app.schemas.sla import ConversationSLAEventLogResponse
+        
+        q = self.db.query(ConversationSLAEventLog).options(
+            joinedload(ConversationSLAEventLog.assigned_user)
+        )
+        
+        if tracking_id:
+            q = q.filter(ConversationSLAEventLog.sla_tracking_id == tracking_id)
+        if event_type:
+            q = q.filter(ConversationSLAEventLog.event_type == event_type)
+        if assigned_to:
+            q = q.filter(ConversationSLAEventLog.assigned_to == assigned_to)
+        
+        total = q.count()
+        
+        logs = q.order_by(ConversationSLAEventLog.event_at.desc()).offset((page - 1) * limit).limit(limit).all()
+        
+        return ListResponse(
+            data=[ConversationSLAEventLogResponse.model_validate(log) for log in logs],
+            pagination={
+                "total": total,
+                "page": page,
+                "limit": limit
+            }
+        )
     
     def get_dashboard_metrics(self):
         """Get dashboard metrics for SLA tracking."""

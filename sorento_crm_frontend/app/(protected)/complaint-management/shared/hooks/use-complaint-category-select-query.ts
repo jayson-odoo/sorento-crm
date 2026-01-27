@@ -14,7 +14,7 @@ export function useComplaintCategorySelectQuery() {
     queryKey: ['complaint-categories-select'],
     queryFn: async () => {
       const response = await apiFetch(
-        '/api/v1/complaint-management/complaint-categories',
+        '/api/v1/complaints-management/complaint-categories',
       );
       if (!response.ok) throw new Error('Failed to fetch complaint categories');
       const data = await response.json();

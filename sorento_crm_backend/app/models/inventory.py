@@ -96,6 +96,33 @@ class Stock(Base):
     )
 
 
+class StockLedger(Base):
+    __tablename__ = "stock_ledger"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="CASCADE"), nullable=False)
+    transaction_type = Column(String(50), nullable=False)
+    quantity_change = Column(Integer, nullable=False)
+    previous_quantity = Column(Integer, nullable=False)
+    new_quantity = Column(Integer, nullable=False)
+    reference_type = Column(String(100), nullable=True)
+    reference_id = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    product = relationship("Product")
+    warehouse = relationship("Warehouse")
+
+    __table_args__ = (
+        Index("ix_stock_ledger_product_id", "product_id"),
+        Index("ix_stock_ledger_warehouse_id", "warehouse_id"),
+        Index("ix_stock_ledger_transaction_type", "transaction_type"),
+        Index("ix_stock_ledger_created_at", "created_at"),
+    )
+
+
 class StockBatch(Base):
     __tablename__ = "stock_batches"
     

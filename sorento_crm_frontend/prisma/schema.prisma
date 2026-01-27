@@ -5,7 +5,6 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 // User Module
@@ -32,15 +31,22 @@ model User {
   avatar          String?
   invitedByUserId String?    @map("invited_by_user_id")
   isProtected     Boolean    @default(false) @map("is_protected")
+  respondUserId   String?    @map("respond_user_id")
+  respondSynced   String     @default("pending") @map("respond_synced")
+  superiorId      String?    @map("superior_id")
 
   role      UserRole    @relation(fields: [roleId], references: [id])
   systemLog SystemLog[]
   accounts  Account[]
   Session   Session[]
+  superior  User?       @relation("UserSuperior", fields: [superiorId], references: [id])
+  subordinates User[]   @relation("UserSuperior")
+  agentAccesses UserAgentAccess[]
 
   @@index([invitedByUserId], map: "users_invited_by_user_id_idx")
   @@index([roleId], map: "users_role_id_idx")
   @@index([status], map: "users_status_idx")
+  @@index([respondSynced], map: "users_respond_synced_idx")
   @@map("users")
 }
 
@@ -489,11 +495,11 @@ model PromotionProduct {
 
 model CampaignType {
   id          String   @id @default(uuid())
-  typeCode    String   @unique @map("type_code") @db.VarChar(50)
+  typeCode    String   @unique @default(uuid()) @map("type_code") @db.VarChar(50)
   typeName    String   @map("type_name") @db.VarChar(150)
   description String?  @db.Text
   createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 
   campaigns MarketingCampaign[]
 
@@ -745,15 +751,32 @@ model AccessAgent {
   picRespondUserId  String?   @map("pic_respond_user_id") @db.Text
 
   contactAccesses ContactAgentAccess[]
+  userAccesses    UserAgentAccess[]
 
   @@index([isActive])
   @@index([code])
   @@map("access_agents")
 }
 
+model UserAgentAccess {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  agentId   String    @map("agent_id")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent AccessAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, agentId])
+  @@index([userId])
+  @@index([agentId])
+  @@map("user_agent_access")
+}
+
 model ContactAgentAccess {
   id                String       @id @default(uuid())
-  respondContactId  String       @map("respond_contact_id") @db.Text
+  respondContactPhone  String       @map("respond_contact_phone") @db.Text
+  respondContactName   String?      @map("respond_contact_name") @db.Text
   agentId           String       @map("agent_id")
   isAllowed         Boolean      @default(true) @map("is_allowed")
   validFrom         DateTime?    @map("valid_from")
@@ -766,9 +789,9 @@ model ContactAgentAccess {
 
   agent AccessAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
-  @@unique([respondContactId, agentId])
+  @@unique([respondContactPhone, agentId])
   @@index([agentId])
-  @@index([respondContactId])
+  @@index([respondContactPhone])
   @@map("contact_agent_access")
 }
 
@@ -819,35 +842,42 @@ model ConversationSLATracking {
   dueAt               DateTime  @map("due_at")
   escalatedAt         DateTime? @map("escalated_at")
   escalationReason    String?   @map("escalation_reason") @db.Text
+  isResponded         Boolean   @default(false) @map("is_responded")
+  respondedAt         DateTime? @map("responded_at")
+  responseTime        Decimal?  @map("response_time") @db.Decimal(10, 2)
   isResolved          Boolean   @default(false) @map("is_resolved")
   resolvedAt          DateTime? @map("resolved_at")
   resolvedBy          String?   @map("resolved_by") @db.Text
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
-  respondContactId    String    @map("respond_contact_id") @db.Text
+  respondContactPhone String    @map("respond_contact_phone") @db.Text
+  respondContactName  String?   @map("respond_contact_name") @db.Text
   syncedToExcel       Boolean   @default(false) @map("synced_to_excel")
   lastSyncedToExcel   DateTime? @map("last_synced_to_excel")
   resolutionDuration  Decimal?  @map("resolution_duration") @db.Decimal(10, 2)
 
   policy        SLAPolicy                    @relation(fields: [policyId], references: [id])
-  escalationLogs ConversationSLAEscalationLog[]
+  eventLogs ConversationSLAEventLog[]
 
-  @@unique([respondContactId])
+  @@unique([respondContactPhone])
   @@index([policyId])
   @@index([isResolved])
   @@index([assignedTo])
   @@map("conversation_sla_tracking")
 }
 
-model ConversationSLAEscalationLog {
+model ConversationSLAEventLog {
   id            String    @id @default(uuid())
   slaTrackingId String    @map("sla_tracking_id")
-  fromTier      Int       @map("from_tier")
-  toTier        Int       @map("to_tier")
-  escalatedAt   DateTime  @default(now()) @map("escalated_at")
-  reason        String    @map("reason") @db.Text
+  eventType     String    @map("event_type") @db.Text
+  fromTier      Int?      @map("from_tier")
+  toTier        Int?      @map("to_tier")
+  eventAt       DateTime  @default(now()) @map("event_at")
+  reason        String?   @map("reason") @db.Text
   assignedTo    String?   @map("assigned_to") @db.Text
-  dueAt         DateTime  @map("due_at")
+  dueAt         DateTime? @map("due_at")
+  responseTime  Decimal?  @map("response_time") @db.Decimal(10, 2)
+  resolutionTime Decimal? @map("resolution_time") @db.Decimal(10, 2)
   reminderCount Int       @default(0) @map("reminder_count")
   lastReminderAt DateTime? @map("last_reminder_at")
   createdAt     DateTime  @default(now()) @map("created_at")
@@ -855,8 +885,9 @@ model ConversationSLAEscalationLog {
   tracking ConversationSLATracking @relation(fields: [slaTrackingId], references: [id], onDelete: Cascade)
 
   @@index([slaTrackingId])
-  @@index([escalatedAt])
-  @@map("conversation_sla_escalation_log")
+  @@index([eventAt])
+  @@index([eventType])
+  @@map("conversation_sla_event_log")
 }
 
 // ============================================

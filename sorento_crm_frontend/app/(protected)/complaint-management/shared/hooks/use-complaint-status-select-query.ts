@@ -14,7 +14,7 @@ export function useComplaintStatusSelectQuery() {
     queryKey: ['complaint-statuses-select'],
     queryFn: async () => {
       const response = await apiFetch(
-        '/api/v1/complaint-management/complaint-statuses',
+        '/api/v1/complaints-management/complaint-statuses',
       );
       if (!response.ok) throw new Error('Failed to fetch complaint statuses');
       const data = await response.json();

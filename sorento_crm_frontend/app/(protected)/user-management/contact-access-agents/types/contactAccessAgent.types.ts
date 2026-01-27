@@ -1,6 +1,7 @@
 export interface ContactAccessAgent {
   id: string;
-  respond_contact_id: string;
+  respond_contact_phone: string;
+  respond_contact_name?: string | null;
   agent_id: string;
   agent_code?: string;
   agent_name?: string;

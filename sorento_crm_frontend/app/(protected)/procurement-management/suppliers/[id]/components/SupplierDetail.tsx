@@ -1,15 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Edit, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useSupplier } from '../../hooks/useSuppliers';
+import { useSupplier, useSuppliers } from '../../hooks/useSuppliers';
 import { formatDate } from '@/lib/helpers';
 import SupplierDeleteDialog from '../../components/supplier-delete-dialog';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface SupplierDetailProps {
   supplierId: string;
@@ -18,6 +19,21 @@ interface SupplierDetailProps {
 export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
   const router = useRouter();
   const { data: supplier, isLoading } = useSupplier(supplierId);
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+      status: undefined,
+      country: undefined,
+      city: undefined,
+      payment_terms_days: undefined,
+    }),
+    [],
+  );
+  const { data: navigationData } = useSuppliers(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   if (isLoading) {
@@ -56,6 +72,11 @@ export default function SupplierDetail({ supplierId }: SupplierDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
+          <RecordNavigation
+            currentId={supplierId}
+            items={navigationItems}
+            basePath="/procurement-management/suppliers"
+          />
           <Button variant="outline" onClick={() => router.push(`/procurement-management/suppliers/${supplierId}/edit`)}>
             <Edit className="size-4" />
             Edit

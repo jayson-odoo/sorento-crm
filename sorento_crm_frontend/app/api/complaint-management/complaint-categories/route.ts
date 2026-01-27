@@ -1,43 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { prisma } from '@/lib/prisma';
-import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
+import { NextRequest } from 'next/server';
+import { proxyToFastAPI } from '@/lib/api-proxy';
 
 export async function GET(req: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions);
-
-    if (!session) {
-      return NextResponse.json(
-        { message: 'Unauthorized request' },
-        { status: 401 },
-      );
-    }
-
-    const categories = await (prisma as any).complaintCategory.findMany({
-      where: {
-        isActive: true,
-      },
-      orderBy: {
-        categoryName: 'asc',
-      },
-    });
-
-    // Transform to snake_case for frontend
-    const transformedCategories = categories.map((category: any) => ({
-      id: category.id,
-      category_code: category.categoryCode,
-      category_name: category.categoryName,
-      description: category.description,
-      severity: category.severity,
-    }));
-
-    return NextResponse.json({ data: transformedCategories });
-  } catch (error) {
-    console.error('Error fetching complaint categories:', error);
-    return NextResponse.json(
-      { message: 'Oops! Something went wrong. Please try again in a moment.' },
-      { status: 500 },
-    );
-  }
+  // Note: If FastAPI doesn't have this endpoint, it will return 404
+  // Should be at /api/v1/complaints-management/complaint-categories
+  return proxyToFastAPI(req, '/api/v1/complaints-management/complaint-categories');
 }

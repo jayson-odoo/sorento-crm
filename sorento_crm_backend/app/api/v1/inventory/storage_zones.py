@@ -5,7 +5,7 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.inventory_service import StorageZoneService
-from app.schemas.inventory import StorageZoneCreate, StorageZoneUpdate, StorageZoneResponse
+from app.schemas.inventory import StorageZoneCreate, StorageZoneUpdate, StorageZoneResponse, StorageZoneTreeItem
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
@@ -25,6 +25,21 @@ async def get_storage_zones(
         service = StorageZoneService(db)
         result = service.list_zones(warehouse_id=warehouse_id, page=page, limit=limit)
         return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/tree", response_model=list[StorageZoneTreeItem])
+async def get_storage_zones_tree(
+    warehouse_id: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get storage zones in tree format."""
+    try:
+        service = StorageZoneService(db)
+        zones = service.list_zones_tree(warehouse_id=warehouse_id)
+        return zones
     except Exception as e:
         raise handle_internal_error(str(e))
 

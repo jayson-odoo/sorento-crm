@@ -94,3 +94,20 @@ async def delete_permission(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_permissions(
+    permission_ids: list[str],
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk delete permissions."""
+    try:
+        service = UserPermissionService(db)
+        result = service.bulk_delete_permissions(permission_ids)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))

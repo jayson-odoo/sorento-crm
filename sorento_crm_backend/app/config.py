@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     # Environment
     environment: str = "development"
     debug: bool = False
+
+    # Respond.io
+    respond_api_key: str | None = None
+    respond_base_url: str = "https://api.respond.io"
+    respond_space_id: str | None = None
+    
+    # External API Access
+    external_api_key: str | None = None  # API key for external parties to access endpoints
     
     model_config = ConfigDict(
         env_file=".env",

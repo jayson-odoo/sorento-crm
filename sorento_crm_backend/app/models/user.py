@@ -33,14 +33,20 @@ class User(Base):
     avatar = Column(String, nullable=True)
     invited_by_user_id = Column(String, nullable=True)
     is_protected = Column(Boolean, default=False, nullable=False)
+    respond_user_id = Column(String, nullable=True)
+    respond_synced = Column(String, default="pending", nullable=False)
+    superior_id = Column(String, ForeignKey("users.id"), nullable=True)
     
     role = relationship("UserRole", back_populates="users")
     system_logs = relationship("SystemLog", back_populates="user")
+    superior = relationship("User", remote_side=[id], backref="subordinates")
+    agent_accesses = relationship("UserAgentAccess", back_populates="user")
     
     __table_args__ = (
         Index("users_invited_by_user_id_idx", "invited_by_user_id"),
         Index("users_role_id_idx", "role_id"),
         Index("users_status_idx", "status"),
+        Index("users_respond_synced_idx", "respond_synced"),
     )
 
 

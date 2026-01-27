@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, date
 from decimal import Decimal
+from app.schemas.resources import AttachmentResponse
 
 
 class ComplaintAttachmentBase(BaseModel):
@@ -20,6 +21,24 @@ class ComplaintAttachmentResponse(ComplaintAttachmentBase):
     id: str
     uploaded_at: datetime
     
+    class Config:
+        from_attributes = True
+
+
+class ComplaintManualAttachmentBase(BaseModel):
+    complaint_id: str
+    attachment_id: str
+
+
+class ComplaintManualAttachmentCreate(ComplaintManualAttachmentBase):
+    pass
+
+
+class ComplaintManualAttachmentResponse(ComplaintManualAttachmentBase):
+    id: str
+    created_at: datetime
+    attachment: Optional[AttachmentResponse] = None
+
     class Config:
         from_attributes = True
 

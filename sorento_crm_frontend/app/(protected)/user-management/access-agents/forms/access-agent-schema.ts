@@ -20,7 +20,8 @@ export const AccessAgentSchema = z.object({
 export type AccessAgentSchemaType = z.infer<typeof AccessAgentSchema>;
 
 export const ContactAgentAccessSchema = z.object({
-  respond_contact_id: z.string().min(1, { message: 'Respond contact ID is required.' }),
+  respond_contact_phone: z.string().min(1, { message: 'Respond contact phone is required.' }),
+  respond_contact_name: z.string().optional().nullable(),
   agent_id: z.string().min(1, { message: 'Agent ID is required.' }),
   is_allowed: z.boolean(),
   valid_from: z.date().optional().nullable(),

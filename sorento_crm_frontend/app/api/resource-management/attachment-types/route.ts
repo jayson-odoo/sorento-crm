@@ -1,79 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { prisma } from '@/lib/prisma';
-import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
+import { NextRequest } from 'next/server';
+import { proxyToFastAPI } from '@/lib/api-proxy';
 
 export async function GET(req: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions);
-
-    if (!session) {
-      return NextResponse.json(
-        { message: 'Unauthorized request' },
-        { status: 401 },
-      );
-    }
-
-    const { searchParams } = new URL(req.url);
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const limit = parseInt(searchParams.get('limit') || '50', 10);
-
-    const totalCount = await prisma.attachmentType.count();
-
-    const attachmentTypes = await prisma.attachmentType.findMany({
-      skip: (page - 1) * limit,
-      take: limit,
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-
-    return NextResponse.json({
-      data: attachmentTypes,
-      pagination: {
-        total: totalCount,
-        page,
-        limit,
-      },
-      empty: totalCount === 0,
-    });
-  } catch (error) {
-    console.error('Error fetching attachment types:', error);
-    return NextResponse.json(
-      { message: 'Oops! Something went wrong. Please try again in a moment.' },
-      { status: 500 },
-    );
-  }
+  return proxyToFastAPI(req, '/api/v1/resource-management/attachment-types');
 }
 
 export async function POST(request: NextRequest) {
-  try {
-    const session = await getServerSession(authOptions);
-
-    if (!session) {
-      return NextResponse.json(
-        { message: 'Unauthorized request' },
-        { status: 401 },
-      );
-    }
-
-    const body = await request.json();
-
-    const attachmentType = await prisma.attachmentType.create({
-      data: {
-        typeName: body.type_name,
-        description: body.description || null,
-        allowedExtensions: body.allowed_extensions,
-        maxFileSizeMb: body.max_file_size_mb || 10,
-      },
-    });
-
-    return NextResponse.json(attachmentType, { status: 201 });
-  } catch (error) {
-    console.error('Error creating attachment type:', error);
-    return NextResponse.json(
-      { message: 'Oops! Something went wrong. Please try again in a moment.' },
-      { status: 500 },
-    );
-  }
+  const body = await request.json();
+  return proxyToFastAPI(request, '/api/v1/resource-management/attachment-types', {
+    method: 'POST',
+    body,
+  });
 }

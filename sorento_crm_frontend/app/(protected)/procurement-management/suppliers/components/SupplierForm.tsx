@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -18,9 +18,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCreateSupplier, useUpdateSupplier, useSupplier } from '../hooks/useSuppliers';
+import { useCreateSupplier, useUpdateSupplier, useSupplier, useSuppliers } from '../hooks/useSuppliers';
 import { SupplierSchema, type SupplierSchemaType } from '../forms/supplier-schema';
 import type { SupplierFormData } from '../types/supplier.types';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface SupplierFormProps {
   supplierId?: string;
@@ -33,6 +34,21 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
   const { data: supplier, isLoading: isLoadingSupplier } = useSupplier(supplierId || null);
   const createMutation = useCreateSupplier();
   const updateMutation = useUpdateSupplier();
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+      status: undefined,
+      country: undefined,
+      city: undefined,
+      payment_terms_days: undefined,
+    }),
+    [],
+  );
+  const { data: navigationData } = useSuppliers(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
 
   const form = useForm<SupplierSchemaType>({
     resolver: zodResolver(SupplierSchema),
@@ -135,6 +151,15 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {isEditMode && supplierId && (
+          <div className="flex justify-end">
+            <RecordNavigation
+              currentId={supplierId}
+              items={navigationItems}
+              basePath="/procurement-management/suppliers"
+            />
+          </div>
+        )}
         <Card>
           <CardHeader>
             <CardTitle>{isEditMode ? 'Edit Supplier' : 'Create Supplier'}</CardTitle>

@@ -1,15 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useOrder, useDeleteOrder } from '../hooks/useOrders';
+import { useOrder, useDeleteOrder, useOrders } from '../hooks/useOrders';
 import { formatDate } from '@/lib/helpers';
 import OrderDeleteDialog from './order-delete-dialog';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface OrderDetailProps {
   orderId: string;
@@ -18,6 +19,17 @@ interface OrderDetailProps {
 export default function OrderDetail({ orderId }: OrderDetailProps) {
   const router = useRouter();
   const { data: order, isLoading } = useOrder(orderId);
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+    }),
+    [],
+  );
+  const { data: navigationData } = useOrders(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   if (isLoading) {
@@ -58,6 +70,11 @@ export default function OrderDetail({ orderId }: OrderDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
+          <RecordNavigation
+            currentId={orderId}
+            items={navigationItems}
+            basePath="/order-management/orders"
+          />
           <Button variant="outline" onClick={() => router.push(`/order-management/orders/${orderId}/edit`)}>
             <Edit className="size-4" />
             Edit

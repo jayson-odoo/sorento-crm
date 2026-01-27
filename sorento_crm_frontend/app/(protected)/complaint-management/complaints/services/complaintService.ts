@@ -3,6 +3,8 @@ import type {
   Complaint,
   ComplaintFormData,
   ComplaintDetail,
+  ComplaintManualAttachmentCreate,
+  ComplaintManualAttachment,
 } from '../types/complaint.types';
 import type {
   DataGridApiFetchParams,
@@ -22,7 +24,7 @@ export async function getComplaints(
     ...(searchQuery ? { query: searchQuery } : {}),
   });
   const response = await apiFetch(
-    `/api/v1/complaint-management/complaints?${queryParams.toString()}`,
+    `/api/v1/complaints-management/complaints?${queryParams.toString()}`,
   );
   if (!response.ok) throw new Error('Failed to fetch complaints');
   return response.json();
@@ -30,7 +32,7 @@ export async function getComplaints(
 
 export async function getComplaint(id: string): Promise<ComplaintDetail> {
   const response = await apiFetch(
-    `/api/v1/complaint-management/complaints/${id}`,
+    `/api/v1/complaints-management/complaints/${id}`,
   );
   if (!response.ok) throw new Error('Failed to fetch complaint');
   return response.json();
@@ -39,7 +41,7 @@ export async function getComplaint(id: string): Promise<ComplaintDetail> {
 export async function createComplaint(
   data: ComplaintFormData,
 ): Promise<Complaint> {
-  const response = await apiFetch('/api/v1/complaint-management/complaints', {
+  const response = await apiFetch('/api/v1/complaints-management/complaints', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -58,7 +60,7 @@ export async function updateComplaint(
   data: Partial<ComplaintFormData>,
 ): Promise<Complaint> {
   const response = await apiFetch(
-    `/api/v1/complaint-management/complaints/${id}`,
+    `/api/v1/complaints-management/complaints/${id}`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -76,13 +78,63 @@ export async function updateComplaint(
 
 export async function deleteComplaint(id: string): Promise<void> {
   const response = await apiFetch(
-    `/api/v1/complaint-management/complaints/${id}`,
+    `/api/v1/complaints-management/complaints/${id}`,
     { method: 'DELETE' },
   );
   if (!response.ok) {
     const error = await response
       .json()
       .catch(() => ({ message: 'Failed to delete complaint' }));
+    throw new Error(error.message);
+  }
+}
+
+export async function createComplaintManualAttachment(
+  data: ComplaintManualAttachmentCreate,
+): Promise<ComplaintManualAttachment> {
+  const response = await apiFetch(
+    '/api/v1/complaints-management/complaints/manual-attachments',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to create manual attachment' }));
+    throw new Error(error.message);
+  }
+  return response.json();
+}
+
+export async function getComplaintManualAttachments(
+  complaintId: string,
+): Promise<ComplaintManualAttachment[]> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/${complaintId}/manual-attachments`,
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to fetch manual attachments' }));
+    throw new Error(error.message);
+  }
+  return response.json();
+}
+
+export async function deleteComplaintManualAttachment(
+  manualAttachmentId: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/manual-attachments/${manualAttachmentId}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to unlink attachment' }));
     throw new Error(error.message);
   }
 }

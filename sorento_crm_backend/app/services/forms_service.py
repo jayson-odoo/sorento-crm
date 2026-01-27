@@ -1,11 +1,12 @@
 """Forms service for business logic."""
 from sqlalchemy.orm import Session
 from typing import Optional
-from app.models.forms import Form, FormSection, FormField, FormVersion
+from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
 from app.models.resources import Attachment
 from app.schemas.forms import (
     FormCreate, FormUpdate, FormSectionCreate, FormSectionUpdate,
-    FormFieldCreate, FormFieldUpdate, FormVersionCreate
+    FormFieldCreate, FormFieldUpdate, FormVersionCreate,
+    FormSubmissionCreate, FormSubmissionUpdate
 )
 from app.services.error_handler import handle_not_found, handle_conflict
 
@@ -118,6 +119,30 @@ class FormService:
         self.db.commit()
         self.db.refresh(form)
         return form
+
+    def create_submission(self, submission_data: FormSubmissionCreate, created_by: Optional[str] = None):
+        """Create a form submission."""
+        submission_dict = submission_data.model_dump()
+        submission_dict["created_by"] = created_by
+        submission = FormSubmission(**submission_dict)
+        self.db.add(submission)
+        self.db.commit()
+        self.db.refresh(submission)
+        return submission
+
+    def update_submission(self, submission_id: str, submission_data: FormSubmissionUpdate):
+        """Update a form submission."""
+        submission = self.db.query(FormSubmission).filter(FormSubmission.id == submission_id).first()
+        if not submission:
+            raise handle_not_found("Form Submission", submission_id)
+
+        update_data = submission_data.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(submission, key, value)
+
+        self.db.commit()
+        self.db.refresh(submission)
+        return submission
 
 
 class FormSectionService:

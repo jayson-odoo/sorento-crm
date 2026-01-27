@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, and_
 from typing import Optional
 import uuid
-from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch
+from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.product import Product
 from app.schemas.inventory import (
     WarehouseCreate, WarehouseUpdate, StorageZoneCreate, StorageZoneUpdate,
@@ -114,6 +114,15 @@ class StorageZoneService:
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
+
+    def list_zones_tree(self, warehouse_id: Optional[str] = None):
+        """List storage zones for tree view with warehouse info."""
+        from sqlalchemy.orm import joinedload
+
+        q = self.db.query(StorageZone).options(joinedload(StorageZone.warehouse))
+        if warehouse_id:
+            q = q.filter(StorageZone.warehouse_id == warehouse_id)
+        return q.all()
     
     def get_zone(self, zone_id: str):
         """Get a storage zone by ID."""
@@ -212,6 +221,35 @@ class StockService:
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
+
+    def list_stock_ledger(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        product_id: Optional[str] = None,
+        warehouse_id: Optional[str] = None,
+        transaction_type: Optional[str] = None
+    ):
+        """List stock ledger entries with pagination and filtering."""
+        from app.schemas.common import ListResponse
+        from app.schemas.inventory import StockLedgerResponse
+        
+        q = self.db.query(StockLedger)
+        if product_id:
+            q = q.filter(StockLedger.product_id == product_id)
+        if warehouse_id:
+            q = q.filter(StockLedger.warehouse_id == warehouse_id)
+        if transaction_type:
+            q = q.filter(StockLedger.transaction_type == transaction_type)
+
+        total = q.count()
+        offset = (page - 1) * limit
+        entries = q.order_by(StockLedger.created_at.desc()).offset(offset).limit(limit).all()
+
+        return ListResponse(
+            data=[StockLedgerResponse.model_validate(entry) for entry in entries],
+            pagination={"total": total, "page": page, "limit": limit}
+        )
     
     def get_all_stock_for_export(
         self,
@@ -512,6 +550,7 @@ class StockService:
         # Step 4: Separate creates and updates
         final_creates = []
         final_updates = []
+        ledger_entries = []
         
         for row_dict in rows_to_create:
             pair = (row_dict['product_id'], row_dict['warehouse_id'])
@@ -524,6 +563,11 @@ class StockService:
         
         for row_dict in rows_to_update:
             final_updates.append(row_dict)
+        
+        # Build existing stock map for ledger calculations
+        existing_by_id = {**existing_stock_by_id}
+        for stock in existing_stock_by_pair.values():
+            existing_by_id[stock.id] = stock
         
         # Step 5: Bulk insert new records
         if final_creates:
@@ -544,6 +588,26 @@ class StockService:
                 ]
                 self.db.bulk_insert_mappings(Stock, insert_data)
                 created = len(final_creates)
+                
+                # Add ledger entries for newly created stock records
+                for row in insert_data:
+                    previous_qty = 0
+                    new_qty = row['quantity_on_hand']
+                    quantity_change = new_qty - previous_qty
+                    if quantity_change != 0:
+                        ledger_entries.append({
+                            'id': str(uuid.uuid4()),
+                            'product_id': row['product_id'],
+                            'warehouse_id': row['warehouse_id'],
+                            'transaction_type': 'BULK_IMPORT',
+                            'quantity_change': quantity_change,
+                            'previous_quantity': previous_qty,
+                            'new_quantity': new_qty,
+                            'reference_type': 'bulk_import',
+                            'reference_id': None,
+                            'notes': 'Bulk import create',
+                            'created_by': user_id
+                        })
             except Exception as e:
                 errors.append(f"Bulk insert error: {str(e)}")
         
@@ -578,11 +642,34 @@ class StockService:
                 # Note: bulk_update_mappings updates all provided fields
                 self.db.bulk_update_mappings(Stock, update_data)
                 updated = len(update_data)
+                
+                # Add ledger entries for updated stock records
+                for update_row in update_data:
+                    existing = existing_by_id.get(update_row['id'])
+                    previous_qty = existing.quantity_on_hand if existing else 0
+                    new_qty = update_row['quantity_on_hand']
+                    quantity_change = new_qty - previous_qty
+                    if quantity_change != 0:
+                        ledger_entries.append({
+                            'id': str(uuid.uuid4()),
+                            'product_id': existing.product_id if existing else update_row.get('product_id'),
+                            'warehouse_id': existing.warehouse_id if existing else update_row.get('warehouse_id'),
+                            'transaction_type': 'BULK_IMPORT',
+                            'quantity_change': quantity_change,
+                            'previous_quantity': previous_qty,
+                            'new_quantity': new_qty,
+                            'reference_type': 'bulk_import',
+                            'reference_id': update_row['id'],
+                            'notes': 'Bulk import update',
+                            'created_by': user_id
+                        })
             except Exception as e:
                 errors.append(f"Bulk update error: {str(e)}")
         
         # Step 7: Commit all changes
         try:
+            if ledger_entries:
+                self.db.bulk_insert_mappings(StockLedger, ledger_entries)
             self.db.commit()
         except Exception as e:
             self.db.rollback()

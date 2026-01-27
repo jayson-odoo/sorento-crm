@@ -4,12 +4,77 @@ from typing import Optional, List
 from datetime import datetime
 import json
 import logging
+import httpx
+from app.config import settings
 from app.models.integration import IntegrationLog
 from app.schemas.integration import IntegrationLogCreate, IntegrationLogUpdate
 from app.services.error_handler import handle_not_found
 from app.services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
+
+
+class RespondClient:
+    """Client for Respond.io API."""
+
+    def __init__(self) -> None:
+        self.base_url = (settings.respond_base_url or "https://api.respond.io").rstrip("/")
+        self.api_key = settings.respond_api_key
+        self.space_id = settings.respond_space_id
+
+    def _headers(self) -> dict:
+        if not self.api_key:
+            return {}
+        return {"Authorization": f"Bearer {self.api_key}"}
+
+    def get_user_by_id(self, user_id: str) -> dict:
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        url = f"{self.base_url}/v2/space/user/{user_id}"
+        with httpx.Client(timeout=15) as client:
+            response = client.get(url, headers=self._headers())
+            response.raise_for_status()
+            return response.json()
+
+    def get_contact_by_identifier(self, identifier: str) -> dict:
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        url = f"{self.base_url}/v2/contact/{identifier}"
+        with httpx.Client(timeout=15) as client:
+            response = client.get(url, headers=self._headers())
+            # Check status and raise with response attached for error handling
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                # Attach response for better error handling upstream
+                e.response = response
+                raise
+            return response.json()
+    
+    def get_contact_by_phone(self, phone_number: str) -> dict:
+        """Get contact by phone number using phone: prefix."""
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        # Format: phone:+60123456789 (ensure phone: prefix is added)
+        # Remove phone: if already present to avoid duplication
+        clean_phone = phone_number.replace("phone:", "")
+        identifier = f"phone:{clean_phone}"
+        return self.get_contact_by_identifier(identifier)
+
+    def list_users(self, limit: int = 100) -> list[dict]:
+        """List Respond.io users."""
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        url = f"{self.base_url}/v2/space/users"
+        params = {"limit": limit}
+        with httpx.Client(timeout=15) as client:
+            response = client.get(url, headers=self._headers(), params=params)
+            response.raise_for_status()
+            data = response.json()
+            # Handle different response formats
+            if isinstance(data, dict):
+                return data.get("data", data.get("users", []))
+            return data if isinstance(data, list) else []
 
 
 class IntegrationLogService:
@@ -53,6 +118,40 @@ class IntegrationLogService:
             raise handle_not_found("Integration Log", log_id)
         return log
     
+    def get_integration_log_response(self, log_id: str):
+        """Get an integration log by ID and return as response model."""
+        from app.schemas.integration import IntegrationLogResponse
+        log = self.get_integration_log(log_id)
+        
+        # Convert to response model
+        log_dict = {
+            'id': str(log.id),
+            'integration_channel': log.integration_channel,
+            'business_table': log.business_table,
+            'business_id': str(log.business_id),
+            'external_reference': log.external_reference,
+            'direction': log.direction,
+            'endpoint': log.endpoint,
+            'http_method': log.http_method,
+            'request_headers': log.request_headers,
+            'request_payload': log.request_payload,
+            'status_code': log.status_code,
+            'status': log.status,
+            'response_headers': log.response_headers,
+            'response_payload': log.response_payload,
+            'error_code': log.error_code,
+            'error_message': log.error_message,
+            'correlation_id': str(log.correlation_id) if log.correlation_id else None,
+            'retry_count': log.retry_count,
+            'max_retry_allowed': log.max_retry_allowed,
+            'next_retry_at': log.next_retry_at,
+            'created_at': log.created_at,
+            'created_by': str(log.created_by) if log.created_by else None,
+            'processed_at': log.processed_at,
+            'updated_at': log.updated_at,  # Can be None for old records
+        }
+        return IntegrationLogResponse.model_validate(log_dict)
+    
     def list_integration_logs(
         self,
         page: int = 1,
@@ -85,8 +184,45 @@ class IntegrationLogService:
             
             logger.debug(f"Found {total} integration logs, returning {len(logs)}")
             
+            # Convert to response models, handling None values
+            from app.schemas.integration import IntegrationLogResponse
+            log_responses = []
+            for log in logs:
+                try:
+                    # Convert SQLAlchemy model to dict with explicit handling
+                    log_dict = {
+                        'id': str(log.id),
+                        'integration_channel': log.integration_channel,
+                        'business_table': log.business_table,
+                        'business_id': str(log.business_id),
+                        'external_reference': log.external_reference,
+                        'direction': log.direction,
+                        'endpoint': log.endpoint,
+                        'http_method': log.http_method,
+                        'request_headers': log.request_headers,
+                        'request_payload': log.request_payload,
+                        'status_code': log.status_code,
+                        'status': log.status,
+                        'response_headers': log.response_headers,
+                        'response_payload': log.response_payload,
+                        'error_code': log.error_code,
+                        'error_message': log.error_message,
+                        'correlation_id': str(log.correlation_id) if log.correlation_id else None,
+                        'retry_count': log.retry_count,
+                        'max_retry_allowed': log.max_retry_allowed,
+                        'next_retry_at': log.next_retry_at,
+                        'created_at': log.created_at,
+                        'created_by': str(log.created_by) if log.created_by else None,
+                        'processed_at': log.processed_at,
+                        'updated_at': log.updated_at,  # Can be None for old records
+                    }
+                    log_responses.append(IntegrationLogResponse.model_validate(log_dict))
+                except Exception as e:
+                    logger.error(f"Error validating integration log {log.id}: {str(e)}", exc_info=True)
+                    raise
+            
             return {
-                "data": logs,
+                "data": log_responses,
                 "pagination": PaginationResponse(total=total, page=page, limit=limit),
                 "empty": total == 0
             }

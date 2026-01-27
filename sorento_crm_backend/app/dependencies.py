@@ -1,5 +1,5 @@
 """Shared dependencies for FastAPI routes."""
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, status, Request, Header
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
@@ -109,6 +109,107 @@ async def get_current_user(
         logger = logging.getLogger(__name__)
         logger.error(f"Unexpected error in JWT validation: {str(e)}")
         logger.error(f"Error type: {type(e).__name__}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Authentication error: {str(e)}"
+        )
+
+
+async def get_api_key(
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key")
+) -> Optional[str]:
+    """Extract API key from X-API-Key header."""
+    return x_api_key
+
+
+async def get_current_user_or_api_key(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
+    api_key: Optional[str] = Depends(get_api_key),
+    db: Session = Depends(get_db)
+) -> dict:
+    """
+    Validate either JWT token (from NextAuth) or API key and return user information.
+    
+    This dependency allows both authenticated users and external API key access.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # If API key is provided, validate it
+    if api_key:
+        # Validate API key against environment variable
+        valid_api_key = getattr(settings, 'external_api_key', None)
+        if not valid_api_key:
+            logger.warning("API key provided but EXTERNAL_API_KEY not configured")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="API key authentication not configured"
+            )
+        
+        if api_key != valid_api_key:
+            logger.warning(f"Invalid API key provided")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key"
+            )
+        
+        # Return a system user dict for API key access
+        return {
+            "id": "system",
+            "email": "api@system",
+            "role_id": "system",
+            "name": "API User",
+            "avatar": None,
+            "status": "ACTIVE",
+            "role_name": "API",
+        }
+    
+    # Otherwise, try JWT token authentication
+    if not token:
+        token = extract_token_from_request(request)
+    
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Provide either Bearer token or X-API-Key header.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm]
+        )
+        
+        user_id: str = payload.get("sub") or payload.get("id")
+        email: str = payload.get("email")
+        role_id: str = payload.get("roleId")
+        
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: missing user ID"
+            )
+        
+        return {
+            "id": user_id,
+            "email": email,
+            "role_id": role_id,
+            "name": payload.get("name"),
+            "avatar": payload.get("avatar"),
+            "status": payload.get("status"),
+            "role_name": payload.get("roleName"),
+        }
+    except JWTError as e:
+        logger.error(f"JWT validation failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in authentication: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Authentication error: {str(e)}"

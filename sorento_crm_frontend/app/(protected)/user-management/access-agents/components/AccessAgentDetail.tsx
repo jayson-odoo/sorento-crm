@@ -1,16 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAccessAgent } from '../hooks/useAccessAgents';
+import { useAccessAgent, useAccessAgents } from '../hooks/useAccessAgents';
 import { formatDate } from '@/lib/helpers';
 import AccessAgentDeleteDialog from './access-agent-delete-dialog';
 import ContactAccessAgentsTable from './ContactAccessAgentsTable';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface AccessAgentDetailProps {
   accessAgentId: string;
@@ -19,6 +20,18 @@ interface AccessAgentDetailProps {
 export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailProps) {
   const router = useRouter();
   const { data: accessAgent, isLoading } = useAccessAgent(accessAgentId);
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+      status: undefined,
+    }),
+    [],
+  );
+  const { data: navigationData } = useAccessAgents(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   if (isLoading) {
@@ -58,6 +71,11 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
           </p>
         </div>
         <div className="flex gap-2">
+          <RecordNavigation
+            currentId={accessAgentId}
+            items={navigationItems}
+            basePath="/user-management/access-agents"
+          />
           <Button variant="outline" onClick={() => router.push(`/user-management/access-agents/${accessAgentId}/edit`)}>
             <Edit className="size-4" />
             Edit
@@ -85,8 +103,23 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
               <p className="font-medium">{accessAgent.name}</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">PIC Respond User ID</p>
-              <p className="font-medium">{accessAgent.pic_respond_user_id || '-'}</p>
+              <p className="text-sm text-muted-foreground">PIC Respond User</p>
+              <div className="space-y-1">
+                {accessAgent.pic_respond_user_id ? (
+                  <>
+                    <p className="font-medium">
+                      {accessAgent.pic_respond_user_name || accessAgent.pic_respond_user_id}
+                    </p>
+                    {accessAgent.pic_respond_user_name && (
+                      <p className="text-xs text-muted-foreground font-mono">
+                        ID: {accessAgent.pic_respond_user_id}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="font-medium text-muted-foreground">-</p>
+                )}
+              </div>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Status</p>

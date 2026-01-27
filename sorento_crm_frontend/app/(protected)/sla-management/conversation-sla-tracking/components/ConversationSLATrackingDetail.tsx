@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
@@ -8,10 +8,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useConversationSLATrackingDetail } from '../hooks/useConversationSLATracking';
+import { useConversationSLATrackingDetail, useConversationSLATracking } from '../hooks/useConversationSLATracking';
 import { formatDate, formatDateTime, formatDuration } from '@/lib/helpers';
-import EscalationLogTable from './EscalationLogTable';
+import EventLogTable from './EventLogTable';
 import { CheckCircle, Clock, AlertCircle, RefreshCw } from 'lucide-react';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface ConversationSLATrackingDetailProps {
   trackingId: string;
@@ -21,6 +22,20 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
   const router = useRouter();
   const queryClient = useQueryClient();
   const { data: tracking, isLoading } = useConversationSLATrackingDetail(trackingId);
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+      assigned_to: undefined,
+      policy_id: undefined,
+      status: undefined,
+    }),
+    [],
+  );
+  const { data: navigationData } = useConversationSLATracking(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleRefresh = async () => {
@@ -80,7 +95,12 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">Contact: {tracking.respond_contact_id}</h1>
+            <h1 className="text-2xl font-bold">
+              Contact: {tracking.contact_phone || tracking.contact?.phone_number || '-'}
+              {tracking.contact_name || tracking.contact?.name 
+                ? ` (${tracking.contact_name || tracking.contact?.name})` 
+                : ''}
+            </h1>
             {tracking.is_resolved ? (
               <Badge variant="success" appearance="ghost">
                 <CheckCircle className="size-3 mr-1" />
@@ -99,23 +119,30 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
             )}
           </div>
           <p className="text-sm text-muted-foreground">
-            Policy: {tracking.policy_name || tracking.policy_code} • Current Tier: {tracking.current_tier}
+            Policy: {tracking.policy?.name || tracking.policy_name || tracking.policy?.code || tracking.policy_code || '-'} • Current Tier: {tracking.current_tier}
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={handleRefresh}
-          disabled={isRefreshing || isLoading}
-        >
-          <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <RecordNavigation
+            currentId={trackingId}
+            items={navigationItems}
+            basePath="/sla-management/conversation-sla-tracking"
+          />
+          <Button
+            variant="outline"
+            onClick={handleRefresh}
+            disabled={isRefreshing || isLoading}
+          >
+            <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <Tabs defaultValue="overview" className="w-full">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="escalation-log">Escalation Log</TabsTrigger>
+          <TabsTrigger value="event-log">Event Log</TabsTrigger>
         </TabsList>
 
         {/* Tab 1: Overview */}
@@ -171,19 +198,21 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                       isCurrent: boolean;
                     }> = [];
                     
+                    const escalationLogs = (tracking.event_logs || []).filter((log) => log.event_type === 'escalation');
+
                     // Determine initial tier
-                    const initialTier = tracking.escalation_logs && tracking.escalation_logs.length > 0
-                      ? tracking.escalation_logs[0].from_tier
+                    const initialTier = escalationLogs.length > 0
+                      ? escalationLogs[0].from_tier
                       : tracking.current_tier;
                     
                     // Check if current tier matches the last escalation log
-                    const lastLog = tracking.escalation_logs && tracking.escalation_logs.length > 0
-                      ? tracking.escalation_logs[tracking.escalation_logs.length - 1]
+                    const lastLog = escalationLogs.length > 0
+                      ? escalationLogs[escalationLogs.length - 1]
                       : null;
                     const isCurrentTierInLogs = lastLog && lastLog.to_tier === tracking.current_tier;
                     
                     // Add initial tier (only if there are escalation logs, otherwise it's handled below)
-                    if (tracking.escalation_logs && tracking.escalation_logs.length > 0) {
+                    if (escalationLogs.length > 0 && initialTier != null) {
                       timelineItems.push({
                         tier: initialTier,
                         startedAt: new Date(tracking.initiated_at),
@@ -193,25 +222,28 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                     }
                     
                     // Add escalation logs
-                    if (tracking.escalation_logs && tracking.escalation_logs.length > 0) {
-                      tracking.escalation_logs.forEach((log, index) => {
-                        const isLast = index === tracking.escalation_logs!.length - 1;
+                    if (escalationLogs.length > 0) {
+                      escalationLogs.forEach((log, index) => {
+                        if (log.to_tier == null) return; // Skip if to_tier is null/undefined
+                        const isLast = index === escalationLogs.length - 1;
                         timelineItems.push({
                           tier: log.to_tier,
-                          startedAt: new Date(log.escalated_at),
+                          startedAt: new Date(log.event_at),
                           isEscalation: log.from_tier !== log.to_tier,
-                          reason: log.reason,
+                          reason: log.reason || undefined,
                           isCurrent: isLast && log.to_tier === tracking.current_tier,
                         });
                       });
                     } else {
                       // If no escalation logs, show current tier as initial tier
-                      timelineItems.push({
-                        tier: tracking.current_tier,
-                        startedAt: new Date(tracking.current_tier_started_at),
-                        isEscalation: false,
-                        isCurrent: true,
-                      });
+                      if (tracking.current_tier != null) {
+                        timelineItems.push({
+                          tier: tracking.current_tier,
+                          startedAt: new Date(tracking.current_tier_started_at),
+                          isEscalation: false,
+                          isCurrent: true,
+                        });
+                      }
                     }
                     
                     return timelineItems.map((item, index) => (
@@ -260,12 +292,20 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm text-muted-foreground">Respond Contact ID</p>
-                  <p className="font-medium">{tracking.respond_contact_id}</p>
+                  <p className="text-sm text-muted-foreground">Contact Phone</p>
+                  <p className="font-medium">
+                    {tracking.contact_phone || tracking.contact?.phone_number || '-'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Contact Name</p>
+                  <p className="font-medium">
+                    {tracking.contact_name || tracking.contact?.name || '-'}
+                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Policy</p>
-                  <p className="font-medium">{tracking.policy_name || tracking.policy_code}</p>
+                  <p className="font-medium">{tracking.policy?.name || tracking.policy_name || tracking.policy?.code || tracking.policy_code || '-'}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Current Tier</p>
@@ -273,7 +313,13 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Assigned To</p>
-                  <p className="font-medium">{tracking.assigned_to || '-'}</p>
+                  <p className="font-medium">
+                    {tracking.assigned_user_name || 
+                     tracking.assigned_user?.name || 
+                     tracking.assigned_user?.email || 
+                     tracking.assigned_to || 
+                     '-'}
+                  </p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Initiated At</p>
@@ -316,9 +362,9 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
           </Card>
         </TabsContent>
 
-        {/* Tab 2: Escalation Log */}
-        <TabsContent value="escalation-log">
-          <EscalationLogTable trackingId={trackingId} />
+        {/* Tab 2: Event Log */}
+        <TabsContent value="event-log">
+          <EventLogTable trackingId={trackingId} />
         </TabsContent>
       </Tabs>
     </div>

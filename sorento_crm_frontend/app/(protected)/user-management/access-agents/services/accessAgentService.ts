@@ -1,5 +1,5 @@
 import { apiFetch } from '@/lib/api';
-import type { AccessAgent, AccessAgentFormData, AccessAgentDetail, ContactAgentAccess, ContactAgentAccessFormData } from '../types/accessAgent.types';
+import type { AccessAgent, AccessAgentFormData, AccessAgentDetail, ContactAgentAccess, ContactAgentAccessFormData, RespondSyncedUser } from '../types/accessAgent.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
 export async function getAccessAgents(params: DataGridApiFetchParams & { status?: string }): Promise<DataGridApiResponse<AccessAgent>> {
@@ -50,6 +50,16 @@ export async function updateAccessAgent(id: string, data: Partial<AccessAgentFor
   return response.json();
 }
 
+export async function getRespondSyncedUsers(query?: string): Promise<RespondSyncedUser[]> {
+  const queryParams = new URLSearchParams({
+    respond_synced: 'successful',
+    ...(query ? { query } : {}),
+  });
+  const response = await apiFetch(`/api/user-management/users/select?${queryParams.toString()}`);
+  if (!response.ok) throw new Error('Failed to fetch respond synced users');
+  return response.json();
+}
+
 export async function deleteAccessAgent(id: string): Promise<void> {
   const response = await apiFetch(`/api/user-management/access-agents/${id}`, { method: 'DELETE' });
   if (!response.ok) {
@@ -73,7 +83,11 @@ export async function createContactAgentAccess(agentId: string, data: ContactAge
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to create contact access agent' }));
-    throw new Error(error.message);
+    // Handle duplicate/conflict errors specifically
+    if (response.status === 409 || error.message?.toLowerCase().includes('duplicate') || error.message?.toLowerCase().includes('already exists')) {
+      throw new Error('An access agent entry already exists for this contact and agent combination.');
+    }
+    throw new Error(error.detail?.message || error.message || 'Failed to create contact access agent');
   }
   return response.json();
 }

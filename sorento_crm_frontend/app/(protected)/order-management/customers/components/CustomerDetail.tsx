@@ -1,15 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useCustomer } from '../hooks/useCustomers';
+import { useCustomer, useCustomers } from '../hooks/useCustomers';
 import { formatDate } from '@/lib/helpers';
 import CustomerDeleteDialog from './customer-delete-dialog';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface CustomerDetailProps {
   customerId: string;
@@ -18,6 +19,18 @@ interface CustomerDetailProps {
 export default function CustomerDetail({ customerId }: CustomerDetailProps) {
   const router = useRouter();
   const { data: customer, isLoading } = useCustomer(customerId);
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+      status: undefined,
+    }),
+    [],
+  );
+  const { data: navigationData } = useCustomers(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   if (isLoading) {
@@ -57,6 +70,11 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
+          <RecordNavigation
+            currentId={customerId}
+            items={navigationItems}
+            basePath="/order-management/customers"
+          />
           <Button variant="outline" onClick={() => router.push(`/order-management/customers/${customerId}/edit`)}>
             <Edit className="size-4" />
             Edit

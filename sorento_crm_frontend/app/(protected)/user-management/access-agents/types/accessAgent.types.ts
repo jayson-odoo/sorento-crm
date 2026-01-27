@@ -9,6 +9,7 @@ export interface AccessAgent {
   synced_to_excel: boolean;
   last_synced_to_excel?: Date | null;
   pic_respond_user_id?: string | null;
+  pic_respond_user_name?: string | null;
 }
 
 export interface AccessAgentFormData {
@@ -19,6 +20,14 @@ export interface AccessAgentFormData {
   is_active: boolean;
 }
 
+export interface RespondSyncedUser {
+  id: string;
+  name?: string | null;
+  email: string;
+  respond_user_id?: string | null;
+  respond_synced?: string | null;
+}
+
 export interface AccessAgentDetail extends AccessAgent {
   contact_accesses_count?: number;
   contact_accesses?: ContactAgentAccess[];
@@ -26,7 +35,8 @@ export interface AccessAgentDetail extends AccessAgent {
 
 export interface ContactAgentAccess {
   id: string;
-  respond_contact_id: string;
+  respond_contact_phone: string;
+  respond_contact_name?: string | null;
   agent_id: string;
   is_allowed: boolean;
   valid_from?: Date | null;
@@ -39,7 +49,8 @@ export interface ContactAgentAccess {
 }
 
 export interface ContactAgentAccessFormData {
-  respond_contact_id: string;
+  respond_contact_phone: string;
+  respond_contact_name?: string;
   agent_id: string;
   is_allowed: boolean;
   valid_from?: Date;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -26,11 +26,12 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCreateOrder, useUpdateOrder, useOrder } from '../hooks/useOrders';
+import { useCreateOrder, useUpdateOrder, useOrder, useOrders } from '../hooks/useOrders';
 import { OrderSchema, type OrderSchemaType } from '../forms/order-schema';
 import type { OrderFormData } from '../types/order.types';
 import { useCustomerSelectQuery } from '../../shared/hooks/use-customer-select-query';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface OrderFormProps {
   orderId?: string;
@@ -45,6 +46,17 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
   const { data: orderStatuses } = useOrderStatusSelectQuery();
   const createMutation = useCreateOrder();
   const updateMutation = useUpdateOrder();
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+    }),
+    [],
+  );
+  const { data: navigationData } = useOrders(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
 
   const form = useForm<OrderSchemaType>({
     resolver: zodResolver(OrderSchema),
@@ -185,6 +197,15 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {isEditMode && orderId && (
+          <div className="flex justify-end">
+            <RecordNavigation
+              currentId={orderId}
+              items={navigationItems}
+              basePath="/order-management/orders"
+            />
+          </div>
+        )}
         <Tabs defaultValue="basic" className="w-full">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="basic">Basic Information</TabsTrigger>

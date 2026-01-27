@@ -2,23 +2,16 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Download, ExternalLink, Paperclip } from 'lucide-react';
+import { Edit, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { useComplaint } from '../hooks/useComplaints';
 import { formatDate } from '@/lib/helpers';
 import ComplaintDeleteDialog from './complaint-delete-dialog';
-import Link from 'next/link';
+import ComplaintNavigation from './ComplaintNavigation';
+import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
 
 interface ComplaintDetailProps {
   complaintId: string;
@@ -71,13 +64,6 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
     );
   }
 
-  const formatFileSize = (bytes: number | null | undefined) => {
-    if (!bytes) return '-';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -94,6 +80,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
+          <ComplaintNavigation complaintId={complaintId} />
           <Button
             variant="outline"
             onClick={() =>
@@ -212,79 +199,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         </CardContent>
       </Card>
 
-      {/* Attachments */}
-      {complaint.attachments && complaint.attachments.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Paperclip className="size-5" />
-              Attachments ({complaint.attachments.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>File Name</TableHead>
-                    <TableHead>File Size</TableHead>
-                    <TableHead>Uploaded At</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {complaint.attachments.map((attachment) => (
-                    <TableRow key={attachment.id}>
-                      <TableCell className="font-medium">
-                        {attachment.file_name || 'Unnamed file'}
-                      </TableCell>
-                      <TableCell>
-                        {formatFileSize(attachment.file_size_bytes)}
-                      </TableCell>
-                      <TableCell>
-                        {formatDate(new Date(attachment.uploaded_at))}
-                      </TableCell>
-                      <TableCell>
-                        {attachment.file_url && (
-                          <div className="flex gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              asChild
-                            >
-                              <Link
-                                href={attachment.file_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                <ExternalLink className="size-4" />
-                                View
-                              </Link>
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              asChild
-                            >
-                              <a
-                                href={attachment.file_url}
-                                download={attachment.file_name || 'download'}
-                              >
-                                <Download className="size-4" />
-                                Download
-                              </a>
-                            </Button>
-                          </div>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <ComplaintManualAttachmentsSection complaintId={complaintId} />
     </div>
   );
 }

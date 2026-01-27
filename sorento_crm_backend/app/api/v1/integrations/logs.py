@@ -1,5 +1,5 @@
 """Integration logs API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 import logging
@@ -8,7 +8,7 @@ from datetime import datetime
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.integration_service import IntegrationLogService
-from app.schemas.integration import IntegrationLogResponse, IntegrationLogUpdateRequest
+from app.schemas.integration import IntegrationLogResponse, IntegrationLogUpdateRequest, IntegrationLogCreate
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
@@ -57,7 +57,7 @@ async def get_integration_log(
     """Get a single integration log by ID."""
     try:
         service = IntegrationLogService(db)
-        log = service.get_integration_log(log_id)
+        log = service.get_integration_log_response(log_id)
         return log
     except HTTPException:
         raise
@@ -92,8 +92,53 @@ async def update_integration_log(
             processed_at=datetime.utcnow() if update_data.status in ["success", "failed"] else None
         )
         
-        log = service.update_integration_log(log_id, update_payload)
+        service.update_integration_log(log_id, update_payload)
+        log = service.get_integration_log_response(log_id)
         return log
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{log_id}/status", status_code=status.HTTP_200_OK)
+async def update_integration_log_status(
+    log_id: str,
+    update_data: IntegrationLogUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Update integration log status with audit logging."""
+    try:
+        service = IntegrationLogService(db)
+
+        from app.schemas.integration import IntegrationLogUpdate
+        update_payload = IntegrationLogUpdate(
+            status=update_data.status,
+            status_code=update_data.status_code,
+            response_payload=update_data.response_payload,
+            error_code=update_data.error_code,
+            error_message=update_data.error_message,
+            processed_at=datetime.utcnow() if update_data.status in ["success", "failed"] else None
+        )
+
+        updated = service.update_integration_log(log_id, update_payload)
+
+        service.create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="integration_log_update",
+                business_table="integration_log",
+                business_id=updated.id,
+                external_reference=updated.external_reference,
+                direction="inbound",
+                endpoint=str(request.url),
+                http_method="POST",
+                status="success"
+            ),
+            request_payload_dict=update_data.model_dump(exclude_unset=True)
+        )
+
+        return {"status": "success", "message": "Integration log updated successfully."}
     except HTTPException:
         raise
     except Exception as e:
@@ -112,7 +157,7 @@ async def retry_integration_log(
         success, error_msg = service.send_webhook_for_log(log_id)
         
         # Get updated log
-        log = service.get_integration_log(log_id)
+        log = service.get_integration_log_response(log_id)
         return log
     except HTTPException:
         raise

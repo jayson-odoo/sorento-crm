@@ -10,6 +10,9 @@ export const UserProfileSchema = z.object({
   status: z.string().nonempty({
     message: 'Status is required.',
   }),
+  respond_user_id: z.string().optional().nullable(),
+  agent_ids: z.array(z.string()).optional(),
+  superior_id: z.string().optional().nullable(),
 });
 
 export type UserProfileSchemaType = z.infer<typeof UserProfileSchema>;

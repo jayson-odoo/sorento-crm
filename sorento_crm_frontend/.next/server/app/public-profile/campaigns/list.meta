@@ -1,0 +1,7 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(protected)/layout,_N_T_/(protected)/public-profile/layout,_N_T_/(protected)/public-profile/campaigns/layout,_N_T_/(protected)/public-profile/campaigns/list/layout,_N_T_/(protected)/public-profile/campaigns/list/page,_N_T_/public-profile/campaigns/list"
+  }
+}

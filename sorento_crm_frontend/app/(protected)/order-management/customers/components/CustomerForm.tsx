@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -18,9 +18,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCreateCustomer, useUpdateCustomer, useCustomer } from '../hooks/useCustomers';
+import { useCreateCustomer, useUpdateCustomer, useCustomer, useCustomers } from '../hooks/useCustomers';
 import { CustomerSchema, type CustomerSchemaType } from '../forms/customer-schema';
 import type { CustomerFormData } from '../types/customer.types';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface CustomerFormProps {
   customerId?: string;
@@ -33,6 +34,18 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
   const { data: customer, isLoading: isLoadingCustomer } = useCustomer(customerId || null);
   const createMutation = useCreateCustomer();
   const updateMutation = useUpdateCustomer();
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+      status: undefined,
+    }),
+    [],
+  );
+  const { data: navigationData } = useCustomers(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
 
   const form = useForm<CustomerSchemaType>({
     resolver: zodResolver(CustomerSchema),
@@ -108,6 +121,15 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {isEditMode && customerId && (
+          <div className="flex justify-end">
+            <RecordNavigation
+              currentId={customerId}
+              items={navigationItems}
+              basePath="/order-management/customers"
+            />
+          </div>
+        )}
         <Card>
           <CardHeader>
             <CardTitle>{isEditMode ? 'Edit Customer' : 'Create Customer'}</CardTitle>

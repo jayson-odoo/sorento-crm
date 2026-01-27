@@ -1,60 +1,26 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { prisma } from '@/lib/prisma';
-import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
+import { NextRequest } from 'next/server';
+import { proxyToFastAPI } from '@/lib/api-proxy';
 
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ sectionId: string }> },
 ) {
-  try {
-    const session = await getServerSession(authOptions);
-
-    if (!session) {
-      return NextResponse.json(
-        { message: 'Unauthorized request' },
-        { status: 401 },
-      );
-    }
-
-    // TODO: Implement once Prisma models are added
-    return NextResponse.json(
-      { message: 'Form section update endpoint - database tables need to be created first' },
-      { status: 501 },
-    );
-  } catch (error) {
-    console.error('Error updating form section:', error);
-    return NextResponse.json(
-      { message: 'Oops! Something went wrong. Please try again in a moment.' },
-      { status: 500 },
-    );
-  }
+  const { sectionId } = await params;
+  const body = await request.json();
+  // Note: If FastAPI doesn't have this endpoint, it will return 404
+  return proxyToFastAPI(request, `/api/v1/forms-management/form-sections/${sectionId}`, {
+    method: 'PUT',
+    body,
+  });
 }
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ sectionId: string }> },
 ) {
-  try {
-    const session = await getServerSession(authOptions);
-
-    if (!session) {
-      return NextResponse.json(
-        { message: 'Unauthorized request' },
-        { status: 401 },
-      );
-    }
-
-    // TODO: Implement once Prisma models are added
-    return NextResponse.json(
-      { message: 'Form section delete endpoint - database tables need to be created first' },
-      { status: 501 },
-    );
-  } catch (error) {
-    console.error('Error deleting form section:', error);
-    return NextResponse.json(
-      { message: 'Oops! Something went wrong. Please try again in a moment.' },
-      { status: 500 },
-    );
-  }
+  const { sectionId } = await params;
+  // Note: If FastAPI doesn't have this endpoint, it will return 404
+  return proxyToFastAPI(request, `/api/v1/forms-management/form-sections/${sectionId}`, {
+    method: 'DELETE',
+  });
 }

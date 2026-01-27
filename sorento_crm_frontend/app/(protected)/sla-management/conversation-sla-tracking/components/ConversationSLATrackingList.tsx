@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
@@ -21,12 +21,20 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { useConversationSLATracking } from '../hooks/useConversationSLATracking';
 import type { ConversationSLATracking } from '../types/conversationSLATracking.types';
 import { formatDate, formatDateTime, formatDuration } from '@/lib/helpers';
+import { apiFetch } from '@/lib/api';
 
 export default function ConversationSLATrackingList() {
   const router = useRouter();
@@ -35,12 +43,26 @@ export default function ConversationSLATrackingList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [assignedToFilter, setAssignedToFilter] = useState('__all__');
 
   const { data, isLoading } = useConversationSLATracking({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
+    assigned_to: assignedToFilter && assignedToFilter !== '__all__' ? assignedToFilter : undefined,
+  });
+
+  const { data: respondUsers } = useQuery({
+    queryKey: ['respond-synced-users'],
+    queryFn: async () => {
+      const response = await apiFetch('/api/user-management/users/select?respond_synced=successful');
+      if (!response.ok) {
+        throw new Error('Failed to fetch respond synced users');
+      }
+      return response.json();
+    },
+    staleTime: 1000 * 60 * 5,
   });
 
   const handleRefresh = async () => {
@@ -75,15 +97,40 @@ export default function ConversationSLATrackingList() {
   const columns = useMemo<ColumnDef<ConversationSLATracking>[]>(
     () => [
       {
-        accessorKey: 'respond_contact_id',
-        header: ({ column }) => <DataGridColumnHeader title="Contact ID" column={column} />,
+        accessorKey: 'contact_phone',
+        header: ({ column }) => <DataGridColumnHeader title="Contact Phone" column={column} />,
+        cell: ({ row }) => {
+          const phone = row.original.contact_phone || 
+                       row.original.contact?.phone_number || 
+                       '-';
+          return phone;
+        },
         size: 200,
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
+        accessorKey: 'contact_name',
+        header: ({ column }) => <DataGridColumnHeader title="Contact Name" column={column} />,
+        cell: ({ row }) => {
+          const name = row.original.contact_name || 
+                      row.original.contact?.name || 
+                      '-';
+          return name;
+        },
+        size: 220,
+        meta: { skeleton: <Skeleton className="h-4 w-36" /> },
+      },
+      {
         accessorKey: 'policy_name',
         header: ({ column }) => <DataGridColumnHeader title="Policy" column={column} />,
-        cell: ({ row }) => row.original.policy_name || '-',
+        cell: ({ row }) => {
+          const policyName = row.original.policy?.name || 
+                            row.original.policy_name || 
+                            row.original.policy?.code || 
+                            row.original.policy_code || 
+                            '-';
+          return policyName;
+        },
         size: 200,
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
@@ -96,9 +143,16 @@ export default function ConversationSLATrackingList() {
         size: 120,
       },
       {
-        accessorKey: 'assigned_to',
+        accessorKey: 'assigned_user_name',
         header: ({ column }) => <DataGridColumnHeader title="Assigned To" column={column} />,
-        cell: ({ row }) => row.original.assigned_to || '-',
+        cell: ({ row }) => {
+          const userName = row.original.assigned_user_name || 
+                          row.original.assigned_user?.name || 
+                          row.original.assigned_user?.email || 
+                          row.original.assigned_to || 
+                          '-';
+          return userName;
+        },
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
@@ -217,7 +271,7 @@ export default function ConversationSLATrackingList() {
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader className="flex-row items-center justify-between flex-wrap gap-3">
           <div className="relative">
             <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
             <Input
@@ -237,6 +291,22 @@ export default function ConversationSLATrackingList() {
               </Button>
             )}
           </div>
+          <Select
+            value={assignedToFilter}
+            onValueChange={(value) => setAssignedToFilter(value)}
+          >
+            <SelectTrigger className="w-64">
+              <SelectValue placeholder="Assigned to" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All assignees</SelectItem>
+              {(respondUsers || []).map((user: { id: string; name?: string | null; respond_user_id?: string | null; email: string }) => (
+                <SelectItem key={user.id} value={user.respond_user_id || user.id}>
+                  {user.name || user.email}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
             variant="outline"
             onClick={handleRefresh}

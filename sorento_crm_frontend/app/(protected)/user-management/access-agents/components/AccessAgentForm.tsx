@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -16,12 +16,20 @@ import {
   FormDescription,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent } from '../hooks/useAccessAgents';
+import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useRespondSyncedUsers, useAccessAgents } from '../hooks/useAccessAgents';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
 import type { AccessAgentFormData } from '../types/accessAgent.types';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface AccessAgentFormProps {
   accessAgentId?: string;
@@ -34,6 +42,19 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
   const { data: accessAgent, isLoading: isLoadingAccessAgent } = useAccessAgent(accessAgentId || null);
   const createMutation = useCreateAccessAgent();
   const updateMutation = useUpdateAccessAgent();
+  const { data: respondUsers, isLoading: isLoadingRespondUsers } = useRespondSyncedUsers();
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+      status: undefined,
+    }),
+    [],
+  );
+  const { data: navigationData } = useAccessAgents(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
 
   const form = useForm<AccessAgentSchemaType>({
     resolver: zodResolver(AccessAgentSchema),
@@ -59,7 +80,7 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
           code: accessAgent.code,
           name: accessAgent.name,
           description: accessAgent.description || '',
-          pic_respond_user_id: accessAgent.pic_respond_user_id || '',
+          pic_respond_user_id: accessAgent.pic_respond_user_id || null,
           is_active: accessAgent.is_active,
         });
         setFormInitialized(true);
@@ -81,7 +102,7 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
         code: data.code,
         name: data.name,
         description: data.description || undefined,
-        pic_respond_user_id: data.pic_respond_user_id || undefined,
+        pic_respond_user_id: data.pic_respond_user_id && data.pic_respond_user_id !== '__none__' ? data.pic_respond_user_id : undefined,
         is_active: data.is_active,
       };
 
@@ -115,6 +136,15 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {isEditMode && accessAgentId && (
+          <div className="flex justify-end">
+            <RecordNavigation
+              currentId={accessAgentId}
+              items={navigationItems}
+              basePath="/user-management/access-agents"
+            />
+          </div>
+        )}
         <Card>
           <CardHeader>
             <CardTitle>{isEditMode ? 'Edit Access Agent' : 'Create Access Agent'}</CardTitle>
@@ -179,22 +209,54 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
               <FormField
                 control={form.control}
                 name="pic_respond_user_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>PIC Respond User ID</FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="Enter user ID"
-                        {...field}
-                        value={field.value || ''}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      Person in charge for responding
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                render={({ field }) => {
+                  // Find the selected user to display their name
+                  const selectedUser = respondUsers?.find(
+                    (user) => user.respond_user_id === field.value
+                  );
+                  const displayValue = selectedUser 
+                    ? (selectedUser.name || selectedUser.email || field.value)
+                    : field.value || '';
+                  
+                  return (
+                    <FormItem>
+                      <FormLabel>PIC Respond User</FormLabel>
+                      <FormControl>
+                        <Select
+                          value={field.value || '__none__'}
+                          onValueChange={(value) => {
+                            // Convert "__none__" to null/empty for optional field
+                            field.onChange(value === '__none__' ? null : value);
+                          }}
+                          disabled={isLoadingRespondUsers}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select user" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Unassigned</SelectItem>
+                            {(respondUsers || [])
+                              .filter((user) => !!user.respond_user_id)
+                              .map((user) => (
+                                <SelectItem key={user.id} value={user.respond_user_id as string}>
+                                  {user.name || user.email}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </FormControl>
+                      <FormDescription>
+                        Person in charge for responding
+                        {selectedUser && (
+                          <span className="block mt-1 text-xs text-muted-foreground">
+                            Selected: {selectedUser.name || selectedUser.email}
+                          </span>
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
               />
 
               <FormField

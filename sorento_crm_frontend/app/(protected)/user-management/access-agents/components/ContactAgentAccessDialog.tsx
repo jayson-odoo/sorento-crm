@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { LoaderCircleIcon, Save } from 'lucide-react';
+import { apiFetch } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -23,33 +24,54 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useCreateContactAgentAccess, useUpdateContactAgentAccess } from '../hooks/useAccessAgents';
+import { useQueryClient } from '@tanstack/react-query';
 import { ContactAgentAccessSchema, type ContactAgentAccessSchemaType } from '../forms/access-agent-schema';
 import type { ContactAgentAccess } from '../types/accessAgent.types';
 
 interface ContactAgentAccessDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  accessAgentId: string;
+  accessAgentId?: string;
   contactAccess?: ContactAgentAccess | null;
+  defaultContactPhone?: string; // Contact phone number (required)
+  defaultContactName?: string; // Contact name (optional)
+  contactId?: string; // Contact ID for query invalidation
+  accessAgents?: Array<{ id: string; name: string; code: string; is_active: boolean }>;
+  showAgentSelection?: boolean; // If true, show agent selection dropdown
 }
 
 export default function ContactAgentAccessDialog({
   open,
   onOpenChange,
-  accessAgentId,
+  accessAgentId = '',
   contactAccess,
+  defaultContactPhone,
+  defaultContactName,
+  contactId,
+  accessAgents = [],
+  showAgentSelection = false,
 }: ContactAgentAccessDialogProps) {
+  const queryClient = useQueryClient();
   const isEditMode = !!contactAccess;
   const createMutation = useCreateContactAgentAccess();
   const updateMutation = useUpdateContactAgentAccess();
   const [formInitialized, setFormInitialized] = useState(false);
+  const [isLookingUp, setIsLookingUp] = useState(false);
 
   const form = useForm<ContactAgentAccessSchemaType>({
     resolver: zodResolver(ContactAgentAccessSchema),
     defaultValues: {
-      respond_contact_id: '',
-      agent_id: accessAgentId,
+      respond_contact_phone: '',
+      respond_contact_name: '',
+      agent_id: accessAgentId || '',
       is_allowed: true,
       valid_from: undefined,
       valid_to: undefined,
@@ -62,7 +84,8 @@ export default function ContactAgentAccessDialog({
     if (contactAccess && isEditMode && !formInitialized && open) {
       const timeoutId = setTimeout(() => {
         form.reset({
-          respond_contact_id: contactAccess.respond_contact_id,
+          respond_contact_phone: contactAccess.respond_contact_phone,
+          respond_contact_name: contactAccess.respond_contact_name || '',
           agent_id: contactAccess.agent_id,
           is_allowed: contactAccess.is_allowed,
           valid_from: contactAccess.valid_from ? new Date(contactAccess.valid_from) : undefined,
@@ -74,15 +97,16 @@ export default function ContactAgentAccessDialog({
       return () => clearTimeout(timeoutId);
     } else if (!isEditMode && open) {
       form.reset({
-        respond_contact_id: '',
-        agent_id: accessAgentId,
+        respond_contact_phone: defaultContactPhone || '',
+        respond_contact_name: '',
+        agent_id: accessAgentId || '',
         is_allowed: true,
         valid_from: undefined,
         valid_to: undefined,
       });
       setFormInitialized(true);
     }
-  }, [contactAccess, isEditMode, form, open, accessAgentId, formInitialized]);
+  }, [contactAccess, isEditMode, form, open, accessAgentId, formInitialized, defaultContactPhone]);
 
   // Reset formInitialized when dialog closes
   useEffect(() => {
@@ -93,35 +117,55 @@ export default function ContactAgentAccessDialog({
 
   const onSubmit = async (data: ContactAgentAccessSchemaType) => {
     try {
+      // Use defaultContactPhone and defaultContactName from contact
+      const contactPhone = defaultContactPhone || data.respond_contact_phone;
+      const contactName = defaultContactName || data.respond_contact_name || undefined;
+
       if (isEditMode && contactAccess) {
         await updateMutation.mutateAsync({
-          agentId: accessAgentId,
+          agentId: accessAgentId || '',
           contactId: contactAccess.id,
           data: {
-            respond_contact_id: data.respond_contact_id,
+            respond_contact_phone: contactPhone,
+            respond_contact_name: contactName,
             is_allowed: data.is_allowed,
             valid_from: data.valid_from ?? undefined,
             valid_to: data.valid_to ?? undefined,
           },
         });
       } else {
+        const agentId = data.agent_id || accessAgentId;
+        if (!agentId) {
+          throw new Error('Agent ID is required');
+        }
+        if (!contactPhone) {
+          throw new Error('Contact phone is required');
+        }
         await createMutation.mutateAsync({
-          agentId: accessAgentId,
+          agentId: agentId,
           data: {
-            respond_contact_id: data.respond_contact_id,
-            agent_id: accessAgentId,
+            respond_contact_phone: contactPhone,
+            respond_contact_name: contactName,
+            agent_id: agentId,
             is_allowed: data.is_allowed,
             valid_from: data.valid_from ?? undefined,
             valid_to: data.valid_to ?? undefined,
           },
         });
       }
+      // Invalidate contact-specific queries if contactId is provided
+      if (contactId) {
+        queryClient.invalidateQueries({ queryKey: ['contact-access-agents', contactId] });
+      }
       onOpenChange(false);
-    } catch (error) {
-      // Error is handled by the mutation hook
+    } catch (error: any) {
+      // Error is handled by the mutation hook, but we can add additional handling here if needed
       console.error('Contact access agent form submission error:', error);
+      // The mutation hook will show the error toast
     }
   };
+
+  // Removed lookup function as respond_contact_name doesn't exist in database
 
   const isLoading = createMutation.isPending || updateMutation.isPending;
 
@@ -135,28 +179,42 @@ export default function ContactAgentAccessDialog({
           <DialogDescription>
             {isEditMode
               ? 'Update the contact access agent details.'
-              : 'Add a new contact access agent by specifying the respond contact ID and validity period.'}
+              : 'Add a new contact access agent by configuring the access settings.'}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="respond_contact_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Respond Contact ID *</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="Enter contact ID"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
+            {showAgentSelection && !isEditMode && (
+              <FormField
+                control={form.control}
+                name="agent_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Access Agent *</FormLabel>
+                    <FormControl>
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select access agent" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {accessAgents
+                            .filter((agent) => agent.is_active)
+                            .map((agent) => (
+                              <SelectItem key={agent.id} value={agent.id}>
+                                {agent.name} ({agent.code})
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}

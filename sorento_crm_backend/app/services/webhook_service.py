@@ -38,6 +38,23 @@ class WebhookService:
         if not url:
             return False, None, None, "MISSING_URL", "Webhook URL is not configured"
         
+        # Validate and fix URL - ensure it has http:// or https:// protocol
+        original_url = url
+        url = url.strip()
+        if not url.startswith(('http://', 'https://')):
+            # Try to auto-fix by adding https://
+            if url.startswith('//'):
+                url = 'https:' + url
+                logger.warning(f"Webhook URL missing protocol, auto-adding https://. Original: {original_url}, Fixed: {url}")
+            elif '://' not in url:
+                # Assume https:// if no protocol specified
+                fixed_url = 'https://' + url
+                logger.warning(f"Webhook URL missing protocol, auto-adding https://. Original: {original_url}, Fixed: {fixed_url}")
+                url = fixed_url
+            else:
+                # Invalid URL format
+                return False, None, None, "INVALID_URL", f"Webhook URL is missing 'http://' or 'https://' protocol: {original_url}"
+        
         default_headers = {
             "Content-Type": "application/json",
             "User-Agent": "Sorento-CRM/1.0.0"
@@ -84,7 +101,12 @@ class WebhookService:
             return False, None, None, "CONNECTION_ERROR", error_msg
             
         except httpx.RequestError as e:
-            error_msg = f"Webhook request failed: {str(e)}"
+            # Check if it's a URL validation error
+            error_str = str(e)
+            if "http://" in error_str.lower() or "https://" in error_str.lower() or "protocol" in error_str.lower():
+                error_msg = f"Webhook request failed: Request URL is missing an 'http://' or 'https://' protocol. URL: {url}"
+            else:
+                error_msg = f"Webhook request failed: {error_str}"
             logger.error(error_msg)
             return False, None, None, "REQUEST_ERROR", error_msg
             

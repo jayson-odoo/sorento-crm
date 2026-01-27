@@ -12,7 +12,7 @@ DB_PORT=$(echo "${DB_HOST_PORT}" | cut -d: -f2)
 
 # Default to host:port if not found in DATABASE_URL
 if [ -z "$DB_HOST" ]; then
-  DB_HOST="72.62.195.20"
+  DB_HOST="72.62.195.19"
   DB_PORT="5432"
 fi
 
@@ -25,7 +25,7 @@ done
 
 echo "${DB_HOST}:${DB_PORT:-5432} - accepting connections"
 echo "Running database migrations..."
-alembic upgrade head
+# alembic upgrade head
 
 echo "Starting FastAPI server..."
 exec python -m gunicorn app.main:app \

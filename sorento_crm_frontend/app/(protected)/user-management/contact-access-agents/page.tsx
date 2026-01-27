@@ -14,7 +14,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
-import ContactAccessAgentsList from './components/ContactAccessAgentsList';
+import ContactsList from '../contacts/components/ContactsList';
 
 export const metadata: Metadata = {
   title: 'Internal Users',
@@ -45,7 +45,7 @@ export default async function ContactAccessAgentsPage() {
       </Container>
 
       <Container>
-        <ContactAccessAgentsList />
+        <ContactsList />
       </Container>
     </>
   );

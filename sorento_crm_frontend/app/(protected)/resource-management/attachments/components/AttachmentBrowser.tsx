@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -28,6 +29,7 @@ import AttachmentUploadDialog from './AttachmentUploadDialog';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
 
 export default function AttachmentBrowser() {
+  const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'uploaded_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -240,7 +242,12 @@ export default function AttachmentBrowser() {
 
   return (
     <>
-      <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+      <DataGrid
+        table={table}
+        recordCount={data?.pagination.total || 0}
+        isLoading={isLoading}
+        onRowClick={(row) => router.push(`/resource-management/attachments/${row.id}`)}
+      >
         <Card>
           <CardHeader className="flex-row items-center justify-between">
             <div className="relative">

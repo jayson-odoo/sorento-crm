@@ -82,11 +82,10 @@ export async function apiFetch(
       if (input.startsWith('/api/')) {
         // Routes that should stay in Next.js (not routed to FastAPI backend)
         // Check for contact-access routes (handled by Next.js with Prisma)
-        // Also exclude SLA policy tiers routes (handled by Next.js with Prisma)
+        // Note: SLA policy tiers routes now use FastAPI (converted from Prisma)
         const isNextJsRoute = 
           input.includes('/contact-access') || 
-          input.includes('/contact-access-agents') ||
-          input.includes('/sla-management/sla-policies/') && input.includes('/tiers');
+          input.includes('/contact-access-agents');
 
         // Route business logic APIs to FastAPI backend
         const businessApiRoutes = [

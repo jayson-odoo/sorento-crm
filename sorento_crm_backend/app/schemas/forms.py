@@ -151,6 +151,31 @@ class FormFieldResponse(FormFieldBase):
         from_attributes = True
 
 
+class FormSubmissionBase(BaseModel):
+    form_id: str
+    status: str = "draft"
+    submission_data: dict
+
+
+class FormSubmissionCreate(FormSubmissionBase):
+    pass
+
+
+class FormSubmissionUpdate(BaseModel):
+    status: Optional[str] = None
+    submission_data: Optional[dict] = None
+
+
+class FormSubmissionResponse(FormSubmissionBase):
+    id: str
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class FormVersionBase(BaseModel):
     form_id: str
     version_number: int

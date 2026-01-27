@@ -110,3 +110,20 @@ async def delete_role(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.patch("/{role_id}/default", status_code=status.HTTP_200_OK)
+async def set_default_role(
+    role_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Set a role as the default role."""
+    try:
+        service = UserRoleService(db)
+        result = service.set_default_role(role_id)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))

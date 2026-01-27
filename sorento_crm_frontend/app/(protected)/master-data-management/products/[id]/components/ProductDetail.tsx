@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -7,11 +8,12 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useProduct } from '../../hooks/useProducts';
+import { useProduct, useProducts } from '../../hooks/useProducts';
 import { formatDate } from '@/lib/helpers';
 import { DataGrid } from '@/components/ui/data-grid';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
 import ProductStockTab from './ProductStockTab';
+import RecordNavigation from '../../../../../../components/common/RecordNavigation';
 
 interface ProductDetailProps {
   productId: string;
@@ -20,6 +22,20 @@ interface ProductDetailProps {
 export default function ProductDetail({ productId }: ProductDetailProps) {
   const router = useRouter();
   const { data: product, isLoading } = useProduct(productId);
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+      category_id: undefined,
+      brand_id: undefined,
+      status: 'all' as const,
+    }),
+    [],
+  );
+  const { data: navigationData } = useProducts(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
 
   if (isLoading) {
     return (
@@ -65,6 +81,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
+          <RecordNavigation
+            currentId={productId}
+            items={navigationItems}
+            basePath="/master-data-management/products"
+          />
           <Button
             variant="outline"
             onClick={() => router.push(`/master-data-management/products/${productId}/edit`)}

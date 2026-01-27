@@ -50,7 +50,7 @@ const ContactAgentAccessDeleteDialog = ({
           <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
           <AlertDialogDescription>
             Are you sure you want to delete the contact access agent for{' '}
-            <strong className="text-foreground">{contactAccess.respond_contact_id}</strong>? This action cannot be undone.
+            <strong className="text-foreground">{contactAccess.respond_contact_phone}</strong>? This action cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

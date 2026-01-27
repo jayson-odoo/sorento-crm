@@ -1,0 +1,7 @@
+{
+  "headers": {
+    "x-nextjs-stale-time": "300",
+    "x-nextjs-prerender": "1",
+    "x-next-cache-tags": "_N_T_/layout,_N_T_/(protected)/layout,_N_T_/(protected)/marketing-management/layout,_N_T_/(protected)/marketing-management/promotions/layout,_N_T_/(protected)/marketing-management/promotions/new/layout,_N_T_/(protected)/marketing-management/promotions/new/page,_N_T_/marketing-management/promotions/new"
+  }
+}

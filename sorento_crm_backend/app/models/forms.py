@@ -96,3 +96,22 @@ class FormVersion(Base):
         Index("ix_form_versions_form_id", "form_id"),
         Index("uq_form_versions_form_id_version_number", "form_id", "version_number", unique=True),
     )
+
+
+class FormSubmission(Base):
+    __tablename__ = "form_submissions"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    form_id = Column(UUID(as_uuid=False), ForeignKey("forms.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(50), default="draft", nullable=False)
+    submission_data = Column(JSONB, nullable=False)
+    created_by = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    form = relationship("Form")
+
+    __table_args__ = (
+        Index("ix_form_submissions_form_id", "form_id"),
+        Index("ix_form_submissions_status", "status"),
+    )

@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess } from '../services/accessAgentService';
+import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getRespondSyncedUsers } from '../services/accessAgentService';
 import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/accessAgent.types';
 
 export function useAccessAgents(params: DataGridApiFetchParams & { status?: string }) {
@@ -83,10 +83,15 @@ export function useCreateContactAgentAccess() {
     mutationFn: ({ agentId, data }: { agentId: string; data: ContactAgentAccessFormData }) => createContactAgentAccess(agentId, data),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['contact-access-agents', variables.agentId] });
+      queryClient.invalidateQueries({ queryKey: ['contact-access-agents'] }); // Invalidate all for grouped list and contact-specific queries
       queryClient.invalidateQueries({ queryKey: ['access-agent', variables.agentId] });
       toast.success('Contact access agent created successfully');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to create contact access agent'),
+    onError: (error: Error) => {
+      // Show user-friendly error message
+      const errorMessage = error.message || 'Failed to create contact access agent';
+      toast.error(errorMessage);
+    },
   });
 }
 
@@ -96,6 +101,7 @@ export function useUpdateContactAgentAccess() {
     mutationFn: ({ agentId, contactId, data }: { agentId: string; contactId: string; data: Partial<ContactAgentAccessFormData> }) => updateContactAgentAccess(agentId, contactId, data),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['contact-access-agents', variables.agentId] });
+      queryClient.invalidateQueries({ queryKey: ['contact-access-agents'] }); // Invalidate all for grouped list
       queryClient.invalidateQueries({ queryKey: ['access-agent', variables.agentId] });
       toast.success('Contact access agent updated successfully');
     },
@@ -109,9 +115,19 @@ export function useDeleteContactAgentAccess() {
     mutationFn: ({ agentId, contactId }: { agentId: string; contactId: string }) => deleteContactAgentAccess(agentId, contactId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['contact-access-agents', variables.agentId] });
+      queryClient.invalidateQueries({ queryKey: ['contact-access-agents'] }); // Invalidate all for grouped list
       queryClient.invalidateQueries({ queryKey: ['access-agent', variables.agentId] });
       toast.success('Contact access agent deleted successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete contact access agent'),
+  });
+}
+
+export function useRespondSyncedUsers(query?: string) {
+  return useQuery({
+    queryKey: ['respond-synced-users', query],
+    queryFn: () => getRespondSyncedUsers(query),
+    staleTime: 1000 * 60 * 5,
+    retry: 1,
   });
 }

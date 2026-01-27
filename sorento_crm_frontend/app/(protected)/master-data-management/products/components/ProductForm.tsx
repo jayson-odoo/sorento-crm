@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -27,7 +27,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCreateProduct, useUpdateProduct, useProduct } from '../hooks/useProducts';
+import { useCreateProduct, useUpdateProduct, useProduct, useProducts } from '../hooks/useProducts';
 import { ProductSchema, type ProductSchemaType } from '../forms/product-schema';
 import type { ProductFormData } from '../types/product.types';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
@@ -35,6 +35,7 @@ import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import { useUOMSelectQuery } from '../../shared/hooks/use-uom-select-query';
 import ProductSuppliersSection from './ProductSuppliersSection';
 import ProductAttachmentsTab from './ProductAttachmentsTab';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface ProductFormProps {
   productId?: string;
@@ -50,6 +51,23 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
   const { data: uoms } = useUOMSelectQuery();
   const createMutation = useCreateProduct();
   const updateMutation = useUpdateProduct();
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+      category_id: undefined,
+      brand_id: undefined,
+      status: 'all' as const,
+      price_min: undefined,
+      price_max: undefined,
+      item_type: undefined,
+    }),
+    [],
+  );
+  const { data: navigationData } = useProducts(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
 
   const form = useForm<ProductSchemaType>({
     resolver: zodResolver(ProductSchema),
@@ -195,6 +213,15 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {isEditMode && productId && (
+          <div className="flex justify-end">
+            <RecordNavigation
+              currentId={productId}
+              items={navigationItems}
+              basePath="/master-data-management/products"
+            />
+          </div>
+        )}
         <Tabs defaultValue="basic" className="w-full">
           <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="basic">Basic Information</TabsTrigger>

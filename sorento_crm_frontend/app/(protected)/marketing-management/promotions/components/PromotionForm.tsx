@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -27,10 +27,11 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useCreatePromotion, useUpdatePromotion, usePromotion } from '../hooks/usePromotions';
+import { useCreatePromotion, useUpdatePromotion, usePromotion, usePromotions } from '../hooks/usePromotions';
 import { PromotionSchema, type PromotionSchemaType } from '../forms/promotion-schema';
 import type { PromotionFormData } from '../types/promotion.types';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface PromotionFormProps {
   promotionId?: string;
@@ -43,6 +44,17 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
   const { data: promotion, isLoading: isLoadingPromotion } = usePromotion(promotionId || null);
   const createMutation = useCreatePromotion();
   const updateMutation = useUpdatePromotion();
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+    }),
+    [],
+  );
+  const { data: navigationData } = usePromotions(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
 
   const form = useForm<PromotionSchemaType>({
     resolver: zodResolver(PromotionSchema),
@@ -131,6 +143,15 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {isEditMode && promotionId && (
+          <div className="flex justify-end">
+            <RecordNavigation
+              currentId={promotionId}
+              items={navigationItems}
+              basePath="/marketing-management/promotions"
+            />
+          </div>
+        )}
         <Tabs defaultValue="basic" className="w-full">
           <TabsList>
             <TabsTrigger value="basic">Basic Information</TabsTrigger>

@@ -7,8 +7,11 @@ import {
   createComplaint,
   updateComplaint,
   deleteComplaint,
+  getComplaintManualAttachments,
+  createComplaintManualAttachment,
+  deleteComplaintManualAttachment,
 } from '../services/complaintService';
-import type { ComplaintFormData } from '../types/complaint.types';
+import type { ComplaintFormData, ComplaintManualAttachmentCreate } from '../types/complaint.types';
 
 export function useComplaints(params: DataGridApiFetchParams) {
   return useQuery({
@@ -82,5 +85,50 @@ export function useDeleteComplaint() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to delete complaint'),
+  });
+}
+
+export function useComplaintManualAttachments(complaintId: string | null) {
+  return useQuery({
+    queryKey: ['complaint-manual-attachments', complaintId],
+    queryFn: () => {
+      if (!complaintId) throw new Error('Complaint ID is required');
+      return getComplaintManualAttachments(complaintId);
+    },
+    enabled: !!complaintId,
+    staleTime: 1000 * 60 * 5,
+    retry: 1,
+  });
+}
+
+export function useCreateComplaintManualAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: ComplaintManualAttachmentCreate) =>
+      createComplaintManualAttachment(data),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ['complaint-manual-attachments', variables.complaint_id],
+      });
+      queryClient.invalidateQueries({ queryKey: ['complaint', variables.complaint_id] });
+      toast.success('Attachment linked successfully');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to link attachment'),
+  });
+}
+
+export function useDeleteComplaintManualAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (manualAttachmentId: string) =>
+      deleteComplaintManualAttachment(manualAttachmentId),
+    onSuccess: (_data, manualAttachmentId, context) => {
+      queryClient.invalidateQueries({ queryKey: ['complaint-manual-attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      toast.success('Attachment unlinked successfully');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to unlink attachment'),
   });
 }

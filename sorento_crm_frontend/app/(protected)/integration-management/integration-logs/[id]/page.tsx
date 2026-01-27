@@ -36,6 +36,15 @@ import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 
+const formatJsonPayload = (payload?: string | null) => {
+  if (!payload) return '';
+  try {
+    return JSON.stringify(JSON.parse(payload), null, 2);
+  } catch {
+    return payload;
+  }
+};
+
 export default function IntegrationLogDetailPage() {
   const params = useParams();
   const id = params.id as string;
@@ -95,9 +104,9 @@ export default function IntegrationLogDetailPage() {
       updated_at: log.updated_at ? format(new Date(log.updated_at), 'PPP p') : '',
       next_retry_at: log.next_retry_at ? format(new Date(log.next_retry_at), 'PPP p') : '',
       request_headers: log.request_headers || '',
-      request_payload: log.request_payload ? JSON.stringify(JSON.parse(log.request_payload), null, 2) : '',
+      request_payload: formatJsonPayload(log.request_payload),
       response_headers: log.response_headers || '',
-      response_payload: log.response_payload ? JSON.stringify(JSON.parse(log.response_payload), null, 2) : '',
+      response_payload: formatJsonPayload(log.response_payload),
       error_code: log.error_code || '',
       error_message: log.error_message || '',
       });

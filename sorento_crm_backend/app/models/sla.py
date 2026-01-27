@@ -52,51 +52,65 @@ class ConversationSLATracking(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     policy_id = Column(UUID(as_uuid=False), ForeignKey("sla_policies.id"), nullable=False)
     current_tier = Column(Integer, nullable=False)
-    assigned_to = Column(Text, nullable=True)
+    assigned_to = Column(Text, nullable=True)  # Keep for backward compatibility
+    assigned_to_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # FK to users
     initiated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     current_tier_started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     due_at = Column(DateTime(timezone=True), nullable=False)
     escalated_at = Column(DateTime(timezone=True), nullable=True)
     escalation_reason = Column(Text, nullable=True)
+    is_responded = Column(Boolean, default=False, nullable=False)
+    responded_at = Column(DateTime(timezone=True), nullable=True)
+    response_time = Column(Numeric(10, 2), nullable=True)
     is_resolved = Column(Boolean, default=False, nullable=False)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     resolved_by = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-    respond_contact_id = Column(Text, nullable=False)
+    respond_contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)  # FK to respond_contacts
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=True), nullable=True)
     resolution_duration = Column(Numeric(10, 2), nullable=True)
     
     policy = relationship("SLAPolicy", back_populates="tracking")
-    escalation_logs = relationship("ConversationSLAEscalationLog", back_populates="tracking")
+    event_logs = relationship("ConversationSLAEventLog", back_populates="tracking")
+    contact = relationship("RespondContact", foreign_keys=[respond_contact_id])
+    assigned_user = relationship("User", foreign_keys=[assigned_to_id])
     
     __table_args__ = (
         Index("ix_conversation_sla_tracking_policy_id", "policy_id"),
         Index("ix_conversation_sla_tracking_is_resolved", "is_resolved"),
         Index("ix_conversation_sla_tracking_assigned_to", "assigned_to"),
-        Index("uq_conversation_sla_tracking_respond_contact_id", "respond_contact_id", unique=True),
+        Index("ix_conversation_sla_tracking_assigned_to_id", "assigned_to_id"),
+        Index("ix_conversation_sla_tracking_respond_contact_id", "respond_contact_id"),
     )
 
 
-class ConversationSLAEscalationLog(Base):
-    __tablename__ = "conversation_sla_escalation_log"
+class ConversationSLAEventLog(Base):
+    __tablename__ = "conversation_sla_event_log"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     sla_tracking_id = Column(UUID(as_uuid=False), ForeignKey("conversation_sla_tracking.id", ondelete="CASCADE"), nullable=False)
-    from_tier = Column(Integer, nullable=False)
-    to_tier = Column(Integer, nullable=False)
-    escalated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    reason = Column(Text, nullable=False)
-    assigned_to = Column(Text, nullable=True)
-    due_at = Column(DateTime(timezone=True), nullable=False)
+    event_type = Column(Text, nullable=False)  # escalation, response, resolution
+    from_tier = Column(Integer, nullable=True)
+    to_tier = Column(Integer, nullable=True)
+    event_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    reason = Column(Text, nullable=True)
+    assigned_to = Column(Text, nullable=True)  # Keep for backward compatibility
+    assigned_to_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # FK to users
+    due_at = Column(DateTime(timezone=True), nullable=True)
+    response_time = Column(Numeric(10, 2), nullable=True)
+    resolution_time = Column(Numeric(10, 2), nullable=True)
     reminder_count = Column(Integer, default=0, nullable=False)
     last_reminder_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     
-    tracking = relationship("ConversationSLATracking", back_populates="escalation_logs")
+    tracking = relationship("ConversationSLATracking", back_populates="event_logs")
+    assigned_user = relationship("User", foreign_keys=[assigned_to_id])
     
     __table_args__ = (
-        Index("ix_conversation_sla_escalation_log_sla_tracking_id", "sla_tracking_id"),
-        Index("ix_conversation_sla_escalation_log_escalated_at", "escalated_at"),
+        Index("ix_conversation_sla_event_log_sla_tracking_id", "sla_tracking_id"),
+        Index("ix_conversation_sla_event_log_event_at", "event_at"),
+        Index("ix_conversation_sla_event_log_event_type", "event_type"),
+        Index("ix_conversation_sla_event_log_assigned_to_id", "assigned_to_id"),
     )

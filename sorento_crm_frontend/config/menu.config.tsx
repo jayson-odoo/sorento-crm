@@ -366,6 +366,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
       },
+      {
+        title: 'SLA Event Logs',
+        path: '/sla-management/escalation-logs',
+      },
     ],
   },
   {
@@ -449,6 +453,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Stock Batches',
         path: '/inventory-management/stock-batches',
       },
+      {
+        title: 'Stock Ledger',
+        path: '/inventory-management/stock-ledger',
+      },
     ],
   },
   {
@@ -485,6 +493,10 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Forms',
         path: '/forms-management/forms',
+      },
+      {
+        title: 'KOL Video Request',
+        path: '/forms-management/kol-video-request',
       },
     ],
   },
@@ -962,6 +974,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
       },
+      {
+        title: 'SLA Event Logs',
+        path: '/sla-management/escalation-logs',
+      },
     ],
   },
   {
@@ -1045,6 +1061,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Stock Batches',
         path: '/inventory-management/stock-batches',
       },
+      {
+        title: 'Stock Ledger',
+        path: '/inventory-management/stock-ledger',
+      },
     ],
   },
   {
@@ -1081,6 +1101,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Forms',
         path: '/forms-management/forms',
+      },
+      {
+        title: 'KOL Video Request',
+        path: '/forms-management/kol-video-request',
       },
     ],
   },

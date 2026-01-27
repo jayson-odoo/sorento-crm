@@ -1,6 +1,6 @@
 """Integration logging schemas."""
 from pydantic import BaseModel, field_validator
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime
 import uuid
 import json
@@ -24,6 +24,11 @@ class IntegrationLogCreate(IntegrationLogBase):
     max_retry_allowed: int = 3
     correlation_id: Optional[str] = None
     created_by: Optional[str] = None
+    status_code: Optional[int] = None
+    response_headers: Optional[str] = None
+    response_payload: Optional[str] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
 
 
 class IntegrationLogUpdate(BaseModel):
@@ -53,7 +58,7 @@ class IntegrationLogResponse(IntegrationLogBase):
     created_at: datetime
     created_by: Optional[str] = None
     processed_at: Optional[datetime] = None
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
     
     @field_validator('id', 'business_id', 'correlation_id', 'created_by', mode='before')
     @classmethod
@@ -81,6 +86,26 @@ class IntegrationLogUpdateRequest(BaseModel):
     """Request from n8n to update integration log status."""
     status: str  # "success", "failed", "processing"
     status_code: Optional[int] = None
-    response_payload: Optional[str] = None
+    response_payload: Optional[Any] = None
     error_code: Optional[str] = None
     error_message: Optional[str] = None
+
+    @field_validator('response_payload', mode='before')
+    @classmethod
+    def normalize_response_payload(cls, v):
+        """Require response payload to be valid JSON object/array."""
+        if v is None:
+            return None
+        if isinstance(v, (dict, list)):
+            return json.dumps(v)
+        if isinstance(v, (bytes, bytearray)):
+            v = v.decode('utf-8', errors='ignore')
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+            except json.JSONDecodeError:
+                raise ValueError("response_payload must be valid JSON.")
+            if not isinstance(parsed, (dict, list)):
+                raise ValueError("response_payload must be a JSON object or array.")
+            return json.dumps(parsed)
+        raise ValueError("response_payload must be a JSON object or array.")

@@ -2,16 +2,17 @@
 # Import all models here so Alembic can discover them
 # Import order matters for relationships - import base models first
 from app.models.user import User, UserRole, UserPermission, UserRolePermission, SystemLog, SystemSetting
+from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
 from app.models.order import Order, OrderStatus, Customer
-from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch
+from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry
 from app.models.marketing import Promotion, PromotionProduct, CampaignType, MarketingCampaign
-from app.models.forms import Form, FormSection, FormField, FormVersion
-from app.models.complaints import Complaint, ComplaintAttachment
-from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEscalationLog
+from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
+from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment
+from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog
 from app.models.resources import Attachment, AttachmentType
-from app.models.access import AccessAgent, ContactAgentAccess
+from app.models.access import AccessAgent, ContactAgentAccess, UserAgentAccess
 from app.models.integration import IntegrationLog
 
 __all__ = [
@@ -32,6 +33,7 @@ __all__ = [
     "StorageZone",
     "Stock",
     "StockBatch",
+    "StockLedger",
     "Supplier",
     "ProductSupplier",
     "InboundShipment",
@@ -48,15 +50,19 @@ __all__ = [
     "FormSection",
     "FormField",
     "FormVersion",
+    "FormSubmission",
     "Complaint",
     "ComplaintAttachment",
+    "ComplaintManualAttachment",
     "SLAPolicy",
     "SLAPolicyTier",
     "ConversationSLATracking",
-    "ConversationSLAEscalationLog",
+    "ConversationSLAEventLog",
     "Attachment",
     "AttachmentType",
     "AccessAgent",
     "ContactAgentAccess",
+    "UserAgentAccess",
     "IntegrationLog",
+    "VerificationToken",
 ]

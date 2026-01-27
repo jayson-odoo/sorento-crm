@@ -28,6 +28,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateComplaint, useUpdateComplaint, useComplaint } from '../hooks/useComplaints';
 import { ComplaintSchema, type ComplaintSchemaType } from '../forms/complaint-schema';
 import type { ComplaintFormData, ComplaintAttachment } from '../types/complaint.types';
+import ComplaintNavigation from './ComplaintNavigation';
+import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
 
 interface ComplaintFormProps {
   complaintId?: string;
@@ -164,6 +166,11 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {isEditMode && complaintId && (
+          <div className="flex justify-end">
+            <ComplaintNavigation complaintId={complaintId} />
+          </div>
+        )}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left Column */}
           <div className="space-y-6">
@@ -504,6 +511,10 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
             </Card>
           </div>
         </div>
+
+        {isEditMode && complaintId && (
+          <ComplaintManualAttachmentsSection complaintId={complaintId} />
+        )}
 
         <div className="flex justify-end gap-4">
           <Button

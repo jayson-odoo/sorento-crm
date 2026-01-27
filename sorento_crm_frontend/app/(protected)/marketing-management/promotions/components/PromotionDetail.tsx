@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -24,13 +24,14 @@ import {
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { usePromotion, useDeletePromotion, useAddPromotionProduct, useRemovePromotionProduct, useUpdatePromotionProductPrice } from '../hooks/usePromotions';
+import { usePromotion, useDeletePromotion, useAddPromotionProduct, useRemovePromotionProduct, useUpdatePromotionProductPrice, usePromotions } from '../hooks/usePromotions';
 import { useProducts } from '../../../master-data-management/products/hooks/useProducts';
 import type { GetProductsParams } from '../../../master-data-management/products/services/productService';
 import { formatDate } from '@/lib/helpers';
 import { toast } from 'sonner';
 import { LoaderCircleIcon } from 'lucide-react';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface PromotionDetailProps {
   promotionId: string;
@@ -39,6 +40,17 @@ interface PromotionDetailProps {
 export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const router = useRouter();
   const { data: promotion, isLoading } = usePromotion(promotionId);
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+    }),
+    [],
+  );
+  const { data: navigationData } = usePromotions(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
   const deleteMutation = useDeletePromotion();
   const addProductMutation = useAddPromotionProduct();
   const removeProductMutation = useRemovePromotionProduct();
@@ -180,6 +192,11 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
+          <RecordNavigation
+            currentId={promotionId}
+            items={navigationItems}
+            basePath="/marketing-management/promotions"
+          />
           <Button variant="outline" onClick={() => router.push(`/marketing-management/promotions/${promotionId}/edit`)}>
             <Edit className="size-4" />
             Edit
