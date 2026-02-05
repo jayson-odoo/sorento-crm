@@ -1,7 +1,7 @@
 """Complaints API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.complaints_service import ComplaintService
@@ -10,8 +10,7 @@ from app.schemas.complaints import (
     ComplaintCreate,
     ComplaintUpdate,
     ComplaintResponse,
-    ComplaintManualAttachmentCreate,
-    ComplaintManualAttachmentResponse,
+    ComplaintAttachmentLinkRequest,
 )
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
@@ -41,6 +40,46 @@ async def get_complaints(
             sort_dir=dir or "asc"
         )
         return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/attachments/{link_id}", status_code=status.HTTP_200_OK)
+async def delete_complaint_attachment(
+    link_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Unlink an attachment from a complaint (complaint_attachments link)."""
+    try:
+        service = ComplaintService(db)
+        service.delete_complaint_attachment(link_id)
+        return {"message": "Attachment unlinked successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{complaint_id}/attachments", status_code=status.HTTP_201_CREATED)
+async def link_attachment_to_complaint(
+    complaint_id: str,
+    body: ComplaintAttachmentLinkRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Link an existing attachment to a complaint (complaint_attachments table)."""
+    try:
+        service = ComplaintService(db)
+        created_by = (current_user.get("id") or None) if isinstance(current_user.get("id"), str) and len(str(current_user.get("id"))) == 36 else None
+        link = service.link_attachment_to_complaint(
+            complaint_id=complaint_id,
+            attachment_id=body.attachment_id,
+            created_by=created_by,
+        )
+        return {"message": "Attachment linked successfully", "link_id": link.id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -109,77 +148,6 @@ async def create_complaint_integration(
         )
 
         return {"status": "success", "message": "Complaint created successfully.", "complaint_id": complaint.id}
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-@router.post("/manual-attachments", response_model=ComplaintManualAttachmentResponse, status_code=status.HTTP_201_CREATED)
-async def create_complaint_manual_attachment(
-    attachment_data: ComplaintManualAttachmentCreate,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    """Create a manual complaint attachment entry from integration."""
-    try:
-        service = ComplaintService(db)
-        link, attachment = service.create_manual_attachment(attachment_data)
-
-        log_service = IntegrationLogService(db)
-        log_service.create_integration_log(
-            IntegrationLogCreate(
-                integration_channel="complaints_api",
-                business_table="complaint_manual_attachments",
-                business_id=link.id,
-                external_reference=link.complaint_id,
-                direction="inbound",
-                endpoint=str(request.url),
-                http_method="POST",
-                status="success"
-            ),
-            request_payload_dict=attachment_data.model_dump()
-        )
-
-        return {
-            "id": link.id,
-            "complaint_id": link.complaint_id,
-            "attachment_id": link.attachment_id,
-            "created_at": link.created_at,
-            "attachment": attachment,
-        }
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-@router.get(
-    "/{complaint_id}/manual-attachments",
-    response_model=List[ComplaintManualAttachmentResponse],
-)
-async def list_complaint_manual_attachments(
-    complaint_id: str,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """List manual attachments linked to a complaint."""
-    try:
-        service = ComplaintService(db)
-        return service.list_manual_attachments(complaint_id)
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-@router.delete("/manual-attachments/{manual_attachment_id}", status_code=status.HTTP_200_OK)
-async def delete_complaint_manual_attachment(
-    manual_attachment_id: str,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Unlink a manual attachment from a complaint."""
-    try:
-        service = ComplaintService(db)
-        service.delete_manual_attachment(manual_attachment_id)
-        return {"message": "Attachment unlinked successfully"}
-    except HTTPException:
-        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 

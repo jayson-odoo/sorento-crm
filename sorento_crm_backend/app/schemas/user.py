@@ -8,6 +8,7 @@ from datetime import datetime
 class RespondContactBase(BaseModel):
     phone_number: str
     name: Optional[str] = None
+    user_type: Optional[str] = None
 
 
 class RespondContactCreate(RespondContactBase):
@@ -17,6 +18,7 @@ class RespondContactCreate(RespondContactBase):
 class RespondContactUpdate(BaseModel):
     phone_number: Optional[str] = None
     name: Optional[str] = None
+    user_type: Optional[str] = None
 
 
 class RespondContactResponse(RespondContactBase):

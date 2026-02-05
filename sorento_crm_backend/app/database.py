@@ -5,12 +5,16 @@ from sqlalchemy.orm import sessionmaker, Session
 from app.config import settings
 
 # Create database engine with connection pooling
+# Set timezone to UTC to ensure consistent timestamp handling
 engine = create_engine(
     settings.database_url,
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,  # Verify connections before using
     echo=settings.debug,
+    connect_args={
+        "options": "-c timezone=utc"  # Force PostgreSQL session timezone to UTC
+    }
 )
 
 # Create session factory

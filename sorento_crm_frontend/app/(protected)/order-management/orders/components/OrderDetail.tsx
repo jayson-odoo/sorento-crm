@@ -155,25 +155,25 @@ export default function OrderDetail({ orderId }: OrderDetailProps) {
             <div>
               <p className="text-sm text-muted-foreground">Subtotal Amount</p>
               <p className="font-medium text-lg">
-                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(order.subtotal_amount)}
+                {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(order.subtotal_amount)}
               </p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Discount Amount</p>
               <p className="font-medium text-lg text-destructive">
-                -{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(order.discount_amount)}
+                -{new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(order.discount_amount)}
               </p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Tax Amount</p>
               <p className="font-medium text-lg">
-                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(order.tax_amount)}
+                {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(order.tax_amount)}
               </p>
             </div>
             <div className="pt-4 border-t">
               <p className="text-sm text-muted-foreground">Total Amount</p>
               <p className="font-bold text-xl">
-                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(order.total_amount)}
+                {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(order.total_amount)}
               </p>
             </div>
             <div className="pt-4">
@@ -193,6 +193,101 @@ export default function OrderDetail({ orderId }: OrderDetailProps) {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Delivery & Tracking</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-sm text-muted-foreground">Debtor Code</p>
+              <p className="font-medium">{order.debtor_code || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Debtor Name</p>
+              <p className="font-medium">{order.debtor_name || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Agent</p>
+              <p className="font-medium">{order.agent || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Order Type</p>
+              <p className="font-medium">{order.order_type || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Customer (Ref)</p>
+              <p className="font-medium">{order.customer_ref || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Cancelled</p>
+              <p className="font-medium">{order.is_cancelled ? 'Yes' : 'No'}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-sm text-muted-foreground">Delivery Time</p>
+              <p className="font-medium">{order.delivery_time || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Checker</p>
+              <p className="font-medium">{order.checker || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Transporter</p>
+              <p className="font-medium">{order.transporter || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Driver Name</p>
+              <p className="font-medium">{order.driver_name || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Lorry Plate</p>
+              <p className="font-medium">{order.lorry_plate || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Warehouse</p>
+              <p className="font-medium">{order.warehouse || '-'}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-sm text-muted-foreground">Salesman</p>
+              <p className="font-medium">{order.salesman || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Trips</p>
+              <p className="font-medium">{order.trips ?? '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">KPI</p>
+              <p className={`font-medium ${order.kpi_warning ? 'text-amber-600' : ''}`}>
+                {order.delivery_days ?? '-'} day(s)
+              </p>
+            </div>
+          </div>
+
+          {(order.delivery_remarks || order.delivery_remarks_cs) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {order.delivery_remarks_cs && (
+                <div>
+                  <p className="text-sm text-muted-foreground">Remarks CS</p>
+                  <p className="font-medium whitespace-pre-wrap">{order.delivery_remarks_cs}</p>
+                </div>
+              )}
+              {order.delivery_remarks && (
+                <div>
+                  <p className="text-sm text-muted-foreground">Remarks</p>
+                  <p className="font-medium whitespace-pre-wrap">{order.delivery_remarks}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
+import { formatDate } from '@/lib/helpers';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -374,8 +375,8 @@ const UserAddDialog = ({
                           <div className="font-medium text-sm">{access.agent_name}</div>
                           <div className="text-xs text-muted-foreground">
                             Allowed: {access.is_allowed ? 'Yes' : 'No'}
-                            {access.valid_from && ` • From: ${access.valid_from.toLocaleDateString()}`}
-                            {access.valid_to && ` • To: ${access.valid_to.toLocaleDateString()}`}
+                            {access.valid_from && ` • From: ${formatDate(new Date(access.valid_from))}`}
+                            {access.valid_to && ` • To: ${formatDate(new Date(access.valid_to))}`}
                           </div>
                         </div>
                         <Button

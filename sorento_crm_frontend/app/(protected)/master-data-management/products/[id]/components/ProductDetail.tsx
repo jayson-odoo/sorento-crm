@@ -128,7 +128,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 <p className="font-medium text-lg">
                   {new Intl.NumberFormat('en-US', {
                     style: 'currency',
-                    currency: 'USD',
+                    currency: 'MYR',
                   }).format(product.list_price)}
                 </p>
               </div>
@@ -203,7 +203,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                         <p className="font-medium text-lg">
                           {new Intl.NumberFormat('en-US', {
                             style: 'currency',
-                            currency: 'USD',
+                            currency: 'MYR',
                           }).format(product.list_price)}
                         </p>
                       </div>
@@ -213,7 +213,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                           <p className="font-medium text-lg">
                             {new Intl.NumberFormat('en-US', {
                               style: 'currency',
-                              currency: 'USD',
+                              currency: 'MYR',
                             }).format(product.cost_price)}
                           </p>
                         </div>

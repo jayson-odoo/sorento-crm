@@ -122,6 +122,45 @@ async def get_api_key(
     return x_api_key
 
 
+async def get_external_api_user(
+    api_key: Optional[str] = Depends(get_api_key),
+) -> dict:
+    """Validate external API key and return system user dict."""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key is required",
+        )
+
+    valid_api_key = getattr(settings, 'external_api_key', None)
+    if not valid_api_key:
+        logger.warning("API key provided but EXTERNAL_API_KEY not configured")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key authentication not configured",
+        )
+
+    if api_key != valid_api_key:
+        logger.warning("Invalid API key provided")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
+
+    return {
+        "id": "system",
+        "email": "api@system",
+        "role_id": "system",
+        "name": "API User",
+        "avatar": None,
+        "status": "ACTIVE",
+        "role_name": "API",
+    }
+
+
 async def get_current_user_or_api_key(
     request: Request,
     token: Optional[str] = Depends(oauth2_scheme),

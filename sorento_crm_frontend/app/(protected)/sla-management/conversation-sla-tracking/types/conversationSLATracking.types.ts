@@ -50,6 +50,10 @@ export interface ConversationSLATracking {
   contact_name?: string | null;
   assigned_user_name?: string | null;
   assigned_user_email?: string | null;
+  responded_by_user_name?: string | null;
+  resolved_by_user_name?: string | null;
+  average_response_time?: number | null;
+  average_resolution_time?: number | null;
 }
 
 export interface ConversationSLATrackingDetail extends ConversationSLATracking {
@@ -63,6 +67,8 @@ export interface ConversationSLAEventLog {
   from_tier?: number | null;
   to_tier?: number | null;
   event_at: Date;
+  from_time?: Date | null; // For response/resolution events, stores initiated_at
+  duration?: number | null; // Duration in hours, calculated for response/resolution events
   reason?: string | null;
   assigned_to?: string | null; // Keep for backward compatibility
   assigned_to_id?: string | null;

@@ -3,8 +3,6 @@ import type {
   Complaint,
   ComplaintFormData,
   ComplaintDetail,
-  ComplaintManualAttachmentCreate,
-  ComplaintManualAttachment,
 } from '../types/complaint.types';
 import type {
   DataGridApiFetchParams,
@@ -89,46 +87,30 @@ export async function deleteComplaint(id: string): Promise<void> {
   }
 }
 
-export async function createComplaintManualAttachment(
-  data: ComplaintManualAttachmentCreate,
-): Promise<ComplaintManualAttachment> {
+export async function linkComplaintAttachment(
+  complaintId: string,
+  attachmentId: string,
+): Promise<{ message: string; link_id: string }> {
   const response = await apiFetch(
-    '/api/v1/complaints-management/complaints/manual-attachments',
+    `/api/v1/complaints-management/complaints/${complaintId}/attachments`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ attachment_id: attachmentId }),
     },
   );
   if (!response.ok) {
     const error = await response
       .json()
-      .catch(() => ({ message: 'Failed to create manual attachment' }));
+      .catch(() => ({ message: 'Failed to link attachment' }));
     throw new Error(error.message);
   }
   return response.json();
 }
 
-export async function getComplaintManualAttachments(
-  complaintId: string,
-): Promise<ComplaintManualAttachment[]> {
+export async function deleteComplaintAttachment(linkId: string): Promise<void> {
   const response = await apiFetch(
-    `/api/v1/complaints-management/complaints/${complaintId}/manual-attachments`,
-  );
-  if (!response.ok) {
-    const error = await response
-      .json()
-      .catch(() => ({ message: 'Failed to fetch manual attachments' }));
-    throw new Error(error.message);
-  }
-  return response.json();
-}
-
-export async function deleteComplaintManualAttachment(
-  manualAttachmentId: string,
-): Promise<void> {
-  const response = await apiFetch(
-    `/api/v1/complaints-management/complaints/manual-attachments/${manualAttachmentId}`,
+    `/api/v1/complaints-management/complaints/attachments/${linkId}`,
     { method: 'DELETE' },
   );
   if (!response.ok) {

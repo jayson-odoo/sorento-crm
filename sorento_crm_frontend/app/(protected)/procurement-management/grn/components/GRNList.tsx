@@ -167,7 +167,7 @@ export default function GRNList() {
           const cost = row.original.total_cost || 0;
           return new Intl.NumberFormat('en-US', {
             style: 'currency',
-            currency: 'USD',
+            currency: 'MYR',
           }).format(cost);
         },
         size: 130,

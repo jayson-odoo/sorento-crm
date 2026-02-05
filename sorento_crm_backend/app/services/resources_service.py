@@ -199,6 +199,23 @@ class AttachmentService:
         attachment.deleted_by = deleted_by
         self.db.commit()
         return {"message": "Attachment deleted successfully"}
+
+    def delete_attachments(self, attachment_ids: list[str], deleted_by: str):
+        """Soft delete multiple attachments by ID. Skips not-found and already-deleted."""
+        from datetime import datetime
+        count = 0
+        for aid in attachment_ids:
+            attachment = self.db.query(Attachment).filter(
+                Attachment.id == aid,
+                Attachment.is_deleted == False,
+            ).first()
+            if attachment:
+                attachment.is_deleted = True
+                attachment.deleted_at = datetime.utcnow()
+                attachment.deleted_by = deleted_by
+                count += 1
+        self.db.commit()
+        return {"message": f"{count} attachment(s) deleted successfully", "deleted_count": count}
     
     def get_file_content(self, attachment_id: str) -> bytes:
         """

@@ -289,7 +289,7 @@ const ProductsList = () => {
             <div className="text-sm">
               {new Intl.NumberFormat('en-US', {
                 style: 'currency',
-                currency: 'USD',
+                currency: 'MYR',
               }).format(price)}
             </div>
           );

@@ -23,6 +23,7 @@ export interface PickingLine {
   spo_allocation?: {
     id: string;
     spo_number?: string | null;
+    spo_line_number?: number | null;
     inbound_shipment_id?: string;
     inbound_shipment?: {
       id: string;

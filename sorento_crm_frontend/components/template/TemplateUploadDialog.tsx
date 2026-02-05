@@ -77,11 +77,11 @@ export function TemplateUploadDialog({
 
       setProgress(50);
       
-      // Call the upload handler
+      // Call the upload handler (now handles queuing and shows toast)
       await onUpload(data);
       
       setProgress(100);
-      toast.success(`Successfully imported ${data.length} row(s)`);
+      // Dialog will be closed by the handler, but ensure it closes
       onOpenChange(false);
       setFile(null);
     } catch (error) {

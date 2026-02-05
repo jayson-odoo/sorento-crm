@@ -1,6 +1,6 @@
 """Product management models."""
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Integer, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -140,6 +140,7 @@ class ProductAttachment(Base):
     attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="CASCADE"), nullable=False)
     is_primary = Column(Boolean, default=False, nullable=True)
     sort_order = Column(Integer, nullable=True)
+    access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     synced_to_excel = Column(Boolean, default=False, nullable=True)
@@ -153,4 +154,5 @@ class ProductAttachment(Base):
         Index("ix_product_attachments_product_id", "product_id"),
         Index("ix_product_attachments_attachment_id", "attachment_id"),
         Index("uq_product_attachment", "product_id", "attachment_id", unique=True),
+        Index("ix_product_attachments_access_levels", "access_levels", postgresql_using="gin"),
     )

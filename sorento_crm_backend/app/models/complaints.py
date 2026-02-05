@@ -1,10 +1,14 @@
 """Complaint management models."""
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Numeric, Date, Index
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Numeric, Date, Index, Boolean, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 import uuid
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.models.resources import Attachment
 
 
 class Complaint(Base):
@@ -38,19 +42,24 @@ class Complaint(Base):
 
 
 class ComplaintAttachment(Base):
+    """Link table: complaint_id + attachment_id (like promotion_attachments)."""
     __tablename__ = "complaint_attachments"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     complaint_id = Column(UUID(as_uuid=False), ForeignKey("complaints.id", ondelete="CASCADE"), nullable=False)
-    file_name = Column(Text, nullable=True)
-    file_url = Column(Text, nullable=True)
-    file_size_bytes = Column(Numeric(20, 0), nullable=True)
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="CASCADE"), nullable=False)
+    is_primary = Column(Boolean, default=False, nullable=False)
+    sort_order = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_by = Column(UUID(as_uuid=False), nullable=True)
     
     complaint = relationship("Complaint", back_populates="attachments")
+    attachment = relationship("Attachment", foreign_keys=[attachment_id])
     
     __table_args__ = (
         Index("ix_complaint_attachments_complaint_id", "complaint_id"),
+        Index("ix_complaint_attachments_attachment_id", "attachment_id"),
+        Index("uq_complaint_attachment", "complaint_id", "attachment_id", unique=True),
     )
 
 

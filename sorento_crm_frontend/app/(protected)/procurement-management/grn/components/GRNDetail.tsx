@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Edit, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -203,7 +204,7 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
                 {grn.total_cost
                   ? new Intl.NumberFormat('en-US', {
                       style: 'currency',
-                      currency: 'USD',
+                      currency: 'MYR',
                     }).format(grn.total_cost)
                   : '-'}
               </p>
@@ -259,11 +260,19 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
                   {grn.picking_lines.map((line) => (
                     <TableRow key={line.id}>
                       <TableCell>
-                        {line.spo_allocation?.spo_number || '-'}
+                        {line.spo_allocation ? (
+                          <Link
+                            href={`/procurement-management/spo-allocations/${line.spo_allocation.id}`}
+                            className="text-primary hover:underline font-medium"
+                          >
+                            {line.spo_allocation.spo_number ?? line.spo_allocation.id}
+                          </Link>
+                        ) : (
+                          '-'
+                        )}
                       </TableCell>
                       <TableCell>
-                        {line.product?.product_code || '-'} -{' '}
-                        {line.product?.product_name || '-'}
+                        {line.product?.product_code || '-'}
                       </TableCell>
                       <TableCell>{line.quantity_expected}</TableCell>
                       <TableCell>{line.quantity_picked}</TableCell>
@@ -283,7 +292,7 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
                         {line.unit_cost
                           ? new Intl.NumberFormat('en-US', {
                               style: 'currency',
-                              currency: 'USD',
+                              currency: 'MYR',
                             }).format(line.unit_cost)
                           : '-'}
                       </TableCell>
@@ -291,7 +300,7 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
                         {line.line_total
                           ? new Intl.NumberFormat('en-US', {
                               style: 'currency',
-                              currency: 'USD',
+                              currency: 'MYR',
                             }).format(line.line_total)
                           : '-'}
                       </TableCell>

@@ -79,6 +79,16 @@ export default function PackingListsList() {
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        accessorKey: 'shipping_container_number',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Container Number" column={column} />
+        ),
+        cell: ({ row }) =>
+          row.original.shipping_container_number || '-',
+        size: 160,
+        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
         accessorKey: 'supplier.supplier_name',
         header: ({ column }) => (
           <DataGridColumnHeader title="Supplier" column={column} />
@@ -134,7 +144,10 @@ export default function PackingListsList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Items" column={column} />
         ),
-        cell: ({ row }) => row.original.total_items_shipped || 0,
+        cell: ({ row }) =>
+          row.original.display_total_items ??
+          row.original.total_items_shipped ??
+          0,
         size: 100,
         meta: { skeleton: <Skeleton className="h-4 w-16" /> },
       },

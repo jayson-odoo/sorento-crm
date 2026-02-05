@@ -9,7 +9,7 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { Search, X, RefreshCw, ChevronRight } from 'lucide-react';
+import { Search, X, RefreshCw, ChevronRight, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -25,6 +25,8 @@ import { apiFetch } from '@/lib/api';
 import type { RespondContact } from '../types/contact.types';
 import { formatDate } from '@/lib/helpers';
 import { toast } from 'sonner';
+import ContactCreateDialog from './ContactCreateDialog';
+import ContactDeleteDialog from './ContactDeleteDialog';
 
 interface ContactsListProps {
   pageIndex?: number;
@@ -39,6 +41,9 @@ export default function ContactsList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [contactToDelete, setContactToDelete] = useState<RespondContact | null>(null);
 
   const fetchContacts = async (): Promise<DataGridApiResponse<RespondContact>> => {
     const sortField = sorting?.[0]?.id || 'created_at';
@@ -89,6 +94,12 @@ export default function ContactsList() {
     router.push(`/user-management/contacts/${contact.id}`);
   };
 
+  const handleDeleteClick = (e: React.MouseEvent, contact: RespondContact) => {
+    e.stopPropagation();
+    setContactToDelete(contact);
+    setDeleteDialogOpen(true);
+  };
+
   const columns = useMemo<ColumnDef<RespondContact>[]>(
     () => [
       {
@@ -121,6 +132,13 @@ export default function ContactsList() {
         meta: { skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
+        accessorKey: 'user_type',
+        header: ({ column }) => <DataGridColumnHeader title="User Type" column={column} />,
+        size: 150,
+        cell: ({ row }) => row.original.user_type || <span className="text-muted-foreground">—</span>,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Created At" column={column} />,
         cell: ({ row }) => formatDate(new Date(row.original.created_at)),
@@ -136,18 +154,28 @@ export default function ContactsList() {
         id: 'actions',
         header: '',
         cell: ({ row }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleRowClick(row.original);
-            }}
-          >
-            <ChevronRight className="size-4" />
-          </Button>
+          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+            <Button
+              variant="ghost"
+              size="sm"
+              title="Delete contact"
+              onClick={(e) => handleDeleteClick(e, row.original)}
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRowClick(row.original);
+              }}
+            >
+              <ChevronRight className="size-4" />
+            </Button>
+          </div>
         ),
-        size: 50,
+        size: 90,
       },
     ],
     [syncContactMutation.isPending],
@@ -193,6 +221,10 @@ export default function ContactsList() {
               </Button>
             )}
           </div>
+          <Button onClick={() => setCreateDialogOpen(true)}>
+            <Plus className="size-4 mr-2" />
+            Create Contact
+          </Button>
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -204,6 +236,17 @@ export default function ContactsList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+
+      <ContactCreateDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+      />
+
+      <ContactDeleteDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        contact={contactToDelete}
+      />
     </DataGrid>
   );
 }

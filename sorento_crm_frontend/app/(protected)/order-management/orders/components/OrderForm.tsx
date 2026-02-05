@@ -69,6 +69,26 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
       order_status_id: '',
       billing_address_id: undefined,
       shipping_address_id: undefined,
+      created_time: undefined,
+      debtor_code: '',
+      debtor_name: '',
+      agent: '',
+      is_cancelled: false,
+      remarks_cs: '',
+      order_type: '',
+      delivery_time: '',
+      checker: '',
+      transporter: '',
+      driver_name: '',
+      lorry_plate: '',
+      customer_ref: '',
+      delivery_remarks_cs: '',
+      delivery_remarks: '',
+      salesman: '',
+      trips: undefined,
+      warehouse: '',
+      delivery_days: undefined,
+      kpi_warning: false,
       subtotal_amount: 0,
       discount_amount: 0,
       tax_amount: 0,
@@ -126,6 +146,26 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
             order_status_id: orderStatusId,
             billing_address_id: order.billing_address_id || undefined,
             shipping_address_id: order.shipping_address_id || undefined,
+            created_time: order.created_time ? new Date(order.created_time) : undefined,
+            debtor_code: order.debtor_code || '',
+            debtor_name: order.debtor_name || '',
+            agent: order.agent || '',
+            is_cancelled: order.is_cancelled ?? false,
+            remarks_cs: order.remarks_cs || '',
+            order_type: order.order_type || '',
+            delivery_time: order.delivery_time || '',
+            checker: order.checker || '',
+            transporter: order.transporter || '',
+            driver_name: order.driver_name || '',
+            lorry_plate: order.lorry_plate || '',
+            customer_ref: order.customer_ref || '',
+            delivery_remarks_cs: order.delivery_remarks_cs || '',
+            delivery_remarks: order.delivery_remarks || '',
+            salesman: order.salesman || '',
+            trips: order.trips ?? undefined,
+            warehouse: order.warehouse || '',
+            delivery_days: order.delivery_days ?? undefined,
+            kpi_warning: order.kpi_warning ?? false,
             subtotal_amount: order.subtotal_amount,
             discount_amount: order.discount_amount || 0,
             tax_amount: order.tax_amount || 0,
@@ -160,6 +200,26 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
         order_status_id: data.order_status_id,
         billing_address_id: data.billing_address_id || undefined,
         shipping_address_id: data.shipping_address_id || undefined,
+        created_time: data.created_time || undefined,
+        debtor_code: data.debtor_code || undefined,
+        debtor_name: data.debtor_name || undefined,
+        agent: data.agent || undefined,
+        is_cancelled: data.is_cancelled ?? false,
+        remarks_cs: data.remarks_cs || undefined,
+        order_type: data.order_type || undefined,
+        delivery_time: data.delivery_time || undefined,
+        checker: data.checker || undefined,
+        transporter: data.transporter || undefined,
+        driver_name: data.driver_name || undefined,
+        lorry_plate: data.lorry_plate || undefined,
+        customer_ref: data.customer_ref || undefined,
+        delivery_remarks_cs: data.delivery_remarks_cs || undefined,
+        delivery_remarks: data.delivery_remarks || undefined,
+        salesman: data.salesman || undefined,
+        trips: data.trips ?? undefined,
+        warehouse: data.warehouse || undefined,
+        delivery_days: data.delivery_days ?? undefined,
+        kpi_warning: data.kpi_warning ?? false,
         subtotal_amount: typeof data.subtotal_amount === 'number' ? data.subtotal_amount : Number(data.subtotal_amount),
         discount_amount: data.discount_amount || 0,
         tax_amount: data.tax_amount || 0,
@@ -207,10 +267,11 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
           </div>
         )}
         <Tabs defaultValue="basic" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="basic">Basic Information</TabsTrigger>
             <TabsTrigger value="financial">Financial Details</TabsTrigger>
             <TabsTrigger value="remarks">Remarks</TabsTrigger>
+            <TabsTrigger value="tracking">Delivery & Tracking</TabsTrigger>
           </TabsList>
 
           {/* Tab 1: Basic Information */}
@@ -525,6 +586,318 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                     </FormItem>
                   )}
                 />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Tab 4: Delivery & Tracking */}
+          <TabsContent value="tracking">
+            <Card>
+              <CardHeader>
+                <CardTitle>Delivery & Tracking</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-8">
+                <div className="space-y-4">
+                  <h4 className="text-sm font-semibold text-muted-foreground">Master Information</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <FormField
+                      control={form.control}
+                      name="created_time"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Created Time</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="datetime-local"
+                              value={field.value ? new Date(field.value).toISOString().slice(0, 16) : ''}
+                              onChange={(e) => field.onChange(e.target.value ? new Date(e.target.value) : undefined)}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="order_type"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Type</FormLabel>
+                          <FormControl>
+                            <Input placeholder="BEYOND" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="debtor_code"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Debtor Code</FormLabel>
+                          <FormControl>
+                            <Input placeholder="300-A007" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="debtor_name"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Debtor Name</FormLabel>
+                          <FormControl>
+                            <Input placeholder="ASIAN PAC HOLDINGS BERHAD" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="agent"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Agent</FormLabel>
+                          <FormControl>
+                            <Input placeholder="ERIC" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="is_cancelled"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Cancelled</FormLabel>
+                          <Select
+                            value={field.value ? 'true' : 'false'}
+                            onValueChange={(value) => field.onChange(value === 'true')}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="false">No</SelectItem>
+                              <SelectItem value="true">Yes</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="remarks_cs"
+                      render={({ field }) => (
+                        <FormItem className="md:col-span-2">
+                          <FormLabel>Remarks CS</FormLabel>
+                          <FormControl>
+                            <Textarea placeholder="Remarks from CS..." {...field} value={field.value || ''} rows={3} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-sm font-semibold text-muted-foreground">Delivery Information</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <FormField
+                      control={form.control}
+                      name="delivery_time"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Delivery Time</FormLabel>
+                          <FormControl>
+                            <Input placeholder="8:47 AM" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="checker"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Checker</FormLabel>
+                          <FormControl>
+                            <Input placeholder="indra" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="transporter"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Transporter</FormLabel>
+                          <FormControl>
+                            <Input placeholder="SORENTO" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="driver_name"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Driver Name</FormLabel>
+                          <FormControl>
+                            <Input placeholder="AZLAN" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="lorry_plate"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Lorry Plate</FormLabel>
+                          <FormControl>
+                            <Input placeholder="VCG1678" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="customer_ref"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Customer</FormLabel>
+                          <FormControl>
+                            <Input placeholder="CPI EMPOWER SDN BHD (PROJECT)" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-sm font-semibold text-muted-foreground">Delivery Details</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <FormField
+                      control={form.control}
+                      name="delivery_remarks_cs"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Remarks CS</FormLabel>
+                          <FormControl>
+                            <Textarea placeholder="CS remarks..." {...field} value={field.value || ''} rows={3} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="delivery_remarks"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Remarks</FormLabel>
+                          <FormControl>
+                            <Textarea placeholder="Delivery remarks..." {...field} value={field.value || ''} rows={3} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="salesman"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Salesman</FormLabel>
+                          <FormControl>
+                            <Input placeholder="ACT" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="trips"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Trips</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              {...field}
+                              value={field.value ?? ''}
+                              onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : undefined)}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="warehouse"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Warehouse</FormLabel>
+                          <FormControl>
+                            <Input placeholder="BRW" {...field} value={field.value || ''} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-sm font-semibold text-muted-foreground">KPI</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <FormField
+                      control={form.control}
+                      name="delivery_days"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Delivery Days</FormLabel>
+                          <FormControl>
+                            <Input value={field.value ?? ''} disabled />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="kpi_warning"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>KPI Warning</FormLabel>
+                          <FormControl>
+                            <Input value={field.value ? 'Yes' : 'No'} disabled />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>

@@ -65,6 +65,23 @@ async def get_integration_log(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{log_id}/status", response_model=IntegrationLogResponse)
+async def get_integration_log_status(
+    log_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get integration log status (same as GET /{log_id}; allows GET .../status for polling/links)."""
+    try:
+        service = IntegrationLogService(db)
+        log = service.get_integration_log_response(log_id)
+        return log
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.put("/{log_id}", response_model=IntegrationLogResponse)
 async def update_integration_log(
     log_id: str,

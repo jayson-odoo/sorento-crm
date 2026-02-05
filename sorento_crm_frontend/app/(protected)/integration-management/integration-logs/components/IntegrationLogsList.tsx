@@ -37,7 +37,7 @@ export default function IntegrationLogsList() {
   const [channelFilter, setChannelFilter] = useState<string>('all');
   const [tableFilter, setTableFilter] = useState<string>('all');
 
-  const { data, isLoading, refetch } = useIntegrationLogs({
+  const { data, isLoading, refetch, isRefetching } = useIntegrationLogs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -80,7 +80,8 @@ export default function IntegrationLogsList() {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => {
-          const status = row.original.status;
+          const status = (row.original.status || 'pending') as string;
+          const key = status.toLowerCase();
           const variants: Record<string, 'destructive' | 'warning' | 'success' | 'secondary' | 'info'> = {
             failed: 'destructive',
             pending: 'warning',
@@ -89,7 +90,13 @@ export default function IntegrationLogsList() {
             success: 'success',
           };
           return (
-            <Badge variant={variants[status] || 'secondary'} appearance="ghost">
+            <Badge
+              variant={variants[key] || 'secondary'}
+              appearance="light"
+              shape="circle"
+              size="md"
+              className="rounded-full font-medium"
+            >
               {status.charAt(0).toUpperCase() + status.slice(1)}
             </Badge>
           );
@@ -223,6 +230,10 @@ export default function IntegrationLogsList() {
               <SelectContent>
                 <SelectItem value="all">All Channels</SelectItem>
                 <SelectItem value="n8n">n8n</SelectItem>
+                <SelectItem value="sla_management">SLA Management</SelectItem>
+                <SelectItem value="sla_tracking_creation">SLA Tracking (create)</SelectItem>
+                <SelectItem value="sla_tracking_update">SLA Tracking (update)</SelectItem>
+                <SelectItem value="sla_escalation">SLA Escalation</SelectItem>
               </SelectContent>
             </Select>
             <Select value={tableFilter} onValueChange={setTableFilter}>
@@ -232,9 +243,21 @@ export default function IntegrationLogsList() {
               <SelectContent>
                 <SelectItem value="all">All Tables</SelectItem>
                 <SelectItem value="attachments">Attachments</SelectItem>
+                <SelectItem value="conversation_sla_tracking">Conversation SLA Tracking</SelectItem>
+                <SelectItem value="conversation_sla_event_log">Conversation SLA Event Log</SelectItem>
               </SelectContent>
             </Select>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            disabled={isRefetching}
+            className="shrink-0"
+          >
+            <RefreshCw className={`size-4 mr-2 ${isRefetching ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
         </CardHeader>
         <CardTable>
           <ScrollArea>

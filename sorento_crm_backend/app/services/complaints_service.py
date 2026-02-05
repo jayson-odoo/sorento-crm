@@ -1,12 +1,38 @@
 """Complaints service for business logic."""
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, inspect
-from typing import Optional
-from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment
-from app.models.resources import Attachment
-from app.schemas.complaints import ComplaintCreate, ComplaintUpdate, ComplaintManualAttachmentCreate
+from typing import Optional, Any
+from app.models.complaints import Complaint, ComplaintAttachment
+from app.models.resources import Attachment, AttachmentType
+from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.s3_service import S3Service
+
+
+def _attachment_response_from_link(link: ComplaintAttachment, resolve_url: Any) -> dict[str, Any]:
+    """Build response-shaped dict from ComplaintAttachment link (with .attachment loaded)."""
+    att = link.attachment
+    if not att:
+        return {
+            "id": link.id,
+            "attachment_id": link.attachment_id,
+            "complaint_id": link.complaint_id,
+            "file_name": None,
+            "file_url": None,
+            "file_size_bytes": None,
+            "uploaded_at": link.created_at,
+            "link_type": "complaint_attachment",
+        }
+    return {
+        "id": link.id,
+        "attachment_id": link.attachment_id,
+        "complaint_id": link.complaint_id,
+        "file_name": att.original_filename,
+        "file_url": resolve_url(att.file_path),
+        "file_size_bytes": att.file_size_bytes,
+        "uploaded_at": att.uploaded_at or link.created_at,
+        "link_type": "complaint_attachment",
+    }
 
 
 class ComplaintService:
@@ -25,50 +51,20 @@ class ComplaintService:
         except Exception:
             return file_path
 
-    def _build_manual_attachments_map(self, complaint_ids: list[str]) -> dict[str, list[ComplaintAttachment]]:
-        if not complaint_ids:
-            return {}
+    def _get_complaint_document_type_id(self) -> Optional[str]:
+        """Return attachment_type id for code 'complaint_document'."""
+        row = self.db.query(AttachmentType.id).filter(AttachmentType.code == "complaint_document").first()
+        return row[0] if row else None
 
-        manual_links = (
-            self.db.query(ComplaintManualAttachment)
-            .filter(ComplaintManualAttachment.complaint_id.in_(complaint_ids))
-            .all()
-        )
-        attachment_ids = [link.attachment_id for link in manual_links]
-        if not attachment_ids:
-            return {complaint_id: [] for complaint_id in complaint_ids}
-
-        attachments = (
-            self.db.query(Attachment)
-            .filter(Attachment.id.in_(attachment_ids))
-            .all()
-        )
-        attachments_map = {attachment.id: attachment for attachment in attachments}
-
-        result: dict[str, list[ComplaintAttachment]] = {complaint_id: [] for complaint_id in complaint_ids}
-        for link in manual_links:
-            resource_attachment = attachments_map.get(link.attachment_id)
-            if not resource_attachment:
-                continue
-            result[link.complaint_id].append(
-                ComplaintAttachment(
-                    id=link.id,
-                    complaint_id=link.complaint_id,
-                    file_name=resource_attachment.original_filename,
-                    file_url=self._resolve_attachment_url(resource_attachment.file_path),
-                    file_size_bytes=resource_attachment.file_size_bytes,
-                    uploaded_at=link.created_at,
-                )
-            )
-        return result
-
-    def _serialize_complaint(
-        self,
-        complaint: Complaint,
-        manual_attachments: list[ComplaintAttachment],
-    ) -> dict:
+    def _serialize_complaint(self, complaint: Complaint) -> dict:
+        """Serialize complaint with attachments from complaint_attachments table only."""
         data = {attr.key: getattr(complaint, attr.key) for attr in inspect(complaint).mapper.column_attrs}
-        data["attachments"] = list(complaint.attachments or []) + manual_attachments
+        link_attachments = [
+            _attachment_response_from_link(link, self._resolve_attachment_url)
+            for link in (complaint.attachments or [])
+            if link.attachment is not None
+        ]
+        data["attachments"] = link_attachments
         return data
     
     def list_complaints(
@@ -80,7 +76,9 @@ class ComplaintService:
         sort_dir: str = "asc"
     ):
         """List complaints."""
-        q = self.db.query(Complaint).options(joinedload(Complaint.attachments))
+        q = self.db.query(Complaint).options(
+            joinedload(Complaint.attachments).joinedload(ComplaintAttachment.attachment)
+        )
         
         if query:
             q = q.filter(
@@ -108,14 +106,7 @@ class ComplaintService:
         total = q.count()
         offset = (page - 1) * limit
         complaints = q.offset(offset).limit(limit).all()
-        manual_attachments_map = self._build_manual_attachments_map([complaint.id for complaint in complaints])
-        complaint_data = [
-            self._serialize_complaint(
-                complaint,
-                manual_attachments_map.get(complaint.id, []),
-            )
-            for complaint in complaints
-        ]
+        complaint_data = [self._serialize_complaint(complaint) for complaint in complaints]
         
         return {
             "data": complaint_data,
@@ -127,7 +118,7 @@ class ComplaintService:
         """Get a complaint by ID."""
         complaint = (
             self.db.query(Complaint)
-            .options(joinedload(Complaint.attachments))
+            .options(joinedload(Complaint.attachments).joinedload(ComplaintAttachment.attachment))
             .filter(Complaint.id == complaint_id)
             .first()
         )
@@ -136,27 +127,42 @@ class ComplaintService:
         return complaint
 
     def get_complaint_with_attachments(self, complaint_id: str) -> dict:
-        """Get a complaint with manual attachments merged into attachments list."""
+        """Get a complaint with attachments from complaint_attachments table."""
         complaint = self.get_complaint(complaint_id)
-        manual_attachments_map = self._build_manual_attachments_map([complaint.id])
-        return self._serialize_complaint(
-            complaint,
-            manual_attachments_map.get(complaint.id, []),
-        )
+        return self._serialize_complaint(complaint)
     
     def create_complaint(self, complaint_data: ComplaintCreate):
-        """Create a new complaint with attachments."""
+        """Create a new complaint with attachments (each becomes Attachment + ComplaintAttachment link)."""
         complaint_dict = complaint_data.model_dump(exclude={"attachments"})
         complaint = Complaint(**complaint_dict)
         self.db.add(complaint)
         self.db.flush()
-        
-        # Create attachments if provided
+
+        type_id = self._get_complaint_document_type_id()
         if complaint_data.attachments:
-            for att_data in complaint_data.attachments:
-                attachment = ComplaintAttachment(**att_data.model_dump(), complaint_id=complaint.id)
-                self.db.add(attachment)
-        
+            for sort_order, att_data in enumerate(complaint_data.attachments):
+                file_name = (att_data.file_name or "document")[:255]
+                file_url = att_data.file_url or ""
+                stored = file_name[:255] if len(file_name) > 255 else file_name
+                file_path = (file_url[:500]) if file_url else "/"
+                size = int(att_data.file_size_bytes) if att_data.file_size_bytes is not None else None
+                resource_att = Attachment(
+                    attachment_type_id=type_id,
+                    original_filename=file_name,
+                    stored_filename=stored,
+                    file_path=file_path,
+                    file_size_bytes=size,
+                )
+                self.db.add(resource_att)
+                self.db.flush()
+                link = ComplaintAttachment(
+                    complaint_id=complaint.id,
+                    attachment_id=resource_att.id,
+                    is_primary=(sort_order == 0),
+                    sort_order=sort_order,
+                )
+                self.db.add(link)
+
         self.db.commit()
         self.db.refresh(complaint)
         return complaint
@@ -179,74 +185,50 @@ class ComplaintService:
         self.db.delete(complaint)
         self.db.commit()
 
-    def create_manual_attachment(self, attachment_data: ComplaintManualAttachmentCreate):
-        """Create a manual complaint attachment link."""
+    def link_attachment_to_complaint(self, complaint_id: str, attachment_id: str, created_by: Optional[str] = None):
+        """Link an existing attachment to a complaint (complaint_attachments table)."""
+        self.get_complaint(complaint_id)  # ensure complaint exists
         attachment = (
             self.db.query(Attachment)
-            .filter(Attachment.id == attachment_data.attachment_id)
+            .filter(Attachment.id == attachment_id)
             .first()
         )
         if not attachment:
-            raise handle_not_found("Attachment", attachment_data.attachment_id)
+            raise handle_not_found("Attachment", attachment_id)
 
-        existing_link = (
-            self.db.query(ComplaintManualAttachment)
+        existing = (
+            self.db.query(ComplaintAttachment)
             .filter(
-                ComplaintManualAttachment.complaint_id == attachment_data.complaint_id,
-                ComplaintManualAttachment.attachment_id == attachment_data.attachment_id,
+                ComplaintAttachment.complaint_id == complaint_id,
+                ComplaintAttachment.attachment_id == attachment_id,
             )
             .first()
         )
-        if existing_link:
+        if existing:
             raise handle_conflict("Attachment is already linked to this complaint.")
 
-        link = ComplaintManualAttachment(**attachment_data.model_dump())
+        count = self.db.query(ComplaintAttachment).filter(ComplaintAttachment.complaint_id == complaint_id).count()
+        link = ComplaintAttachment(
+            complaint_id=complaint_id,
+            attachment_id=attachment_id,
+            is_primary=(count == 0),
+            sort_order=count,
+            created_by=created_by,
+        )
         self.db.add(link)
         self.db.commit()
         self.db.refresh(link)
-        return link, attachment
+        return link
 
-    def list_manual_attachments(self, complaint_id: str):
-        """List manual complaint attachment links with attachment data."""
-        links = (
-            self.db.query(ComplaintManualAttachment)
-            .filter(ComplaintManualAttachment.complaint_id == complaint_id)
-            .order_by(ComplaintManualAttachment.created_at.desc())
-            .all()
-        )
-        attachment_ids = [link.attachment_id for link in links]
-        attachments = (
-            self.db.query(Attachment)
-            .filter(Attachment.id.in_(attachment_ids))
-            .all()
-        ) if attachment_ids else []
-        attachments_map = {attachment.id: attachment for attachment in attachments}
-
-        result = []
-        for link in links:
-            attachment = attachments_map.get(link.attachment_id)
-            if not attachment:
-                continue
-            result.append(
-                {
-                    "id": link.id,
-                    "complaint_id": link.complaint_id,
-                    "attachment_id": link.attachment_id,
-                    "created_at": link.created_at,
-                    "attachment": attachment,
-                }
-            )
-        return result
-
-    def delete_manual_attachment(self, manual_attachment_id: str):
-        """Delete a manual attachment link."""
+    def delete_complaint_attachment(self, link_id: str):
+        """Delete a complaint-attachment link (from complaint_attachments table)."""
         link = (
-            self.db.query(ComplaintManualAttachment)
-            .filter(ComplaintManualAttachment.id == manual_attachment_id)
+            self.db.query(ComplaintAttachment)
+            .filter(ComplaintAttachment.id == link_id)
             .first()
         )
         if not link:
-            raise handle_not_found("Complaint manual attachment", manual_attachment_id)
+            raise handle_not_found("Complaint attachment link", link_id)
         self.db.delete(link)
         self.db.commit()
         return link

@@ -118,7 +118,8 @@ class InboundShipmentLineResponse(InboundShipmentLineBase):
     shipment_id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+    product: Optional[ProductSimple] = None
+
     class Config:
         from_attributes = True
 
@@ -183,6 +184,8 @@ class InboundShipmentResponse(InboundShipmentBase):
     shipment_lines: Optional[List[InboundShipmentLineResponse]] = None
     lines_count: Optional[int] = 0
     spo_allocations_count: Optional[int] = 0
+    display_total_items: Optional[int] = None
+    display_total_cartons: Optional[int] = None
     
     @field_validator('created_by', mode='before')
     @classmethod
@@ -244,6 +247,16 @@ class WarehouseSimple(BaseModel):
         from_attributes = True
 
 
+class SPOAllocationSimple(BaseModel):
+    """Minimal SPO allocation for embedding in picking line responses."""
+    id: str
+    spo_number: Optional[str] = None
+    spo_line_number: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
 class SPOAllocationResponse(SPOAllocationBase):
     id: str
     created_at: datetime
@@ -270,12 +283,18 @@ class SPOAllocationResponse(SPOAllocationBase):
         from_attributes = True
 
 
+class ShipmentWithAllocationsGroup(BaseModel):
+    """Inbound shipment with its SPO allocations for grouped list view."""
+    inbound_shipment: InboundShipmentSimple
+    spo_allocations: List[SPOAllocationResponse]
+
+
 class PickingLineBase(BaseModel):
     spo_allocation_id: Optional[str] = None
     product_id: str
     quantity_expected: int
     quantity_picked: int
-    quantity_discrepancy: int = 0
+    # quantity_discrepancy is a DB-generated column; do not include in create
     uom_id: Optional[str] = None
     picked_condition: str = "good"
     condition_remarks: Optional[str] = None
@@ -294,10 +313,12 @@ class PickingLineCreate(PickingLineBase):
 class PickingLineResponse(PickingLineBase):
     id: str
     picking_header_id: str
+    quantity_discrepancy: int = 0  # from DB generated column
     created_at: datetime
     updated_at: Optional[datetime] = None
     product: Optional[ProductSimple] = None
-    
+    spo_allocation: Optional[SPOAllocationSimple] = None
+
     class Config:
         from_attributes = True
 
@@ -349,6 +370,26 @@ class PickingHeaderResponse(PickingHeaderBase):
         from_attributes = True
 
 
+def _parse_date_string(v: Optional[str | date]) -> Optional[date]:
+    """Parse date from string; accept dd/mm/yyyy, dd-mm-yyyy, yyyy-mm-dd."""
+    if v is None:
+        return None
+    if isinstance(v, date):
+        return v
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    if not s:
+        return None
+    from datetime import datetime as dt
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return dt.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 class StockInquiryBase(BaseModel):
     salesperson: Optional[str] = None
     product_code: Optional[str] = None
@@ -360,6 +401,11 @@ class StockInquiryBase(BaseModel):
     brand: Optional[str] = None
     additional_remark: Optional[str] = None
     purchasing_response: Optional[str] = None
+
+    @field_validator("delivery_date", mode="before")
+    @classmethod
+    def parse_delivery_date(cls, v: Optional[str | date]) -> Optional[date]:
+        return _parse_date_string(v)
 
 
 class StockInquiryCreate(StockInquiryBase):
@@ -378,11 +424,121 @@ class StockInquiryUpdate(BaseModel):
     additional_remark: Optional[str] = None
     purchasing_response: Optional[str] = None
 
+    @field_validator("delivery_date", mode="before")
+    @classmethod
+    def parse_delivery_date(cls, v: Optional[str | date]) -> Optional[date]:
+        return _parse_date_string(v)
+
 
 class StockInquiryResponse(StockInquiryBase):
     id: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     
+    class Config:
+        from_attributes = True
+
+
+# Purchase Request / Sponsorship Form
+class PurchaseRequestLineBase(BaseModel):
+    item_code: Optional[str] = None
+    quantity: Optional[Decimal] = None
+    remark: Optional[str] = None
+
+
+class PurchaseRequestLineCreate(PurchaseRequestLineBase):
+    pass
+
+
+class PurchaseRequestLineResponse(PurchaseRequestLineBase):
+    id: str
+    purchase_request_id: str
+    sort_order: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PurchaseRequestHeaderBase(BaseModel):
+    request_type: str  # purchase_request | sponsorship_form
+    request_date: Optional[date] = None
+    customer_name: Optional[str] = None
+    project_title: Optional[str] = None
+    purpose: Optional[str] = None
+    expected_delivery_date: Optional[date] = None
+    expected_po_date: Optional[date] = None
+    expected_po_date_text: Optional[str] = None
+    requested_by: Optional[str] = None
+    requested_at: Optional[date] = None
+    status: Optional[str] = None
+    source: Optional[str] = None
+    external_reference: Optional[str] = None
+
+
+class PurchaseRequestHeaderCreate(PurchaseRequestHeaderBase):
+    products: Optional[List[PurchaseRequestLineCreate]] = []
+
+    @field_validator("request_type")
+    @classmethod
+    def validate_request_type(cls, v: Optional[str]) -> Optional[str]:
+        if v and v.strip() not in ("purchase_request", "sponsorship_form"):
+            raise ValueError("request_type must be purchase_request or sponsorship_form")
+        return v.strip() if v else None
+
+    @field_validator("request_date", "expected_delivery_date", "expected_po_date", "requested_at", mode="before")
+    @classmethod
+    def parse_date(cls, v: Optional[str | date]) -> Optional[date]:
+        return _parse_date_string(v)
+
+
+class PurchaseRequestHeaderUpdate(BaseModel):
+    request_type: Optional[str] = None
+    request_date: Optional[date] = None
+    customer_name: Optional[str] = None
+    project_title: Optional[str] = None
+    purpose: Optional[str] = None
+    expected_delivery_date: Optional[date] = None
+    expected_po_date: Optional[date] = None
+    expected_po_date_text: Optional[str] = None
+    requested_by: Optional[str] = None
+    requested_at: Optional[date] = None
+    status: Optional[str] = None
+    products: Optional[List[PurchaseRequestLineCreate]] = None
+
+    @field_validator("request_type", mode="before")
+    @classmethod
+    def validate_request_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        s = v.strip() if isinstance(v, str) else v
+        if s not in ("purchase_request", "sponsorship_form"):
+            raise ValueError("request_type must be purchase_request or sponsorship_form")
+        return s
+
+    @field_validator("request_date", "expected_delivery_date", "expected_po_date", "requested_at", mode="before")
+    @classmethod
+    def parse_date(cls, v: Optional[str | date]) -> Optional[date]:
+        return _parse_date_string(v)
+
+
+class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
+    """Response for list endpoint (no lines)."""
+    id: str
+    request_number: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
+    id: str
+    request_number: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    lines: Optional[List[PurchaseRequestLineResponse]] = []
+
     class Config:
         from_attributes = True

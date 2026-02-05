@@ -94,6 +94,7 @@ async def update_contact(
             'id': str(contact.id),
             'phone_number': contact.phone_number,
             'name': contact.name,
+            'user_type': contact.user_type,
             'created_at': contact.created_at,
             'updated_at': contact.updated_at,
             'created_by': contact.created_by,
@@ -103,6 +104,24 @@ async def update_contact(
         raise
     except Exception as e:
         logger.error(f"Error updating contact {contact_id}: {str(e)}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_contact(
+    contact_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a respond contact. Related access records are cascade-deleted; SLA tracking references are set to null."""
+    try:
+        service = ContactService(db)
+        service.delete_contact(contact_id)
+        return None
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting contact {contact_id}: {str(e)}", exc_info=True)
         raise handle_internal_error(str(e))
 
 
@@ -121,6 +140,7 @@ async def sync_contact(
             'id': str(contact.id),
             'phone_number': contact.phone_number,
             'name': contact.name,
+            'user_type': contact.user_type,
             'created_at': contact.created_at,
             'updated_at': contact.updated_at,
             'created_by': contact.created_by,

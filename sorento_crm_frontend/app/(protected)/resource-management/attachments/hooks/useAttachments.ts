@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getAttachments, uploadAttachment, deleteAttachment, restoreAttachment, downloadAttachment, getAttachmentMetadata, checkDuplicateByHash, resubmitAttachmentWebhook } from '../services/attachmentService';
+import { getAttachments, uploadAttachment, deleteAttachment, bulkDeleteAttachments, restoreAttachment, downloadAttachment, getAttachmentMetadata, checkDuplicateByHash, resubmitAttachmentWebhook } from '../services/attachmentService';
 import { apiFetch } from '@/lib/api';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 
@@ -19,11 +19,11 @@ export function useAttachments(params: DataGridApiFetchParams & { entity_type?: 
 export function useUploadAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ file, attachmentTypeId, entityType, entityId }: { file: File; attachmentTypeId: string; entityType?: string; entityId?: string }) =>
-      uploadAttachment(file, attachmentTypeId, entityType, entityId),
+    mutationFn: ({ file, attachmentTypeId, entityType, entityId, accessLevels }: { file: File; attachmentTypeId: string; entityType?: string; entityId?: string; accessLevels?: string[] }) =>
+      uploadAttachment(file, attachmentTypeId, entityType, entityId, accessLevels),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
-      toast.success('File uploaded successfully');
+      // Toast will be shown by the dialog component for multiple files
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to upload file'),
   });
@@ -52,6 +52,19 @@ export function useDeleteAttachment() {
       toast.success('Attachment deleted successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete attachment'),
+  });
+}
+
+export function useBulkDeleteAttachments() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteAttachments(ids),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      const count = data?.deleted_count ?? 0;
+      toast.success(count === 1 ? '1 attachment deleted' : `${count} attachments deleted`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to delete attachments'),
   });
 }
 

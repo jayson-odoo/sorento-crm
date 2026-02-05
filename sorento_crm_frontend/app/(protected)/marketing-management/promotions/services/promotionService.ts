@@ -2,8 +2,10 @@ import { apiFetch } from '@/lib/api';
 import type { Promotion, PromotionFormData, PromotionDetail, PromotionProduct } from '../types/promotion.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-export async function getPromotions(params: DataGridApiFetchParams & { promo_type?: string; status?: string; date_from?: string; date_to?: string }): Promise<DataGridApiResponse<Promotion>> {
-  const { pageIndex, pageSize, sorting, searchQuery, promo_type, status, date_from, date_to } = params;
+export async function getPromotions(
+  params: DataGridApiFetchParams & { promo_type?: string; status?: string; date_from?: string; date_to?: string; user_type?: string },
+): Promise<DataGridApiResponse<Promotion>> {
+  const { pageIndex, pageSize, sorting, searchQuery, promo_type, status, date_from, date_to, user_type } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -15,6 +17,7 @@ export async function getPromotions(params: DataGridApiFetchParams & { promo_typ
     ...(status ? { status } : {}),
     ...(date_from ? { date_from } : {}),
     ...(date_to ? { date_to } : {}),
+    ...(user_type ? { user_type } : {}),
   });
   const response = await apiFetch(`/api/v1/marketing/promotions?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch promotions');

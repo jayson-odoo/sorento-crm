@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints
     
+    # Redis Queue
+    redis_url: str = "redis://localhost:6379/0"
+    
     model_config = ConfigDict(
         env_file=".env",
         case_sensitive=False,

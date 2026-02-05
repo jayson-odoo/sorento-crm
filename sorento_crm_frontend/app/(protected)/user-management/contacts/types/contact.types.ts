@@ -2,6 +2,7 @@ export interface RespondContact {
   id: string;
   phone_number: string;
   name?: string | null;
+  user_type?: string | null;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
@@ -10,4 +11,5 @@ export interface RespondContact {
 export interface RespondContactFormData {
   phone_number: string;
   name?: string;
+  user_type?: string | null;
 }

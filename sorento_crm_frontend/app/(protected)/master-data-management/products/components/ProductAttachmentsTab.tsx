@@ -16,6 +16,7 @@ import type { ProductAttachment } from '../../product-attachments/types/productA
 import { formatDate } from '@/lib/helpers';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 
 interface ProductAttachmentsTabProps {
   productId: string | undefined;
@@ -74,6 +75,19 @@ export default function ProductAttachmentsTab({
     return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
   };
 
+  const renderAccessLevels = (levels?: string[] | null) => {
+    if (!levels || levels.length === 0) return null;
+    return (
+      <div className="mt-2 flex flex-wrap gap-2">
+        {levels.map((level) => (
+          <Badge key={level} variant="secondary">
+            {level === 'dealer' ? 'Dealer' : 'End User'}
+          </Badge>
+        ))}
+      </div>
+    );
+  };
+
   if (!isEditMode) {
     return (
       <Card>
@@ -106,6 +120,7 @@ export default function ProductAttachmentsTab({
                         {formatFileSize(pa.attachment?.file_size_bytes)} •{' '}
                         {pa.attachment?.uploaded_at && formatDate(new Date(pa.attachment.uploaded_at))}
                       </p>
+                    {renderAccessLevels(pa.access_levels)}
                     </div>
                   </div>
                   <div className="flex gap-2">
@@ -186,6 +201,7 @@ export default function ProductAttachmentsTab({
                       {formatFileSize(pa.attachment?.file_size_bytes)} •{' '}
                       {pa.attachment?.uploaded_at && formatDate(new Date(pa.attachment.uploaded_at))}
                     </p>
+                    {renderAccessLevels(pa.access_levels)}
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -259,6 +275,7 @@ interface LinkAttachmentDialogProps {
 function LinkAttachmentDialog({ open, onOpenChange, productId }: LinkAttachmentDialogProps) {
   const [selectedAttachmentId, setSelectedAttachmentId] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<string>('');
+  const [accessLevels, setAccessLevels] = useState<string[]>(['dealer', 'end_user']);
   const createMutation = useCreateProductAttachment();
   const queryClient = useQueryClient();
 
@@ -280,6 +297,7 @@ function LinkAttachmentDialog({ open, onOpenChange, productId }: LinkAttachmentD
     if (!open) {
       setSelectedAttachmentId('');
       setSortOrder('');
+      setAccessLevels(['dealer', 'end_user']);
     }
   }, [open]);
 
@@ -293,6 +311,7 @@ function LinkAttachmentDialog({ open, onOpenChange, productId }: LinkAttachmentD
       product_id: productId,
       attachment_id: selectedAttachmentId,
       sort_order: sortOrder ? parseInt(sortOrder, 10) : undefined,
+      access_levels: accessLevels,
     }, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: ['product-attachments-by-product', productId] });
@@ -343,6 +362,31 @@ function LinkAttachmentDialog({ open, onOpenChange, productId }: LinkAttachmentD
               onChange={(e) => setSortOrder(e.target.value)}
               min="0"
             />
+          </div>
+          <div className="space-y-2">
+            <Label>Access Levels</Label>
+            <div className="flex flex-wrap gap-4">
+              {['dealer', 'end_user'].map((level) => {
+                const checked = accessLevels.includes(level);
+                return (
+                  <label key={level} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(value) => {
+                        const next = new Set(accessLevels);
+                        if (value) {
+                          next.add(level);
+                        } else {
+                          next.delete(level);
+                        }
+                        setAccessLevels(Array.from(next));
+                      }}
+                    />
+                    {level === 'dealer' ? 'Dealer' : 'End User'}
+                  </label>
+                );
+              })}
+            </div>
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>

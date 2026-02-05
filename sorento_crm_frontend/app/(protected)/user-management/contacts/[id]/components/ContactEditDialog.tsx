@@ -56,6 +56,7 @@ export default function ContactEditDialog({
     defaultValues: {
       phone_number: contact?.phone_number || '',
       name: contact?.name || '',
+      user_type: contact?.user_type || '',
     },
     mode: 'onSubmit',
   });
@@ -65,6 +66,7 @@ export default function ContactEditDialog({
       form.reset({
         phone_number: contact.phone_number || '',
         name: contact.name || '',
+        user_type: contact.user_type || '',
       });
     }
   }, [open, contact, form]);
@@ -79,6 +81,7 @@ export default function ContactEditDialog({
         body: JSON.stringify({
           phone_number: values.phone_number,
           name: values.name || null,
+          user_type: values.user_type || null,
         }),
       });
 
@@ -183,6 +186,30 @@ export default function ContactEditDialog({
                   </FormControl>
                   <FormDescription>
                     Optional: Contact name from Respond.io
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="user_type"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>User Type</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      id="user_type"
+                      type="text"
+                      placeholder="User type (optional)"
+                      value={field.value || ''}
+                      disabled={mutation.isPending}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Optional: Synced from Respond.io or set manually
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

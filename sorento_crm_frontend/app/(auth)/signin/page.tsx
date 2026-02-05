@@ -21,8 +21,8 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { LoaderCircleIcon } from 'lucide-react';
-import { Icons } from '@/components/common/icons';
 import { getSigninSchema, SigninSchemaType } from '../forms/signin-schema';
+import { toAbsoluteUrl } from '@/lib/helpers';
 
 export default function Page() {
   const router = useRouter();
@@ -79,6 +79,16 @@ export default function Page() {
         onSubmit={form.handleSubmit(onSubmit)}
         className="block w-full space-y-5"
       >
+        <div className="flex justify-start pb-4">
+          <Link href="/">
+            <img
+              src={toAbsoluteUrl('/media/app/sorento-logo.svg')}
+              className="h-[28px] max-w-none"
+              alt=""
+            />
+          </Link>
+        </div>
+
         <div className="space-y-1.5 pb-3">
           <h1 className="text-2xl font-semibold tracking-tight text-center">
             Sign in to Sorento
@@ -96,26 +106,6 @@ export default function Page() {
             access.
           </AlertTitle>
         </Alert>
-
-        <div className="flex flex-col gap-3.5">
-          <Button
-            variant="outline"
-            type="button"
-            onClick={() => signIn('google', { callbackUrl: '/' })}
-          >
-            <Icons.googleColorful className="size-5! opacity-100!" /> Sign in
-            with Google
-          </Button>
-        </div>
-
-        <div className="relative py-1.5">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t" />
-          </div>
-          <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-background px-2 text-muted-foreground">or</span>
-          </div>
-        </div>
 
         {error && (
           <Alert variant="destructive">
@@ -211,16 +201,6 @@ export default function Page() {
             Continue
           </Button>
         </div>
-
-        <p className="text-sm text-muted-foreground text-center">
-          Don&apos;t have an account?{' '}
-          <Link
-            href="/signup"
-            className="text-sm font-semibold text-foreground hover:text-primary"
-          >
-            Sign Up
-          </Link>
-        </p>
       </form>
     </Form>
   );

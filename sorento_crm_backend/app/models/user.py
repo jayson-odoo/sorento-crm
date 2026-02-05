@@ -129,8 +129,8 @@ class SystemSetting(Base):
     support_phone = Column(String, nullable=True)
     language = Column(String, default="en", nullable=False)
     timezone = Column(String, default="UTC", nullable=False)
-    currency = Column(String, default="USD", nullable=False)
-    currency_format = Column(String, default="$ {value}", nullable=False)
+    currency = Column(String, default="MYR", nullable=False)
+    currency_format = Column(String, default="RM {value}", nullable=False)
     
     social_facebook = Column(String, nullable=True)
     social_twitter = Column(String, nullable=True)

@@ -431,6 +431,14 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Stock Inquiries',
         path: '/procurement-management/stock-inquiries',
       },
+      {
+        title: 'Purchase Requests',
+        path: '/procurement-management/purchase-requests',
+      },
+      {
+        title: 'Sponsorship Forms',
+        path: '/procurement-management/sponsorship-forms',
+      },
     ],
   },
   {
@@ -525,6 +533,20 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Integration Logs',
         path: '/integration-management/integration-logs',
+      },
+    ],
+  },
+  {
+    title: 'System Management',
+    icon: Settings,
+    children: [
+      {
+        title: 'Import Jobs',
+        path: '/system-management/import-jobs',
+      },
+      {
+        title: 'Import Logs',
+        path: '/system-management/import-logs',
       },
     ],
   },
@@ -1038,6 +1060,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Stock Inquiries',
         path: '/procurement-management/stock-inquiries',
+      },
+      {
+        title: 'Purchase Requests',
+        path: '/procurement-management/purchase-requests',
+      },
+      {
+        title: 'Sponsorship Forms',
+        path: '/procurement-management/sponsorship-forms',
       },
     ],
   },

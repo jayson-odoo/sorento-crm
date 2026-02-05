@@ -8,10 +8,20 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useConversationSLATrackingDetail, useConversationSLATracking } from '../hooks/useConversationSLATracking';
-import { formatDate, formatDateTime, formatDuration } from '@/lib/helpers';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { useConversationSLATrackingDetail, useConversationSLATracking, useDeleteConversationSLATracking } from '../hooks/useConversationSLATracking';
+import { formatDate, formatDateTime, formatDuration, parseNaiveDateTimeAsLocal } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2 } from 'lucide-react';
 import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface ConversationSLATrackingDetailProps {
@@ -37,11 +47,21 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
   const { data: navigationData } = useConversationSLATracking(navigationParams);
   const navigationItems = navigationData?.data ?? [];
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const deleteMutation = useDeleteConversationSLATracking();
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
     await queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking-detail', trackingId] });
     setIsRefreshing(false);
+  };
+
+  const handleDelete = () => {
+    deleteMutation.mutate(trackingId, {
+      onSuccess: () => {
+        router.push('/sla-management/conversation-sla-tracking');
+      },
+    });
   };
 
   if (isLoading) {
@@ -65,16 +85,40 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
   }
 
   const getTimeInCurrentTier = () => {
-    const now = new Date();
-    const started = new Date(tracking.current_tier_started_at);
+    // Both now and started_at are in UTC - calculate difference directly
+    const now = new Date(); // Current time in UTC (JavaScript Date is always UTC internally)
+    const started = parseNaiveDateTimeAsLocal(tracking.current_tier_started_at); // UTC from database
+    // getTime() returns milliseconds in UTC for both, so difference is correct
     const diff = now.getTime() - started.getTime();
     return formatDuration(diff);
   };
 
+  const getResponseDuration = () => {
+    if (tracking.is_responded && tracking.responded_at && tracking.initiated_at) {
+      // Both are UTC from database, getTime() returns UTC milliseconds, so difference is correct
+      const initiated = parseNaiveDateTimeAsLocal(tracking.initiated_at); // UTC from database
+      const responded = parseNaiveDateTimeAsLocal(tracking.responded_at); // UTC from database
+      const diff = responded.getTime() - initiated.getTime(); // UTC milliseconds difference
+      return formatDuration(diff);
+    }
+    return null;
+  };
+
   const getTimeToResolution = () => {
     if (tracking.is_resolved && tracking.resolved_at) {
-      const initiated = new Date(tracking.initiated_at);
-      const resolved = new Date(tracking.resolved_at);
+      const initiated = parseNaiveDateTimeAsLocal(tracking.initiated_at);
+      const resolved = parseNaiveDateTimeAsLocal(tracking.resolved_at);
+      const diff = resolved.getTime() - initiated.getTime();
+      return formatDuration(diff);
+    }
+    return null;
+  };
+
+  const getResolutionDuration = () => {
+    // Calculate same way as Response Duration: from initiated_at to resolved_at (date difference)
+    if (tracking.is_resolved && tracking.resolved_at && tracking.initiated_at) {
+      const initiated = parseNaiveDateTimeAsLocal(tracking.initiated_at);
+      const resolved = parseNaiveDateTimeAsLocal(tracking.resolved_at);
       const diff = resolved.getTime() - initiated.getTime();
       return formatDuration(diff);
     }
@@ -83,8 +127,11 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
 
   const getTimeRemaining = () => {
     if (tracking.is_resolved) return null;
-    const now = new Date();
-    const due = new Date(tracking.due_at);
+    // Both now and due_at are in UTC - calculate difference directly
+    const now = new Date(); // Current time in UTC (JavaScript Date is always UTC internally)
+    const due = parseNaiveDateTimeAsLocal(tracking.due_at); // UTC from database
+    // getTime() returns milliseconds in UTC for both, so difference is correct
+    // Positive means time left, negative means overdue
     const diff = due.getTime() - now.getTime();
     return formatDuration(diff);
   };
@@ -136,8 +183,36 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
             <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
+          <Button
+            variant="destructive"
+            onClick={() => setDeleteDialogOpen(true)}
+            disabled={deleteMutation.isPending}
+          >
+            <Trash2 className="size-4 mr-2" />
+            Delete
+          </Button>
         </div>
       </div>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Conversation SLA Tracking</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this conversation SLA tracking record? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Tabs defaultValue="overview" className="w-full">
         <TabsList>
@@ -170,12 +245,6 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                     <p className={`font-medium text-lg ${getTimeRemaining()!.startsWith('-') ? 'text-destructive' : ''}`}>
                       {getTimeRemaining()!.startsWith('-') ? `${getTimeRemaining()!.substring(1)} overdue` : `${getTimeRemaining()} left`}
                     </p>
-                  </div>
-                )}
-                {tracking.resolution_duration && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Resolution Duration</p>
-                    <p className="font-medium text-lg">{formatDuration(tracking.resolution_duration * 3600 * 1000)}</p>
                   </div>
                 )}
               </CardContent>
@@ -215,7 +284,7 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                     if (escalationLogs.length > 0 && initialTier != null) {
                       timelineItems.push({
                         tier: initialTier,
-                        startedAt: new Date(tracking.initiated_at),
+                        startedAt: parseNaiveDateTimeAsLocal(tracking.initiated_at),
                         isEscalation: false,
                         isCurrent: false,
                       });
@@ -228,7 +297,7 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                         const isLast = index === escalationLogs.length - 1;
                         timelineItems.push({
                           tier: log.to_tier,
-                          startedAt: new Date(log.event_at),
+                          startedAt: parseNaiveDateTimeAsLocal(log.event_at),
                           isEscalation: log.from_tier !== log.to_tier,
                           reason: log.reason || undefined,
                           isCurrent: isLast && log.to_tier === tracking.current_tier,
@@ -239,7 +308,7 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                       if (tracking.current_tier != null) {
                         timelineItems.push({
                           tier: tracking.current_tier,
-                          startedAt: new Date(tracking.current_tier_started_at),
+                          startedAt: parseNaiveDateTimeAsLocal(tracking.current_tier_started_at),
                           isEscalation: false,
                           isCurrent: true,
                         });
@@ -323,20 +392,20 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Initiated At</p>
-                  <p className="font-medium">{formatDateTime(new Date(tracking.initiated_at))}</p>
+                  <p className="font-medium">{formatDateTime(parseNaiveDateTimeAsLocal(tracking.initiated_at))}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Current Tier Started At</p>
-                  <p className="font-medium">{formatDateTime(new Date(tracking.current_tier_started_at))}</p>
+                  <p className="font-medium">{formatDateTime(parseNaiveDateTimeAsLocal(tracking.current_tier_started_at))}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Due At</p>
-                  <p className="font-medium">{formatDateTime(new Date(tracking.due_at))}</p>
+                  <p className="font-medium">{formatDateTime(parseNaiveDateTimeAsLocal(tracking.due_at))}</p>
                 </div>
                 {tracking.escalated_at && (
                   <div>
                     <p className="text-sm text-muted-foreground">Escalated At</p>
-                    <p className="font-medium">{formatDateTime(new Date(tracking.escalated_at))}</p>
+                    <p className="font-medium">{formatDateTime(parseNaiveDateTimeAsLocal(tracking.escalated_at))}</p>
                   </div>
                 )}
                 {tracking.escalation_reason && (
@@ -345,18 +414,95 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                     <p className="font-medium">{tracking.escalation_reason}</p>
                   </div>
                 )}
-                {tracking.is_resolved && tracking.resolved_at && (
-                  <>
+              </div>
+
+              {/* Response Section */}
+              <div className="border-t pt-4 mt-4">
+                <h3 className="text-lg font-semibold mb-4">Response</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Is Responded</p>
+                    <p className="font-medium">
+                      {tracking.is_responded ? (
+                        <Badge variant="success" appearance="ghost">Yes</Badge>
+                      ) : (
+                        <Badge variant="secondary" appearance="ghost">No</Badge>
+                      )}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Responded At</p>
+                    <p className="font-medium">
+                      {tracking.responded_at 
+                        ? formatDateTime(parseNaiveDateTimeAsLocal(tracking.responded_at))
+                        : '-'
+                      }
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Response Duration</p>
+                    <p className="font-medium">
+                      {getResponseDuration() || '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Responded By</p>
+                    <p className="font-medium">
+                      {tracking.responded_by_user_name || '-'}
+                    </p>
+                  </div>
+                  {tracking.average_response_time !== null && tracking.average_response_time !== undefined && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Average Response Time</p>
+                      <p className="font-medium">
+                        {formatDuration(tracking.average_response_time * 3600 * 1000)}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Resolution Section */}
+              <div className="border-t pt-4 mt-4">
+                <h3 className="text-lg font-semibold mb-4">Resolution</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Is Resolved</p>
+                    <p className="font-medium">
+                      {tracking.is_resolved ? (
+                        <Badge variant="success" appearance="ghost">Yes</Badge>
+                      ) : (
+                        <Badge variant="secondary" appearance="ghost">No</Badge>
+                      )}
+                    </p>
+                  </div>
+                  {tracking.resolved_at && (
                     <div>
                       <p className="text-sm text-muted-foreground">Resolved At</p>
-                      <p className="font-medium">{formatDateTime(new Date(tracking.resolved_at))}</p>
+                      <p className="font-medium">{formatDateTime(parseNaiveDateTimeAsLocal(tracking.resolved_at))}</p>
                     </div>
+                  )}
+                  <div>
+                    <p className="text-sm text-muted-foreground">Resolution Duration</p>
+                    <p className="font-medium">
+                      {getResolutionDuration() || '-'}
+                    </p>
+                  </div>
+                  {tracking.resolved_by_user_name || tracking.resolved_by ? (
                     <div>
                       <p className="text-sm text-muted-foreground">Resolved By</p>
-                      <p className="font-medium">{tracking.resolved_by || '-'}</p>
+                      <p className="font-medium">{tracking.resolved_by_user_name || tracking.resolved_by || '-'}</p>
                     </div>
-                  </>
-                )}
+                  ) : null}
+                  {tracking.average_resolution_time !== null && tracking.average_resolution_time !== undefined && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Average Resolution Time</p>
+                      <p className="font-medium">
+                        {formatDuration(tracking.average_resolution_time * 3600 * 1000)}
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>

@@ -3,11 +3,54 @@ import type {
   SPOAllocation,
   SPOAllocationDetail,
   SPOAllocationFormData,
+  ShipmentWithAllocationsGroup,
 } from '../types/spoAllocation.types';
 import type {
   DataGridApiFetchParams,
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
+
+export type GroupedByShipmentParams = {
+  page?: number;
+  limit?: number;
+  query?: string;
+  warehouse_id?: string;
+  receipt_status?: string;
+  sort?: string;
+  dir?: string;
+};
+
+export async function getSPOAllocationsGroupedByShipment(
+  params: GroupedByShipmentParams = {},
+): Promise<{
+  data: ShipmentWithAllocationsGroup[];
+  pagination: { total: number; page: number; limit: number };
+  empty: boolean;
+}> {
+  const {
+    page = 1,
+    limit = 50,
+    query,
+    warehouse_id,
+    receipt_status,
+    sort = 'shipment_number',
+    dir = 'asc',
+  } = params;
+  const searchParams = new URLSearchParams({
+    page: String(page),
+    limit: String(limit),
+    ...(sort ? { sort } : {}),
+    ...(dir ? { dir } : {}),
+    ...(query ? { query } : {}),
+    ...(warehouse_id ? { warehouse_id } : {}),
+    ...(receipt_status ? { receipt_status } : {}),
+  });
+  const response = await apiFetch(
+    `/api/v1/procurement/spo-allocations/grouped-by-shipment?${searchParams.toString()}`,
+  );
+  if (!response.ok) throw new Error('Failed to fetch SPO allocations grouped by shipment');
+  return response.json();
+}
 
 export async function getSPOAllocations(
   params: DataGridApiFetchParams & {

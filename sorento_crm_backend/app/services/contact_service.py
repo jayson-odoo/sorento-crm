@@ -127,7 +127,19 @@ class ContactService:
         self.db.commit()
         self.db.refresh(contact)
         return contact
-    
+
+    def delete_contact(self, contact_id: str) -> None:
+        """Delete a respond contact and all contact–agent linkages. Related contact_agent_access rows are deleted; conversation_sla_tracking.respond_contact_id is SET NULL."""
+        from app.models.access import ContactAgentAccess
+
+        contact = self.get_contact(contact_id)
+        # Delete contact–agent access linkages first so the contact can be removed
+        self.db.query(ContactAgentAccess).filter(
+            ContactAgentAccess.respond_contact_id == contact_id
+        ).delete(synchronize_session=False)
+        self.db.delete(contact)
+        self.db.commit()
+
     def sync_contact_name(self, contact_id: str) -> RespondContact:
         """Sync contact name from Respond.io API."""
         contact = self.get_contact(contact_id)
@@ -147,6 +159,7 @@ class ContactService:
             
             # Extract name from response - Respond.io returns firstName and lastName
             name = None
+            user_type = None
             
             # Try to get name from various possible locations
             if payload.get("name"):
@@ -170,11 +183,32 @@ class ContactService:
                 elif last_name:
                     name = last_name.strip()
             
-            if name:
-                contact.name = name
+            # Extract user_type from custom_fields list
+            custom_fields = (
+                payload.get("custom_fields")
+                or payload.get("customFields")
+                or payload.get("data", {}).get("custom_fields")
+                or payload.get("data", {}).get("customFields")
+                or payload.get("contact", {}).get("custom_fields")
+                or payload.get("contact", {}).get("customFields")
+            )
+            if isinstance(custom_fields, list):
+                for field in custom_fields:
+                    field_name = str(field.get("name", "")).strip().lower()
+                    if field_name == "user_type":
+                        user_type = field.get("value")
+                        break
+            
+            if name or user_type is not None:
+                if name:
+                    contact.name = name
+                if user_type is not None:
+                    contact.user_type = str(user_type).strip() if user_type is not None else None
                 self.db.commit()
                 self.db.refresh(contact)
-                logger.info(f"Synced contact name for {contact.phone_number}: {name}")
+                logger.info(
+                    f"Synced contact {contact.phone_number}: name={name or contact.name}, user_type={contact.user_type}"
+                )
                 
                 # Log successful sync
                 log_service.create_integration_log(
@@ -191,7 +225,9 @@ class ContactService:
                     request_payload_dict=request_payload
                 )
             else:
-                error_msg = f"Could not find name in Respond.io response for {contact.phone_number}"
+                error_msg = (
+                    f"Could not find name or user_type in Respond.io response for {contact.phone_number}"
+                )
                 logger.warning(error_msg)
                 
                 # Log warning - no name found

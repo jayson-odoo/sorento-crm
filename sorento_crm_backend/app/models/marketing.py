@@ -1,7 +1,7 @@
 """Marketing management models."""
 import enum
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Integer, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -31,6 +31,7 @@ class Promotion(Base):
     start_date = Column(DateTime(timezone=True), nullable=False)
     end_date = Column(DateTime(timezone=True), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -43,6 +44,7 @@ class Promotion(Base):
         Index("ix_promotions_start_date", "start_date"),
         Index("ix_promotions_end_date", "end_date"),
         Index("ix_promotions_promo_type", "promo_type"),
+        Index("ix_promotions_access_levels", "access_levels", postgresql_using="gin"),
     )
 
 

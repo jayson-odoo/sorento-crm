@@ -103,6 +103,7 @@ export async function apiFetch(
           '/api/user-management/roles',
           '/api/user-management/permissions',
           '/api/user-management/access-agents',
+          '/api/user-management/contacts',
         ];
 
         const isBusinessApi = !isNextJsRoute && businessApiRoutes.some(route => input.startsWith(route));

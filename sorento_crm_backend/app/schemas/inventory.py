@@ -99,6 +99,16 @@ class StockUpdate(BaseModel):
     reorder_point: Optional[int] = None
 
 
+class ProductSimple(BaseModel):
+    id: str
+    product_code: str
+    product_name: str
+    reorder_level: Optional[int] = None
+    
+    class Config:
+        from_attributes = True
+
+
 class StockLedgerResponse(BaseModel):
     id: str
     product_id: str
@@ -112,17 +122,10 @@ class StockLedgerResponse(BaseModel):
     notes: Optional[str] = None
     created_by: Optional[str] = None
     created_at: datetime
+    product: Optional[ProductSimple] = None
+    warehouse: Optional[WarehouseSimple] = None
+    created_by_name: Optional[str] = None
 
-    class Config:
-        from_attributes = True
-
-
-class ProductSimple(BaseModel):
-    id: str
-    product_code: str
-    product_name: str
-    reorder_level: Optional[int] = None
-    
     class Config:
         from_attributes = True
 
@@ -187,6 +190,9 @@ class BulkImportStockRequest(BaseModel):
 
 class BulkImportStockResponse(BaseModel):
     """Response schema for bulk import."""
+    import_session_id: Optional[str] = None
     created: int = 0
     updated: int = 0
+    skipped: int = 0
     errors: list[str] = []
+    warnings: list[dict] = []

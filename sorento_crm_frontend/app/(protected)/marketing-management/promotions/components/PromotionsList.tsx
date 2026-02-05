@@ -44,13 +44,25 @@ export default function PromotionsList() {
       {
         accessorKey: 'promo_code',
         header: ({ column }) => <DataGridColumnHeader title="Promo Code" column={column} />,
-        size: 250,
+        cell: ({ row }) => (
+          <div className="min-w-0 max-w-full truncate" title={row.original.promo_code || ''}>
+            {row.original.promo_code || '-'}
+          </div>
+        ),
+        size: 180,
+        minSize: 120,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'name',
         header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
-        size: 250,
+        cell: ({ row }) => (
+          <div className="min-w-0 max-w-full truncate" title={row.original.name || ''}>
+            {row.original.name || '-'}
+          </div>
+        ),
+        size: 220,
+        minSize: 150,
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
@@ -68,6 +80,25 @@ export default function PromotionsList() {
           return <Badge variant="secondary">{typeLabels[type as string] || type}</Badge>;
         },
         size: 150,
+      },
+      {
+        accessorKey: 'access_levels',
+        header: ({ column }) => <DataGridColumnHeader title="Access" column={column} />,
+        cell: ({ row }) => {
+          const levels = row.original.access_levels || [];
+          if (!levels.length) return '-';
+          return (
+            <div className="flex flex-wrap gap-2">
+              {levels.map((level) => (
+                <Badge key={level} variant="secondary">
+                  {level === 'dealer' ? 'Dealer' : 'End User'}
+                </Badge>
+              ))}
+            </div>
+          );
+        },
+        size: 160,
+        minSize: 120,
       },
       {
         accessorKey: 'start_date',

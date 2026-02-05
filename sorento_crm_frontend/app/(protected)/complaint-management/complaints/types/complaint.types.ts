@@ -1,25 +1,13 @@
-import type { Attachment } from '@/app/(protected)/resource-management/attachments/types/attachment.types';
-
 export interface ComplaintAttachment {
   id: string;
   complaint_id: string;
+  attachment_id?: string | null;
   file_name?: string | null;
   file_url?: string | null;
   file_size_bytes?: number | null;
   uploaded_at: Date;
-}
-
-export interface ComplaintManualAttachmentCreate {
-  complaint_id: string;
-  attachment_id: string;
-}
-
-export interface ComplaintManualAttachment {
-  id: string;
-  complaint_id: string;
-  attachment_id: string;
-  created_at: Date;
-  attachment?: Attachment | null;
+  /** From complaint_attachments table */
+  link_type?: 'complaint_attachment' | null;
 }
 
 export interface Complaint {

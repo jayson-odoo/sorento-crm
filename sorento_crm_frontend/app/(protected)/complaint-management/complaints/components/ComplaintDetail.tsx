@@ -199,7 +199,10 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         </CardContent>
       </Card>
 
-      <ComplaintManualAttachmentsSection complaintId={complaintId} />
+      <ComplaintManualAttachmentsSection
+          complaintId={complaintId}
+          attachments={complaint.attachments ?? []}
+        />
     </div>
   );
 }

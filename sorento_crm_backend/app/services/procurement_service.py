@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import date, datetime
 from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
-    PickingHeader, PickingLine, StockInquiry
+    PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine
 )
 from app.models.product import Product
 from app.models.resources import Attachment
@@ -13,7 +13,8 @@ from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
     SPOAllocationCreate, SPOAllocationUpdate, PickingHeaderCreate, PickingHeaderUpdate,
-    StockInquiryCreate, StockInquiryUpdate
+    StockInquiryCreate, StockInquiryUpdate,
+    PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate,
 )
 from app.services.error_handler import handle_not_found, handle_conflict
 
@@ -147,8 +148,14 @@ class InboundShipmentService:
         
         total = q.count()
         offset = (page - 1) * limit
-        shipments = q.offset(offset).limit(limit).all()
-        
+        from sqlalchemy.orm import joinedload
+        shipments = (
+            q.options(joinedload(InboundShipment.shipment_lines))
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
         return {
             "data": shipments,
             "pagination": {"total": total, "page": page, "limit": limit},
@@ -156,16 +163,17 @@ class InboundShipmentService:
         }
     
     def get_shipment(self, shipment_id: str):
-        """Get a shipment by ID."""
+        """Get a shipment by ID with lines and product details."""
         from sqlalchemy.orm import joinedload
         shipment = self.db.query(InboundShipment).options(
-            joinedload(InboundShipment.attachment).joinedload(Attachment.attachment_type)
+            joinedload(InboundShipment.attachment).joinedload(Attachment.attachment_type),
+            joinedload(InboundShipment.shipment_lines).joinedload(InboundShipmentLine.product),
         ).filter(InboundShipment.id == shipment_id).first()
         if not shipment:
             raise handle_not_found("Inbound Shipment", shipment_id)
         return shipment
     
-    def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str):
+    def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
         """Create a new inbound shipment with lines."""
         existing = self.db.query(InboundShipment).filter(
             InboundShipment.shipment_number == shipment_data.shipment_number
@@ -201,6 +209,12 @@ class InboundShipmentService:
         self.db.commit()
         self.db.refresh(shipment)
         return shipment
+
+    def delete_shipment(self, shipment_id: str) -> None:
+        """Delete an inbound shipment. Lines and SPO allocations cascade via DB."""
+        shipment = self.get_shipment(shipment_id)
+        self.db.delete(shipment)
+        self.db.commit()
 
 
 class SPOAllocationService:
@@ -270,7 +284,113 @@ class SPOAllocationService:
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
-    
+
+    def list_allocations_grouped_by_shipment(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        warehouse_id: Optional[str] = None,
+        receipt_status: Optional[str] = None,
+        sort_field: str = "shipment_number",
+        sort_dir: str = "asc",
+    ):
+        """List inbound shipments that have SPO allocations, each with its allocations (for grouped list view)."""
+        from sqlalchemy.orm import joinedload
+        from app.schemas.procurement import (
+            InboundShipmentSimple,
+            SPOAllocationResponse,
+            ShipmentWithAllocationsGroup,
+        )
+
+        # Subquery / join: shipments that have at least one allocation matching filters
+        q_shipments = (
+            self.db.query(InboundShipment)
+            .join(SPOAllocation, SPOAllocation.inbound_shipment_id == InboundShipment.id)
+            .distinct()
+        )
+
+        shipment_filters = []
+        if warehouse_id and warehouse_id != "all":
+            shipment_filters.append(SPOAllocation.warehouse_id == warehouse_id)
+        if receipt_status and receipt_status != "all":
+            shipment_filters.append(SPOAllocation.receipt_status == receipt_status)
+        if query:
+            shipment_filters.append(
+                or_(
+                    SPOAllocation.spo_number.ilike(f"%{query}%"),
+                    InboundShipment.shipment_number.ilike(f"%{query}%"),
+                    SPOAllocation.product.has(Product.product_code.ilike(f"%{query}%")),
+                    SPOAllocation.product.has(Product.product_name.ilike(f"%{query}%")),
+                )
+            )
+        if shipment_filters:
+            q_shipments = q_shipments.filter(and_(*shipment_filters))
+
+        allocation_filters = []
+        if warehouse_id and warehouse_id != "all":
+            allocation_filters.append(SPOAllocation.warehouse_id == warehouse_id)
+        if receipt_status and receipt_status != "all":
+            allocation_filters.append(SPOAllocation.receipt_status == receipt_status)
+
+        sort_map = {
+            "shipment_number": InboundShipment.shipment_number,
+            "created_at": InboundShipment.created_at,
+        }
+        sort_column = sort_map.get(sort_field, InboundShipment.shipment_number)
+        if sort_dir == "desc":
+            q_shipments = q_shipments.order_by(sort_column.desc())
+        else:
+            q_shipments = q_shipments.order_by(sort_column.asc())
+
+        total = q_shipments.count()
+        offset = (page - 1) * limit
+        shipments_page = q_shipments.offset(offset).limit(limit).all()
+        shipment_ids = [s.id for s in shipments_page]
+
+        if not shipment_ids:
+            return {
+                "data": [],
+                "pagination": {"total": total, "page": page, "limit": limit},
+                "empty": True,
+            }
+
+        # Load all allocations for these shipments (same filters) with relations
+        q_alloc = (
+            self.db.query(SPOAllocation)
+            .filter(SPOAllocation.inbound_shipment_id.in_(shipment_ids))
+            .options(
+                joinedload(SPOAllocation.product),
+                joinedload(SPOAllocation.warehouse),
+                joinedload(SPOAllocation.inbound_shipment),
+            )
+        )
+        if allocation_filters:
+            q_alloc = q_alloc.filter(and_(*allocation_filters))
+        q_alloc = q_alloc.order_by(SPOAllocation.spo_number, SPOAllocation.id)
+        allocations = q_alloc.all()
+
+        # Group by inbound_shipment_id preserving shipment order
+        by_shipment: dict[str, list] = {}
+        for a in allocations:
+            by_shipment.setdefault(a.inbound_shipment_id, []).append(a)
+
+        groups = []
+        for ship in shipments_page:
+            allocs = by_shipment.get(ship.id, [])
+            groups.append(
+                ShipmentWithAllocationsGroup(
+                    inbound_shipment=InboundShipmentSimple.model_validate(ship),
+                    spo_allocations=[SPOAllocationResponse.model_validate(a) for a in allocs],
+                )
+            )
+
+        return {
+            "data": groups,
+            "pagination": {"total": total, "page": page, "limit": limit},
+            "empty": total == 0,
+        }
+
     def get_allocation(self, allocation_id: str):
         """Get an SPO allocation by ID."""
         from sqlalchemy.orm import joinedload
@@ -375,7 +495,8 @@ class PickingHeaderService:
         """Get a GRN by ID."""
         from sqlalchemy.orm import selectinload, joinedload
         grn = self.db.query(PickingHeader).options(
-            selectinload(PickingHeader.picking_lines).joinedload(PickingLine.product)
+            selectinload(PickingHeader.picking_lines).joinedload(PickingLine.product),
+            selectinload(PickingHeader.picking_lines).joinedload(PickingLine.spo_allocation),
         ).filter(
             PickingHeader.id == grn_id,
             PickingHeader.picking_type == "goods_received"
@@ -384,7 +505,7 @@ class PickingHeaderService:
             raise handle_not_found("GRN", grn_id)
         return grn
     
-    def create_grn(self, grn_data: PickingHeaderCreate, created_by: str):
+    def create_grn(self, grn_data: PickingHeaderCreate, created_by: str | None = None):
         """Create a new GRN with lines."""
         existing = self.db.query(PickingHeader).filter(
             PickingHeader.picking_number == grn_data.picking_number
@@ -402,10 +523,11 @@ class PickingHeaderService:
         self.db.add(grn)
         self.db.flush()
         
-        # Create lines if provided
+        # Create lines if provided (exclude quantity_discrepancy - DB generated column)
         if grn_data.picking_lines:
             for line_data in grn_data.picking_lines:
-                line = PickingLine(**line_data.model_dump(), picking_header_id=grn.id)
+                line_dict = line_data.model_dump(exclude={"quantity_discrepancy"}, exclude_none=False)
+                line = PickingLine(**line_dict, picking_header_id=grn.id)
                 self.db.add(line)
         
         self.db.commit()
@@ -628,4 +750,184 @@ class ProductSupplierService:
         """Delete a product supplier relationship."""
         product_supplier = self.get_product_supplier(product_supplier_id)
         self.db.delete(product_supplier)
+        self.db.commit()
+
+
+class PurchaseRequestService:
+    """Service for purchase request / sponsorship form operations."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def _parse_date(self, value: Optional[str | date | datetime]) -> Optional[date]:
+        if value is None:
+            return None
+        if isinstance(value, date) and not isinstance(value, datetime):
+            return value
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, str):
+            s = value.strip()
+            if not s:
+                return None
+            for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+                try:
+                    return datetime.strptime(s, fmt).date()
+                except ValueError:
+                    continue
+        return None
+
+    def create_external_request(self, payload):
+        """Create purchase request header + lines from external payload."""
+        expected_po_date_text = None
+        if isinstance(payload.expected_po_date, str):
+            expected_po_date_text = payload.expected_po_date.strip() or None
+
+        header = PurchaseRequestHeader(
+            request_type=payload.request_type,
+            request_date=self._parse_date(payload.date),
+            customer_name=payload.customer_name,
+            project_title=payload.project_title,
+            purpose=payload.purpose,
+            expected_delivery_date=self._parse_date(payload.expected_delivery_date),
+            expected_po_date=self._parse_date(payload.expected_po_date),
+            expected_po_date_text=expected_po_date_text,
+            requested_by=payload.requested_by,
+            requested_at=self._parse_date(payload.requested_at),
+            external_reference=payload.external_reference,
+            status="draft",
+            source="external",
+        )
+        self.db.add(header)
+        self.db.flush()
+
+        if payload.products:
+            for index, line_data in enumerate(payload.products):
+                line = PurchaseRequestLine(
+                    purchase_request_id=header.id,
+                    item_code=line_data.item_code,
+                    quantity=line_data.quantity,
+                    remark=line_data.remark,
+                    sort_order=index,
+                )
+                self.db.add(line)
+
+        self.db.commit()
+        self.db.refresh(header)
+        return header
+
+    def list_requests(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        request_type: Optional[str] = None,
+        sort_field: str = "request_date",
+        sort_dir: str = "desc",
+    ):
+        """List purchase requests / sponsorship forms with pagination."""
+        from sqlalchemy.orm import joinedload
+
+        q = self.db.query(PurchaseRequestHeader)
+        if query:
+            q = q.filter(
+                or_(
+                    PurchaseRequestHeader.customer_name.ilike(f"%{query}%"),
+                    PurchaseRequestHeader.project_title.ilike(f"%{query}%"),
+                    PurchaseRequestHeader.purpose.ilike(f"%{query}%"),
+                    PurchaseRequestHeader.requested_by.ilike(f"%{query}%"),
+                    PurchaseRequestHeader.request_number.ilike(f"%{query}%"),
+                )
+            )
+        if request_type and request_type.strip() in ("purchase_request", "sponsorship_form"):
+            q = q.filter(PurchaseRequestHeader.request_type == request_type.strip())
+
+        sort_map = {
+            "request_date": PurchaseRequestHeader.request_date,
+            "created_at": PurchaseRequestHeader.created_at,
+            "customer_name": PurchaseRequestHeader.customer_name,
+            "project_title": PurchaseRequestHeader.project_title,
+        }
+        sort_col = sort_map.get(sort_field, PurchaseRequestHeader.request_date)
+        if sort_dir == "desc":
+            q = q.order_by(sort_col.desc().nullslast())
+        else:
+            q = q.order_by(sort_col.asc().nullsfirst())
+
+        total = q.count()
+        offset = (page - 1) * limit
+        items = q.offset(offset).limit(limit).all()
+        return {
+            "data": items,
+            "pagination": {"total": total, "page": page, "limit": limit},
+            "empty": total == 0,
+        }
+
+    def get_request(self, request_id: str):
+        """Get a purchase request by ID with lines."""
+        from sqlalchemy.orm import joinedload
+
+        header = (
+            self.db.query(PurchaseRequestHeader)
+            .options(joinedload(PurchaseRequestHeader.lines))
+            .filter(PurchaseRequestHeader.id == request_id)
+            .first()
+        )
+        if not header:
+            raise handle_not_found("Purchase request", request_id)
+        return header
+
+    def create_request(self, data: PurchaseRequestHeaderCreate):
+        """Create purchase request header + lines (internal API)."""
+        dump = data.model_dump(exclude={"products"})
+        dump["status"] = "draft"
+        dump["source"] = "manual"
+        header = PurchaseRequestHeader(**{k: v for k, v in dump.items() if hasattr(PurchaseRequestHeader, k)})
+        self.db.add(header)
+        self.db.flush()
+
+        for index, line_data in enumerate(data.products or []):
+            line = PurchaseRequestLine(
+                purchase_request_id=header.id,
+                item_code=line_data.item_code,
+                quantity=line_data.quantity,
+                remark=line_data.remark,
+                sort_order=index,
+            )
+            self.db.add(line)
+
+        self.db.commit()
+        self.db.refresh(header)
+        return header
+
+    def update_request(self, request_id: str, data: PurchaseRequestHeaderUpdate):
+        """Update purchase request header and optionally replace lines."""
+        header = self.get_request(request_id)
+        payload = data.model_dump(exclude_unset=True, exclude={"products"})
+        for key, value in payload.items():
+            if hasattr(header, key):
+                setattr(header, key, value)
+
+        if data.products is not None:
+            for line in list(header.lines or []):
+                self.db.delete(line)
+            self.db.flush()
+            for index, line_data in enumerate(data.products):
+                line = PurchaseRequestLine(
+                    purchase_request_id=header.id,
+                    item_code=line_data.item_code,
+                    quantity=line_data.quantity,
+                    remark=line_data.remark,
+                    sort_order=index,
+                )
+                self.db.add(line)
+
+        self.db.commit()
+        self.db.refresh(header)
+        return header
+
+    def delete_request(self, request_id: str) -> None:
+        """Delete a purchase request and its lines."""
+        header = self.get_request(request_id)
+        self.db.delete(header)
         self.db.commit()

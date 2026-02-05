@@ -2,6 +2,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, and_
 from typing import Optional
+import time
 import uuid
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.product import Product
@@ -10,6 +11,7 @@ from app.schemas.inventory import (
     StockCreate, StockUpdate, StockBatchCreate, StockBatchUpdate
 )
 from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.import_log_service import ImportLogService
 
 
 class WarehouseService:
@@ -233,8 +235,13 @@ class StockService:
         """List stock ledger entries with pagination and filtering."""
         from app.schemas.common import ListResponse
         from app.schemas.inventory import StockLedgerResponse
+        from app.models.user import User
+        from sqlalchemy.orm import selectinload
         
-        q = self.db.query(StockLedger)
+        q = self.db.query(StockLedger).options(
+            selectinload(StockLedger.product),
+            selectinload(StockLedger.warehouse)
+        )
         if product_id:
             q = q.filter(StockLedger.product_id == product_id)
         if warehouse_id:
@@ -246,8 +253,56 @@ class StockService:
         offset = (page - 1) * limit
         entries = q.order_by(StockLedger.created_at.desc()).offset(offset).limit(limit).all()
 
+        user_ids = {entry.created_by for entry in entries if entry.created_by}
+        user_map = {}
+        if user_ids:
+            users = self.db.query(User).filter(User.id.in_(user_ids)).all()
+            user_map = {user.id: user.name or user.email for user in users}
+
+        response_entries = []
+        for entry in entries:
+            response = StockLedgerResponse.model_validate(entry)
+            response.created_by_name = user_map.get(entry.created_by)
+            response_entries.append(response)
+
         return ListResponse(
-            data=[StockLedgerResponse.model_validate(entry) for entry in entries],
+            data=response_entries,
+            pagination={"total": total, "page": page, "limit": limit}
+        )
+
+    def get_stock_ledger_by_stock(self, product_id: str, warehouse_id: str, page: int = 1, limit: int = 50):
+        """Get stock ledger entries for a specific product-warehouse combination."""
+        from app.schemas.common import ListResponse
+        from app.schemas.inventory import StockLedgerResponse
+        from app.models.user import User
+        from sqlalchemy.orm import selectinload
+
+        q = self.db.query(StockLedger).options(
+            selectinload(StockLedger.product),
+            selectinload(StockLedger.warehouse)
+        ).filter(
+            StockLedger.product_id == product_id,
+            StockLedger.warehouse_id == warehouse_id
+        )
+
+        total = q.count()
+        offset = (page - 1) * limit
+        entries = q.order_by(StockLedger.created_at.desc()).offset(offset).limit(limit).all()
+
+        user_ids = {entry.created_by for entry in entries if entry.created_by}
+        user_map = {}
+        if user_ids:
+            users = self.db.query(User).filter(User.id.in_(user_ids)).all()
+            user_map = {user.id: user.name or user.email for user in users}
+
+        response_entries = []
+        for entry in entries:
+            response = StockLedgerResponse.model_validate(entry)
+            response.created_by_name = user_map.get(entry.created_by)
+            response_entries.append(response)
+
+        return ListResponse(
+            data=response_entries,
             pagination={"total": total, "page": page, "limit": limit}
         )
     
@@ -313,13 +368,19 @@ class StockService:
             user_id: ID of the user performing the import
             
         Returns:
-            dict with created, updated counts and errors
+            dict with created, updated, skipped counts and errors
         """
         created = 0
         updated = 0
         errors = []
+        error_records = []
+        warnings = []
+        skipped_rows = 0
+        import_session_id = str(uuid.uuid4())
+        start_time = time.monotonic()
         
         # Column mapping from Excel headers to database fields
+        # Include all variations that might appear in exported Excel files
         column_mapping = {
             'id': 'id',
             'ID': 'id',
@@ -341,25 +402,37 @@ class StockService:
             'Quantity': 'quantity_on_hand',
             'Total': 'quantity_on_hand',
             'Total Quantity': 'quantity_on_hand',
+            'total quantity': 'quantity_on_hand',  # Lowercase variant
+            'total': 'quantity_on_hand',  # Lowercase variant
             'reserved_quantity': 'quantity_reserved',
             'Reserved Quantity': 'quantity_reserved',
             'quantity_reserved': 'quantity_reserved',
             'Quantity Reserved': 'quantity_reserved',
+            'reserved quantity': 'quantity_reserved',  # Lowercase variant
             'Reserved': 'quantity_reserved',
             'quantity_available': 'quantity_available',
             'Available': 'quantity_available',
             'available': 'quantity_available',
             'quantity_damaged': 'quantity_damaged',
             'Quantity Damaged': 'quantity_damaged',
+            'quantity damaged': 'quantity_damaged',  # Lowercase variant
             'reorder_point': 'reorder_point',
             'Reorder Point': 'reorder_point',
+            'reorder point': 'reorder_point',  # Lowercase variant
         }
         
         def parse_int(value):
-            """Parse integer value."""
+            """Parse integer value, handling Excel formatting."""
             if value is None or value == '':
                 return 0
+            # Handle string values that might be formatted numbers
+            if isinstance(value, str):
+                # Remove common formatting characters
+                value = value.strip().replace(',', '').replace('$', '').replace('RM', '').replace(' ', '')
+                if value == '' or value == '-':
+                    return 0
             try:
+                # Try to parse as float first (handles decimals), then convert to int
                 return int(float(str(value)))
             except (ValueError, TypeError):
                 return 0
@@ -380,17 +453,32 @@ class StockService:
                 elif db_key == 'id' and value:
                     stock_ids_to_lookup.add(str(value).strip())
         
-        # Bulk lookup products by code
+        # Bulk lookup products by code (case-insensitive)
         product_code_map = {}
+        product_code_lower_map = {}
         if product_codes_to_lookup:
-            products = self.db.query(Product).filter(Product.product_code.in_(product_codes_to_lookup)).all()
-            product_code_map = {p.product_code: p.id for p in products}
+            # Use case-insensitive matching for product codes
+            from sqlalchemy import func
+            products = self.db.query(Product).filter(
+                func.lower(Product.product_code).in_([code.lower() for code in product_codes_to_lookup])
+            ).all()
+            # Create maps: one with original case, one with lowercase
+            for p in products:
+                product_code_map[p.product_code] = p.id
+                product_code_lower_map[p.product_code.lower()] = p.id
         
-        # Bulk lookup warehouses by name
+        # Bulk lookup warehouses by name (case-insensitive)
         warehouse_name_map = {}
+        warehouse_name_lower_map = {}
         if warehouse_names_to_lookup:
-            warehouses = self.db.query(Warehouse).filter(Warehouse.warehouse_name.in_(warehouse_names_to_lookup)).all()
-            warehouse_name_map = {w.warehouse_name: w.id for w in warehouses}
+            # Use case-insensitive matching for warehouse names
+            warehouses = self.db.query(Warehouse).filter(
+                func.lower(Warehouse.warehouse_name).in_([name.lower() for name in warehouse_names_to_lookup])
+            ).all()
+            # Create maps: one with original case, one with lowercase
+            for w in warehouses:
+                warehouse_name_map[w.warehouse_name] = w.id
+                warehouse_name_lower_map[w.warehouse_name.lower()] = w.id
         
         # Bulk lookup existing stock by IDs
         existing_stock_by_id = {}
@@ -412,20 +500,26 @@ class StockService:
                 stock_id = None
                 
                 for excel_key, value in row_data.items():
-                    # Try exact match first, then case-insensitive match
-                    db_key = column_mapping.get(excel_key)
+                    # Normalize the Excel key
+                    excel_key_normalized = str(excel_key).strip()
+                    excel_key_lower = excel_key_normalized.lower()
+                    
+                    # Try exact match first
+                    db_key = column_mapping.get(excel_key_normalized)
                     if db_key is None:
                         # Try case-insensitive match
-                        excel_key_lower = excel_key.lower().strip()
                         db_key = column_mapping.get(excel_key_lower)
-                        if db_key is None:
-                            # Try matching with common variations
-                            for key, val in column_mapping.items():
-                                if key.lower().strip() == excel_key_lower:
-                                    db_key = val
-                                    break
-                        if db_key is None:
-                            db_key = excel_key_lower
+                    if db_key is None:
+                        # Try matching with common variations (remove extra spaces, handle variations)
+                        for key, val in column_mapping.items():
+                            key_normalized = key.lower().strip().replace(' ', '')
+                            excel_normalized = excel_key_lower.replace(' ', '')
+                            if key_normalized == excel_normalized:
+                                db_key = val
+                                break
+                    if db_key is None:
+                        # Fallback: use lowercase key
+                        db_key = excel_key_lower
                     
                     if db_key in ['quantity_on_hand', 'quantity_reserved', 'quantity_available', 'quantity_damaged', 'reorder_point']:
                         mapped_data[db_key] = parse_int(value)
@@ -438,33 +532,50 @@ class StockService:
                     elif db_key == 'id':
                         stock_id = str(value).strip() if value and str(value).strip() else None
                 
-                # Look up product_id from product_code
+                # Look up product_id from product_code (case-insensitive)
                 if not mapped_data.get('product_id') and product_code:
+                    product_code_lower = product_code.lower()
                     if product_code in product_code_map:
                         mapped_data['product_id'] = product_code_map[product_code]
+                    elif product_code_lower in product_code_lower_map:
+                        mapped_data['product_id'] = product_code_lower_map[product_code_lower]
                     else:
-                        errors.append(f"Row {idx}: Product with code '{product_code}' not found")
+                        message = f"Row {idx}: Product with code '{product_code}' not found"
+                        errors.append(message)
+                        error_records.append({"row": idx, "error": message, "data": row_data})
                         continue
                 
-                # Look up warehouse_id from warehouse_name
+                # Look up warehouse_id from warehouse_name (case-insensitive)
                 if not mapped_data.get('warehouse_id') and warehouse_name:
+                    warehouse_name_lower = warehouse_name.lower()
                     if warehouse_name in warehouse_name_map:
                         mapped_data['warehouse_id'] = warehouse_name_map[warehouse_name]
+                    elif warehouse_name_lower in warehouse_name_lower_map:
+                        mapped_data['warehouse_id'] = warehouse_name_lower_map[warehouse_name_lower]
                     else:
-                        errors.append(f"Row {idx}: Warehouse with name '{warehouse_name}' not found")
+                        message = f"Row {idx}: Warehouse with name '{warehouse_name}' not found"
+                        errors.append(message)
+                        error_records.append({"row": idx, "error": message, "data": row_data})
                         continue
                 
                 # Validate required fields
                 if not mapped_data.get('product_id'):
-                    errors.append(f"Row {idx}: Product ID or Product Code is required")
+                    message = f"Row {idx}: Product ID or Product Code is required"
+                    errors.append(message)
+                    error_records.append({"row": idx, "error": message, "data": row_data})
                     continue
                 
                 if not mapped_data.get('warehouse_id'):
-                    errors.append(f"Row {idx}: Warehouse ID or Warehouse Name is required")
+                    message = f"Row {idx}: Warehouse ID or Warehouse Name is required"
+                    errors.append(message)
+                    error_records.append({"row": idx, "error": message, "data": row_data})
                     continue
                 
                 # Handle quantity logic
-                # Get values from mapped_data (already parsed as integers)
+                # quantity_available is a GENERATED column in the database, so we don't update it
+                # We only update quantity_on_hand (from "Total Quantity") and quantity_reserved (from "Reserved Quantity")
+                # The database will automatically calculate quantity_available = quantity_on_hand - quantity_reserved
+                
                 quantity_available_raw = mapped_data.get('quantity_available', 0)
                 quantity_on_hand_raw = mapped_data.get('quantity_on_hand', 0)
                 quantity_reserved_raw = mapped_data.get('quantity_reserved', 0)
@@ -475,53 +586,39 @@ class StockService:
                 quantity_reserved = int(quantity_reserved_raw) if quantity_reserved_raw else 0
                 
                 # Logic: If "Available" is provided but "Total Quantity" and "Reserved Quantity" are empty,
-                # use Available as quantity_on_hand
+                # use Available as quantity_on_hand (since Available = Total - Reserved, if Reserved=0, then Available = Total)
                 if quantity_available > 0 and quantity_on_hand == 0 and quantity_reserved == 0:
                     # Only Available is provided - use it as quantity_on_hand
                     mapped_data['quantity_on_hand'] = quantity_available
                     mapped_data['quantity_reserved'] = 0
-                    mapped_data['quantity_available'] = quantity_available
                 elif quantity_on_hand > 0:
-                    # quantity_on_hand is provided - calculate available if not provided
-                    if quantity_available == 0:
-                        mapped_data['quantity_available'] = quantity_on_hand - quantity_reserved
-                    else:
-                        # Both provided - use the provided available value
-                        mapped_data['quantity_available'] = quantity_available
+                    # quantity_on_hand is provided - use it as is
+                    # quantity_reserved is already set from mapped_data
+                    pass
                 elif quantity_available > 0:
                     # Only Available provided (fallback case)
                     mapped_data['quantity_on_hand'] = quantity_available
                     mapped_data['quantity_reserved'] = 0
-                    mapped_data['quantity_available'] = quantity_available
                 else:
                     # Nothing provided - default to 0
                     mapped_data['quantity_on_hand'] = 0
                     mapped_data['quantity_reserved'] = 0
-                    mapped_data['quantity_available'] = 0
                 
-                # Final safety check: ensure quantity_available is always set
-                if 'quantity_available' not in mapped_data or mapped_data.get('quantity_available') is None:
-                    qoh = mapped_data.get('quantity_on_hand', 0) or 0
-                    qres = mapped_data.get('quantity_reserved', 0) or 0
-                    mapped_data['quantity_available'] = qoh - qres
-                
-                # Prepare row data - ensure all quantity fields are explicitly set
+                # Prepare row data - only set fields we can update (NOT quantity_available - it's generated)
                 row_dict = {
                     'product_id': mapped_data['product_id'],
                     'warehouse_id': mapped_data['warehouse_id'],
                     'zone_id': mapped_data.get('zone_id'),
                     'quantity_on_hand': mapped_data.get('quantity_on_hand', 0) or 0,
                     'quantity_reserved': mapped_data.get('quantity_reserved', 0) or 0,
-                    'quantity_available': mapped_data.get('quantity_available', 0) or 0,
+                    # Note: quantity_available is NOT included - it's a generated column
                     'quantity_damaged': mapped_data.get('quantity_damaged', 0) or 0,
                     'reorder_point': mapped_data.get('reorder_point'),
                     '_row_idx': idx,
                     '_stock_id': stock_id,
+                    '_product_code': product_code,
+                    '_warehouse_name': warehouse_name,
                 }
-                
-                # Final check: ensure quantity_available is set correctly
-                if row_dict['quantity_available'] == 0 and row_dict['quantity_on_hand'] > 0:
-                    row_dict['quantity_available'] = row_dict['quantity_on_hand'] - row_dict['quantity_reserved']
                 
                 # Check if exists by ID first
                 if stock_id and stock_id in existing_stock_by_id:
@@ -529,11 +626,14 @@ class StockService:
                     rows_to_update.append(row_dict)
                 else:
                     # Will check by product_id + warehouse_id later
-                    product_warehouse_pairs.add((mapped_data['product_id'], mapped_data['warehouse_id']))
+                    # Ensure both IDs are strings for consistent tuple matching
+                    product_warehouse_pairs.add((str(mapped_data['product_id']), str(mapped_data['warehouse_id'])))
                     rows_to_create.append(row_dict)
                 
             except Exception as e:
-                errors.append(f"Row {idx}: {str(e)}")
+                message = f"Row {idx}: {str(e)}"
+                errors.append(message)
+                error_records.append({"row": idx, "error": message, "data": row_data})
                 continue
         
         # Step 3: Bulk lookup existing stock by product_id + warehouse_id
@@ -545,21 +645,29 @@ class StockService:
                 for pid, wid in product_warehouse_pairs
             ]
             existing_stocks = self.db.query(Stock).filter(or_(*conditions)).all()
-            existing_stock_by_pair = {(s.product_id, s.warehouse_id): s for s in existing_stocks}
+            # Ensure tuple keys use string UUIDs for consistent matching
+            existing_stock_by_pair = {(str(s.product_id), str(s.warehouse_id)): s for s in existing_stocks}
         
-        # Step 4: Separate creates and updates
+        # Step 4: Separate creates and updates (no new stock creation allowed)
         final_creates = []
         final_updates = []
         ledger_entries = []
         
         for row_dict in rows_to_create:
-            pair = (row_dict['product_id'], row_dict['warehouse_id'])
+            # Ensure tuple uses string UUIDs for consistent matching
+            pair = (str(row_dict['product_id']), str(row_dict['warehouse_id']))
             if pair in existing_stock_by_pair:
                 # Move to updates
                 row_dict['_existing_id'] = existing_stock_by_pair[pair].id
                 final_updates.append(row_dict)
             else:
-                final_creates.append(row_dict)
+                skipped_rows += 1
+                warnings.append({
+                    "row": row_dict.get("_row_idx"),
+                    "product_code": row_dict.get("_product_code"),
+                    "warehouse": row_dict.get("_warehouse_name"),
+                    "reason": "Stock record not found for product + warehouse"
+                })
         
         for row_dict in rows_to_update:
             final_updates.append(row_dict)
@@ -569,116 +677,131 @@ class StockService:
         for stock in existing_stock_by_pair.values():
             existing_by_id[stock.id] = stock
         
-        # Step 5: Bulk insert new records
+        # Step 5: Skip bulk insert (no new stock creation allowed)
         if final_creates:
-            try:
-                insert_data = [
-                    {
-                        'id': str(uuid.uuid4()) if not row.get('_stock_id') else row['_stock_id'],
-                        'product_id': row['product_id'],
-                        'warehouse_id': row['warehouse_id'],
-                        'zone_id': row.get('zone_id'),
-                        'quantity_on_hand': row['quantity_on_hand'],
-                        'quantity_reserved': row['quantity_reserved'],
-                        'quantity_available': row['quantity_available'],
-                        'quantity_damaged': row.get('quantity_damaged', 0),
-                        'reorder_point': row.get('reorder_point'),
-                    }
-                    for row in final_creates
-                ]
-                self.db.bulk_insert_mappings(Stock, insert_data)
-                created = len(final_creates)
-                
-                # Add ledger entries for newly created stock records
-                for row in insert_data:
-                    previous_qty = 0
-                    new_qty = row['quantity_on_hand']
-                    quantity_change = new_qty - previous_qty
-                    if quantity_change != 0:
-                        ledger_entries.append({
-                            'id': str(uuid.uuid4()),
-                            'product_id': row['product_id'],
-                            'warehouse_id': row['warehouse_id'],
-                            'transaction_type': 'BULK_IMPORT',
-                            'quantity_change': quantity_change,
-                            'previous_quantity': previous_qty,
-                            'new_quantity': new_qty,
-                            'reference_type': 'bulk_import',
-                            'reference_id': None,
-                            'notes': 'Bulk import create',
-                            'created_by': user_id
-                        })
-            except Exception as e:
-                errors.append(f"Bulk insert error: {str(e)}")
+            created = 0
         
-        # Step 6: Bulk update existing records
+        # Step 6: Update existing records (use individual updates for reliability)
         if final_updates:
             try:
                 # Group updates by ID (if same ID appears multiple times, use the last one)
+                # Note: quantity_available is a GENERATED column, so we don't update it
+                # The database will automatically calculate it as quantity_on_hand - quantity_reserved
                 update_dict = {}
                 for row_dict in final_updates:
                     stock_id = row_dict['_existing_id']
                     qoh = row_dict.get('quantity_on_hand', 0) or 0
                     qres = row_dict.get('quantity_reserved', 0) or 0
-                    qavail = row_dict.get('quantity_available', 0) or 0
                     
-                    # Ensure quantity_available is calculated if not explicitly set
-                    if qavail == 0 and qoh > 0:
-                        qavail = qoh - qres
-                    
-                    # Always update with the latest values - ensure all fields are explicitly set
+                    # Store update data - only fields we can update (NOT quantity_available)
                     update_dict[stock_id] = {
-                        'id': stock_id,
                         'zone_id': row_dict.get('zone_id'),
                         'quantity_on_hand': qoh,
                         'quantity_reserved': qres,
-                        'quantity_available': qavail,  # Explicitly set
+                        # quantity_available is NOT included - it's a generated column
                         'quantity_damaged': row_dict.get('quantity_damaged', 0) or 0,
                         'reorder_point': row_dict.get('reorder_point'),
                     }
                 
-                update_data = list(update_dict.values())
-                # Use bulk_update_mappings - ensure all fields are included
-                # Note: bulk_update_mappings updates all provided fields
-                self.db.bulk_update_mappings(Stock, update_data)
-                updated = len(update_data)
-                
-                # Add ledger entries for updated stock records
-                for update_row in update_data:
-                    existing = existing_by_id.get(update_row['id'])
-                    previous_qty = existing.quantity_on_hand if existing else 0
-                    new_qty = update_row['quantity_on_hand']
+                # Perform individual updates for reliability
+                for stock_id, update_data in update_dict.items():
+                    stock = existing_by_id.get(stock_id)
+                    if not stock:
+                        # Try to fetch from database if not in cache
+                        stock = self.db.query(Stock).filter(Stock.id == stock_id).first()
+                        if not stock:
+                            message = f"Stock record with ID '{stock_id}' not found for update"
+                            errors.append(message)
+                            error_records.append({"row": None, "error": message, "data": None})
+                            continue
+                        existing_by_id[stock_id] = stock
+                    
+                    previous_qty = stock.quantity_on_hand
+                    # Update the stock record - only update fields that are not generated columns
+                    # quantity_available will be automatically calculated by the database
+                    for key, value in update_data.items():
+                        # Skip quantity_available if it somehow got into update_data (shouldn't happen)
+                        if key != 'quantity_available':
+                            setattr(stock, key, value)
+                    # Mark as modified to ensure SQLAlchemy tracks the change
+                    self.db.add(stock)
+                    new_qty = update_data['quantity_on_hand']
                     quantity_change = new_qty - previous_qty
+                    # Add ledger entry if quantity changed
                     if quantity_change != 0:
+                        # Get the calculated quantity_available after update (will be refreshed from DB)
+                        # For ledger, we'll use the calculated value: new_qty - quantity_reserved
+                        calculated_available = new_qty - update_data.get('quantity_reserved', 0)
                         ledger_entries.append({
                             'id': str(uuid.uuid4()),
-                            'product_id': existing.product_id if existing else update_row.get('product_id'),
-                            'warehouse_id': existing.warehouse_id if existing else update_row.get('warehouse_id'),
+                            'product_id': stock.product_id,
+                            'warehouse_id': stock.warehouse_id,
                             'transaction_type': 'BULK_IMPORT',
                             'quantity_change': quantity_change,
                             'previous_quantity': previous_qty,
                             'new_quantity': new_qty,
                             'reference_type': 'bulk_import',
-                            'reference_id': update_row['id'],
+                            'reference_id': stock_id,
                             'notes': 'Bulk import update',
                             'created_by': user_id
                         })
+                
+                updated = len(update_dict)
             except Exception as e:
-                errors.append(f"Bulk update error: {str(e)}")
+                message = f"Bulk update error: {str(e)}"
+                errors.append(message)
+                error_records.append({"row": None, "error": message, "data": None})
         
         # Step 7: Commit all changes
+        commit_successful = False
         try:
             if ledger_entries:
                 self.db.bulk_insert_mappings(StockLedger, ledger_entries)
+            # Flush to ensure all changes are sent to database
+            self.db.flush()
+            # Commit the transaction
             self.db.commit()
+            commit_successful = True
         except Exception as e:
             self.db.rollback()
-            errors.append(f"Database error: {str(e)}")
-        
+            message = f"Database error: {str(e)}"
+            errors.append(message)
+            error_records.append({"row": None, "error": message, "data": None})
+
+        # Step 8: Create import log entry (only if commit was successful)
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        if commit_successful:
+            try:
+                import_log_service = ImportLogService(self.db)
+                import_log_service.create_import_log(
+                    entity_type="stock",
+                    entity_table="stock",
+                    import_session_id=import_session_id,
+                    filename=None,
+                    import_type="BULK_IMPORT",
+                    total_rows=len(stock_data),
+                    successful_rows=created + updated,
+                    created_rows=created,
+                    updated_rows=updated,
+                    failed_rows=len(error_records),
+                    skipped_rows=skipped_rows,
+                    warnings=warnings,
+                    errors=error_records,
+                    summary=None,
+                    imported_by=user_id,
+                    duration_ms=duration_ms,
+                )
+            except Exception:
+                # Import logging should not break the main import flow
+                pass
+
         return {
+            "import_session_id": import_session_id,
             "created": created,
             "updated": updated,
-            "errors": errors
+            "skipped": skipped_rows,
+            "errors": errors,
+            "warnings": warnings
         }
     
     def get_stock(self, stock_id: str):

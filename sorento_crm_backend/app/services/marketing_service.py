@@ -19,9 +19,12 @@ class PromotionService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_promotions(self, page: int = 1, limit: int = 50):
+    def list_promotions(self, page: int = 1, limit: int = 50, user_type: Optional[str] = None):
         """List promotions."""
         q = self.db.query(Promotion).order_by(Promotion.created_at.desc())
+        
+        if user_type:
+            q = q.filter(Promotion.access_levels.contains([user_type]))
         
         total = q.count()
         offset = (page - 1) * limit

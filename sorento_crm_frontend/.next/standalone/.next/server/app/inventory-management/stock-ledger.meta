@@ -1,7 +1,0 @@
-{
-  "headers": {
-    "x-nextjs-stale-time": "300",
-    "x-nextjs-prerender": "1",
-    "x-next-cache-tags": "_N_T_/layout,_N_T_/(protected)/layout,_N_T_/(protected)/inventory-management/layout,_N_T_/(protected)/inventory-management/stock-ledger/layout,_N_T_/(protected)/inventory-management/stock-ledger/page,_N_T_/inventory-management/stock-ledger"
-  }
-}

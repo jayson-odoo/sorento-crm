@@ -19,9 +19,11 @@ import {
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription, AlertIcon } from '@/components/ui/alert';
 import { useUploadAttachment, useAttachmentTypesList } from '../hooks/useAttachments';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
+import { toast } from 'sonner';
 
 interface AttachmentUploadDialogProps {
   open: boolean;
@@ -39,11 +41,14 @@ export default function AttachmentUploadDialog({
   entityId: propEntityId,
 }: AttachmentUploadDialogProps) {
   const [selectedTypeId, setSelectedTypeId] = useState<string>('');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [entityType, setEntityType] = useState<string>(propEntityType || '');
   const [entityId, setEntityId] = useState<string>(propEntityId || '');
+  const [accessLevels, setAccessLevels] = useState<string[]>(['dealer', 'end_user']);
   const [dragActive, setDragActive] = useState(false);
   const [validationError, setValidationError] = useState<string>('');
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+  const [isUploading, setIsUploading] = useState(false);
 
   const { data: attachmentTypes = [], isLoading: isLoadingTypes } = useAttachmentTypesList();
   const uploadMutation = useUploadAttachment();
@@ -54,25 +59,31 @@ export default function AttachmentUploadDialog({
   useEffect(() => {
     if (!open) {
       setSelectedTypeId('');
-      setSelectedFile(null);
+      setSelectedFiles([]);
       setEntityType(propEntityType || '');
       setEntityId(propEntityId || '');
+      setAccessLevels(['dealer', 'end_user']);
       setValidationError('');
+      setUploadProgress({});
+      setIsUploading(false);
     }
   }, [open, propEntityType, propEntityId]);
 
-  // Update validation when type or file changes
+  // Update validation when type or files change
   useEffect(() => {
-    if (selectedFile && selectedType) {
-      validateFile(selectedFile, selectedType);
+    if (selectedFiles.length > 0 && selectedType) {
+      const invalidFiles = selectedFiles.filter(file => !validateFile(file, selectedType, false));
+      if (invalidFiles.length > 0) {
+        setValidationError(`${invalidFiles.length} file(s) failed validation`);
+      } else {
+        setValidationError('');
+      }
     } else {
       setValidationError('');
     }
-  }, [selectedFile, selectedType]);
+  }, [selectedFiles, selectedType]);
 
-  const validateFile = (file: File, type: AttachmentType) => {
-    setValidationError('');
-
+  const validateFile = (file: File, type: AttachmentType, showError: boolean = true): boolean => {
     // Check file extension
     const allowedExtensions = type.allowed_extensions
       .split(',')
@@ -80,18 +91,22 @@ export default function AttachmentUploadDialog({
     const fileExt = file.name.split('.').pop()?.toLowerCase();
 
     if (!fileExt || !allowedExtensions.includes(fileExt)) {
-      setValidationError(
-        `File extension .${fileExt} is not allowed. Allowed extensions: ${type.allowed_extensions}`
-      );
+      if (showError) {
+        setValidationError(
+          `File extension .${fileExt} is not allowed. Allowed extensions: ${type.allowed_extensions}`
+        );
+      }
       return false;
     }
 
     // Check file size
     const fileSizeMB = file.size / (1024 * 1024);
     if (fileSizeMB > type.max_file_size_mb) {
-      setValidationError(
-        `File size (${fileSizeMB.toFixed(2)} MB) exceeds maximum allowed size (${type.max_file_size_mb} MB)`
-      );
+      if (showError) {
+        setValidationError(
+          `File size (${fileSizeMB.toFixed(2)} MB) exceeds maximum allowed size (${type.max_file_size_mb} MB)`
+        );
+      }
       return false;
     }
 
@@ -115,14 +130,24 @@ export default function AttachmentUploadDialog({
       setDragActive(false);
 
       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        const file = e.dataTransfer.files[0];
-        if (selectedType) {
-          if (validateFile(file, selectedType)) {
-            setSelectedFile(file);
-          }
-        } else {
+        if (!selectedType) {
           setValidationError('Please select an attachment type first');
+          return;
         }
+        
+        const files = Array.from(e.dataTransfer.files);
+        const validFiles = files.filter(file => validateFile(file, selectedType, false));
+        
+        if (validFiles.length === 0) {
+          setValidationError('No valid files found. Please check file extensions and sizes.');
+          return;
+        }
+        
+        if (validFiles.length < files.length) {
+          setValidationError(`${files.length - validFiles.length} file(s) were skipped due to validation errors.`);
+        }
+        
+        setSelectedFiles(prev => [...prev, ...validFiles]);
       }
     },
     [selectedType]
@@ -131,18 +156,43 @@ export default function AttachmentUploadDialog({
   const handleFileInput = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
-        const file = e.target.files[0];
-        if (selectedType) {
-          if (validateFile(file, selectedType)) {
-            setSelectedFile(file);
-          }
-        } else {
+        if (!selectedType) {
           setValidationError('Please select an attachment type first');
+          return;
         }
+        
+        const files = Array.from(e.target.files);
+        const validFiles = files.filter(file => validateFile(file, selectedType, false));
+        
+        if (validFiles.length === 0) {
+          setValidationError('No valid files found. Please check file extensions and sizes.');
+          return;
+        }
+        
+        if (validFiles.length < files.length) {
+          setValidationError(`${files.length - validFiles.length} file(s) were skipped due to validation errors.`);
+        }
+        
+        setSelectedFiles(prev => [...prev, ...validFiles]);
+        
+        // Reset input to allow selecting the same files again
+        e.target.value = '';
       }
     },
     [selectedType]
   );
+  
+  const removeFile = (index: number) => {
+    const fileToRemove = selectedFiles[index];
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+    if (fileToRemove) {
+      setUploadProgress(prev => {
+        const newProgress = { ...prev };
+        delete newProgress[fileToRemove.name];
+        return newProgress;
+      });
+    }
+  };
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return bytes + ' B';
@@ -164,27 +214,60 @@ export default function AttachmentUploadDialog({
       return;
     }
 
-    if (!selectedFile) {
-      setValidationError('Please select a file to upload');
+    if (selectedFiles.length === 0) {
+      setValidationError('Please select at least one file to upload');
       return;
     }
 
-    if (validationError) {
+    if (validationError && !validationError.includes('skipped')) {
       return;
     }
+
+    setIsUploading(true);
+    const uploadedIds: string[] = [];
+    let hasError = false;
 
     try {
-      const attachment = await uploadMutation.mutateAsync({
-        file: selectedFile,
-        attachmentTypeId: selectedTypeId,
-        entityType: entityType || propEntityType || undefined,
-        entityId: entityId || propEntityId || undefined,
-      });
+      // Upload files sequentially so each triggers N8N integration
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
+        try {
+          setUploadProgress(prev => ({ ...prev, [file.name]: 0 }));
+          
+          const attachment = await uploadMutation.mutateAsync({
+            file: file,
+            attachmentTypeId: selectedTypeId,
+            entityType: entityType || propEntityType || undefined,
+            entityId: entityId || propEntityId || undefined,
+            accessLevels,
+          });
+          
+          uploadedIds.push(attachment.id);
+          setUploadProgress(prev => ({ ...prev, [file.name]: 100 }));
+        } catch (error) {
+          hasError = true;
+          setUploadProgress(prev => ({ ...prev, [file.name]: -1 })); // -1 indicates error
+          // Continue with next file even if one fails
+        }
+      }
 
-      onSuccess?.(attachment.id);
-      onOpenChange(false);
+      if (uploadedIds.length > 0) {
+        if (uploadedIds.length === selectedFiles.length) {
+          toast.success(`Successfully uploaded ${uploadedIds.length} file${uploadedIds.length !== 1 ? 's' : ''}`);
+        } else {
+          toast.warning(`Uploaded ${uploadedIds.length} of ${selectedFiles.length} files. Some files failed.`);
+        }
+        onSuccess?.(uploadedIds[0]); // Pass first ID for compatibility
+        onOpenChange(false);
+      } else if (hasError) {
+        setValidationError('All files failed to upload. Please try again.');
+        toast.error('All files failed to upload. Please try again.');
+      }
     } catch (error) {
       // Error is handled by the mutation hook (toast)
+      setValidationError('Upload failed. Please try again.');
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -205,7 +288,7 @@ export default function AttachmentUploadDialog({
               value={selectedTypeId}
               onValueChange={(value) => {
                 setSelectedTypeId(value);
-                setSelectedFile(null);
+                setSelectedFiles([]);
                 setValidationError('');
               }}
               disabled={isLoadingTypes}
@@ -227,7 +310,7 @@ export default function AttachmentUploadDialog({
               </SelectContent>
             </Select>
             {selectedType && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground mt-1">
                 Allowed: {selectedType.allowed_extensions} • Max size: {selectedType.max_file_size_mb} MB
               </p>
             )}
@@ -235,7 +318,7 @@ export default function AttachmentUploadDialog({
 
           {/* File Upload */}
           <div className="space-y-2">
-            <Label>File <span className="text-destructive">*</span></Label>
+            <Label>Files <span className="text-destructive">*</span></Label>
             <div
               onDragEnter={handleDrag}
               onDragLeave={handleDrag}
@@ -245,34 +328,68 @@ export default function AttachmentUploadDialog({
                 dragActive ? 'border-primary bg-primary/5' : 'border-border'
               }`}
             >
-              {selectedFile ? (
+              {selectedFiles.length > 0 ? (
                 <div className="space-y-3">
-                  <div className="flex items-center gap-3 p-3 border rounded-lg bg-muted/50">
-                    <FileIcon className="size-5 text-muted-foreground" />
-                    <div className="flex-1 min-w-0 text-left">
-                      <p className="text-sm font-medium truncate">{selectedFile.name}</p>
-                      <p className="text-xs text-muted-foreground">{formatFileSize(selectedFile.size)}</p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setSelectedFile(null);
-                        setValidationError('');
-                      }}
-                    >
-                      <X className="size-4" />
-                    </Button>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {selectedFiles.map((file, index) => (
+                      <div key={`${file.name}-${index}`} className="flex items-center gap-3 p-3 border rounded-lg bg-muted/50">
+                        <FileIcon className="size-5 text-muted-foreground flex-shrink-0" />
+                        <div className="flex-1 min-w-0 text-left">
+                          <p className="text-sm font-medium truncate">{file.name}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{formatFileSize(file.size)}</p>
+                          {uploadProgress[file.name] !== undefined && uploadProgress[file.name] >= 0 && (
+                            <div className="mt-1.5">
+                              <div className="h-1 bg-muted rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full bg-primary transition-all duration-300"
+                                  style={{ width: `${uploadProgress[file.name]}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
+                          {uploadProgress[file.name] === -1 && (
+                            <p className="text-xs text-destructive mt-0.5">Upload failed</p>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeFile(index)}
+                          disabled={isUploading}
+                        >
+                          <X className="size-4" />
+                        </Button>
+                      </div>
+                    ))}
                   </div>
+                  {!isUploading && (
+                    <div className="pt-2 border-t">
+                      <input
+                        type="file"
+                        multiple
+                        accept={getAcceptString(selectedType)}
+                        onChange={handleFileInput}
+                        className="hidden"
+                        id="file-upload"
+                        disabled={!selectedTypeId}
+                      />
+                      <label htmlFor="file-upload">
+                        <Button variant="outline" asChild disabled={!selectedTypeId} size="sm">
+                          <span>Add More Files</span>
+                        </Button>
+                      </label>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
                   <Upload className="size-8 mx-auto mb-3 text-muted-foreground" />
                   <p className="text-sm text-muted-foreground mb-2">
-                    Drag and drop file here, or click to browse
+                    Drag and drop files here, or click to browse
                   </p>
                   <input
                     type="file"
+                    multiple
                     accept={getAcceptString(selectedType)}
                     onChange={handleFileInput}
                     className="hidden"
@@ -281,12 +398,12 @@ export default function AttachmentUploadDialog({
                   />
                   <label htmlFor="file-upload">
                     <Button variant="outline" asChild disabled={!selectedTypeId}>
-                      <span>Select File</span>
+                      <span>Select Files</span>
                     </Button>
                   </label>
                   {selectedType && (
                     <p className="text-xs text-muted-foreground mt-2">
-                      Max file size: {selectedType.max_file_size_mb} MB
+                      Max file size: {selectedType.max_file_size_mb} MB per file
                     </p>
                   )}
                 </>
@@ -304,7 +421,7 @@ export default function AttachmentUploadDialog({
                 value={entityType}
                 onChange={(e) => setEntityType(e.target.value)}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground mt-1">
                 Link this attachment to a specific entity type
               </p>
             </div>
@@ -316,10 +433,39 @@ export default function AttachmentUploadDialog({
                 value={entityId}
                 onChange={(e) => setEntityId(e.target.value)}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground mt-1">
                 Link this attachment to a specific entity
               </p>
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Access Levels</Label>
+            <div className="flex flex-wrap gap-4">
+              {['dealer', 'end_user'].map((level) => {
+                const checked = accessLevels.includes(level);
+                return (
+                  <label key={level} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(value) => {
+                        const next = new Set(accessLevels);
+                        if (value) {
+                          next.add(level);
+                        } else {
+                          next.delete(level);
+                        }
+                        setAccessLevels(Array.from(next));
+                      }}
+                    />
+                    {level === 'dealer' ? 'Dealer' : 'End User'}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              This will be sent to the webhook for product attachment linking.
+            </p>
           </div>
 
           {/* Validation Error */}
@@ -339,9 +485,11 @@ export default function AttachmentUploadDialog({
           </Button>
           <Button
             onClick={handleUpload}
-            disabled={!selectedTypeId || !selectedFile || !!validationError || uploadMutation.isPending}
+            disabled={!selectedTypeId || selectedFiles.length === 0 || (!!validationError && !validationError.includes('skipped')) || isUploading}
           >
-            {uploadMutation.isPending ? 'Uploading...' : 'Upload Attachment'}
+            {isUploading 
+              ? `Uploading ${selectedFiles.filter(file => uploadProgress[file.name] === 100).length + 1} of ${selectedFiles.length}...` 
+              : `Upload ${selectedFiles.length} Attachment${selectedFiles.length !== 1 ? 's' : ''}`}
           </Button>
         </DialogFooter>
       </DialogContent>

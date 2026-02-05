@@ -513,7 +513,10 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         </div>
 
         {isEditMode && complaintId && (
-          <ComplaintManualAttachmentsSection complaintId={complaintId} />
+          <ComplaintManualAttachmentsSection
+            complaintId={complaintId}
+            attachments={complaint?.attachments ?? []}
+          />
         )}
 
         <div className="flex justify-end gap-4">

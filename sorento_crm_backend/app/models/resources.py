@@ -11,6 +11,7 @@ class AttachmentType(Base):
     __tablename__ = "attachment_types"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code = Column(String(50), unique=True, nullable=True)
     type_name = Column(String(100), unique=True, nullable=False)
     description = Column(Text, nullable=True)
     allowed_extensions = Column(String(255), nullable=False)

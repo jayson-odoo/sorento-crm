@@ -166,7 +166,7 @@ const MyBalance = ({ className }: IMyBalanceProps) => {
 
         const formatter = new Intl.NumberFormat('en-US', {
           style: 'currency',
-          currency: 'USD',
+          currency: 'MYR',
         });
 
         const formattedNumber = formatter.format(number);

@@ -20,7 +20,7 @@ export function ClassicLayout({ children }: { children: ReactNode }) {
         <div className="m-5">
           <Link href="/">
             <img
-              src={toAbsoluteUrl('/media/app/mini-logo.svg')}
+              src={toAbsoluteUrl('/media/app/sorento-logo.svg')}
               className="h-[35px] max-w-none"
               alt=""
             />

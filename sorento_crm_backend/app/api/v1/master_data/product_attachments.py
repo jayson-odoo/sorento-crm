@@ -20,6 +20,7 @@ async def get_product_attachments(
     dir: Optional[str] = Query("asc"),
     product_id: Optional[str] = Query(None),
     attachment_id: Optional[str] = Query(None),
+    user_type: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -32,7 +33,8 @@ async def get_product_attachments(
             sort_field=sort or "created_at",
             sort_dir=dir or "asc",
             product_id=product_id,
-            attachment_id=attachment_id
+            attachment_id=attachment_id,
+            user_type=user_type
         )
         return result
     except Exception as e:
@@ -112,13 +114,14 @@ async def delete_product_attachment(
 @router.get("/product/{product_id}")
 async def get_product_attachments_by_product(
     product_id: str,
+    user_type: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get all attachments for a specific product."""
     try:
         service = ProductAttachmentService(db)
-        product_attachments = service.get_product_attachments_by_product(product_id)
+        product_attachments = service.get_product_attachments_by_product(product_id, user_type=user_type)
         return product_attachments
     except Exception as e:
         raise handle_internal_error(str(e))

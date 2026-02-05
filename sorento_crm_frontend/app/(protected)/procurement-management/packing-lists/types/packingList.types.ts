@@ -57,6 +57,8 @@ export interface PackingList {
   } | null;
   lines_count?: number;
   spo_allocations_count?: number;
+  display_total_items?: number | null;
+  display_total_cartons?: number | null;
 }
 
 export interface PackingListDetail extends PackingList {

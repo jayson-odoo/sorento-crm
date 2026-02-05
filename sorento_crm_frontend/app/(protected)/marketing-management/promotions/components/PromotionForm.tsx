@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useCreatePromotion, useUpdatePromotion, usePromotion, usePromotions } from '../hooks/usePromotions';
@@ -32,6 +33,9 @@ import { PromotionSchema, type PromotionSchemaType } from '../forms/promotion-sc
 import type { PromotionFormData } from '../types/promotion.types';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 import RecordNavigation from '@/components/common/RecordNavigation';
+
+type AccessLevel = 'dealer' | 'end_user';
+const ACCESS_LEVELS: AccessLevel[] = ['dealer', 'end_user'];
 
 interface PromotionFormProps {
   promotionId?: string;
@@ -66,6 +70,7 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
       start_date: new Date(),
       end_date: new Date(),
       is_active: true,
+      access_levels: ACCESS_LEVELS,
     },
     mode: 'onSubmit',
   });
@@ -87,6 +92,9 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
           start_date: new Date(promotion.start_date),
           end_date: new Date(promotion.end_date),
           is_active: promotion.is_active,
+          access_levels: promotion.access_levels && promotion.access_levels.length > 0
+            ? (promotion.access_levels as AccessLevel[])
+            : ACCESS_LEVELS,
         });
         setFormInitialized(true);
       }, 0);
@@ -111,6 +119,7 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
         start_date: data.start_date,
         end_date: data.end_date,
         is_active: data.is_active,
+        access_levels: data.access_levels,
       };
 
       if (isEditMode && promotionId) {
@@ -223,6 +232,42 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                       <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="access_levels"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Access Levels *</FormLabel>
+                  <FormDescription>
+                    Choose who can view this promotion.
+                  </FormDescription>
+                  <div className="mt-2 flex flex-wrap gap-4">
+                    {ACCESS_LEVELS.map((level) => {
+                      const checked = field.value?.includes(level);
+                      return (
+                        <label key={level} className="flex items-center gap-2 text-sm">
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(value) => {
+                              const next = new Set(field.value || []);
+                              if (value) {
+                                next.add(level);
+                              } else {
+                                next.delete(level);
+                              }
+                              field.onChange(Array.from(next) as AccessLevel[]);
+                            }}
+                          />
+                          {level === 'dealer' ? 'Dealer' : 'End User'}
+                        </label>
+                      );
+                    })}
+                  </div>
                   <FormMessage />
                 </FormItem>
               )}

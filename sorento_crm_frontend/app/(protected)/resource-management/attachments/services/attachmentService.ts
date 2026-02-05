@@ -27,13 +27,17 @@ export async function uploadAttachment(
   file: File,
   attachmentTypeId: string,
   entityType?: string,
-  entityId?: string
+  entityId?: string,
+  accessLevels?: string[]
 ): Promise<Attachment> {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('attachment_type_id', attachmentTypeId);
   if (entityType) formData.append('entity_type', entityType);
   if (entityId) formData.append('entity_id', entityId);
+  if (accessLevels && accessLevels.length > 0) {
+    formData.append('access_levels', JSON.stringify(accessLevels));
+  }
 
   // Debug: Log FormData contents
   console.log('FormData entries:');
@@ -67,6 +71,19 @@ export async function deleteAttachment(id: string): Promise<void> {
     const error = await response.json().catch(() => ({ message: 'Failed to delete attachment' }));
     throw new Error(error.message);
   }
+}
+
+export async function bulkDeleteAttachments(ids: string[]): Promise<{ message: string; deleted_count: number }> {
+  const response = await apiFetch('/api/v1/resource-management/attachments/bulk-delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ attachment_ids: ids }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to delete attachments' }));
+    throw new Error(error.message ?? error.detail ?? 'Failed to delete attachments');
+  }
+  return response.json();
 }
 
 export async function restoreAttachment(id: string): Promise<void> {

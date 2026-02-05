@@ -61,6 +61,7 @@ class ConversationSLATracking(Base):
     escalation_reason = Column(Text, nullable=True)
     is_responded = Column(Boolean, default=False, nullable=False)
     responded_at = Column(DateTime(timezone=True), nullable=True)
+    responded_by = Column(Text, nullable=True)
     response_time = Column(Numeric(10, 2), nullable=True)
     is_resolved = Column(Boolean, default=False, nullable=False)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
@@ -73,7 +74,11 @@ class ConversationSLATracking(Base):
     resolution_duration = Column(Numeric(10, 2), nullable=True)
     
     policy = relationship("SLAPolicy", back_populates="tracking")
-    event_logs = relationship("ConversationSLAEventLog", back_populates="tracking")
+    event_logs = relationship(
+        "ConversationSLAEventLog",
+        back_populates="tracking",
+        cascade="all, delete-orphan",
+    )
     contact = relationship("RespondContact", foreign_keys=[respond_contact_id])
     assigned_user = relationship("User", foreign_keys=[assigned_to_id])
     
@@ -94,7 +99,9 @@ class ConversationSLAEventLog(Base):
     event_type = Column(Text, nullable=False)  # escalation, response, resolution
     from_tier = Column(Integer, nullable=True)
     to_tier = Column(Integer, nullable=True)
-    event_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    event_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)  # Timestamptz, stores UTC
+    from_time = Column(DateTime(timezone=True), nullable=True)  # Timestamptz, stores UTC
+    duration = Column(Numeric(10, 2), nullable=True)  # Duration in hours
     reason = Column(Text, nullable=True)
     assigned_to = Column(Text, nullable=True)  # Keep for backward compatibility
     assigned_to_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # FK to users

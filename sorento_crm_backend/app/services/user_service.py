@@ -323,6 +323,16 @@ class UserPermissionService:
     def __init__(self, db: Session):
         self.db = db
     
+    def get_all_permissions(self, query: Optional[str] = None):
+        """Get all permissions for select dropdowns (no pagination)."""
+        q = self.db.query(UserPermission)
+        if query:
+            q = q.filter(
+                (UserPermission.name.ilike(f"%{query}%")) |
+                (UserPermission.slug.ilike(f"%{query}%"))
+            )
+        return q.order_by(UserPermission.name).all()
+
     def list_permissions(self, page: int = 1, limit: int = 50):
         """List user permissions."""
         q = self.db.query(UserPermission)
@@ -395,7 +405,8 @@ class AccessAgentService:
         self.db = db
     
     def list_agents(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
-        """List access agents."""
+        """List access agents with PIC user name resolved."""
+        from app.models.user import User
         q = self.db.query(AccessAgent)
         
         if query:
@@ -410,8 +421,32 @@ class AccessAgentService:
         offset = (page - 1) * limit
         agents = q.offset(offset).limit(limit).all()
         
+        # Enrich each agent with pic_respond_user_name
+        data = []
+        for agent in agents:
+            pic_respond_user_name = None
+            if agent.pic_respond_user_id:
+                user = self.db.query(User).filter(
+                    User.respond_user_id == agent.pic_respond_user_id
+                ).first()
+                if user:
+                    pic_respond_user_name = user.name or user.email
+            data.append({
+                "id": str(agent.id),
+                "code": agent.code,
+                "name": agent.name,
+                "description": agent.description,
+                "is_active": agent.is_active,
+                "created_at": agent.created_at,
+                "updated_at": agent.updated_at,
+                "synced_to_excel": agent.synced_to_excel,
+                "last_synced_to_excel": agent.last_synced_to_excel,
+                "pic_respond_user_id": agent.pic_respond_user_id,
+                "pic_respond_user_name": pic_respond_user_name,
+            })
+        
         return {
-            "data": agents,
+            "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }

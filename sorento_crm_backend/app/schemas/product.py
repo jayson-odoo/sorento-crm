@@ -191,7 +191,17 @@ class ProductResponse(ProductBase):
     category: Optional[ProductCategorySimple] = None
     brand: Optional[BrandSimple] = None
     base_uom: Optional[UnitOfMeasureSimple] = None
-    
+
+    @field_validator('created_by', 'updated_by', mode='before')
+    @classmethod
+    def convert_uuid_to_str(cls, v):
+        """Convert UUID objects to strings for created_by/updated_by."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v) if v else None
+
     class Config:
         from_attributes = True
 
@@ -230,6 +240,7 @@ class ProductAttachmentBase(BaseModel):
     attachment_id: str
     is_primary: Optional[bool] = False
     sort_order: Optional[int] = None
+    access_levels: Optional[list[str]] = None
 
 
 class ProductAttachmentCreate(ProductAttachmentBase):
@@ -239,6 +250,7 @@ class ProductAttachmentCreate(ProductAttachmentBase):
 class ProductAttachmentUpdate(BaseModel):
     is_primary: Optional[bool] = None
     sort_order: Optional[int] = None
+    access_levels: Optional[list[str]] = None
 
 
 class ProductAttachmentResponse(ProductAttachmentBase):

@@ -89,7 +89,7 @@ export default function CampaignDashboard({ campaignId }: CampaignDashboardProps
               <div>
                 <p className="text-sm text-muted-foreground">Budget</p>
                 <p className="font-medium text-lg">
-                  {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(campaign.budget)}
+                  {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(campaign.budget)}
                 </p>
               </div>
             )}

@@ -1,5 +1,5 @@
 """Procurement models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Date
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Date, Computed
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -89,9 +89,36 @@ class InboundShipment(Base):
     
     supplier = relationship("Supplier", back_populates="inbound_shipments")
     attachment = relationship("Attachment")
-    shipment_lines = relationship("InboundShipmentLine", back_populates="shipment")
-    spo_allocations = relationship("SPOAllocation", back_populates="inbound_shipment")
-    
+    # Order matters: delete allocations before lines (allocations can reference lines)
+    spo_allocations = relationship(
+        "SPOAllocation",
+        back_populates="inbound_shipment",
+        cascade="all, delete-orphan",
+    )
+    shipment_lines = relationship(
+        "InboundShipmentLine",
+        back_populates="shipment",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def display_total_items(self):
+        """Total items for display: sum of quantity_shipped from lines when present and > 0, else total_items_shipped."""
+        if self.shipment_lines and len(self.shipment_lines) > 0:
+            total = sum((line.quantity_shipped or 0) for line in self.shipment_lines)
+            if total > 0:
+                return total
+        return self.total_items_shipped
+
+    @property
+    def display_total_cartons(self):
+        """Total cartons for display: sum of cartons_count from lines when present and > 0, else total_cartons."""
+        if self.shipment_lines and len(self.shipment_lines) > 0:
+            total = sum((line.cartons_count or 0) for line in self.shipment_lines)
+            if total > 0:
+                return total
+        return self.total_cartons
+
     __table_args__ = (
         Index("ix_inbound_shipments_supplier_id", "supplier_id"),
         Index("ix_inbound_shipments_shipment_number", "shipment_number"),
@@ -122,7 +149,11 @@ class InboundShipmentLine(Base):
     shipment = relationship("InboundShipment", back_populates="shipment_lines")
     product = relationship("Product", back_populates="inbound_shipment_lines")
     uom = relationship("UnitOfMeasure", foreign_keys=[uom_id])
-    spo_allocations = relationship("SPOAllocation", back_populates="inbound_shipment_line")
+    spo_allocations = relationship(
+        "SPOAllocation",
+        back_populates="inbound_shipment_line",
+        cascade="all, delete-orphan",
+    )
     
     __table_args__ = (
         Index("ix_inbound_shipment_lines_shipment_id", "shipment_id"),
@@ -209,7 +240,7 @@ class PickingLine(Base):
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
     quantity_expected = Column(Integer, nullable=False)
     quantity_picked = Column(Integer, nullable=False)
-    quantity_discrepancy = Column(Integer, nullable=False)  # Generated column
+    quantity_discrepancy = Column(Integer, Computed("(quantity_expected - quantity_picked)"), nullable=False)
     uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
     picked_condition = Column(String(50), default="good", nullable=False)
     condition_remarks = Column(Text, nullable=True)
@@ -259,4 +290,60 @@ class StockInquiry(Base):
         Index("ix_stock_inquiries_product_code", "product_code"),
         Index("ix_stock_inquiries_delivery_date", "delivery_date"),
         Index("ix_stock_inquiries_created_at", "created_at"),
+    )
+
+
+class PurchaseRequestHeader(Base):
+    __tablename__ = "purchase_requests"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    request_type = Column(String(50), nullable=False)  # purchase_request | sponsorship_form
+    request_number = Column(String(50), nullable=True)
+    request_date = Column(Date, nullable=True)
+    customer_name = Column(Text, nullable=True)
+    project_title = Column(Text, nullable=True)
+    purpose = Column(Text, nullable=True)
+    expected_delivery_date = Column(Date, nullable=True)
+    expected_po_date = Column(Date, nullable=True)
+    expected_po_date_text = Column(Text, nullable=True)
+    requested_by = Column(Text, nullable=True)
+    requested_at = Column(Date, nullable=True)
+    status = Column(String(50), default="draft", nullable=False)
+    source = Column(String(50), default="external", nullable=False)
+    external_reference = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    lines = relationship(
+        "PurchaseRequestLine",
+        back_populates="purchase_request",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_purchase_requests_request_type", "request_type"),
+        Index("ix_purchase_requests_request_date", "request_date"),
+        Index("ix_purchase_requests_customer_name", "customer_name"),
+    )
+
+
+class PurchaseRequestLine(Base):
+    __tablename__ = "purchase_request_lines"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    purchase_request_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("purchase_requests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    item_code = Column(Text, nullable=True)
+    quantity = Column(Numeric(15, 2), nullable=True)
+    remark = Column(Text, nullable=True)
+    sort_order = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    purchase_request = relationship("PurchaseRequestHeader", back_populates="lines")
+
+    __table_args__ = (
+        Index("ix_purchase_request_lines_purchase_request_id", "purchase_request_id"),
     )

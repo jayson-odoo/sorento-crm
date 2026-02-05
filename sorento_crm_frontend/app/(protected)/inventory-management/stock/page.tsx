@@ -1,20 +1,52 @@
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import StockDashboard from './components/StockDashboard';
+import { Metadata } from 'next';
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '@/components/ui/breadcrumb';
+import { Container } from '@/components/common/container';
+import {
+  Toolbar,
+  ToolbarActions,
+  ToolbarHeading,
+  ToolbarTitle,
+} from '@/components/common/toolbar';
 import StockBalanceGrid from './components/StockBalanceGrid';
+
+export const metadata: Metadata = {
+  title: 'Stock',
+  description: 'Manage stock inventory.',
+};
 
 export default function StockPage() {
   return (
-    <Tabs defaultValue="dashboard" className="w-full">
-      <TabsList>
-        <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-        <TabsTrigger value="balance">Stock Balance</TabsTrigger>
-      </TabsList>
-      <TabsContent value="dashboard">
-        <StockDashboard />
-      </TabsContent>
-      <TabsContent value="balance">
+    <>
+      <Container>
+        <Toolbar>
+          <ToolbarHeading>
+            <ToolbarTitle>Stock</ToolbarTitle>
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem>
+                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                <BreadcrumbItem>
+                  <BreadcrumbPage>Inventory Management</BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+          </ToolbarHeading>
+          <ToolbarActions></ToolbarActions>
+        </Toolbar>
+      </Container>
+
+      <Container>
         <StockBalanceGrid />
-      </TabsContent>
-    </Tabs>
+      </Container>
+    </>
   );
 }

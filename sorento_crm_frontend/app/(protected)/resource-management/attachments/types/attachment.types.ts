@@ -21,6 +21,7 @@ export interface Attachment {
     email: string;
   };
   entity_name?: string;
+  attachment_type?: AttachmentTypeSimple | null;
 }
 
 export interface AttachmentType {

@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getConversationSLATracking, getConversationSLATrackingDetail, getSLATrackingDashboardMetrics } from '../services/conversationSLATrackingService';
+import { getConversationSLATracking, getConversationSLATrackingDetail, getSLATrackingDashboardMetrics, deleteConversationSLATracking, deleteConversationSLAEventLog } from '../services/conversationSLATrackingService';
 
 export function useConversationSLATracking(params: DataGridApiFetchParams & { policy_id?: string; status?: string; assigned_to?: string }) {
   return useQuery({
@@ -33,5 +33,27 @@ export function useSLATrackingDashboardMetrics() {
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,
     retry: 1,
+  });
+}
+
+export function useDeleteConversationSLATracking() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteConversationSLATracking,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking'] });
+      queryClient.invalidateQueries({ queryKey: ['sla-tracking-dashboard-metrics'] });
+    },
+  });
+}
+
+export function useDeleteConversationSLAEventLog() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteConversationSLAEventLog,
+    onSuccess: (_, logId) => {
+      // Invalidate the detail query to refresh event logs
+      queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking-detail'] });
+    },
   });
 }

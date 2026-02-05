@@ -98,6 +98,26 @@ export default function PackingListDetail({
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ') || '-';
 
+  // Total items/cartons from shipment lines when present (source of truth)
+  const totalItemsFromLines =
+    packingList.shipment_lines?.reduce(
+      (sum, line) => sum + (line.quantity_shipped ?? 0),
+      0,
+    ) ?? 0;
+  const totalCartonsFromLines =
+    packingList.shipment_lines?.reduce(
+      (sum, line) => sum + (line.cartons_count ?? 0),
+      0,
+    ) ?? 0;
+  const displayTotalItems =
+    packingList.shipment_lines?.length && totalItemsFromLines > 0
+      ? totalItemsFromLines
+      : packingList.total_items_shipped ?? 0;
+  const displayTotalCartons =
+    packingList.shipment_lines?.length && totalCartonsFromLines > 0
+      ? totalCartonsFromLines
+      : packingList.total_cartons ?? 0;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -229,13 +249,11 @@ export default function PackingListDetail({
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Total Items</p>
-                <p className="font-medium">
-                  {packingList.total_items_shipped || 0}
-                </p>
+                <p className="font-medium">{displayTotalItems}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Total Cartons</p>
-                <p className="font-medium">{packingList.total_cartons || 0}</p>
+                <p className="font-medium">{displayTotalCartons}</p>
               </div>
             </div>
             {packingList.notes && (
@@ -333,8 +351,7 @@ export default function PackingListDetail({
                     {packingList.shipment_lines.map((line) => (
                       <TableRow key={line.id}>
                         <TableCell>
-                          {line.product?.product_code || '-'} -{' '}
-                          {line.product?.product_name || '-'}
+                          {line.product?.product_code || '-'}
                         </TableCell>
                         <TableCell>{line.quantity_shipped}</TableCell>
                         <TableCell>{line.cartons_count}</TableCell>
@@ -343,7 +360,7 @@ export default function PackingListDetail({
                           {line.unit_cost
                             ? new Intl.NumberFormat('en-US', {
                                 style: 'currency',
-                                currency: 'USD',
+                                currency: 'MYR',
                               }).format(line.unit_cost)
                             : '-'}
                         </TableCell>

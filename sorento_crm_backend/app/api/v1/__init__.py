@@ -14,6 +14,8 @@ from app.api.v1 import (
     user_management,
     integrations,
     test_auth,
+    system,
+    external,
 )
 
 api_router = APIRouter()
@@ -32,4 +34,8 @@ api_router.include_router(sla.router, prefix="/sla-management", tags=["sla"])
 api_router.include_router(resources.router, prefix="/resource-management", tags=["resources"])
 api_router.include_router(user_management.router, prefix="/user-management", tags=["user-management"])
 api_router.include_router(integrations.logs.router, prefix="/integrations/logs", tags=["integrations"])
+# Alias so /api/v1/integration-management/integration-logs/* works when requests hit backend directly (e.g. nginx)
+api_router.include_router(integrations.logs.router, prefix="/integration-management/integration-logs", tags=["integrations"])
+api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(test_auth.router, tags=["test"])
+api_router.include_router(external.router, prefix="/external", tags=["external"])

@@ -69,10 +69,11 @@ export default function AccessAgentsList() {
         meta: { skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
-        accessorKey: 'pic_respond_user_id',
-        header: ({ column }) => <DataGridColumnHeader title="PIC User" column={column} />,
-        cell: ({ row }) => row.original.pic_respond_user_id || '-',
-        size: 150,
+        accessorKey: 'pic_respond_user_name',
+        header: ({ column }) => <DataGridColumnHeader title="Assigned To (PIC)" column={column} />,
+        cell: ({ row }) =>
+          row.original.pic_respond_user_name || row.original.pic_respond_user_id || '-',
+        size: 180,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {

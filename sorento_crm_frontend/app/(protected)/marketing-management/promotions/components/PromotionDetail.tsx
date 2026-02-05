@@ -280,15 +280,15 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                           <td className="p-2 text-sm">{pp.product?.product_code || '-'}</td>
                           <td className="p-2 text-sm">{pp.product?.product_name || '-'}</td>
                           <td className="p-2 text-sm text-right">
-                            {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(listPrice)}
+                            {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(listPrice)}
                           </td>
                           <td className="p-2 text-sm text-right">
-                            {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(promoPrice)}
+                            {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(promoPrice)}
                           </td>
                           <td className="p-2 text-sm text-right">
                             {discount > 0 ? (
                               <Badge variant="success">
-                                {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(discount)}
+                                {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(discount)}
                               </Badge>
                             ) : (
                               '-'
@@ -463,7 +463,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                   onChange={(e) => setPromotionPrice(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  List Price: {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(
+                  List Price: {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(
                     promotion.products?.find(p => p.product_id === editingProduct.product_id)?.product?.list_price || 0
                   )}
                 </p>

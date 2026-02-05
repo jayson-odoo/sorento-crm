@@ -1,5 +1,5 @@
 """Orders API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
@@ -126,5 +126,62 @@ async def bulk_import_orders(
         return result
     except HTTPException:
         raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/import-tracking", status_code=status.HTTP_202_ACCEPTED)
+async def import_order_tracking(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Import orders from Excel file with Master and Daily Tracking sheets (queued).
+    
+    Returns job ID for tracking progress.
+    """
+    try:
+        if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file type. Please upload an Excel file (.xlsx or .xls)."
+            )
+        file_data = await file.read()
+        
+        from app.services.job_service import JobService
+        from app.services.queue_service import enqueue_job
+        from app.tasks.import_tasks import process_order_tracking_import
+        
+        # Create job record
+        job_service = JobService(db)
+        job = job_service.create_job(
+            job_type='order_tracking_import',
+            user_id=current_user["id"],
+            filename=file.filename
+        )
+        db.commit()
+        
+        # Enqueue job
+        rq_job = enqueue_job(
+            process_order_tracking_import,
+            str(job.id),  # Pass DB job ID (UUID)
+            file_data,
+            current_user["id"],
+            queue_name='imports',
+            job_timeout=3600
+        )
+        
+        # Update job with RQ job ID
+        job_service.update_job_with_rq_id(job, rq_job.id)
+        
+        return {
+            'job_id': rq_job.id,
+            'status': 'queued',
+            'message': 'Import job queued successfully'
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise handle_internal_error(str(e))

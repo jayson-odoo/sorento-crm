@@ -1,9 +1,20 @@
+# Node modules
 sorento_crm_frontend/node_modules/*
+sorento_crm_backend/node_modules/*
+
+# Next.js build output and cache
+sorento_crm_frontend/.next/*
 sorento_crm_backend/.next/*
+
+# Environment files
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+
+# OS files
 .DS_Store
-.gz
+
+# Compressed files
+*.gz

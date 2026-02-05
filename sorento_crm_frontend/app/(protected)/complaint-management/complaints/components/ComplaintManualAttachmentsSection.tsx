@@ -29,24 +29,25 @@ import { Label } from '@/components/ui/label';
 import { formatDate } from '@/lib/helpers';
 import { useAttachments } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import {
-  useComplaintManualAttachments,
-  useCreateComplaintManualAttachment,
-  useDeleteComplaintManualAttachment,
+  useLinkComplaintAttachment,
+  useDeleteComplaintAttachment,
 } from '../hooks/useComplaints';
+import type { ComplaintAttachment } from '../types/complaint.types';
 import { toast } from 'sonner';
 
 interface ComplaintManualAttachmentsSectionProps {
   complaintId: string;
+  /** Attachments from complaint detail (complaint_attachments table). Pass complaint.attachments. */
+  attachments?: ComplaintAttachment[];
 }
 
 export default function ComplaintManualAttachmentsSection({
   complaintId,
+  attachments: attachmentsFromComplaint = [],
 }: ComplaintManualAttachmentsSectionProps) {
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
-  const { data: manualAttachments = [], isLoading } =
-    useComplaintManualAttachments(complaintId);
-  const createMutation = useCreateComplaintManualAttachment();
-  const deleteMutation = useDeleteComplaintManualAttachment();
+  const linkMutation = useLinkComplaintAttachment();
+  const deleteMutation = useDeleteComplaintAttachment();
 
   const { data: attachmentsData, isLoading: isLoadingAttachments } = useAttachments({
     pageIndex: 0,
@@ -58,18 +59,20 @@ export default function ComplaintManualAttachmentsSection({
 
   const attachments = useMemo(
     () =>
-      manualAttachments
-        .map((link) => ({
-          ...link,
-          attachment: link.attachment || null,
-        }))
-        .filter((link) => link.attachment),
-    [manualAttachments],
+      attachmentsFromComplaint.filter(
+        (link) => link.file_name != null || link.file_url != null,
+      ),
+    [attachmentsFromComplaint],
   );
 
   const linkedAttachmentIds = useMemo(
-    () => new Set(attachments.map((link) => link.attachment_id)),
-    [attachments],
+    () =>
+      new Set(
+        attachmentsFromComplaint
+          .map((a) => a.attachment_id)
+          .filter((id): id is string => !!id),
+      ),
+    [attachmentsFromComplaint],
   );
   const availableAttachments = useMemo(
     () => allAttachments.filter((attachment) => !linkedAttachmentIds.has(attachment.id)),
@@ -96,9 +99,7 @@ export default function ComplaintManualAttachmentsSection({
         </Button>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div className="text-sm text-muted-foreground">Loading attachments...</div>
-        ) : attachments.length === 0 ? (
+        {attachments.length === 0 ? (
           <div className="text-sm text-muted-foreground">No linked attachments.</div>
         ) : (
           <div className="overflow-x-auto">
@@ -113,19 +114,20 @@ export default function ComplaintManualAttachmentsSection({
               </TableHeader>
               <TableBody>
                 {attachments.map((link) => {
-                  const attachment = link.attachment!;
                   const previewUrl =
-                    attachment.file_path?.startsWith('http')
-                      ? attachment.file_path
-                      : `/api/v1/resource-management/attachments/${attachment.id}/download`;
+                    link.file_url?.startsWith('http') === true
+                      ? link.file_url
+                      : link.attachment_id
+                        ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
+                        : link.file_url ?? '#';
                   return (
                     <TableRow key={link.id}>
                       <TableCell className="font-medium">
-                        {attachment.original_filename || 'Unnamed file'}
+                        {link.file_name || 'Unnamed file'}
                       </TableCell>
-                      <TableCell>{formatFileSize(attachment.file_size_bytes)}</TableCell>
+                      <TableCell>{formatFileSize(link.file_size_bytes)}</TableCell>
                       <TableCell>
-                        {formatDate(new Date(link.created_at))}
+                        {formatDate(new Date(link.uploaded_at))}
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-2">
@@ -141,8 +143,12 @@ export default function ComplaintManualAttachmentsSection({
                           </Button>
                           <Button variant="outline" size="sm" asChild>
                             <a
-                              href={`/api/v1/resource-management/attachments/${attachment.id}/download`}
-                              download={attachment.original_filename || 'download'}
+                              href={
+                                link.attachment_id
+                                  ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
+                                  : previewUrl
+                              }
+                              download={link.file_name || 'download'}
                             >
                               <Download className="size-4" />
                               Download
@@ -196,7 +202,7 @@ function LinkAttachmentDialog({
   isLoading,
 }: LinkAttachmentDialogProps) {
   const [selectedAttachmentId, setSelectedAttachmentId] = useState<string>('');
-  const createMutation = useCreateComplaintManualAttachment();
+  const linkMutation = useLinkComplaintAttachment();
 
   useEffect(() => {
     if (!open) {
@@ -209,9 +215,9 @@ function LinkAttachmentDialog({
       toast.error('Please select an attachment');
       return;
     }
-    await createMutation.mutateAsync({
-      complaint_id: complaintId,
-      attachment_id: selectedAttachmentId,
+    await linkMutation.mutateAsync({
+      complaintId,
+      attachmentId: selectedAttachmentId,
     });
     setSelectedAttachmentId('');
     onOpenChange(false);
@@ -254,9 +260,9 @@ function LinkAttachmentDialog({
             </Button>
             <Button
               onClick={handleLink}
-              disabled={!selectedAttachmentId || createMutation.isPending}
+              disabled={!selectedAttachmentId || linkMutation.isPending}
             >
-              {createMutation.isPending ? 'Linking...' : 'Link Attachment'}
+              {linkMutation.isPending ? 'Linking...' : 'Link Attachment'}
             </Button>
           </div>
         </div>

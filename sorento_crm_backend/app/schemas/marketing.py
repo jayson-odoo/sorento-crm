@@ -16,6 +16,7 @@ class PromotionBase(BaseModel):
     start_date: datetime
     end_date: datetime
     is_active: bool = True
+    access_levels: Optional[list[str]] = None
 
 
 class PromotionCreate(PromotionBase):
@@ -29,6 +30,7 @@ class PromotionUpdate(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     is_active: Optional[bool] = None
+    access_levels: Optional[list[str]] = None
 
 
 class PromotionResponse(PromotionBase):

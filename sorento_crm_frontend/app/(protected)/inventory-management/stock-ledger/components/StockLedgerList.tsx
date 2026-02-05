@@ -42,25 +42,44 @@ export default function StockLedgerList() {
   const columns = useMemo<ColumnDef<StockLedgerEntry>[]>(
     () => [
       {
-        accessorKey: 'product_id',
-        header: ({ column }) => <DataGridColumnHeader title="Product ID" column={column} />,
+        accessorKey: 'product.product_code',
+        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+        cell: ({ row }) => (
+          <div className="flex flex-col">
+            <span className="font-medium">{row.original.product?.product_code || row.original.product_id}</span>
+            <span className="text-muted-foreground text-xs">{row.original.product?.product_name || '-'}</span>
+          </div>
+        ),
         size: 220,
         meta: { skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
-        accessorKey: 'warehouse_id',
-        header: ({ column }) => <DataGridColumnHeader title="Warehouse ID" column={column} />,
-        size: 220,
+        accessorKey: 'warehouse.warehouse_name',
+        header: ({ column }) => <DataGridColumnHeader title="Warehouse" column={column} />,
+        cell: ({ row }) => row.original.warehouse?.warehouse_name || row.original.warehouse_id,
+        size: 200,
         meta: { skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
         accessorKey: 'transaction_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         size: 140,
+        cell: ({ row }) => (
+          <span className="text-xs font-medium text-muted-foreground">{row.original.transaction_type}</span>
+        ),
       },
       {
         accessorKey: 'quantity_change',
         header: ({ column }) => <DataGridColumnHeader title="Change" column={column} />,
+        cell: ({ row }) => {
+          const value = row.original.quantity_change;
+          const isPositive = value > 0;
+          return (
+            <span className={isPositive ? 'text-emerald-600 font-medium' : 'text-red-600 font-medium'}>
+              {isPositive ? `+${value}` : value}
+            </span>
+          );
+        },
         size: 120,
       },
       {
@@ -78,6 +97,12 @@ export default function StockLedgerList() {
         header: ({ column }) => <DataGridColumnHeader title="Created At" column={column} />,
         cell: ({ row }) => formatDateTime(new Date(row.original.created_at)),
         size: 200,
+      },
+      {
+        accessorKey: 'created_by_name',
+        header: ({ column }) => <DataGridColumnHeader title="Created By" column={column} />,
+        cell: ({ row }) => row.original.created_by_name || row.original.created_by || '-',
+        size: 180,
       },
     ],
     [],

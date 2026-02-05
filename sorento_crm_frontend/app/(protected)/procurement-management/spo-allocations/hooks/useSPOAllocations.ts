@@ -3,12 +3,37 @@ import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   getSPOAllocations,
+  getSPOAllocationsGroupedByShipment,
   getSPOAllocation,
   createSPOAllocation,
   updateSPOAllocation,
   deleteSPOAllocation,
 } from '../services/spoAllocationService';
-import type { SPOAllocationFormData } from '../types/spoAllocation.types';
+import type {
+  SPOAllocationFormData,
+  ShipmentWithAllocationsGroup,
+} from '../types/spoAllocation.types';
+import type { GroupedByShipmentParams } from '../services/spoAllocationService';
+
+export function useSPOAllocationsGroupedByShipment(params: GroupedByShipmentParams = {}) {
+  return useQuery({
+    queryKey: [
+      'spo-allocations-grouped-by-shipment',
+      params.page,
+      params.limit,
+      params.query,
+      params.warehouse_id,
+      params.receipt_status,
+      params.sort,
+      params.dir,
+    ],
+    queryFn: () => getSPOAllocationsGroupedByShipment(params),
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
 
 export function useSPOAllocations(
   params: DataGridApiFetchParams & {

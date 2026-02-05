@@ -21,7 +21,7 @@ import {
 } from '@/components/common/toolbar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Pencil, RefreshCw } from 'lucide-react';
+import { Pencil, RefreshCw, Trash2 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 import { formatDate } from '@/lib/helpers';
@@ -29,6 +29,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import ContactAccessAgentsTable from './components/ContactAccessAgentsTable';
 import ContactEditDialog from './components/ContactEditDialog';
+import ContactDeleteDialog from '../components/ContactDeleteDialog';
 import type { RespondContact } from '../types/contact.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
 
@@ -37,6 +38,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const queryClient = useQueryClient();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const navigationParams = useMemo(
     () => ({
       pageIndex: 0,
@@ -157,6 +159,14 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
               items={navigationItems}
               basePath="/user-management/contacts"
             />
+            <Button
+              variant="outline"
+              onClick={() => setDeleteDialogOpen(true)}
+              className="text-destructive border-destructive/50 hover:bg-destructive/10"
+            >
+              <Trash2 className="size-4 mr-2" />
+              Delete contact
+            </Button>
             <Button asChild variant="outline">
               <button onClick={() => router.push('/user-management/contacts')}>
                 <MoveLeft /> Back to contacts
@@ -204,6 +214,10 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                 <p className="font-medium">{contact.name || <span className="text-muted-foreground">Not set</span>}</p>
               </div>
               <div>
+                <p className="text-sm text-muted-foreground">User Type</p>
+                <p className="font-medium">{contact.user_type || <span className="text-muted-foreground">—</span>}</p>
+              </div>
+              <div>
                 <p className="text-sm text-muted-foreground">Created At</p>
                 <p className="font-medium">{formatDate(new Date(contact.created_at))}</p>
               </div>
@@ -229,6 +243,13 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
         open={editDialogOpen}
         closeDialog={() => setEditDialogOpen(false)}
         contact={contact}
+      />
+
+      <ContactDeleteDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        contact={contact}
+        onSuccess={() => router.push('/user-management/contacts')}
       />
     </>
   );

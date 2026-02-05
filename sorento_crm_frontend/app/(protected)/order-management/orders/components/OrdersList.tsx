@@ -11,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Download, Upload } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Download, Upload, AlertTriangle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -27,7 +27,8 @@ import type { Order } from '../types/order.types';
 import { formatDate } from '@/lib/helpers';
 import { TemplateDownloadDialog } from '@/components/template/TemplateDownloadDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
-import { exportOrders, bulkImportOrders } from '../services/orderService';
+import { exportOrders, bulkImportOrders, importOrderTracking } from '../services/orderService';
+import { OrderTrackingUploadDialog } from './OrderTrackingUploadDialog';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { ColumnOption } from '@/lib/excel-utils';
@@ -40,6 +41,7 @@ export default function OrdersList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [trackingUploadOpen, setTrackingUploadOpen] = useState(false);
   const [exportData, setExportData] = useState<Order[]>([]);
   const [isLoadingExport, setIsLoadingExport] = useState(false);
 
@@ -91,6 +93,13 @@ export default function OrdersList() {
     }
   };
 
+  const handleUploadTracking = async (file: File) => {
+    const result = await importOrderTracking(file);
+    // Job is queued, will be processed in background
+    queryClient.invalidateQueries({ queryKey: ['orders'] });
+    return result;
+  };
+
   const handleRowClick = (row: Order) => {
     const orderId = row.id;
     router.push(`/order-management/orders/${orderId}`);
@@ -140,11 +149,28 @@ export default function OrdersList() {
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        accessorKey: 'delivery_days',
+        header: ({ column }) => <DataGridColumnHeader title="Delivery Days" column={column} />,
+        cell: ({ row }) => {
+          if (row.original.delivery_days === null || row.original.delivery_days === undefined) return '-';
+          return (
+            <div className="flex items-center gap-2">
+              <span>{row.original.delivery_days}</span>
+              {row.original.kpi_warning && (
+                <AlertTriangle className="size-4 text-amber-500" />
+              )}
+            </div>
+          );
+        },
+        size: 130,
+        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
         accessorKey: 'total_amount',
         header: ({ column }) => <DataGridColumnHeader title="Total Amount" column={column} />,
         cell: ({ row }) => {
           const amount = row.original.total_amount || 0;
-          return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+          return new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(amount);
         },
         size: 130,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
@@ -207,6 +233,10 @@ export default function OrdersList() {
               <Upload className="size-4" />
               Import
             </Button>
+            <Button variant="outline" onClick={() => setTrackingUploadOpen(true)}>
+              <Upload className="size-4" />
+              Import Tracking
+            </Button>
             <Button onClick={() => router.push('/order-management/orders/new')}>
               <Plus />
               Create Order
@@ -234,6 +264,11 @@ export default function OrdersList() {
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
         onUpload={handleUploadTemplate}
+      />
+      <OrderTrackingUploadDialog
+        open={trackingUploadOpen}
+        onOpenChange={setTrackingUploadOpen}
+        onUpload={handleUploadTracking}
       />
     </DataGrid>
   );

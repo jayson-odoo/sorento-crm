@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Download, RefreshCw, Trash2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDate } from '@/lib/helpers';
@@ -177,7 +177,11 @@ export default function AttachmentDetail({ attachmentId }: AttachmentDetailProps
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Status</p>
-              <Badge variant={attachment.is_deleted ? 'destructive' : 'success'} appearance="ghost">
+              <Badge
+                variant={attachment.is_deleted ? 'destructive' : 'success'}
+                appearance="ghost"
+              >
+                <BadgeDot />
                 {attachment.is_deleted ? 'Deleted' : 'Active'}
               </Badge>
             </div>

@@ -30,8 +30,10 @@ import { exportStockBalance, bulkImportStock } from '../services/stockService';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { ColumnOption } from '@/lib/excel-utils';
+import { useRouter } from 'next/navigation';
 
 export default function StockBalanceGrid() {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'product_code', desc: false }]);
@@ -87,11 +89,17 @@ export default function StockBalanceGrid() {
   const handleUploadTemplate = async (data: any[]) => {
     try {
       const result = await bulkImportStock(data);
-      toast.success(`Successfully imported: ${result.created} created, ${result.updated} updated`);
-      if (result.errors.length > 0) {
-        toast.warning(`${result.errors.length} error(s) occurred during import`);
-      }
+      // Job has been queued - show success message and close dialog
+      toast.success('Import job queued successfully. Processing in background. Please refresh after a while to see results.', {
+        duration: 5000,
+        action: {
+          label: 'View Status',
+          onClick: () => router.push(`/system-management/import-jobs`),
+        },
+      });
       queryClient.invalidateQueries({ queryKey: ['stock-balance'] });
+      // Return success to close dialog
+      return;
     } catch (error) {
       throw error; // Let the dialog handle the error display
     }
@@ -200,8 +208,19 @@ export default function StockBalanceGrid() {
     manualFiltering: true,
   });
 
+  const handleRowClick = (row: Stock) => {
+    if (row.product_id && row.warehouse_id) {
+      router.push(`/inventory-management/stock/${row.product_id}/${row.warehouse_id}`);
+    }
+  };
+
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid
+      table={table}
+      recordCount={data?.pagination.total || 0}
+      isLoading={isLoading}
+      onRowClick={handleRowClick}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-2 flex-wrap">

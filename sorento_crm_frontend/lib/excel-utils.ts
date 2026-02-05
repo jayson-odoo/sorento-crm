@@ -95,6 +95,43 @@ export async function parseExcelFile(file: File): Promise<any[]> {
 }
 
 /**
+ * Parse Excel file and return all sheets by name
+ */
+export async function parseExcelSheets(file: File): Promise<{
+  sheetNames: string[];
+  sheets: Record<string, any[]>;
+}> {
+  const xlsx = await getXLSX();
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = xlsx.read(data, { type: 'array' });
+        const sheets: Record<string, any[]> = {};
+
+        workbook.SheetNames.forEach((sheetName: string) => {
+          const worksheet = workbook.Sheets[sheetName];
+          sheets[sheetName] = xlsx.utils.sheet_to_json(worksheet);
+        });
+
+        resolve({ sheetNames: workbook.SheetNames, sheets });
+      } catch (error) {
+        reject(new Error('Failed to parse Excel file: ' + (error instanceof Error ? error.message : 'Unknown error')));
+      }
+    };
+
+    reader.onerror = () => {
+      reject(new Error('Failed to read file'));
+    };
+
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+/**
  * Get column headers from Excel file
  */
 export async function getExcelHeaders(file: File): Promise<string[]> {

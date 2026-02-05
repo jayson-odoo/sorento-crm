@@ -37,6 +37,15 @@ export interface SPOAllocation {
 
 export interface SPOAllocationDetail extends SPOAllocation {}
 
+/** Inbound shipment with its SPO allocations (grouped list view). */
+export interface ShipmentWithAllocationsGroup {
+  inbound_shipment: {
+    id: string;
+    shipment_number: string;
+  };
+  spo_allocations: SPOAllocation[];
+}
+
 export interface SPOAllocationFormData {
   spo_number?: string;
   spo_line_number?: number;

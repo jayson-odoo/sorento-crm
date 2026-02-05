@@ -110,3 +110,27 @@ export async function bulkImportOrders(data: any[]): Promise<{ created: number; 
   }
   return response.json();
 }
+
+/**
+ * Import order tracking data from Excel file (Master + Daily Tracking sheets)
+ */
+export async function importOrderTracking(file: File): Promise<{
+  job_id: string;
+  status: string;
+  message: string;
+}> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await apiFetch('/api/v1/order-management/orders/import-tracking', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to queue import job' }));
+    throw new Error(error.message || 'Failed to queue import job');
+  }
+
+  return response.json();
+}

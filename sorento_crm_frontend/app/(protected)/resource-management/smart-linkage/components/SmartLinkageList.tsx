@@ -74,7 +74,8 @@ export default function SmartLinkageList() {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => {
-          const status = row.original.status;
+          const status = (row.original.status || 'pending') as string;
+          const key = status.toLowerCase();
           const variants: Record<string, 'destructive' | 'warning' | 'success' | 'secondary' | 'info'> = {
             failed: 'destructive',
             pending: 'warning',
@@ -83,7 +84,13 @@ export default function SmartLinkageList() {
             success: 'success',
           };
           return (
-            <Badge variant={variants[status] || 'secondary'} appearance="ghost">
+            <Badge
+              variant={variants[key] || 'secondary'}
+              appearance="light"
+              shape="circle"
+              size="md"
+              className="rounded-full font-medium"
+            >
               {status.charAt(0).toUpperCase() + status.slice(1)}
             </Badge>
           );

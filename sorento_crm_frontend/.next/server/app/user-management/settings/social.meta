@@ -1,7 +1,0 @@
-{
-  "headers": {
-    "x-nextjs-stale-time": "300",
-    "x-nextjs-prerender": "1",
-    "x-next-cache-tags": "_N_T_/layout,_N_T_/(protected)/layout,_N_T_/(protected)/user-management/layout,_N_T_/(protected)/user-management/settings/layout,_N_T_/(protected)/user-management/settings/social/layout,_N_T_/(protected)/user-management/settings/social/page,_N_T_/user-management/settings/social"
-  }
-}

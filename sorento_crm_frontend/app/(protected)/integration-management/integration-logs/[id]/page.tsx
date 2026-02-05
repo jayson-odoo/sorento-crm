@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,8 +30,9 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
-import { useIntegrationLog, useRetryIntegrationLog } from '../hooks/useIntegrationLogs';
-import { format } from 'date-fns';
+import RecordNavigation from '@/components/common/RecordNavigation';
+import { useIntegrationLog, useIntegrationLogs, useRetryIntegrationLog } from '../hooks/useIntegrationLogs';
+import { formatDateTime } from '@/lib/helpers';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
@@ -51,6 +52,17 @@ export default function IntegrationLogDetailPage() {
   const router = useRouter();
   const { data: log, isLoading } = useIntegrationLog(id);
   const retryMutation = useRetryIntegrationLog();
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+    }),
+    [],
+  );
+  const { data: navigationData } = useIntegrationLogs(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
 
   const form = useForm({
     defaultValues: {
@@ -98,11 +110,11 @@ export default function IntegrationLogDetailPage() {
       retry_count: `${log.retry_count || 0}`,
       max_retry_allowed: `${log.max_retry_allowed || 0}`,
       correlation_id: log.correlation_id || '',
-      created_at: log.created_at ? format(new Date(log.created_at), 'PPP p') : '',
+      created_at: log.created_at ? formatDateTime(new Date(log.created_at)) : '',
       created_by: log.created_by || '',
-      processed_at: log.processed_at ? format(new Date(log.processed_at), 'PPP p') : '',
-      updated_at: log.updated_at ? format(new Date(log.updated_at), 'PPP p') : '',
-      next_retry_at: log.next_retry_at ? format(new Date(log.next_retry_at), 'PPP p') : '',
+      processed_at: log.processed_at ? formatDateTime(new Date(log.processed_at)) : '',
+      updated_at: log.updated_at ? formatDateTime(new Date(log.updated_at)) : '',
+      next_retry_at: log.next_retry_at ? formatDateTime(new Date(log.next_retry_at)) : '',
       request_headers: log.request_headers || '',
       request_payload: formatJsonPayload(log.request_payload),
       response_headers: log.response_headers || '',
@@ -137,6 +149,8 @@ export default function IntegrationLogDetailPage() {
     sent: 'info',
     success: 'success',
   };
+  const status = (log.status || 'pending') as string;
+  const statusKey = status.toLowerCase();
 
   return (
     <>
@@ -163,6 +177,11 @@ export default function IntegrationLogDetailPage() {
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
+            <RecordNavigation
+              currentId={id}
+              items={navigationItems}
+              basePath="/integration-management/integration-logs"
+            />
             <Button variant="ghost" size="sm" onClick={() => router.back()}>
               <ArrowLeft className="size-4 mr-2" />
               Back
@@ -220,8 +239,14 @@ export default function IntegrationLogDetailPage() {
                       <FormLabel>Status</FormLabel>
                       <FormControl>
                         <div className="pt-2">
-                          <Badge variant={statusVariants[log.status] || 'secondary'} appearance="ghost">
-                            {log.status.charAt(0).toUpperCase() + log.status.slice(1)}
+                          <Badge
+                            variant={statusVariants[statusKey] || 'secondary'}
+                            appearance="light"
+                            shape="circle"
+                            size="md"
+                            className="rounded-full font-medium"
+                          >
+                            {status.charAt(0).toUpperCase() + status.slice(1)}
                           </Badge>
                         </div>
                       </FormControl>

@@ -6,7 +6,7 @@ from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
 from app.models.order import Order, OrderStatus, Customer
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
-from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry
+from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine
 from app.models.marketing import Promotion, PromotionProduct, CampaignType, MarketingCampaign
 from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
 from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment
@@ -14,6 +14,8 @@ from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, Co
 from app.models.resources import Attachment, AttachmentType
 from app.models.access import AccessAgent, ContactAgentAccess, UserAgentAccess
 from app.models.integration import IntegrationLog
+from app.models.import_log import ImportLog
+from app.models.job import ImportJob
 
 __all__ = [
     "User",
@@ -42,6 +44,8 @@ __all__ = [
     "PickingHeader",
     "PickingLine",
     "StockInquiry",
+    "PurchaseRequestHeader",
+    "PurchaseRequestLine",
     "Promotion",
     "PromotionProduct",
     "CampaignType",
@@ -64,5 +68,7 @@ __all__ = [
     "ContactAgentAccess",
     "UserAgentAccess",
     "IntegrationLog",
+    "ImportLog",
+    "ImportJob",
     "VerificationToken",
 ]

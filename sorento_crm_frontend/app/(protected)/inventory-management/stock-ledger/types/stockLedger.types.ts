@@ -10,5 +10,15 @@ export interface StockLedgerEntry {
   reference_id?: string | null;
   notes?: string | null;
   created_by?: string | null;
+  created_by_name?: string | null;
   created_at: Date;
+  product?: {
+    id: string;
+    product_code: string;
+    product_name: string;
+  };
+  warehouse?: {
+    id: string;
+    warehouse_name: string;
+  };
 }

@@ -7,11 +7,10 @@ import {
   createComplaint,
   updateComplaint,
   deleteComplaint,
-  getComplaintManualAttachments,
-  createComplaintManualAttachment,
-  deleteComplaintManualAttachment,
+  linkComplaintAttachment,
+  deleteComplaintAttachment,
 } from '../services/complaintService';
-import type { ComplaintFormData, ComplaintManualAttachmentCreate } from '../types/complaint.types';
+import type { ComplaintFormData } from '../types/complaint.types';
 
 export function useComplaints(params: DataGridApiFetchParams) {
   return useQuery({
@@ -88,29 +87,19 @@ export function useDeleteComplaint() {
   });
 }
 
-export function useComplaintManualAttachments(complaintId: string | null) {
-  return useQuery({
-    queryKey: ['complaint-manual-attachments', complaintId],
-    queryFn: () => {
-      if (!complaintId) throw new Error('Complaint ID is required');
-      return getComplaintManualAttachments(complaintId);
-    },
-    enabled: !!complaintId,
-    staleTime: 1000 * 60 * 5,
-    retry: 1,
-  });
-}
-
-export function useCreateComplaintManualAttachment() {
+export function useLinkComplaintAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: ComplaintManualAttachmentCreate) =>
-      createComplaintManualAttachment(data),
+    mutationFn: ({
+      complaintId,
+      attachmentId,
+    }: {
+      complaintId: string;
+      attachmentId: string;
+    }) => linkComplaintAttachment(complaintId, attachmentId),
     onSuccess: (_data, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ['complaint-manual-attachments', variables.complaint_id],
-      });
-      queryClient.invalidateQueries({ queryKey: ['complaint', variables.complaint_id] });
+      queryClient.invalidateQueries({ queryKey: ['complaint', variables.complaintId] });
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
       toast.success('Attachment linked successfully');
     },
     onError: (error: Error) =>
@@ -118,14 +107,13 @@ export function useCreateComplaintManualAttachment() {
   });
 }
 
-export function useDeleteComplaintManualAttachment() {
+export function useDeleteComplaintAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (manualAttachmentId: string) =>
-      deleteComplaintManualAttachment(manualAttachmentId),
-    onSuccess: (_data, manualAttachmentId, context) => {
-      queryClient.invalidateQueries({ queryKey: ['complaint-manual-attachments'] });
+    mutationFn: (linkId: string) => deleteComplaintAttachment(linkId),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
       toast.success('Attachment unlinked successfully');
     },
     onError: (error: Error) =>

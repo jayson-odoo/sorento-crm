@@ -2,6 +2,8 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 from typing import Optional
+import uuid
+import time
 from decimal import Decimal
 from app.models.order import Order, OrderStatus, Customer
 from app.schemas.order import (
@@ -9,6 +11,7 @@ from app.schemas.order import (
     OrderStatusCreate, OrderStatusUpdate
 )
 from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.import_log_service import ImportLogService
 
 
 class OrderService:
@@ -308,6 +311,259 @@ class OrderService:
             "created": created,
             "updated": updated,
             "errors": errors
+        }
+
+    def import_excel_tracking(self, file_data: bytes, user_id: str):
+        """Import orders from Excel file with Master and Daily Tracking sheets."""
+        from io import BytesIO
+        from datetime import datetime, date, time
+        import openpyxl
+
+        created = 0
+        updated = 0
+        errors = []
+        kpi_warnings = []
+        import_session_id = str(uuid.uuid4())
+        start_time = time.monotonic()
+        master_rows = 0
+        tracking_rows = 0
+
+        try:
+            workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
+        except Exception as exc:
+            raise ValueError(f"Failed to read Excel file: {exc}") from exc
+
+        required_sheets = {"Master", "Daily Tracking"}
+        if not required_sheets.issubset(set(workbook.sheetnames)):
+            missing = required_sheets.difference(set(workbook.sheetnames))
+            raise ValueError(f"Missing required sheet(s): {', '.join(sorted(missing))}")
+
+        master_sheet = workbook["Master"]
+        tracking_sheet = workbook["Daily Tracking"]
+
+        master_mapping = {
+            "Doc. No.": "order_number",
+            "Date": "order_date",
+            "Created Time": "created_time",
+            "Debtor Code": "debtor_code",
+            "Debtor Name": "debtor_name",
+            "Agent": "agent",
+            "Cancel": "is_cancelled",
+            "Remarks CS": "remarks_cs",
+            "Type": "order_type",
+        }
+
+        tracking_mapping = {
+            "Doc Number": "order_number",
+            "Date": "actual_delivery_date",
+            "Time": "delivery_time",
+            "Checker": "checker",
+            "Transporter": "transporter",
+            "Driver Name": "driver_name",
+            "Lorry Plate": "lorry_plate",
+            "Customer": "customer_ref",
+            "Remarks CS": "delivery_remarks_cs",
+            "Remarks": "delivery_remarks",
+            "Salesman": "salesman",
+            "Trips": "trips",
+            "W/H": "warehouse",
+            "Doc Date": "doc_date",
+        }
+
+        def normalize_header(value):
+            return str(value).strip() if value is not None else ""
+
+        def iter_sheet_rows(sheet):
+            headers = [normalize_header(cell.value) for cell in sheet[1]]
+            for row_idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+                if not any(cell is not None and str(cell).strip() for cell in row):
+                    continue
+                row_data = {}
+                for idx, value in enumerate(row):
+                    header = headers[idx] if idx < len(headers) else ""
+                    if header:
+                        row_data[header] = value
+                yield row_idx, row_data
+
+        def parse_date_value(value, doc_date_value=None):
+            if value is None or value == "":
+                return None
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, date):
+                return datetime.combine(value, time.min)
+            if isinstance(value, str):
+                cleaned = value.strip()
+                for fmt in ["%d/%m/%Y", "%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S"]:
+                    try:
+                        return datetime.strptime(cleaned, fmt)
+                    except ValueError:
+                        continue
+                try:
+                    parsed = datetime.strptime(cleaned, "%d-%b")
+                    year = doc_date_value.year if isinstance(doc_date_value, (datetime, date)) else datetime.now().year
+                    return parsed.replace(year=year)
+                except ValueError:
+                    return None
+            return None
+
+        def parse_time_value(value):
+            if value is None or value == "":
+                return None
+            if isinstance(value, time):
+                return value
+            if isinstance(value, datetime):
+                return value.time()
+            if isinstance(value, str):
+                cleaned = value.strip()
+                for fmt in ["%I:%M %p", "%I:%M%p", "%H:%M", "%H:%M:%S"]:
+                    try:
+                        return datetime.strptime(cleaned, fmt).time()
+                    except ValueError:
+                        continue
+            return None
+
+        def parse_bool(value):
+            if value is None or value == "":
+                return False
+            if isinstance(value, bool):
+                return value
+            return str(value).strip().upper() not in {"F", "FALSE", "0", "NO", "N"}
+
+        # Process Master sheet
+        for row_idx, row_data in iter_sheet_rows(master_sheet):
+            master_rows += 1
+            try:
+                mapped = {}
+                for header, value in row_data.items():
+                    if header not in master_mapping:
+                        continue
+                    db_key = master_mapping[header]
+                    if db_key in {"order_date", "created_time"}:
+                        mapped[db_key] = parse_date_value(value)
+                    elif db_key == "is_cancelled":
+                        mapped[db_key] = parse_bool(value)
+                    else:
+                        mapped[db_key] = str(value).strip() if value is not None else None
+
+                order_number = mapped.get("order_number")
+                if not order_number:
+                    errors.append({"row": row_idx, "error": "Doc. No. is required", "data": row_data})
+                    continue
+
+                existing_order = self.db.query(Order).filter(
+                    Order.order_number == order_number,
+                    Order.deleted_at.is_(None)
+                ).first()
+
+                if existing_order:
+                    for key, value in mapped.items():
+                        if key != "order_number":
+                            setattr(existing_order, key, value)
+                    existing_order.updated_by = user_id
+                    updated += 1
+                else:
+                    mapped["created_by"] = user_id
+                    order = Order(**mapped)
+                    self.db.add(order)
+                    created += 1
+            except Exception as exc:
+                errors.append({"row": row_idx, "error": str(exc), "data": row_data})
+
+        # Process Daily Tracking sheet
+        for row_idx, row_data in iter_sheet_rows(tracking_sheet):
+            tracking_rows += 1
+            try:
+                mapped = {}
+                doc_date_value = None
+                for header, value in row_data.items():
+                    if header not in tracking_mapping:
+                        continue
+                    db_key = tracking_mapping[header]
+                    if db_key == "doc_date":
+                        doc_date_value = parse_date_value(value)
+                        continue
+                    if db_key == "actual_delivery_date":
+                        mapped[db_key] = parse_date_value(value, doc_date_value=doc_date_value)
+                    elif db_key == "trips":
+                        mapped[db_key] = int(value) if value not in (None, "") else None
+                    else:
+                        mapped[db_key] = str(value).strip() if value is not None else None
+
+                order_number = mapped.get("order_number")
+                if not order_number:
+                    errors.append({"row": row_idx, "error": "Doc Number is required", "data": row_data})
+                    continue
+
+                order = self.db.query(Order).filter(
+                    Order.order_number == order_number,
+                    Order.deleted_at.is_(None)
+                ).first()
+
+                if not order:
+                    errors.append({"row": row_idx, "error": f"Order '{order_number}' not found in Master sheet", "data": row_data})
+                    continue
+
+                delivery_date = mapped.get("actual_delivery_date")
+                delivery_time = parse_time_value(row_data.get("Time"))
+                if delivery_date and delivery_time:
+                    mapped["actual_delivery_date"] = datetime.combine(delivery_date.date(), delivery_time)
+
+                for key, value in mapped.items():
+                    if key != "order_number":
+                        setattr(order, key, value)
+
+                if order.order_date and order.actual_delivery_date:
+                    delivery_days = (order.actual_delivery_date.date() - order.order_date.date()).days
+                    order.delivery_days = delivery_days
+                    order.kpi_warning = delivery_days > 2
+                    if order.kpi_warning:
+                        kpi_warnings.append({"order_number": order.order_number, "days": delivery_days})
+                else:
+                    order.delivery_days = None
+                    order.kpi_warning = False
+
+                order.updated_by = user_id
+                updated += 1
+            except Exception as exc:
+                errors.append({"row": row_idx, "error": str(exc), "data": row_data})
+
+        try:
+            self.db.commit()
+        except Exception as exc:
+            self.db.rollback()
+            errors.append({"row": None, "error": f"Database error: {exc}", "data": None})
+
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        try:
+            import_log_service = ImportLogService(self.db)
+            import_log_service.create_import_log(
+                entity_type="order",
+                entity_table="orders",
+                import_session_id=import_session_id,
+                filename=None,
+                import_type="EXCEL_IMPORT",
+                total_rows=master_rows + tracking_rows,
+                successful_rows=created + updated,
+                created_rows=created,
+                updated_rows=updated,
+                failed_rows=len(errors),
+                skipped_rows=0,
+                warnings=None,
+                errors=errors,
+                summary={"kpi_warnings": kpi_warnings, "master_rows": master_rows, "tracking_rows": tracking_rows},
+                imported_by=user_id,
+                duration_ms=duration_ms,
+            )
+        except Exception:
+            pass
+
+        return {
+            "import_session_id": import_session_id,
+            "created": created,
+            "updated": updated,
+            "errors": errors,
+            "kpi_warnings": kpi_warnings
         }
 
 

@@ -5,11 +5,45 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.procurement_service import SPOAllocationService
-from app.schemas.procurement import SPOAllocationCreate, SPOAllocationUpdate, SPOAllocationResponse
+from app.schemas.procurement import (
+    SPOAllocationCreate,
+    SPOAllocationUpdate,
+    SPOAllocationResponse,
+    ShipmentWithAllocationsGroup,
+)
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
+
+
+@router.get("/grouped-by-shipment", response_model=ListResponse[ShipmentWithAllocationsGroup])
+async def get_spo_allocations_grouped_by_shipment(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    query: Optional[str] = Query(None),
+    warehouse_id: Optional[str] = Query(None),
+    receipt_status: Optional[str] = Query(None),
+    sort: Optional[str] = Query("shipment_number"),
+    dir: Optional[str] = Query("asc"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get SPO allocations grouped by inbound shipment (for list view with expandable groups)."""
+    try:
+        service = SPOAllocationService(db)
+        result = service.list_allocations_grouped_by_shipment(
+            page=page,
+            limit=limit,
+            query=query,
+            warehouse_id=warehouse_id,
+            receipt_status=receipt_status,
+            sort_field=sort or "shipment_number",
+            sort_dir=dir or "asc",
+        )
+        return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
 
 
 @router.get("/", response_model=ListResponse[SPOAllocationResponse])

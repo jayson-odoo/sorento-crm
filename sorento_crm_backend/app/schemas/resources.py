@@ -63,6 +63,18 @@ class AttachmentUpdate(BaseModel):
     entity_id: Optional[str] = None
 
 
+class AttachmentBulkDeleteRequest(BaseModel):
+    """Request body for mass-deleting attachments."""
+    attachment_ids: list[str]
+
+    @field_validator("attachment_ids")
+    @classmethod
+    def at_least_one(cls, v: list[str]) -> list[str]:
+        if not v or len(v) == 0:
+            raise ValueError("At least one attachment ID is required")
+        return v
+
+
 class AttachmentTypeSimple(BaseModel):
     id: str
     type_name: str

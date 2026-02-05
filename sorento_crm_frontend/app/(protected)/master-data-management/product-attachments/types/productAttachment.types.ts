@@ -6,6 +6,7 @@ export interface ProductAttachment {
   attachment_id: string;
   is_primary?: boolean | null;
   sort_order?: number | null;
+  access_levels?: string[] | null;
   created_at?: Date | string | null;
   created_by?: string | null;
   synced_to_excel?: boolean | null;
@@ -24,4 +25,5 @@ export interface ProductAttachmentFormData {
   attachment_id: string;
   is_primary?: boolean;
   sort_order?: number;
+  access_levels?: string[];
 }

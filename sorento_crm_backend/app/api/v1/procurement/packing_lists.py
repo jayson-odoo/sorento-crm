@@ -99,10 +99,10 @@ async def delete_packing_list(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete a packing list."""
+    """Delete a packing list (inbound shipment). Lines and SPO allocations cascade."""
     try:
         service = InboundShipmentService(db)
-        # Implement delete logic
+        service.delete_shipment(shipment_id)
         return {"message": "Packing list deleted successfully"}
     except HTTPException:
         raise

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_or_api_key
 from app.services.procurement_service import StockInquiryService
 from app.schemas.procurement import StockInquiryCreate, StockInquiryUpdate, StockInquiryResponse
 from app.schemas.common import ListResponse
@@ -19,7 +19,7 @@ async def get_stock_inquiries(
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query("id"),
     dir: Optional[str] = Query("desc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get stock inquiries with pagination and search."""
@@ -42,7 +42,7 @@ async def get_stock_inquiries(
 @router.get("/{inquiry_id}", response_model=StockInquiryResponse)
 async def get_stock_inquiry(
     inquiry_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single stock inquiry by ID."""
@@ -59,7 +59,7 @@ async def get_stock_inquiry(
 @router.post("/", response_model=StockInquiryResponse, status_code=status.HTTP_201_CREATED)
 async def create_stock_inquiry(
     inquiry_data: StockInquiryCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Create a new stock inquiry."""
@@ -77,7 +77,7 @@ async def create_stock_inquiry(
 async def update_stock_inquiry(
     inquiry_id: str,
     inquiry_data: StockInquiryUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Update a stock inquiry."""
@@ -94,7 +94,7 @@ async def update_stock_inquiry(
 @router.delete("/{inquiry_id}", status_code=status.HTTP_200_OK)
 async def delete_stock_inquiry(
     inquiry_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Delete a stock inquiry."""

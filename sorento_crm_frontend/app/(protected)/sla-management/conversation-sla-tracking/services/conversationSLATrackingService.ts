@@ -31,3 +31,20 @@ export async function getSLATrackingDashboardMetrics(): Promise<SLATrackingDashb
   if (!response.ok) throw new Error('Failed to fetch dashboard metrics');
   return response.json();
 }
+
+export async function deleteConversationSLATracking(id: string): Promise<void> {
+  const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking/${id}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error('Failed to delete conversation SLA tracking');
+}
+
+export async function deleteConversationSLAEventLog(logId: string): Promise<void> {
+  const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking/event-logs/${logId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to delete event log' }));
+    throw new Error(error.detail || 'Failed to delete event log');
+  }
+}

@@ -39,6 +39,9 @@ services:
       
       # Integration Webhook URL (n8n)
       N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-https://automate.foundryx.my/webhook/e26f935a-0e48-42a1-93ac-703b94b7196f}
+      
+      # Redis (RQ queue for import jobs)
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -46,9 +49,23 @@ services:
       # - ./sorento_crm_backend/app:/app/app
       - backend_logs:/app/logs
     restart: unless-stopped
+    depends_on:
+      - redis
     networks:
       - sorento_network
     # use the image's ENTRYPOINT (/start.sh) – no long inline sh -c here
+
+  redis:
+    image: redis:7-alpine
+    container_name: sorento_crm_redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - sorento_network
+    command: redis-server --appendonly yes
 
   # Next.js Frontend (served by Nginx)
   frontend:
@@ -80,6 +97,8 @@ services:
 
 volumes:
   backend_logs:
+    driver: local
+  redis_data:
     driver: local
 
 networks:

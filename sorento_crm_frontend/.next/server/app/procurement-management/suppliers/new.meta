@@ -1,7 +1,0 @@
-{
-  "headers": {
-    "x-nextjs-stale-time": "300",
-    "x-nextjs-prerender": "1",
-    "x-next-cache-tags": "_N_T_/layout,_N_T_/(protected)/layout,_N_T_/(protected)/procurement-management/layout,_N_T_/(protected)/procurement-management/suppliers/layout,_N_T_/(protected)/procurement-management/suppliers/new/layout,_N_T_/(protected)/procurement-management/suppliers/new/page,_N_T_/procurement-management/suppliers/new"
-  }
-}

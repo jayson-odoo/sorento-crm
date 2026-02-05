@@ -404,7 +404,8 @@ class ProductAttachmentService:
         sort_field: str = "created_at",
         sort_dir: str = "asc",
         product_id: Optional[str] = None,
-        attachment_id: Optional[str] = None
+        attachment_id: Optional[str] = None,
+        user_type: Optional[str] = None
     ):
         """List product attachments with filtering and pagination."""
         from sqlalchemy.orm import joinedload
@@ -419,6 +420,9 @@ class ProductAttachmentService:
         
         if attachment_id:
             q = q.filter(ProductAttachment.attachment_id == attachment_id)
+        
+        if user_type:
+            q = q.filter(ProductAttachment.access_levels.contains([user_type]))
         
         sort_map = {
             "created_at": ProductAttachment.created_at,
@@ -506,14 +510,16 @@ class ProductAttachmentService:
         self.db.commit()
         return {"message": "Product attachment deleted successfully"}
     
-    def get_product_attachments_by_product(self, product_id: str):
+    def get_product_attachments_by_product(self, product_id: str, user_type: Optional[str] = None):
         """Get all attachments for a specific product."""
         from sqlalchemy.orm import joinedload
-        product_attachments = self.db.query(ProductAttachment).options(
+        q = self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
         ).filter(ProductAttachment.product_id == product_id).order_by(
             ProductAttachment.sort_order.asc().nulls_last(),
             ProductAttachment.created_at.asc()
-        ).all()
-        return product_attachments
+        )
+        if user_type:
+            q = q.filter(ProductAttachment.access_levels.contains([user_type]))
+        return q.all()

@@ -11,7 +11,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.resources_service import AttachmentService, AttachmentTypeService
 from app.services.integration_service import IntegrationLogService
-from app.schemas.resources import AttachmentCreate, AttachmentUpdate, AttachmentResponse
+from app.schemas.resources import AttachmentCreate, AttachmentUpdate, AttachmentResponse, AttachmentBulkDeleteRequest
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -69,6 +69,7 @@ async def create_attachment(
     attachment_type_id: str = Form(...),
     entity_type: Optional[str] = Form(None),
     entity_id: Optional[str] = Form(None),
+    access_levels: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -142,6 +143,16 @@ async def create_attachment(
                 detail=f"Failed to upload file to storage: {str(s3_error)}"
             )
         
+        # Parse access levels for webhook payload (JSON array string expected)
+        access_levels_payload = None
+        if access_levels:
+            try:
+                parsed = json.loads(access_levels)
+                if isinstance(parsed, list):
+                    access_levels_payload = parsed
+            except Exception:
+                logger.warning("Invalid access_levels payload; expected JSON array.")
+
         # Create attachment record
         attachment_data = AttachmentCreate(
             attachment_type_id=attachment_type_id,
@@ -191,8 +202,9 @@ async def create_attachment(
                     "integration_log_id": integration_log.id,
                     "s3_url": s3_url,
                     "attachment_id": attachment.id,
-                    "attachment_filename": attachment.stored_filename,
-                    "attachment_type": attachment_type.type_name if attachment_type else None
+                    "attachment_filename": attachment.original_filename,
+                    "attachment_type": attachment_type.type_name if attachment_type else None,
+                    "access_levels": access_levels_payload,
                 }
                 
                 # Update log with payload containing the correct integration_log_id
@@ -330,6 +342,23 @@ async def delete_attachment(
     try:
         service = AttachmentService(db)
         result = service.delete_attachment(attachment_id, current_user["id"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/bulk-delete", status_code=status.HTTP_200_OK)
+async def bulk_delete_attachments(
+    body: AttachmentBulkDeleteRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Mass delete attachments (soft delete)."""
+    try:
+        service = AttachmentService(db)
+        result = service.delete_attachments(body.attachment_ids, current_user["id"])
         return result
     except HTTPException:
         raise

@@ -1,7 +1,7 @@
 """SLA management schemas."""
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, field_validator, model_validator, model_serializer, ConfigDict
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 import uuid
 
@@ -27,8 +27,7 @@ class SLAPolicyTierResponse(SLAPolicyTierBase):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SLAPolicyBase(BaseModel):
@@ -55,8 +54,7 @@ class SLAPolicyResponse(SLAPolicyBase):
     tiers_count: Optional[int] = 0
     tracking_count: Optional[int] = 0
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ConversationSLATrackingBase(BaseModel):
@@ -71,6 +69,7 @@ class ConversationSLATrackingBase(BaseModel):
     escalation_reason: Optional[str] = None
     is_responded: bool = False
     responded_at: Optional[datetime] = None
+    responded_by: Optional[str] = None
     response_time: Optional[Decimal] = None
     is_resolved: bool = False
     resolved_at: Optional[datetime] = None
@@ -79,8 +78,37 @@ class ConversationSLATrackingBase(BaseModel):
     resolution_duration: Optional[Decimal] = None
 
 
-class ConversationSLATrackingCreate(ConversationSLATrackingBase):
-    contact_phone_number: Optional[str] = None
+class ConversationSLATrackingCreate(BaseModel):
+    policy_id: str
+    current_tier: int
+    assigned_to: Optional[str] = None  # Keep for backward compatibility
+    assigned_to_id: Optional[str] = None  # FK to users
+    initiated_at: Optional[datetime] = None  # Auto-populated to now if not provided
+    current_tier_started_at: Optional[datetime] = None  # Auto-populated to now if not provided
+    # due_at is calculated from policy tier, not provided by requester
+    escalated_at: Optional[datetime] = None  # Will be reset to None
+    escalation_reason: Optional[str] = None  # Will be reset to None
+    is_responded: bool = False
+    responded_at: Optional[datetime] = None  # Will be reset to None
+    responded_by: Optional[str] = None  # Will be reset to None
+    response_time: Optional[Decimal] = None  # Will be reset to None
+    is_resolved: bool = False  # Will be reset to False
+    resolved_at: Optional[datetime] = None  # Will be reset to None
+    resolved_by: Optional[str] = None  # Will be reset to None
+    respond_contact_id: Optional[str] = None  # FK to respond_contacts
+    resolution_duration: Optional[Decimal] = None  # Will be reset to None
+    contact_phone_number: str  # Required field
+
+    @field_validator('contact_phone_number')
+    @classmethod
+    def validate_contact_phone_number(cls, v):
+        """Validate contact_phone_number is not empty, null, or undefined."""
+        if v is None:
+            raise ValueError("contact_phone_number is required and cannot be null or undefined")
+        v_str = str(v).strip()
+        if not v_str or v_str.lower() in ['null', 'undefined', '[undefined]', '[null]']:
+            raise ValueError("contact_phone_number is required and cannot be empty, null, or undefined")
+        return v_str
 
 
 class ConversationSLATrackingUpdate(BaseModel):
@@ -90,6 +118,7 @@ class ConversationSLATrackingUpdate(BaseModel):
     escalation_reason: Optional[str] = None
     is_responded: Optional[bool] = None
     responded_at: Optional[datetime] = None
+    responded_by: Optional[str] = None
     response_time: Optional[Decimal] = None
     is_resolved: Optional[bool] = None
     resolved_at: Optional[datetime] = None
@@ -108,6 +137,7 @@ class ConversationSLATrackingUpdate(BaseModel):
 class ConversationSLATrackingStatusUpdate(BaseModel):
     is_responded: Optional[bool] = None
     responded_at: Optional[datetime] = None
+    responded_by: Optional[str] = None
     response_time: Optional[Decimal] = None
     is_resolved: Optional[bool] = None
     resolved_at: Optional[datetime] = None
@@ -129,8 +159,7 @@ class SLAPolicySimple(BaseModel):
     code: str
     name: str
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ContactSimple(BaseModel):
@@ -139,8 +168,7 @@ class ContactSimple(BaseModel):
     phone_number: str
     name: Optional[str] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserSimple(BaseModel):
@@ -149,8 +177,7 @@ class UserSimple(BaseModel):
     email: str
     name: Optional[str] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ConversationSLAEventLogResponse(BaseModel):
@@ -161,6 +188,8 @@ class ConversationSLAEventLogResponse(BaseModel):
     from_tier: Optional[int] = None
     to_tier: Optional[int] = None
     event_at: datetime
+    from_time: Optional[datetime] = None  # For response/resolution events, stores initiated_at
+    duration: Optional[Decimal] = None  # Duration in hours, calculated for response/resolution events
     reason: Optional[str] = None
     assigned_to: Optional[str] = None  # Keep for backward compatibility
     assigned_to_id: Optional[str] = None
@@ -175,6 +204,22 @@ class ConversationSLAEventLogResponse(BaseModel):
     # Computed fields
     assigned_user_name: Optional[str] = None  # From assigned_user.name
     assigned_user_email: Optional[str] = None  # From assigned_user.email
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+    @model_serializer(mode='wrap', when_used='json')
+    def serialize_model(self, serializer, info):
+        """Custom serialization to convert timezone-aware datetimes to naive UTC strings."""
+        data = serializer(self)
+        # Convert timezone-aware datetimes to naive UTC
+        datetime_fields = ['event_at', 'from_time', 'due_at', 'last_reminder_at', 'created_at']
+        for field in datetime_fields:
+            if field in data and data[field] is not None:
+                value = getattr(self, field)
+                if isinstance(value, datetime) and value.tzinfo is not None:
+                    # Convert to UTC and remove timezone for naive representation
+                    data[field] = value.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
+        return data
     
     @field_validator('sla_tracking_id', mode='before')
     @classmethod
@@ -209,9 +254,6 @@ class ConversationSLAEventLogResponse(BaseModel):
             self.assigned_user_email = None
         
         return self
-    
-    class Config:
-        from_attributes = True
 
 
 class ConversationSLAEventLogCreate(BaseModel):
@@ -220,6 +262,8 @@ class ConversationSLAEventLogCreate(BaseModel):
     from_tier: Optional[int] = None
     to_tier: Optional[int] = None
     event_at: Optional[datetime] = None
+    from_time: Optional[datetime] = None  # For response/resolution events, stores initiated_at
+    duration: Optional[Decimal] = None  # Duration in hours, calculated for response/resolution events
     reason: Optional[str] = None
     assigned_to: Optional[str] = None  # Keep for backward compatibility
     assigned_to_id: Optional[str] = None  # FK to users
@@ -249,6 +293,28 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     contact_name: Optional[str] = None  # From contact.name or respond_contact_name
     assigned_user_name: Optional[str] = None  # From assigned_user.name
     assigned_user_email: Optional[str] = None  # From assigned_user.email
+    responded_by_user_name: Optional[str] = None  # Looked up from responded_by user ID
+    resolved_by_user_name: Optional[str] = None  # Looked up from resolved_by user ID
+    # Average times calculated from event logs
+    average_response_time: Optional[Decimal] = None  # Average duration from event logs with event_type="response"
+    average_resolution_time: Optional[Decimal] = None  # Average duration from event logs with event_type="resolution"
+    
+    @model_serializer(mode='wrap', when_used='json')
+    def serialize_model(self, serializer, info):
+        """Custom serialization to convert timezone-aware datetimes to naive UTC strings."""
+        data = serializer(self)
+        # Convert timezone-aware datetimes to naive UTC
+        datetime_fields = [
+            'initiated_at', 'current_tier_started_at', 'due_at', 'escalated_at',
+            'responded_at', 'resolved_at', 'created_at', 'updated_at', 'last_synced_to_excel'
+        ]
+        for field in datetime_fields:
+            if field in data and data[field] is not None:
+                value = getattr(self, field)
+                if isinstance(value, datetime) and value.tzinfo is not None:
+                    # Convert to UTC and remove timezone for naive representation
+                    data[field] = value.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
+        return data
     
     @field_validator('policy_id', mode='before')
     @classmethod
@@ -295,6 +361,3 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
             self.assigned_user_email = None
         
         return self
-    
-    class Config:
-        from_attributes = True

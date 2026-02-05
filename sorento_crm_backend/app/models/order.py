@@ -1,5 +1,5 @@
 """Order management models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Index, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -61,6 +61,26 @@ class Order(Base):
     updated_by = Column(String, nullable=True)
     billing_address_id = Column(String, nullable=True)
     shipping_address_id = Column(String, nullable=True)
+    created_time = Column(DateTime(timezone=True), nullable=True)
+    debtor_code = Column(String(100), nullable=True)
+    debtor_name = Column(String(255), nullable=True)
+    agent = Column(String(100), nullable=True)
+    is_cancelled = Column(Boolean, default=False, nullable=False)
+    remarks_cs = Column(Text, nullable=True)
+    order_type = Column(String(50), nullable=True)
+    delivery_time = Column(String(20), nullable=True)
+    checker = Column(String(100), nullable=True)
+    transporter = Column(String(100), nullable=True)
+    driver_name = Column(String(100), nullable=True)
+    lorry_plate = Column(String(50), nullable=True)
+    customer_ref = Column(String(255), nullable=True)
+    delivery_remarks_cs = Column(Text, nullable=True)
+    delivery_remarks = Column(Text, nullable=True)
+    salesman = Column(String(100), nullable=True)
+    trips = Column(Integer, nullable=True)
+    warehouse = Column(String(50), nullable=True)
+    delivery_days = Column(Integer, nullable=True)
+    kpi_warning = Column(Boolean, default=False, nullable=False)
     subtotal_amount = Column(Numeric(15, 2), default=0, nullable=False)
     discount_amount = Column(Numeric(15, 2), default=0, nullable=False)
     tax_amount = Column(Numeric(15, 2), default=0, nullable=False)
@@ -82,4 +102,7 @@ class Order(Base):
         Index("ix_orders_order_number", "order_number"),
         Index("ix_orders_created_by", "created_by"),
         Index("ix_orders_deleted_at", "deleted_at"),
+        Index("ix_orders_debtor_code", "debtor_code"),
+        Index("ix_orders_kpi_warning", "kpi_warning"),
+        Index("ix_orders_is_cancelled", "is_cancelled"),
     )

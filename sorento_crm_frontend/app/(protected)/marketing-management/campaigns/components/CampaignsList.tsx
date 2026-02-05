@@ -76,7 +76,7 @@ export default function CampaignsList() {
         header: ({ column }) => <DataGridColumnHeader title="Budget" column={column} />,
         cell: ({ row }) => {
           const budget = row.original.budget;
-          return budget ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(budget) : '-';
+          return budget ? new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(budget) : '-';
         },
         size: 120,
       },
@@ -85,7 +85,7 @@ export default function CampaignsList() {
         header: ({ column }) => <DataGridColumnHeader title="Spent" column={column} />,
         cell: ({ row }) => {
           const spent = row.original.spent;
-          return spent ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(spent) : '-';
+          return spent ? new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(spent) : '-';
         },
         size: 120,
       },

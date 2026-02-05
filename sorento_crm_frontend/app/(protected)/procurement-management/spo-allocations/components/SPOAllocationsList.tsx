@@ -1,57 +1,67 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
   SortingState,
   useReactTable,
   getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Link as LinkIcon } from 'lucide-react';
+import { Plus, Search, X, ChevronDown, ChevronRight, Link as LinkIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useSPOAllocations } from '../hooks/useSPOAllocations';
-import type { SPOAllocation } from '../types/spoAllocation.types';
-import { formatDate } from '@/lib/helpers';
+import { useSPOAllocationsGroupedByShipment } from '../hooks/useSPOAllocations';
+import type { SPOAllocation, ShipmentWithAllocationsGroup } from '../types/spoAllocation.types';
 import Link from 'next/link';
+import React from 'react';
 
 export default function SPOAllocationsList() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const shipmentId = searchParams.get('shipment_id');
-  
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
-    pageSize: 50,
+    pageSize: 20,
   });
   const [sorting, setSorting] = useState<SortingState>([
-    { id: 'created_at', desc: true },
+    { id: 'shipment_number', desc: false },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
-  const { data, isLoading } = useSPOAllocations({
-    pageIndex: pagination.pageIndex,
-    pageSize: pagination.pageSize,
-    sorting,
-    searchQuery,
-    shipment_id: shipmentId || undefined,
+  const { data, isLoading } = useSPOAllocationsGroupedByShipment({
+    page: pagination.pageIndex + 1,
+    limit: pagination.pageSize,
+    query: searchQuery || undefined,
+    sort: sorting[0]?.id ?? 'shipment_number',
+    dir: sorting[0]?.desc ? 'desc' : 'asc',
   });
 
-  const handleRowClick = (row: SPOAllocation) => {
-    const spoId = row.id;
-    router.push(`/procurement-management/spo-allocations/${spoId}`);
+  const groupedData = data?.data ?? [];
+  const totalShipments = data?.pagination?.total ?? 0;
+  const pageCount = Math.ceil(totalShipments / pagination.pageSize);
+
+  const toggleGroup = (shipmentId: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(shipmentId)) {
+        next.delete(shipmentId);
+      } else {
+        next.add(shipmentId);
+      }
+      return next;
+    });
+  };
+
+  const handleAllocationClick = (allocation: SPOAllocation) => {
+    router.push(`/procurement-management/spo-allocations/${allocation.id}`);
   };
 
   const getStatusBadgeVariant = (status: string) => {
@@ -69,137 +79,91 @@ export default function SPOAllocationsList() {
     }
   };
 
-  const columns = useMemo<ColumnDef<SPOAllocation>[]>(
+  const columns = useMemo<ColumnDef<ShipmentWithAllocationsGroup>[]>(
     () => [
       {
-        accessorKey: 'spo_number',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="SPO Number" column={column} />
+        id: 'expand',
+        header: '',
+        cell: ({ row }) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleGroup(row.original.inbound_shipment.id);
+            }}
+          >
+            {expandedGroups.has(row.original.inbound_shipment.id) ? (
+              <ChevronDown className="size-4" />
+            ) : (
+              <ChevronRight className="size-4" />
+            )}
+          </Button>
         ),
-        cell: ({ row }) => row.original.spo_number || '-',
-        size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        size: 50,
       },
       {
         accessorKey: 'inbound_shipment.shipment_number',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Packing List" column={column} />
+          <DataGridColumnHeader title="Packing List (Inbound Shipment)" column={column} />
         ),
         cell: ({ row }) => {
-          const shipment = row.original.inbound_shipment;
-          if (shipment) {
-            return (
+          const ship = row.original.inbound_shipment;
+          const count = row.original.spo_allocations.length;
+          return (
+            <div className="flex items-center gap-2">
               <Link
-                href={`/procurement-management/packing-lists/${shipment.id}`}
-                className="text-primary hover:underline flex items-center gap-1"
+                href={`/procurement-management/packing-lists/${ship.id}`}
+                className="text-primary hover:underline font-medium flex items-center gap-1"
                 onClick={(e) => e.stopPropagation()}
               >
                 <LinkIcon className="size-3" />
-                {shipment.shipment_number}
+                {ship.shipment_number}
               </Link>
-            );
-          }
-          return '-';
-        },
-        size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        accessorKey: 'product.product_name',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Product" column={column} />
-        ),
-        cell: ({ row }) => row.original.product?.product_name || '-',
-        size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
-      },
-      {
-        accessorKey: 'warehouse.warehouse_name',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Warehouse" column={column} />
-        ),
-        cell: ({ row }) => row.original.warehouse?.warehouse_name || '-',
-        size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        accessorKey: 'allocated_quantity',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Allocated Qty" column={column} />
-        ),
-        size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
-      },
-      {
-        accessorKey: 'quantity_received',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Received Qty" column={column} />
-        ),
-        size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
-      },
-      {
-        accessorKey: 'receipt_status',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Status" column={column} />
-        ),
-        cell: ({ row }) => {
-          const status = row.original.receipt_status;
-          const statusLabel = status
-            ?.split('_')
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(' ') || '-';
-          return (
-            <Badge variant={getStatusBadgeVariant(status)}>{statusLabel}</Badge>
+              <Badge variant="secondary" size="sm">
+                {count} allocation{count !== 1 ? 's' : ''}
+              </Badge>
+            </div>
           );
         },
-        size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        accessorKey: 'actions',
-        header: '',
-        cell: () => (
-          <ChevronRight className="text-muted-foreground/70 size-3.5" />
-        ),
-        size: 40,
+        size: 280,
+        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
     ],
-    [],
+    [expandedGroups],
   );
 
   const table = useReactTable({
     columns,
-    data: data?.data || [],
-    pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
-    getRowId: (row) => row.id,
+    data: groupedData,
+    pageCount,
+    getRowId: (row) => row.inbound_shipment.id,
     state: { pagination, sorting },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     manualPagination: true,
     manualSorting: true,
-    manualFiltering: true,
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
   });
 
   return (
     <DataGrid
       table={table}
-      recordCount={data?.pagination.total || 0}
+      recordCount={totalShipments}
       isLoading={isLoading}
-      onRowClick={handleRowClick}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">
             <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
             <Input
-              placeholder="Search SPO allocations..."
+              placeholder="Search by shipment number, SPO number, product..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
+              className="ps-9 w-72"
             />
             {searchQuery && (
               <Button
@@ -223,7 +187,167 @@ export default function SPOAllocationsList() {
         </CardHeader>
         <CardTable>
           <ScrollArea>
-            <DataGridTable />
+            <table className="w-full border-collapse table-fixed">
+              <thead>
+                <tr className="border-b bg-muted/40">
+                  {table.getHeaderGroups()[0]?.headers.map((header) => (
+                    <th
+                      key={header.id}
+                      className="relative text-left p-4 font-medium text-sm text-muted-foreground truncate"
+                      style={{
+                        width: header.getSize(),
+                        minWidth: header.getSize(),
+                      }}
+                    >
+                      {header.isPlaceholder
+                        ? null
+                        : typeof header.column.columnDef.header === 'function'
+                          ? header.column.columnDef.header(header.getContext())
+                          : header.column.columnDef.header}
+                      {header.column.getCanResize() && (
+                        <div
+                          role="separator"
+                          aria-orientation="vertical"
+                          onDoubleClick={() => header.column.resetSize()}
+                          onMouseDown={header.getResizeHandler()}
+                          onTouchStart={header.getResizeHandler()}
+                          className="absolute top-0 right-0 h-full w-4 cursor-col-resize select-none touch-none flex justify-center items-center -mr-2 z-10 after:absolute after:inset-y-0 after:w-px after:bg-border after:-translate-x-1/2"
+                        />
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={columns.length} className="p-4">
+                      <div className="text-center text-muted-foreground">
+                        Loading...
+                      </div>
+                    </td>
+                  </tr>
+                ) : groupedData.length === 0 ? (
+                  <tr>
+                    <td colSpan={columns.length} className="p-4">
+                      <div className="text-center text-muted-foreground">
+                        No inbound shipments with SPO allocations found.
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  groupedData.map((group) => (
+                    <React.Fragment key={group.inbound_shipment.id}>
+                      <tr className="border-b hover:bg-accent/50">
+                        {table.getHeaderGroups()[0]?.headers.map((header) => {
+                          const cell = table
+                            .getRow(group.inbound_shipment.id)
+                            ?.getVisibleCells()
+                            .find((c) => c.column.id === header.id);
+                          return (
+                            <td
+                              key={header.id}
+                              className="p-4 truncate"
+                              style={{
+                                width: header.getSize(),
+                                minWidth: header.getSize(),
+                              }}
+                            >
+                              {cell &&
+                                (typeof cell.column.columnDef.cell === 'function'
+                                  ? cell.column.columnDef.cell(cell.getContext())
+                                  : cell.column.columnDef.cell)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                      {expandedGroups.has(group.inbound_shipment.id) && (
+                        <tr>
+                          <td
+                            colSpan={columns.length}
+                            className="p-0 bg-muted/30 align-top"
+                          >
+                            <div className="p-4">
+                              <div className="mb-3 font-medium text-sm text-muted-foreground">
+                                SPO allocations for {group.inbound_shipment.shipment_number}
+                              </div>
+                              <table className="w-full border-collapse">
+                                <thead>
+                                  <tr className="border-b">
+                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[140px]">
+                                      SPO Number
+                                    </th>
+                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground min-w-[160px]">
+                                      Product
+                                    </th>
+                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[120px]">
+                                      Warehouse
+                                    </th>
+                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[100px]">
+                                      Allocated Qty
+                                    </th>
+                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[100px]">
+                                      Received Qty
+                                    </th>
+                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[120px]">
+                                      Status
+                                    </th>
+                                    <th className="w-8" />
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {group.spo_allocations.map((allocation) => (
+                                    <tr
+                                      key={allocation.id}
+                                      className="border-b hover:bg-background cursor-pointer"
+                                      onClick={() => handleAllocationClick(allocation)}
+                                    >
+                                      <td className="p-2 text-sm">
+                                        {allocation.spo_number ?? '-'}
+                                      </td>
+                                      <td className="p-2 text-sm">
+                                        {allocation.product?.product_name ?? '-'}
+                                      </td>
+                                      <td className="p-2 text-sm">
+                                        {allocation.warehouse?.warehouse_name ?? '-'}
+                                      </td>
+                                      <td className="p-2 text-sm">
+                                        {allocation.allocated_quantity}
+                                      </td>
+                                      <td className="p-2 text-sm">
+                                        {allocation.quantity_received}
+                                      </td>
+                                      <td className="p-2">
+                                        <Badge
+                                          variant={getStatusBadgeVariant(
+                                            allocation.receipt_status,
+                                          )}
+                                          size="sm"
+                                        >
+                                          {allocation.receipt_status
+                                            ?.split('_')
+                                            .map((w) =>
+                                              w.charAt(0).toUpperCase() + w.slice(1),
+                                            )
+                                            .join(' ') ?? '-'}
+                                        </Badge>
+                                      </td>
+                                      <td className="p-2">
+                                        <ChevronRight className="text-muted-foreground/70 size-3.5" />
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))
+                )}
+              </tbody>
+            </table>
             <ScrollBar orientation="horizontal" />
           </ScrollArea>
         </CardTable>

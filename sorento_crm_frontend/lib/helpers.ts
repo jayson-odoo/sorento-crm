@@ -95,25 +95,65 @@ export function timeAgo(date: Date | string): string {
   return `${Math.floor(diff / 31536000)} year${Math.floor(diff / 31536000) > 1 ? 's' : ''} ago`;
 }
 
+/** Pad number to 2 digits for dd/MM/yyyy */
+function padTwo(n: number): string {
+  return n.toString().padStart(2, '0');
+}
+
 export function formatDate(input: Date | string | number): string {
   const date = new Date(input);
-  return date.toLocaleDateString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  });
+  const day = padTwo(date.getDate());
+  const month = padTwo(date.getMonth() + 1);
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+/**
+ * Parse a naive UTC datetime string from the database and return a Date object.
+ * 
+ * CRITICAL RULE: 
+ * - Database stores UTC time internally (timestamptz)
+ * - Backend sends naive UTC strings (no timezone info): "2026-01-28T00:27:58"
+ * - Frontend displays these times AS-IS in local formatting (00:27 stays 00:27)
+ * - NO timezone conversion - display the UTC hour/minute/second directly
+ * 
+ * Example:
+ * - DB stores: 2026-01-28 00:27:58 UTC (displayed by PostgreSQL as 08:27:58+08:00)
+ * - Backend sends: "2026-01-28T00:27:58" (naive UTC string)
+ * - Frontend displays: "28/01/2026, 12:27 AM" (00:27 displayed as-is)
+ */
+export function parseNaiveDateTimeAsLocal(dateString: string | Date): Date {
+  if (dateString instanceof Date) {
+    return dateString;
+  }
+
+  // Remove any milliseconds and ensure clean string
+  let cleanString = dateString.replace(/\.\d{3,}/, '');
+  
+  // If it has timezone info (Z or +/-HH:MM), remove it and treat as naive
+  cleanString = cleanString.replace(/Z$/, '').replace(/[+-]\d{2}:?\d{2}$/, '');
+  
+  // Parse as local time (no Z suffix) - this makes JavaScript treat it as if it's already local time
+  // This way, 00:27 displays as 00:27, not converted to a different timezone
+  return new Date(cleanString);
 }
 
 export function formatDateTime(input: Date | string | number): string {
-  const date = new Date(input);
-  return date.toLocaleString('en-US', {
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    hour12: true,
-  });
+  // Always use parseNaiveDateTimeAsLocal to handle naive and UTC dates correctly
+  const date = typeof input === 'string'
+    ? parseNaiveDateTimeAsLocal(input)
+    : input instanceof Date
+      ? input
+      : new Date(input);
+  const day = padTwo(date.getDate());
+  const month = padTwo(date.getMonth() + 1);
+  const year = date.getFullYear();
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const hour12 = hours % 12 || 12;
+  const time = `${hour12}:${padTwo(minutes)} ${ampm}`;
+  return `${day}/${month}/${year}, ${time}`;
 }
 
 /**

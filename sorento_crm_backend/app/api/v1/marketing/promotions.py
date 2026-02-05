@@ -1,5 +1,6 @@
 """Promotions API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Path, Body
+from typing import Optional
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -15,13 +16,14 @@ router = APIRouter()
 async def get_promotions(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
+    user_type: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get promotions with pagination."""
     try:
         service = PromotionService(db)
-        result = service.list_promotions(page=page, limit=limit)
+        result = service.list_promotions(page=page, limit=limit, user_type=user_type)
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -30,6 +32,7 @@ async def get_promotions(
 @router.get("/{promotion_id}", response_model=PromotionResponse)
 async def get_promotion(
     promotion_id: str,
+    user_type: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -37,6 +40,9 @@ async def get_promotion(
     try:
         service = PromotionService(db)
         promotion = service.get_promotion(promotion_id)
+        if user_type and promotion.access_levels and user_type not in promotion.access_levels:
+            from app.services.error_handler import handle_not_found
+            raise handle_not_found("Promotion", promotion_id)
         
         # Map promo_selling_price to promotion_price for each product
         if hasattr(promotion, 'products') and promotion.products:

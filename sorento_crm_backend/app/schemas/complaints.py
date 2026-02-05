@@ -19,28 +19,17 @@ class ComplaintAttachmentCreate(ComplaintAttachmentBase):
 
 class ComplaintAttachmentResponse(ComplaintAttachmentBase):
     id: str
+    attachment_id: Optional[str] = None
     uploaded_at: datetime
-    
+    link_type: Optional[str] = None  # "complaint_attachment"
+
     class Config:
         from_attributes = True
 
 
-class ComplaintManualAttachmentBase(BaseModel):
-    complaint_id: str
+class ComplaintAttachmentLinkRequest(BaseModel):
+    """Body for linking an existing attachment to a complaint."""
     attachment_id: str
-
-
-class ComplaintManualAttachmentCreate(ComplaintManualAttachmentBase):
-    pass
-
-
-class ComplaintManualAttachmentResponse(ComplaintManualAttachmentBase):
-    id: str
-    created_at: datetime
-    attachment: Optional[AttachmentResponse] = None
-
-    class Config:
-        from_attributes = True
 
 
 class ComplaintBase(BaseModel):
