@@ -11,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, FileDown } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -24,6 +24,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockInquiries } from '../hooks/useStockInquiries';
 import type { StockInquiry } from '../types/stockInquiry.types';
+import { exportStockInquiriesToExcel } from '../utils/exportStockInquiryToExcel';
 import { formatDate } from '@/lib/helpers';
 
 export default function StockInquiriesList() {
@@ -36,6 +37,7 @@ export default function StockInquiriesList() {
     { id: 'created_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   const { data, isLoading } = useStockInquiries({
     pageIndex: pagination.pageIndex,
@@ -47,6 +49,17 @@ export default function StockInquiriesList() {
   const handleRowClick = (row: StockInquiry) => {
     const inquiryId = row.id;
     router.push(`/procurement-management/stock-inquiries/${inquiryId}`);
+  };
+
+  const handleExportExcel = async () => {
+    const items = data?.data ?? [];
+    if (items.length === 0) return;
+    setExporting(true);
+    try {
+      await exportStockInquiriesToExcel(items, 'Stock_Inquiries.xlsx');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const columns = useMemo<ColumnDef<StockInquiry>[]>(
@@ -189,14 +202,24 @@ export default function StockInquiriesList() {
               </Button>
             )}
           </div>
-          <Button
-            onClick={() =>
-              router.push('/procurement-management/stock-inquiries/new')
-            }
-          >
-            <Plus />
-            Create Stock Inquiry
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={handleExportExcel}
+              disabled={exporting || !data?.data?.length}
+            >
+              <FileDown />
+              {exporting ? 'Exporting…' : 'Export to Excel'}
+            </Button>
+            <Button
+              onClick={() =>
+                router.push('/procurement-management/stock-inquiries/new')
+              }
+            >
+              <Plus />
+              Create Stock Inquiry
+            </Button>
+          </div>
         </CardHeader>
         <CardTable>
           <ScrollArea>

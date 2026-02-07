@@ -29,7 +29,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateOrder, useUpdateOrder, useOrder, useOrders } from '../hooks/useOrders';
 import { OrderSchema, type OrderSchemaType } from '../forms/order-schema';
 import type { OrderFormData } from '../types/order.types';
-import { useCustomerSelectQuery } from '../../shared/hooks/use-customer-select-query';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import RecordNavigation from '@/components/common/RecordNavigation';
 
@@ -42,7 +41,6 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
   const router = useRouter();
   const isEditMode = !!orderId;
   const { data: order, isLoading: isLoadingOrder } = useOrder(orderId || null);
-  const { data: customers } = useCustomerSelectQuery();
   const { data: orderStatuses } = useOrderStatusSelectQuery();
   const createMutation = useCreateOrder();
   const updateMutation = useUpdateOrder();
@@ -119,30 +117,21 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
     if (
       order &&
       isEditMode &&
-      customers &&
-      customers.length > 0 &&
       orderStatuses &&
       orderStatuses.length > 0 &&
       !formInitialized
     ) {
-      // Ensure values are strings for proper matching
-      const customerId = order.customer_id ? String(order.customer_id) : '';
       const orderStatusId = order.order_status_id ? String(order.order_status_id) : '';
-
-      // Verify that the selected values exist in the options
-      const customerExists = customers.some((c) => c.id === customerId) || order.customer;
       const orderStatusExists = orderStatuses.some((os) => os.id === orderStatusId) || order.order_status;
 
-      // Only reset if we can guarantee the selected items will be available
-      if (customerExists && orderStatusExists) {
-        // Use setTimeout to ensure SelectContent items are rendered before form reset
+      if (orderStatusExists) {
         const timeoutId = setTimeout(() => {
           form.reset({
             order_number: order.order_number,
             order_date: order.order_date ? new Date(order.order_date) : new Date(),
             promised_delivery_date: order.promised_delivery_date ? new Date(order.promised_delivery_date) : undefined,
             actual_delivery_date: order.actual_delivery_date ? new Date(order.actual_delivery_date) : undefined,
-            customer_id: customerId,
+            customer_id: order.customer_id ? String(order.customer_id) : '',
             order_status_id: orderStatusId,
             billing_address_id: order.billing_address_id || undefined,
             shipping_address_id: order.shipping_address_id || undefined,
@@ -178,7 +167,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
         return () => clearTimeout(timeoutId);
       }
     }
-  }, [order, isEditMode, customers, orderStatuses, form, formInitialized]);
+  }, [order, isEditMode, orderStatuses, form, formInitialized]);
 
   // Reset formInitialized when orderId changes
   useEffect(() => {
@@ -196,7 +185,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
         order_date: data.order_date,
         promised_delivery_date: data.promised_delivery_date || undefined,
         actual_delivery_date: data.actual_delivery_date || undefined,
-        customer_id: data.customer_id,
+        customer_id: data.customer_id ?? undefined,
         order_status_id: data.order_status_id,
         billing_address_id: data.billing_address_id || undefined,
         shipping_address_id: data.shipping_address_id || undefined,
@@ -366,36 +355,6 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <FormField
                     control={form.control}
-                    name="customer_id"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Customer *</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value || ''}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select customer" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {customers?.map((customer) => (
-                              <SelectItem key={customer.id} value={customer.id}>
-                                {customer.customer_code} - {customer.customer_name}
-                              </SelectItem>
-                            ))}
-                            {(!customers || customers.length === 0) && (
-                              <SelectItem value="__no_customers__" disabled>
-                                No customers available
-                              </SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
                     name="order_status_id"
                     render={({ field }) => (
                       <FormItem>
@@ -419,6 +378,95 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                             )}
                           </SelectContent>
                         </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="order_type"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Order Type</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g. BEYOND, CG" {...field} value={field.value ?? ''} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="debtor_code"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Debtor Code</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g. 300-A007" {...field} value={field.value ?? ''} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="debtor_name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Debtor Name</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Company name" {...field} value={field.value ?? ''} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="agent"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Agent</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Agent name" {...field} value={field.value ?? ''} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="remarks_cs"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Remarks CS</FormLabel>
+                        <FormControl>
+                          <Input placeholder="e.g. PS25-2053" {...field} value={field.value ?? ''} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="is_cancelled"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center gap-2 space-y-0">
+                        <FormControl>
+                          <input
+                            type="checkbox"
+                            checked={!!field.value}
+                            onChange={(e) => field.onChange(e.target.checked)}
+                            className="h-4 w-4 rounded border-input"
+                          />
+                        </FormControl>
+                        <FormLabel className="font-normal">Cancelled</FormLabel>
                         <FormMessage />
                       </FormItem>
                     )}

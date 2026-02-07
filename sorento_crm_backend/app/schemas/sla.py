@@ -11,6 +11,7 @@ class SLAPolicyTierBase(BaseModel):
     tier_level: int
     tier_name: str
     response_hours: int
+    resolution_hours: int = 24
 
 
 class SLAPolicyTierCreate(SLAPolicyTierBase):
@@ -18,8 +19,10 @@ class SLAPolicyTierCreate(SLAPolicyTierBase):
 
 
 class SLAPolicyTierUpdate(BaseModel):
+    tier_level: Optional[int] = None
     tier_name: Optional[str] = None
     response_hours: Optional[int] = None
+    resolution_hours: Optional[int] = None
 
 
 class SLAPolicyTierResponse(SLAPolicyTierBase):
@@ -64,7 +67,8 @@ class ConversationSLATrackingBase(BaseModel):
     assigned_to_id: Optional[str] = None  # FK to users
     initiated_at: datetime
     current_tier_started_at: datetime
-    due_at: datetime
+    due_at: datetime  # Response deadline
+    due_at_resolution: Optional[datetime] = None  # Resolution deadline (initiated_at + tier.resolution_hours)
     escalated_at: Optional[datetime] = None
     escalation_reason: Optional[str] = None
     is_responded: bool = False
@@ -114,6 +118,7 @@ class ConversationSLATrackingCreate(BaseModel):
 class ConversationSLATrackingUpdate(BaseModel):
     current_tier: Optional[int] = None
     assigned_to: Optional[str] = None
+    due_at_resolution: Optional[datetime] = None
     escalated_at: Optional[datetime] = None
     escalation_reason: Optional[str] = None
     is_responded: Optional[bool] = None
@@ -298,15 +303,25 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     # Average times calculated from event logs
     average_response_time: Optional[Decimal] = None  # Average duration from event logs with event_type="response"
     average_resolution_time: Optional[Decimal] = None  # Average duration from event logs with event_type="resolution"
-    
+    # Time-in-tier and time-remaining (computed; response timers stop when is_responded, resolution when is_resolved)
+    time_in_tier_response_seconds: Optional[float] = None
+    time_remaining_response_seconds: Optional[float] = None
+    time_in_tier_resolution_seconds: Optional[float] = None
+    time_remaining_resolution_seconds: Optional[float] = None
+    resolution_due_at: Optional[datetime] = None  # initiated_at + tier.resolution_hours
+    # Tier KPI hours (for frontend to color response_time / resolution_duration)
+    tier_response_hours: Optional[int] = None
+    tier_resolution_hours: Optional[int] = None
+
     @model_serializer(mode='wrap', when_used='json')
     def serialize_model(self, serializer, info):
         """Custom serialization to convert timezone-aware datetimes to naive UTC strings."""
         data = serializer(self)
         # Convert timezone-aware datetimes to naive UTC
         datetime_fields = [
-            'initiated_at', 'current_tier_started_at', 'due_at', 'escalated_at',
-            'responded_at', 'resolved_at', 'created_at', 'updated_at', 'last_synced_to_excel'
+            'initiated_at', 'current_tier_started_at', 'due_at', 'due_at_resolution', 'escalated_at',
+            'responded_at', 'resolved_at', 'created_at', 'updated_at', 'last_synced_to_excel',
+            'resolution_due_at'
         ]
         for field in datetime_fields:
             if field in data and data[field] is not None:

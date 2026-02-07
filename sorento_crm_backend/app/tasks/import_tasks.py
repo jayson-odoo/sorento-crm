@@ -92,23 +92,42 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
         # Process import
         order_service = OrderService(db)
         result = order_service.import_excel_tracking(file_data, user_id)
-        
-        # Mark job as completed
+
+        created = result.get('created', 0)
+        updated = result.get('updated', 0)
+        errors = result.get('errors', [])
+        master_rows = result.get('master_rows', 0)
+        tracking_rows = result.get('tracking_rows', 0)
+        failed_count = len(errors)
+        successful_rows = created + updated
+        processed_rows = master_rows + tracking_rows
+
+        # Mark job as completed with correct counts
         job_service.complete_job(
             job_id=job.job_id,
             result={
-                'master_rows': result.get('master_rows', 0),
-                'tracking_rows': result.get('tracking_rows', 0),
+                'created': created,
+                'updated': updated,
+                'failed': failed_count,
+                'master_rows': master_rows,
+                'tracking_rows': tracking_rows,
                 'kpi_warnings': result.get('kpi_warnings', []),
                 'import_session_id': result.get('import_session_id'),
+                'errors': errors[:50],  # First 50 errors for UI/log
             },
-            successful_rows=result.get('master_rows', 0) + result.get('tracking_rows', 0),
-            failed_rows=0,
+            successful_rows=successful_rows,
+            failed_rows=failed_count,
             skipped_rows=0,
-            processed_rows=result.get('master_rows', 0) + result.get('tracking_rows', 0)
+            processed_rows=processed_rows,
         )
-        
-        logger.info(f"Order tracking import job {job.job_id} completed successfully")
+
+        logger.info(
+            "Order tracking import job %s completed: processed=%s (Master=%s, Tracking=%s), created=%s, updated=%s, failed=%s",
+            job.job_id, processed_rows, master_rows, tracking_rows, created, updated, failed_count,
+        )
+        if errors:
+            for i, err in enumerate(errors[:3]):
+                logger.warning("Order tracking import job %s error [%s]: row=%s %s", job.job_id, i + 1, err.get('row'), err.get('error'))
         
     except Exception as e:
         logger.error(f"Order tracking import job {job.job_id} failed: {str(e)}", exc_info=True)

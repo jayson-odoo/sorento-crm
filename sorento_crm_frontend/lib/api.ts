@@ -126,13 +126,8 @@ export async function apiFetch(
         } else if (input.startsWith('/api/complaint-management/')) {
           url = `/api/v1/complaint-management${input.replace('/api/complaint-management', '')}`;
         } else if (input.startsWith('/api/sla-management/')) {
-          // Exclude tiers routes - they stay in Next.js
-          if (input.includes('/sla-policies/') && input.includes('/tiers')) {
-            // Keep in Next.js - don't route to backend
-            url = input;
-          } else {
-            url = `/api/v1/sla-management${input.replace('/api/sla-management', '')}`;
-          }
+          // Route all SLA management (including tiers) to FastAPI backend
+          url = `/api/v1/sla-management${input.replace('/api/sla-management', '')}`;
         } else if (input.startsWith('/api/resource-management/')) {
           url = `/api/v1/resource-management${input.replace('/api/resource-management', '')}`;
         } else if (input.startsWith('/api/user-management/')) {

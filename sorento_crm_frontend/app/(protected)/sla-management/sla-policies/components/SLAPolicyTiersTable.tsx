@@ -71,6 +71,12 @@ export default function SLAPolicyTiersTable({ policyId }: SLAPolicyTiersTablePro
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
+        accessorKey: 'resolution_hours',
+        header: ({ column }) => <DataGridColumnHeader title="Resolution Hours" column={column} />,
+        size: 150,
+        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
         accessorKey: 'actions',
         header: '',
         cell: ({ row }) => (

@@ -1,9 +1,11 @@
 """Order service for business logic."""
-from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
-from typing import Optional
+import logging
 import uuid
 import time
+from typing import Optional
+
+from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
 from decimal import Decimal
 from app.models.order import Order, OrderStatus, Customer
 from app.schemas.order import (
@@ -12,6 +14,8 @@ from app.schemas.order import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.import_log_service import ImportLogService
+
+logger = logging.getLogger(__name__)
 
 
 class OrderService:
@@ -316,7 +320,7 @@ class OrderService:
     def import_excel_tracking(self, file_data: bytes, user_id: str):
         """Import orders from Excel file with Master and Daily Tracking sheets."""
         from io import BytesIO
-        from datetime import datetime, date, time
+        from datetime import datetime, date, time as dt_time
         import openpyxl
 
         created = 0
@@ -332,6 +336,8 @@ class OrderService:
             workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
         except Exception as exc:
             raise ValueError(f"Failed to read Excel file: {exc}") from exc
+
+        logger.info("Order tracking import: opened workbook, sheets=%s", workbook.sheetnames)
 
         required_sheets = {"Master", "Daily Tracking"}
         if not required_sheets.issubset(set(workbook.sheetnames)):
@@ -373,8 +379,10 @@ class OrderService:
         def normalize_header(value):
             return str(value).strip() if value is not None else ""
 
-        def iter_sheet_rows(sheet):
+        def iter_sheet_rows(sheet, sheet_name_for_log=""):
             headers = [normalize_header(cell.value) for cell in sheet[1]]
+            if sheet_name_for_log:
+                logger.info("Order tracking import: sheet %r headers (row 1)=%s", sheet_name_for_log, headers)
             for row_idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
                 if not any(cell is not None and str(cell).strip() for cell in row):
                     continue
@@ -391,7 +399,7 @@ class OrderService:
             if isinstance(value, datetime):
                 return value
             if isinstance(value, date):
-                return datetime.combine(value, time.min)
+                return datetime.combine(value, dt_time.min)
             if isinstance(value, str):
                 cleaned = value.strip()
                 for fmt in ["%d/%m/%Y", "%d/%m/%Y %H:%M", "%d/%m/%Y %H:%M:%S", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S"]:
@@ -410,7 +418,7 @@ class OrderService:
         def parse_time_value(value):
             if value is None or value == "":
                 return None
-            if isinstance(value, time):
+            if isinstance(value, dt_time):
                 return value
             if isinstance(value, datetime):
                 return value.time()
@@ -431,7 +439,7 @@ class OrderService:
             return str(value).strip().upper() not in {"F", "FALSE", "0", "NO", "N"}
 
         # Process Master sheet
-        for row_idx, row_data in iter_sheet_rows(master_sheet):
+        for row_idx, row_data in iter_sheet_rows(master_sheet, "Master"):
             master_rows += 1
             try:
                 mapped = {}
@@ -471,7 +479,7 @@ class OrderService:
                 errors.append({"row": row_idx, "error": str(exc), "data": row_data})
 
         # Process Daily Tracking sheet
-        for row_idx, row_data in iter_sheet_rows(tracking_sheet):
+        for row_idx, row_data in iter_sheet_rows(tracking_sheet, "Daily Tracking"):
             tracking_rows += 1
             try:
                 mapped = {}
@@ -528,11 +536,21 @@ class OrderService:
             except Exception as exc:
                 errors.append({"row": row_idx, "error": str(exc), "data": row_data})
 
+        logger.info(
+            "Order tracking import: Master rows=%s, Tracking rows=%s, created=%s, updated=%s, errors=%s",
+            master_rows, tracking_rows, created, updated, len(errors),
+        )
+        for i, err in enumerate(errors[:5]):
+            logger.warning("Order tracking import error [%s]: row=%s %s | data keys=%s", i + 1, err.get("row"), err.get("error"), list(err.get("data") or {}).keys())
+        if len(errors) > 5:
+            logger.warning("Order tracking import: ... and %s more errors", len(errors) - 5)
+
         try:
             self.db.commit()
         except Exception as exc:
             self.db.rollback()
             errors.append({"row": None, "error": f"Database error: {exc}", "data": None})
+            logger.exception("Order tracking import: database commit failed")
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
         try:
@@ -563,7 +581,9 @@ class OrderService:
             "created": created,
             "updated": updated,
             "errors": errors,
-            "kpi_warnings": kpi_warnings
+            "kpi_warnings": kpi_warnings,
+            "master_rows": master_rows,
+            "tracking_rows": tracking_rows,
         }
 
 

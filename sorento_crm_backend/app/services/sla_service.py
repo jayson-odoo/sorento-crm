@@ -11,26 +11,61 @@ from app.schemas.sla import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
 
+# Malaysia timezone (UTC+8) for all SLA timestamps
+MALAYSIA_TZ = timezone(timedelta(hours=8))
 
-def to_naive_datetime(dt: datetime) -> datetime:
-    """Convert timezone-aware datetime to naive datetime (UTC+8).
-    
-    Database stores timestamps as naive (no timezone), but they represent UTC+8 time.
-    This function converts a timezone-aware datetime to a naive datetime by:
-    1. Converting to UTC+8 if it has timezone info
-    2. Removing timezone info to make it naive
-    
-    For naive datetimes, returns as-is (assumes they're already in UTC+8).
+# Optional: set USE_REMOTE_TIME=1 to get "now" from a time API (avoids server clock drift)
+_REMOTE_TIME_URL = "https://worldtimeapi.org/api/timezone/Etc/UTC"
+
+
+def _utc_now_from_remote() -> Optional[datetime]:
+    """Fetch current UTC from a time API. Returns None on any failure."""
+    try:
+        import urllib.request
+        import json
+        with urllib.request.urlopen(_REMOTE_TIME_URL, timeout=3) as r:
+            data = json.loads(r.read().decode())
+            # e.g. "2026-02-06T04:06:36.123456+00:00"
+            s = data.get("datetime") or data.get("utc_datetime")
+            if s:
+                return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        pass
+    return None
+
+
+def now_malaysia() -> datetime:
+    """Current time in Malaysia (UTC+8). Use for all SLA 'now' timestamps so DB shows Malaysia time.
+    If USE_REMOTE_TIME=1, fetches UTC from a time API first (use when server clock is wrong).
+    """
+    import os
+    if os.environ.get("USE_REMOTE_TIME", "").strip() == "1":
+        utc = _utc_now_from_remote()
+        if utc is not None:
+            return utc.astimezone()
+    return datetime.now()
+
+
+def to_aware_utc8(dt: Optional[datetime]) -> Optional[datetime]:
+    """Convert datetime to timezone-aware Malaysia (UTC+8) for DB storage.
+    Naive datetimes are treated as Malaysia time. Use before writing to timestamptz.
     """
     if dt is None:
         return None
     if dt.tzinfo is None:
-        # Already naive, return as-is (assume it's already in UTC+8)
+        return dt.replace(tzinfo=MALAYSIA_TZ)
+    return dt.astimezone(MALAYSIA_TZ)
+
+
+def to_naive_datetime(dt: datetime) -> datetime:
+    """Convert timezone-aware datetime to naive datetime (Malaysia UTC+8).
+    For naive datetimes, returns as-is (assumes they're already Malaysia time).
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
         return dt
-    # Convert to UTC+8 (Malaysia/Singapore timezone)
-    utc8 = timezone(timedelta(hours=8))
-    dt_utc8 = dt.astimezone(utc8)
-    # Return naive datetime (timezone info removed)
+    dt_utc8 = dt.astimezone(MALAYSIA_TZ)
     return dt_utc8.replace(tzinfo=None)
 
 
@@ -206,6 +241,88 @@ class SLAPolicyTierService:
         return {"message": "SLA policy tier deleted successfully"}
 
 
+def _now_utc() -> datetime:
+    """Current time as timezone-aware UTC for DB storage and duration math."""
+    return datetime.now(timezone.utc)
+
+
+def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Convert to timezone-aware UTC for DB storage and duration calculations. Naive treated as UTC."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def compute_tracking_timings(tracking, tier) -> dict:
+    """
+    Compute time-in-tier and time-remaining for response and resolution.
+    Response timers stop when is_responded=True; resolution timers stop when is_resolved=True.
+    Returns dict with time_in_tier_response_seconds, time_remaining_response_seconds,
+    time_in_tier_resolution_seconds, time_remaining_resolution_seconds, resolution_due_at.
+    """
+    if tier is None:
+        return {
+            "time_in_tier_response_seconds": None,
+            "time_remaining_response_seconds": None,
+            "time_in_tier_resolution_seconds": None,
+            "time_remaining_resolution_seconds": None,
+            "resolution_due_at": None,
+        }
+    now = _now_utc()
+    initiated_at = _to_aware_utc(tracking.initiated_at)
+    current_tier_started_at = _to_aware_utc(tracking.current_tier_started_at)
+    due_at = _to_aware_utc(tracking.due_at)
+    responded_at = _to_aware_utc(tracking.responded_at)
+    resolved_at = _to_aware_utc(tracking.resolved_at)
+    due_at_resolution = _to_aware_utc(getattr(tracking, "due_at_resolution", None))
+    resolution_hours = getattr(tier, "resolution_hours", None) or 24
+    resolution_due_at = due_at_resolution if due_at_resolution is not None else (
+        (initiated_at + timedelta(hours=resolution_hours)) if initiated_at else None
+    )
+
+    # Time in tier (response): if responded = responded_at - initiated_at; else timer keeps counting
+    if tracking.is_responded and responded_at and initiated_at:
+        time_in_tier_response_seconds = (responded_at - initiated_at).total_seconds()
+    elif current_tier_started_at:
+        time_in_tier_response_seconds = (now - current_tier_started_at).total_seconds()
+    else:
+        time_in_tier_response_seconds = None
+
+    # Time remaining for response (0 when is_responded)
+    if tracking.is_responded:
+        time_remaining_response_seconds = 0.0
+    elif due_at:
+        time_remaining_response_seconds = max(0.0, (due_at - now).total_seconds())
+    else:
+        time_remaining_response_seconds = None
+
+    # Time in tier (resolution): if resolved = resolved_at - initiated_at; else timer keeps counting
+    if tracking.is_resolved and resolved_at and initiated_at:
+        time_in_tier_resolution_seconds = (resolved_at - initiated_at).total_seconds()
+    elif initiated_at:
+        time_in_tier_resolution_seconds = (now - initiated_at).total_seconds()
+    else:
+        time_in_tier_resolution_seconds = None
+
+    # Time remaining for resolution (0 when is_resolved)
+    if tracking.is_resolved:
+        time_remaining_resolution_seconds = 0.0
+    elif resolution_due_at:
+        time_remaining_resolution_seconds = max(0.0, (resolution_due_at - now).total_seconds())
+    else:
+        time_remaining_resolution_seconds = None
+
+    return {
+        "time_in_tier_response_seconds": time_in_tier_response_seconds,
+        "time_remaining_response_seconds": time_remaining_response_seconds,
+        "time_in_tier_resolution_seconds": time_in_tier_resolution_seconds,
+        "time_remaining_resolution_seconds": time_remaining_resolution_seconds,
+        "resolution_due_at": resolution_due_at,
+    }
+
+
 class ConversationSLATrackingService:
     """Service for conversation SLA tracking operations."""
     
@@ -272,6 +389,7 @@ class ConversationSLATrackingService:
                 "initiated_at": track.initiated_at,
                 "current_tier_started_at": track.current_tier_started_at,
                 "due_at": track.due_at,
+                "due_at_resolution": getattr(track, "due_at_resolution", None),
                 "escalated_at": track.escalated_at,
                 "escalation_reason": track.escalation_reason,
                 "is_responded": track.is_responded,
@@ -312,7 +430,15 @@ class ConversationSLATrackingService:
                 "resolved_by_user_name": resolved_by_user_name,
                 "event_logs": []  # Initialize as empty
             }
-            
+            # Compute time-in-tier and time-remaining (response stops when is_responded, resolution when is_resolved)
+            tier = self.db.query(SLAPolicyTier).filter(
+                SLAPolicyTier.policy_id == track.policy_id,
+                SLAPolicyTier.tier_level == track.current_tier,
+            ).first()
+            track_dict.update(compute_tracking_timings(track, tier))
+            track_dict["tier_response_hours"] = tier.response_hours if tier else None
+            track_dict["tier_resolution_hours"] = getattr(tier, "resolution_hours", None) if tier else None
+
             # Try to load event_logs if relationship exists
             try:
                 if hasattr(track, 'event_logs'):
@@ -416,23 +542,17 @@ class ConversationSLATrackingService:
                 )
             tracking_dict["assigned_to_id"] = user.id
 
-        # Auto-populate initiated_at and current_tier_started_at to now if not provided
-        # Store as naive datetime (no timezone) - represents UTC+8 time
-        now_utc = datetime.now(timezone.utc)
-        now_naive = to_naive_datetime(now_utc)
+        # Auto-populate initiated_at and current_tier_started_at to now (UTC)
+        now_utc = _now_utc()
         if not tracking_dict.get("initiated_at"):
-            tracking_dict["initiated_at"] = now_naive
+            tracking_dict["initiated_at"] = now_utc
         else:
-            # Convert provided initiated_at to naive if it has timezone
-            if isinstance(tracking_dict["initiated_at"], datetime) and tracking_dict["initiated_at"].tzinfo:
-                tracking_dict["initiated_at"] = to_naive_datetime(tracking_dict["initiated_at"])
-        
+            tracking_dict["initiated_at"] = _to_aware_utc(tracking_dict["initiated_at"])
+
         if not tracking_dict.get("current_tier_started_at"):
-            tracking_dict["current_tier_started_at"] = now_naive
+            tracking_dict["current_tier_started_at"] = now_utc
         else:
-            # Convert provided current_tier_started_at to naive if it has timezone
-            if isinstance(tracking_dict["current_tier_started_at"], datetime) and tracking_dict["current_tier_started_at"].tzinfo:
-                tracking_dict["current_tier_started_at"] = to_naive_datetime(tracking_dict["current_tier_started_at"])
+            tracking_dict["current_tier_started_at"] = _to_aware_utc(tracking_dict["current_tier_started_at"])
 
         # Reset escalation and resolution fields
         tracking_dict["escalated_at"] = None
@@ -460,16 +580,19 @@ class ConversationSLATrackingService:
                 f"SLA policy tier {tracking_dict['current_tier']} not found for policy {tracking_dict['policy_id']}"
             )
 
-        # Calculate due_at from current_tier_started_at + tier.response_hours
-        # Ensure current_tier_started_at is naive datetime
-        current_tier_started_at = tracking_dict["current_tier_started_at"]
-        if isinstance(current_tier_started_at, str):
-            current_tier_started_at = datetime.fromisoformat(current_tier_started_at.replace('Z', '+00:00'))
-        # Convert to naive if it has timezone info
-        current_tier_started_at = to_naive_datetime(current_tier_started_at) if current_tier_started_at.tzinfo else current_tier_started_at
-        
-        due_at = current_tier_started_at + timedelta(hours=tier.response_hours)
-        tracking_dict["due_at"] = to_naive_datetime(due_at) if isinstance(due_at, datetime) and due_at.tzinfo else due_at
+        # Calculate due_at (response) and due_at_resolution from tier (UTC)
+        current_tier_started_at = _to_aware_utc(tracking_dict["current_tier_started_at"])
+        initiated_at_utc = _to_aware_utc(tracking_dict["initiated_at"])
+        response_hours = tier.response_hours if tier.response_hours is not None else 24
+        resolution_hours = getattr(tier, "resolution_hours", None) or 24
+        if current_tier_started_at:
+            tracking_dict["due_at"] = current_tier_started_at + timedelta(hours=response_hours)
+        else:
+            tracking_dict["due_at"] = None
+        if initiated_at_utc:
+            tracking_dict["due_at_resolution"] = initiated_at_utc + timedelta(hours=resolution_hours)
+        else:
+            tracking_dict["due_at_resolution"] = None
 
         # Check if tracking already exists for this contact
         existing = self.db.query(ConversationSLATracking).filter(
@@ -487,26 +610,30 @@ class ConversationSLATrackingService:
                 if key not in preserve_fields:
                     setattr(existing, key, value)
             
-            # Always recalculate due_at based on current_tier_started_at and tier
+            # Always recalculate due_at and due_at_resolution based on tier (UTC)
             tier = self.db.query(SLAPolicyTier).filter(
                 SLAPolicyTier.policy_id == tracking_dict["policy_id"],
                 SLAPolicyTier.tier_level == tracking_dict["current_tier"]
             ).first()
             if tier:
-                current_tier_started_at = tracking_dict["current_tier_started_at"]
-                if isinstance(current_tier_started_at, str):
-                    current_tier_started_at = datetime.fromisoformat(current_tier_started_at.replace('Z', '+00:00'))
-                # Convert to naive if it has timezone info
-                current_tier_started_at = to_naive_datetime(current_tier_started_at) if current_tier_started_at.tzinfo else current_tier_started_at
-                due_at = current_tier_started_at + timedelta(hours=tier.response_hours)
-                existing.due_at = to_naive_datetime(due_at) if isinstance(due_at, datetime) and due_at.tzinfo else due_at
+                current_tier_started_at = _to_aware_utc(tracking_dict["current_tier_started_at"])
+                initiated_at_utc = _to_aware_utc(tracking_dict["initiated_at"])
+                res_hours = getattr(tier, "resolution_hours", None) or 24
+                if current_tier_started_at:
+                    existing.due_at = current_tier_started_at + timedelta(hours=(tier.response_hours or 24))
+                if initiated_at_utc:
+                    existing.due_at_resolution = initiated_at_utc + timedelta(hours=res_hours)
             
             self.db.commit()
             self.db.refresh(existing)
             return existing
         
-        # Create new tracking record
+        # Create new tracking record (set due_at_resolution explicitly so it is never omitted)
         tracking = ConversationSLATracking(**tracking_dict)
+        if tracking_dict.get("due_at_resolution") is not None:
+            tracking.due_at_resolution = tracking_dict["due_at_resolution"]
+        if tracking_dict.get("due_at") is not None:
+            tracking.due_at = tracking_dict["due_at"]
         self.db.add(tracking)
         self.db.commit()
         self.db.refresh(tracking)
@@ -535,43 +662,38 @@ class ConversationSLATrackingService:
                 )
             update_data["assigned_to_id"] = user.id
         
-        # Smart handling for is_responded
-        if update_data.get("is_responded") is True:
+        # Coerce flags to bool for consistent handling (e.g. JSON "true", 1, or string "true")
+        is_responded = update_data.get("is_responded")
+        is_responded = is_responded is True or (isinstance(is_responded, str) and is_responded.lower() in ("true", "1")) or is_responded == 1
+        is_resolved = update_data.get("is_resolved")
+        is_resolved = is_resolved is True or (isinstance(is_resolved, str) and is_resolved.lower() in ("true", "1")) or is_resolved == 1
+        # If client sent resolved_by or resolved_at without is_resolved, treat as marking resolved
+        if not is_resolved and (update_data.get("resolved_by") or ("resolved_at" in update_data and update_data.get("resolved_at") is not None)):
+            is_resolved = True
+
+        # Smart handling for is_responded (same as responded_at / responded_by)
+        if is_responded:
             if tracking.is_responded:
                 raise handle_validation_error("Conversation is already responded.")
-            # Auto-set responded_at to now if not provided
-            # Store as naive datetime (no timezone) - represents UTC+8 time
+            update_data["is_responded"] = True
+            # Auto-set responded_at to now (UTC)
             if "responded_at" not in update_data or update_data.get("responded_at") is None:
-                now_utc = datetime.now(timezone.utc)
-                update_data["responded_at"] = to_naive_datetime(now_utc)
+                update_data["responded_at"] = _now_utc()
             
-            # Auto-calculate response_time from initiated_at to responded_at
+            # Auto-calculate response_time from initiated_at to responded_at (UTC)
             if "response_time" not in update_data or update_data.get("response_time") is None:
                 responded_at = update_data["responded_at"]
                 if isinstance(responded_at, str):
                     responded_at = datetime.fromisoformat(responded_at.replace('Z', '+00:00'))
-                # Convert to naive if it has timezone info, then treat as UTC+8 for calculation
-                if responded_at.tzinfo:
-                    responded_at = to_naive_datetime(responded_at)
-                # Treat naive datetime as UTC+8 for calculation
-                responded_at_utc8 = responded_at.replace(tzinfo=timezone(timedelta(hours=8)))
-                
+                responded_at_utc = _to_aware_utc(responded_at)
                 initiated_at = tracking.initiated_at
-                if initiated_at:
-                    # Treat naive datetime as UTC+8 for calculation
-                    if isinstance(initiated_at, datetime) and not initiated_at.tzinfo:
-                        initiated_at_utc8 = initiated_at.replace(tzinfo=timezone(timedelta(hours=8)))
-                    else:
-                        initiated_at_utc8 = initiated_at if initiated_at.tzinfo else initiated_at.replace(tzinfo=timezone(timedelta(hours=8)))
-                    
+                if initiated_at and responded_at_utc:
+                    initiated_at_utc_val = _to_aware_utc(initiated_at)
                     from decimal import Decimal, ROUND_HALF_UP
-                    duration = (responded_at_utc8 - initiated_at_utc8).total_seconds() / 3600
-                    update_data["response_time"] = Decimal(str(duration)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                
-                # Ensure responded_at is stored as naive
-                update_data["responded_at"] = responded_at if not responded_at.tzinfo else to_naive_datetime(responded_at)
+                    duration = (responded_at_utc - initiated_at_utc_val).total_seconds() / 3600
+                    update_data["response_time"] = Decimal(str(max(0, duration))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             
-            # Resolve responded_by to user ID if provided as respond_user_id
+            # Resolve responded_by to user UUID (users.id); accept respond_user_id, email, or id
             if "responded_by" in update_data and update_data.get("responded_by"):
                 responded_by_value = str(update_data["responded_by"]).strip()
                 responded_by_user = self.db.query(User).filter(
@@ -583,7 +705,6 @@ class ConversationSLATrackingService:
                     raise handle_validation_error(
                         f"User not found for responded_by (respond_user_id): {responded_by_value}"
                     )
-                # Store the user ID
                 update_data["responded_by"] = responded_by_user.id
         elif update_data.get("is_responded") is False:
             # If setting is_responded to False, clear response fields
@@ -591,39 +712,30 @@ class ConversationSLATrackingService:
             update_data["response_time"] = None
             update_data["responded_by"] = None
         
-        # Smart handling for is_resolved (mirror is_responded: auto-set resolved_at, resolution_duration)
-        if update_data.get("is_resolved") is True:
+        # Smart handling for is_resolved (same pattern: resolved_at, resolution_duration, resolved_by as user UUID)
+        if is_resolved:
             if tracking.is_resolved:
                 raise handle_validation_error("Conversation is already resolved.")
-            # Auto-set resolved_at to now if not provided
+            update_data["is_resolved"] = True
+            # Always set resolved_at when marking resolved (UTC)
             if "resolved_at" not in update_data or update_data.get("resolved_at") is None:
-                now_utc = datetime.now(timezone.utc)
-                update_data["resolved_at"] = to_naive_datetime(now_utc)
+                update_data["resolved_at"] = _now_utc()
             
-            # Auto-calculate resolution_duration from initiated_at to resolved_at (same as response_time)
+            # Auto-calculate resolution_duration from initiated_at to resolved_at (UTC)
             if "resolution_duration" not in update_data or update_data.get("resolution_duration") is None:
                 resolved_at = update_data["resolved_at"]
                 if isinstance(resolved_at, str):
                     resolved_at = datetime.fromisoformat(resolved_at.replace('Z', '+00:00'))
-                if resolved_at.tzinfo:
-                    resolved_at = to_naive_datetime(resolved_at)
-                resolved_at_utc8 = resolved_at.replace(tzinfo=timezone(timedelta(hours=8)))
-                
+                resolved_at_utc = _to_aware_utc(resolved_at)
                 initiated_at = tracking.initiated_at
-                if initiated_at:
-                    if isinstance(initiated_at, datetime) and not initiated_at.tzinfo:
-                        initiated_at_utc8 = initiated_at.replace(tzinfo=timezone(timedelta(hours=8)))
-                    else:
-                        initiated_at_utc8 = initiated_at if initiated_at.tzinfo else initiated_at.replace(tzinfo=timezone(timedelta(hours=8)))
-                    
+                if initiated_at and resolved_at_utc:
+                    initiated_at_utc_val = _to_aware_utc(initiated_at)
                     from decimal import Decimal, ROUND_HALF_UP
-                    duration = (resolved_at_utc8 - initiated_at_utc8).total_seconds() / 3600
-                    update_data["resolution_duration"] = Decimal(str(duration)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                
-                update_data["resolved_at"] = resolved_at if not resolved_at.tzinfo else to_naive_datetime(resolved_at)
+                    duration = (resolved_at_utc - initiated_at_utc_val).total_seconds() / 3600
+                    update_data["resolution_duration"] = Decimal(str(max(0, duration))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             
-            # Resolve resolved_by to user ID if provided (respond_user_id, id, or email)
-            if "resolved_by" in update_data and update_data.get("resolved_by"):
+            # Resolve resolved_by to user UUID (users.id); accept respond_user_id (e.g. 971724), email, or id
+            if "resolved_by" in update_data and update_data.get("resolved_by") is not None:
                 resolved_by_value = str(update_data["resolved_by"]).strip()
                 resolved_by_user = self.db.query(User).filter(
                     (User.respond_user_id == resolved_by_value) |
@@ -638,16 +750,19 @@ class ConversationSLATrackingService:
         elif update_data.get("is_resolved") is False:
             # If setting is_resolved to False, clear resolution fields
             update_data["resolved_at"] = None
-            update_data["resolved_by"] = None
             update_data["resolution_duration"] = None
+            update_data["resolved_by"] = None
         
-        # Convert all datetime fields to naive (no timezone) before storing
-        datetime_fields = ["initiated_at", "current_tier_started_at", "due_at", "escalated_at", 
+        # Convert all datetime fields to timezone-aware UTC before storing
+        datetime_fields = ["initiated_at", "current_tier_started_at", "due_at", "due_at_resolution", "escalated_at",
                           "responded_at", "resolved_at"]
         for field in datetime_fields:
             if field in update_data and update_data[field] is not None:
-                if isinstance(update_data[field], datetime) and update_data[field].tzinfo:
-                    update_data[field] = to_naive_datetime(update_data[field])
+                dt = update_data[field]
+                if isinstance(dt, str):
+                    dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
+                if isinstance(dt, datetime):
+                    update_data[field] = _to_aware_utc(dt)
         
         # Apply all updates
         for key, value in update_data.items():
@@ -696,15 +811,13 @@ class ConversationSLATrackingService:
             if user:
                 log_dict["assigned_to_id"] = user.id
         
-        # Auto-populate event_at to now if not provided
-        # Store as naive datetime (no timezone) - represents UTC+8 time
+        # Auto-populate event_at to now (UTC)
         if not log_dict.get("event_at"):
-            now_utc = datetime.now(timezone.utc)
-            log_dict["event_at"] = to_naive_datetime(now_utc)
+            log_dict["event_at"] = _now_utc()
         else:
-            # Convert provided event_at to naive if it has timezone info
-            if isinstance(log_dict.get("event_at"), datetime) and log_dict["event_at"].tzinfo:
-                log_dict["event_at"] = to_naive_datetime(log_dict["event_at"])
+            dt = log_dict.get("event_at")
+            if isinstance(dt, datetime):
+                log_dict["event_at"] = _to_aware_utc(dt)
         
         # For response or resolution events, auto-populate from_time and duration
         event_type = log_dict.get("event_type", "").lower()
@@ -715,38 +828,23 @@ class ConversationSLATrackingService:
             ).first()
             
             if tracking and tracking.initiated_at:
-                # Set from_time to initiated_at (convert to naive)
+                # Set from_time to initiated_at (UTC)
                 initiated_at = tracking.initiated_at
-                if isinstance(initiated_at, datetime) and initiated_at.tzinfo:
-                    pass
-                elif isinstance(initiated_at, datetime) and not initiated_at.tzinfo:
-                    # Already naive, use as-is
-                    pass
-                else:
-                    # Handle string conversion if needed
-                    if isinstance(initiated_at, str):
-                        initiated_at = datetime.fromisoformat(initiated_at.replace('Z', '+00:00'))
-                        if initiated_at.tzinfo:
-                            initiated_at = to_naive_datetime(initiated_at)
+                if isinstance(initiated_at, str):
+                    initiated_at = datetime.fromisoformat(initiated_at.replace('Z', '+00:00'))
+                log_dict["from_time"] = _to_aware_utc(initiated_at) if isinstance(initiated_at, datetime) else initiated_at
                 
-                log_dict["from_time"] = initiated_at
-                
-                # Calculate duration from initiated_at to event_at
+                # Calculate duration from initiated_at to event_at (UTC)
                 event_at = log_dict["event_at"]
                 if isinstance(event_at, str):
                     event_at = datetime.fromisoformat(event_at.replace('Z', '+00:00'))
-                    if event_at.tzinfo:
-                        event_at = to_naive_datetime(event_at)
-                
-                # Treat both as UTC+8 for calculation
-                utc8 = timezone(timedelta(hours=8))
-                initiated_at_utc8 = initiated_at.replace(tzinfo=utc8) if not initiated_at.tzinfo else initiated_at
-                event_at_utc8 = event_at.replace(tzinfo=utc8) if not event_at.tzinfo else event_at
-                
-                # Calculate duration in hours
-                duration_seconds = (event_at_utc8 - initiated_at_utc8).total_seconds()
-                duration_hours = Decimal(str(duration_seconds / 3600)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                log_dict["duration"] = duration_hours
+                initiated_at_utc = _to_aware_utc(initiated_at)
+                event_at_utc = _to_aware_utc(event_at)
+                if initiated_at_utc and event_at_utc:
+                    duration_seconds = (event_at_utc - initiated_at_utc).total_seconds()
+                    duration_seconds = max(0.0, duration_seconds)  # clamp for bad legacy data
+                    duration_hours = Decimal(str(duration_seconds / 3600)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    log_dict["duration"] = duration_hours
         
         log = ConversationSLAEventLog(**log_dict)
         self.db.add(log)
@@ -818,17 +916,16 @@ class ConversationSLATrackingService:
         # Calculate escalation rate
         escalation_rate = float(escalated_count / total_trackings * 100) if total_trackings > 0 else 0.0
         
-        # Response time trends (last 30 days)
-        from datetime import timezone
-        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        # Response time trends (last 30 days) — UTC
+        thirty_days_ago = _now_utc() - timedelta(days=30)
         recent_trackings = [
             t for t in all_trackings
-            if t.initiated_at and t.initiated_at.replace(tzinfo=timezone.utc) >= thirty_days_ago
+            if t.initiated_at and _to_aware_utc(t.initiated_at) >= thirty_days_ago
         ]
         
         response_time_trends = []
         for i in range(30):
-            date = datetime.now(timezone.utc) - timedelta(days=29 - i)
+            date = _now_utc() - timedelta(days=29 - i)
             date_str = date.date().isoformat()
             
             day_trackings = [

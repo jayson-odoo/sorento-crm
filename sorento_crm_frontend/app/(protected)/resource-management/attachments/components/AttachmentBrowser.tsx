@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  Row,
   RowSelectionState,
   SortingState,
   useReactTable,
@@ -291,8 +292,7 @@ export default function AttachmentBrowser() {
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
-    enableRowSelection: true,
-    getRowCanSelect: (row) => !row.original.is_deleted,
+    enableRowSelection: (row: Row<Attachment>) => !row.original.is_deleted,
   });
 
   return (

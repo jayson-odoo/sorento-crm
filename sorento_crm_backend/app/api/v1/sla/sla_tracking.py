@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
-from app.services.sla_service import ConversationSLATrackingService, to_naive_datetime
+from app.services.sla_service import ConversationSLATrackingService, to_naive_datetime, compute_tracking_timings
 from app.services.integration_service import IntegrationLogService
 from app.schemas.sla import (
     ConversationSLATrackingCreate,
@@ -20,7 +20,7 @@ from app.schemas.sla import (
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error, handle_validation_error
-from app.models.sla import ConversationSLATracking
+from app.models.sla import ConversationSLATracking, SLAPolicyTier
 
 router = APIRouter()
 
@@ -354,8 +354,7 @@ async def update_sla_tracking_status_integration(
 
         if update_data.is_responded and not update_data.responded_at:
             raise handle_validation_error("responded_at is required when is_responded is true.")
-        if update_data.is_resolved and not update_data.resolved_at:
-            raise handle_validation_error("resolved_at is required when is_resolved is true.")
+        # resolved_at is optional when is_resolved is true; service will set it to now if missing
 
         update_dict = update_data.model_dump(exclude_unset=True)
         update_dict.pop("response_time", None)
@@ -393,7 +392,7 @@ async def update_sla_tracking_status_integration(
             ))
 
         if update_data.is_resolved:
-            # Try to find user by resolved_by (might be name, email, or ID)
+            # Resolved_by is stored as user UUID by the service; look up for event log
             resolved_by_user_id = None
             if tracking.resolved_by:
                 from app.models.user import User
@@ -405,12 +404,14 @@ async def update_sla_tracking_status_integration(
                 ).first()
                 if resolved_user:
                     resolved_by_user_id = resolved_user.id
-            
-            # Convert resolved_at to UTC before creating event log
-            resolved_at_utc = update_data.resolved_at
+
+            # Use tracking.resolved_at (set by service if not sent) for event log
+            resolved_at_utc = update_data.resolved_at or getattr(tracking, "resolved_at", None)
             if isinstance(resolved_at_utc, datetime) and resolved_at_utc.tzinfo:
                 resolved_at_utc = resolved_at_utc.astimezone(timezone.utc)
-            
+            elif isinstance(resolved_at_utc, datetime) and not resolved_at_utc.tzinfo:
+                resolved_at_utc = resolved_at_utc.replace(tzinfo=timezone.utc)
+
             service.create_event_log(ConversationSLAEventLogCreate(
                 sla_tracking_id=tracking_id,
                 event_type="resolution",
@@ -606,11 +607,12 @@ async def get_sla_tracking_record(
                 }
                 event_logs_data.append(log_data)
                 
-                # Collect durations for average calculation
-                if log.event_type and log.event_type.lower() == "response" and log.duration is not None:
-                    response_durations.append(float(log.duration))
-                elif log.event_type and log.event_type.lower() == "resolution" and log.duration is not None:
-                    resolution_durations.append(float(log.duration))
+                # Collect durations for average calculation (only positive, to ignore legacy negative values)
+                d = float(log.duration) if log.duration is not None else None
+                if log.event_type and log.event_type.lower() == "response" and d is not None and d > 0:
+                    response_durations.append(d)
+                elif log.event_type and log.event_type.lower() == "resolution" and d is not None and d > 0:
+                    resolution_durations.append(d)
         
         # Calculate averages
         from decimal import Decimal, ROUND_HALF_UP
@@ -625,6 +627,15 @@ async def get_sla_tracking_record(
             avg = sum(resolution_durations) / len(resolution_durations)
             average_resolution_time = Decimal(str(avg)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         
+        # Time-in-tier and time-remaining (response stops when is_responded, resolution when is_resolved)
+        tier = db.query(SLAPolicyTier).filter(
+            SLAPolicyTier.policy_id == tracking.policy_id,
+            SLAPolicyTier.tier_level == tracking.current_tier,
+        ).first()
+        timings = compute_tracking_timings(tracking, tier)
+        tier_response_hours = tier.response_hours if tier else None
+        tier_resolution_hours = getattr(tier, "resolution_hours", None) if tier else None
+
         # Construct response dict
         response_dict = {
             "id": str(tracking.id),
@@ -635,6 +646,7 @@ async def get_sla_tracking_record(
             "initiated_at": tracking.initiated_at,
             "current_tier_started_at": tracking.current_tier_started_at,
             "due_at": tracking.due_at,
+            "due_at_resolution": tracking.due_at_resolution,
             "escalated_at": tracking.escalated_at,
             "escalation_reason": tracking.escalation_reason,
             "is_responded": tracking.is_responded,
@@ -676,6 +688,9 @@ async def get_sla_tracking_record(
             "average_response_time": average_response_time,
             "average_resolution_time": average_resolution_time,
             "event_logs": event_logs_data,
+            "tier_response_hours": tier_response_hours,
+            "tier_resolution_hours": tier_resolution_hours,
+            **timings,
         }
         
         return ConversationSLATrackingResponse.model_validate(response_dict)

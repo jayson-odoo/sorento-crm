@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { useCreateSLAPolicyTier, useUpdateSLAPolicyTier } from '../hooks/useSLAPolicies';
-import { SLAPolicyTierSchema, type SLAPolicyTierSchemaType } from '../forms/sla-policy-schema';
+import { SLAPolicyTierSchema, type SLAPolicyTierFormInputType } from '../forms/sla-policy-schema';
 import type { SLAPolicyTier } from '../types/slaPolicy.types';
 
 interface SLAPolicyTierDialogProps {
@@ -43,18 +43,23 @@ export default function SLAPolicyTierDialog({
   const createMutation = useCreateSLAPolicyTier();
   const updateMutation = useUpdateSLAPolicyTier();
   const [formInitialized, setFormInitialized] = useState(false);
+  // Local string state for number inputs so user can clear and type (e.g. 72) without being blocked
+  const [tierLevelStr, setTierLevelStr] = useState('');
+  const [responseHoursStr, setResponseHoursStr] = useState('');
+  const [resolutionHoursStr, setResolutionHoursStr] = useState('');
 
-  const form = useForm<SLAPolicyTierSchemaType>({
+  const form = useForm<SLAPolicyTierFormInputType>({
     resolver: zodResolver(SLAPolicyTierSchema),
     defaultValues: {
       tier_level: 1,
       tier_name: '',
       response_hours: 24,
+      resolution_hours: 24,
     },
     mode: 'onSubmit',
   });
 
-  // Load tier data when editing
+  // Load tier data when editing and sync local number strings
   useEffect(() => {
     if (tier && isEditMode && !formInitialized && open) {
       const timeoutId = setTimeout(() => {
@@ -62,7 +67,11 @@ export default function SLAPolicyTierDialog({
           tier_level: tier.tier_level,
           tier_name: tier.tier_name,
           response_hours: tier.response_hours,
+          resolution_hours: tier.resolution_hours ?? 24,
         });
+        setTierLevelStr(String(tier.tier_level));
+        setResponseHoursStr(String(tier.response_hours));
+        setResolutionHoursStr(String(tier.resolution_hours ?? 24));
         setFormInitialized(true);
       }, 0);
 
@@ -72,37 +81,50 @@ export default function SLAPolicyTierDialog({
         tier_level: 1,
         tier_name: '',
         response_hours: 24,
+        resolution_hours: 24,
       });
+      setTierLevelStr('1');
+      setResponseHoursStr('24');
+      setResolutionHoursStr('24');
       setFormInitialized(true);
     }
   }, [tier, isEditMode, form, open, formInitialized]);
 
-  // Reset formInitialized when dialog closes
+  // Reset formInitialized and local number strings when dialog closes
   useEffect(() => {
     if (!open) {
       setFormInitialized(false);
+      setTierLevelStr('');
+      setResponseHoursStr('');
+      setResolutionHoursStr('');
     }
   }, [open]);
 
-  const onSubmit = async (data: SLAPolicyTierSchemaType) => {
+  const onSubmit = async (data: SLAPolicyTierFormInputType) => {
+    // Use local number strings so values are correct; allow empty -> 1
+    const tierLevel = Math.max(1, parseInt(tierLevelStr, 10) || 1);
+    const responseHours = Math.max(1, parseInt(responseHoursStr, 10) || 1);
+    const resolutionHours = Math.max(1, parseInt(resolutionHoursStr, 10) || 1);
     try {
       if (isEditMode && tier) {
         await updateMutation.mutateAsync({
           policyId,
           tierId: tier.id,
           data: {
-            tier_level: data.tier_level,
+            tier_level: tierLevel,
             tier_name: data.tier_name,
-            response_hours: data.response_hours,
+            response_hours: responseHours,
+            resolution_hours: resolutionHours,
           },
         });
       } else {
         await createMutation.mutateAsync({
           policyId,
           data: {
-            tier_level: data.tier_level,
+            tier_level: tierLevel,
             tier_name: data.tier_name,
-            response_hours: data.response_hours,
+            response_hours: responseHours,
+            resolution_hours: resolutionHours,
           },
         });
       }
@@ -138,14 +160,15 @@ export default function SLAPolicyTierDialog({
                   <FormLabel>Tier Level *</FormLabel>
                   <FormControl>
                     <Input
-                      type="number"
+                      type="text"
+                      inputMode="numeric"
                       placeholder="1"
                       {...field}
-                      value={field.value}
-                      onChange={(e) => field.onChange(parseInt(e.target.value, 10) || 1)}
-                      disabled={isEditMode}
+                      value={tierLevelStr}
+                      onChange={(e) => setTierLevelStr(e.target.value.replace(/\D/g, ''))}
                     />
                   </FormControl>
+                  <p className="text-xs text-muted-foreground">Escalation order (1 = first tier).</p>
                   <FormMessage />
                 </FormItem>
               )}
@@ -176,13 +199,37 @@ export default function SLAPolicyTierDialog({
                   <FormLabel>Response Hours *</FormLabel>
                   <FormControl>
                     <Input
-                      type="number"
-                      placeholder="24"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="e.g. 24 or 72"
                       {...field}
-                      value={field.value}
-                      onChange={(e) => field.onChange(parseInt(e.target.value, 10) || 1)}
+                      value={responseHoursStr}
+                      onChange={(e) => setResponseHoursStr(e.target.value.replace(/\D/g, ''))}
                     />
                   </FormControl>
+                  <p className="text-xs text-muted-foreground">Conversation must be responded within this many hours (e.g. 24, 72).</p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="resolution_hours"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Resolution Hours *</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="e.g. 24 or 72"
+                      {...field}
+                      value={resolutionHoursStr}
+                      onChange={(e) => setResolutionHoursStr(e.target.value.replace(/\D/g, ''))}
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">Conversation must be resolved within this many hours (KPI for resolution time; e.g. 24, 72).</p>
                   <FormMessage />
                 </FormItem>
               )}

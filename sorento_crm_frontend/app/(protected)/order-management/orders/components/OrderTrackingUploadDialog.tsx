@@ -86,9 +86,10 @@ export function OrderTrackingUploadDialog({
       const importResult = await onUpload(file);
       setProgress(100);
       // Job has been queued - show success message and close dialog
-      toast.success('Import job queued successfully. Processing in background. Please refresh after a while to see results.', {
-        duration: 5000,
-      });
+      toast.success(
+        'Import job queued. Check the backend terminal for the import log (rows read, created, updated, errors). Refresh the page after a moment to see updated orders.',
+        { duration: 8000 }
+      );
       onOpenChange(false);
       setFile(null);
       setSheetSummary(null);

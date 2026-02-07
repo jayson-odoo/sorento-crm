@@ -138,6 +138,22 @@ export function parseNaiveDateTimeAsLocal(dateString: string | Date): Date {
   return new Date(cleanString);
 }
 
+/**
+ * Parse API datetime string as UTC (backend sends naive UTC strings).
+ * Use for duration calculations so (responded_at - initiated_at) is correct.
+ */
+export function parseDateTimeAsUTC(dateString: string | Date): Date {
+  if (dateString instanceof Date) {
+    return dateString;
+  }
+  const s = String(dateString).trim();
+  if (!s) return new Date(NaN);
+  if (s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s)) {
+    return new Date(s);
+  }
+  return new Date(s + 'Z');
+}
+
 export function formatDateTime(input: Date | string | number): string {
   // Always use parseNaiveDateTimeAsLocal to handle naive and UTC dates correctly
   const date = typeof input === 'string'
@@ -175,6 +191,24 @@ export function formatDuration(milliseconds: number): string {
   if (minutes > 0) parts.push(`${minutes}m`);
   if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
   
+  const formatted = parts.join(' ');
+  return isNegative ? `-${formatted}` : formatted;
+}
+
+/**
+ * Format a duration in milliseconds to a string that always includes seconds (e.g. "1h 2m 0s", "2m 35s")
+ */
+export function formatDurationWithSeconds(milliseconds: number): string {
+  const isNegative = milliseconds < 0;
+  const absMs = Math.abs(milliseconds);
+  const totalSeconds = Math.floor(absMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
   const formatted = parts.join(' ');
   return isNegative ? `-${formatted}` : formatted;
 }

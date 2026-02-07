@@ -26,6 +26,7 @@ export interface SLAPolicyTier {
   tier_level: number;
   tier_name: string;
   response_hours: number;
+  resolution_hours: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -34,4 +35,5 @@ export interface SLAPolicyTierFormData {
   tier_level: number;
   tier_name: string;
   response_hours: number;
+  resolution_hours: number;
 }

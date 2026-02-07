@@ -57,7 +57,7 @@ export interface OrderFormData {
   order_date: Date;
   promised_delivery_date?: Date;
   actual_delivery_date?: Date;
-  customer_id: string;
+  customer_id?: string | null;
   order_status_id: string;
   billing_address_id?: string;
   shipping_address_id?: string;

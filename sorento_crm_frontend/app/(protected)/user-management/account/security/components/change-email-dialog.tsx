@@ -14,7 +14,7 @@ import {
   CardHeading,
   CardTitle,
 } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogTitle } from '@/components/ui/dialog';
 import {
   Form,
   FormControl,
@@ -90,6 +90,7 @@ const ChangeEmailDialog = ({
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent>
+        <DialogTitle className="sr-only">Change Email</DialogTitle>
         <CardHeader className="py-5">
           <CardHeading>
             <CardTitle>Change Email</CardTitle>

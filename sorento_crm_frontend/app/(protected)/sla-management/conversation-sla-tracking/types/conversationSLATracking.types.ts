@@ -54,6 +54,14 @@ export interface ConversationSLATracking {
   resolved_by_user_name?: string | null;
   average_response_time?: number | null;
   average_resolution_time?: number | null;
+  // Time-in-tier and time-remaining (backend-computed; response stops when is_responded, resolution when is_resolved)
+  time_in_tier_response_seconds?: number | null;
+  time_remaining_response_seconds?: number | null;
+  time_in_tier_resolution_seconds?: number | null;
+  time_remaining_resolution_seconds?: number | null;
+  resolution_due_at?: Date | string | null;
+  tier_response_hours?: number | null;
+  tier_resolution_hours?: number | null;
 }
 
 export interface ConversationSLATrackingDetail extends ConversationSLATracking {

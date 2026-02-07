@@ -33,7 +33,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { useConversationSLATracking } from '../hooks/useConversationSLATracking';
 import type { ConversationSLATracking } from '../types/conversationSLATracking.types';
-import { formatDate, formatDateTime, formatDuration } from '@/lib/helpers';
+import { formatDate, formatDateTime, formatDuration, formatDurationWithSeconds } from '@/lib/helpers';
 import { apiFetch } from '@/lib/api';
 
 export default function ConversationSLATrackingList() {
@@ -77,7 +77,10 @@ export default function ConversationSLATrackingList() {
     router.push(`/sla-management/conversation-sla-tracking/${trackingId}`);
   };
 
-  const getTimeRemaining = (dueAt: Date) => {
+  const getTimeRemaining = (dueAt: Date, backendSeconds?: number | null) => {
+    if (backendSeconds !== undefined && backendSeconds !== null) {
+      return formatDuration(backendSeconds * 1000);
+    }
     const now = new Date();
     const due = new Date(dueAt);
     const diff = due.getTime() - now.getTime();
@@ -92,6 +95,15 @@ export default function ConversationSLATrackingList() {
     const remaining = due.getTime() - now.getTime();
     if (total <= 0) return 0;
     return Math.max(0, Math.min(100, (remaining / total) * 100));
+  };
+
+  const formatSecondsToDuration = (seconds: number | null | undefined) => {
+    if (seconds == null) return '—';
+    return formatDuration(seconds * 1000);
+  };
+  const formatSecondsToDurationWithSeconds = (seconds: number | null | undefined) => {
+    if (seconds == null) return '—';
+    return formatDurationWithSeconds(seconds * 1000);
   };
 
   const columns = useMemo<ColumnDef<ConversationSLATracking>[]>(
@@ -185,19 +197,41 @@ export default function ConversationSLATrackingList() {
         size: 180,
       },
       {
-        accessorKey: 'time_remaining',
-        header: ({ column }) => <DataGridColumnHeader title="Time Remaining" column={column} />,
+        accessorKey: 'time_elapsed',
+        header: ({ column }) => <DataGridColumnHeader title="Time elapsed" column={column} />,
         cell: ({ row }) => {
-          if (row.original.is_resolved) {
+          const o = row.original;
+          // When resolved: resolution time; when only responded: response time; else: live elapsed
+          const sec = o.is_resolved && o.resolution_duration != null
+            ? o.resolution_duration * 3600
+            : o.is_responded && o.response_time != null
+              ? o.response_time * 3600
+              : (o.time_in_tier_resolution_seconds ?? undefined);
+          return (
+            <span className="text-sm">
+              {formatSecondsToDurationWithSeconds(sec)}
+            </span>
+          );
+        },
+        size: 120,
+      },
+      {
+        accessorKey: 'time_remaining_response',
+        header: ({ column }) => <DataGridColumnHeader title="Time remaining (response)" column={column} />,
+        cell: ({ row }) => {
+          const o = row.original;
+          if (o.is_responded) {
+            const withinKpi = (o.response_time ?? 0) <= (o.tier_response_hours ?? 0);
+            const hours = o.response_time ?? 0;
+            const str = hours < 1 ? formatSecondsToDuration(hours * 3600) : `${hours.toFixed(1)}h`;
             return (
-              <div className="flex items-center gap-2">
-                <CheckCircle className="size-4 text-green-600" />
-                <span className="text-sm text-green-600">Resolved</span>
-              </div>
+              <span className={`text-sm font-medium ${withinKpi ? 'text-green-600' : 'text-destructive'}`}>
+                {str}
+              </span>
             );
           }
-          const timeRemaining = getTimeRemaining(row.original.due_at);
-          const percent = getTimeRemainingPercent(row.original.due_at, row.original.current_tier_started_at);
+          const timeRemaining = getTimeRemaining(o.due_at, o.time_remaining_response_seconds);
+          const percent = getTimeRemainingPercent(o.due_at, o.current_tier_started_at);
           const isOverdue = timeRemaining.startsWith('-');
           return (
             <div className="space-y-1 w-40">
@@ -212,6 +246,31 @@ export default function ConversationSLATrackingList() {
           );
         },
         size: 200,
+      },
+      {
+        accessorKey: 'time_remaining_resolution',
+        header: ({ column }) => <DataGridColumnHeader title="Time remaining (resolution)" column={column} />,
+        cell: ({ row }) => {
+          const o = row.original;
+          if (o.is_resolved) {
+            const withinKpi = (o.resolution_duration ?? 0) <= (o.tier_resolution_hours ?? 0);
+            const hours = o.resolution_duration ?? 0;
+            const str = hours < 1 ? formatSecondsToDuration(hours * 3600) : `${hours.toFixed(1)}h`;
+            return (
+              <span className={`text-sm font-medium ${withinKpi ? 'text-green-600' : 'text-destructive'}`}>
+                {str}
+              </span>
+            );
+          }
+          const sec = o.time_remaining_resolution_seconds;
+          const str = formatSecondsToDuration(sec ?? undefined);
+          return (
+            <span className="text-sm">
+              {str} left
+            </span>
+          );
+        },
+        size: 180,
       },
       {
         accessorKey: 'is_resolved',

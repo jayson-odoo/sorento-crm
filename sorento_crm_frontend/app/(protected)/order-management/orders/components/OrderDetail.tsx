@@ -66,7 +66,7 @@ export default function OrderDetail({ orderId }: OrderDetailProps) {
             )}
           </div>
           <p className="text-sm text-muted-foreground">
-            {order.customer?.customer_name || 'No customer'} • Order Date: {order.order_date ? formatDate(new Date(order.order_date)) : '-'}
+            {order.debtor_name || order.debtor_code || '—'} • Order Date: {order.order_date ? formatDate(new Date(order.order_date)) : '-'}
           </p>
         </div>
         <div className="flex gap-2">
@@ -113,11 +113,28 @@ export default function OrderDetail({ orderId }: OrderDetailProps) {
                 <p className="font-medium">{order.order_date ? formatDate(new Date(order.order_date)) : '-'}</p>
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Customer</p>
-                <p className="font-medium">{order.customer?.customer_name || '-'}</p>
-                {order.customer?.customer_code && (
-                  <p className="text-xs text-muted-foreground">Code: {order.customer.customer_code}</p>
-                )}
+                <p className="text-sm text-muted-foreground">Debtor Code</p>
+                <p className="font-medium">{order.debtor_code || '-'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Debtor Name</p>
+                <p className="font-medium">{order.debtor_name || '-'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Agent</p>
+                <p className="font-medium">{order.agent || '-'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Order Type</p>
+                <p className="font-medium">{order.order_type || '-'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Cancelled</p>
+                <p className="font-medium">{order.is_cancelled ? 'Yes' : 'No'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Remarks CS</p>
+                <p className="font-medium">{order.remarks_cs || '-'}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Order Status</p>
@@ -215,6 +232,10 @@ export default function OrderDetail({ orderId }: OrderDetailProps) {
             <div>
               <p className="text-sm text-muted-foreground">Order Type</p>
               <p className="font-medium">{order.order_type || '-'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Remarks CS</p>
+              <p className="font-medium">{order.remarks_cs || '-'}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Customer (Ref)</p>

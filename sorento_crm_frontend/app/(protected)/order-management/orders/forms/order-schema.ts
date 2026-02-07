@@ -8,7 +8,7 @@ export const OrderSchema = z.object({
   order_date: z.date({ required_error: 'Order date is required.' }),
   promised_delivery_date: z.date().optional().nullable(),
   actual_delivery_date: z.date().optional().nullable(),
-  customer_id: z.string().min(1, { message: 'Customer is required.' }),
+  customer_id: z.string().optional().nullable(),
   order_status_id: z.string().min(1, { message: 'Order status is required.' }),
   billing_address_id: z.string().optional().nullable(),
   shipping_address_id: z.string().optional().nullable(),

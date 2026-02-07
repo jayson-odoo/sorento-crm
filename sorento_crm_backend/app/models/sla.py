@@ -35,6 +35,7 @@ class SLAPolicyTier(Base):
     tier_level = Column(Integer, nullable=False)
     tier_name = Column(Text, nullable=False)
     response_hours = Column(Integer, nullable=False)
+    resolution_hours = Column(Integer, nullable=False, server_default="24")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     
@@ -56,7 +57,8 @@ class ConversationSLATracking(Base):
     assigned_to_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # FK to users
     initiated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     current_tier_started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    due_at = Column(DateTime(timezone=True), nullable=False)
+    due_at = Column(DateTime(timezone=True), nullable=False)  # Response deadline: current_tier_started_at + tier.response_hours
+    due_at_resolution = Column(DateTime(timezone=True), nullable=True)  # Resolution deadline: initiated_at + tier.resolution_hours
     escalated_at = Column(DateTime(timezone=True), nullable=True)
     escalation_reason = Column(Text, nullable=True)
     is_responded = Column(Boolean, default=False, nullable=False)

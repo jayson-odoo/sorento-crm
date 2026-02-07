@@ -20,17 +20,19 @@ export type SLAPolicySchemaType = z.infer<typeof SLAPolicySchema>;
 
 export const SLAPolicyTierSchema = z.object({
   tier_level: z
-    .number()
-    .int({ message: 'Tier level must be a whole number.' })
-    .min(1, { message: 'Tier level must be at least 1.' }),
+    .union([z.number().int().min(1), z.undefined()])
+    .transform((x) => (x === undefined ? 1 : x)),
   tier_name: z
     .string()
     .min(1, { message: 'Tier name is required.' })
     .max(255, { message: 'Tier name must not exceed 255 characters.' }),
   response_hours: z
-    .number()
-    .int({ message: 'Response hours must be a whole number.' })
-    .min(1, { message: 'Response hours must be at least 1.' }),
+    .union([z.number().int().min(1), z.undefined()])
+    .transform((x) => (x === undefined ? 1 : x)),
+  resolution_hours: z
+    .union([z.number().int().min(1), z.undefined()])
+    .transform((x) => (x === undefined ? 1 : x)),
 });
 
 export type SLAPolicyTierSchemaType = z.infer<typeof SLAPolicyTierSchema>;
+export type SLAPolicyTierFormInputType = z.input<typeof SLAPolicyTierSchema>;

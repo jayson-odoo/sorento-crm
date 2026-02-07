@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2 } from 'lucide-react';
+import { Edit, Trash2, FileDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { exportStockInquiryToExcel } from '../utils/exportStockInquiryToExcel';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -24,6 +25,17 @@ export default function StockInquiryDetail({
     isValidId ? inquiryId : null,
   );
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportExcel = async () => {
+    if (!inquiry) return;
+    setExporting(true);
+    try {
+      await exportStockInquiryToExcel(inquiry);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   if (!isValidId) {
     return (
@@ -80,6 +92,14 @@ export default function StockInquiryDetail({
           </p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={handleExportExcel}
+            disabled={exporting}
+          >
+            <FileDown className="size-4" />
+            {exporting ? 'Exporting…' : 'Export to Excel'}
+          </Button>
           <Button
             variant="outline"
             onClick={() =>

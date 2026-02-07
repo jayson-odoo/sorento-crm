@@ -81,9 +81,10 @@ export function useCreateSLAPolicyTier() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ policyId, data }: { policyId: string; data: SLAPolicyTierFormData }) => createSLAPolicyTier(policyId, data),
-    onSuccess: (_, variables) => {
+    onSuccess: async (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['sla-policy-tiers', variables.policyId] });
       queryClient.invalidateQueries({ queryKey: ['sla-policy', variables.policyId] });
+      await queryClient.refetchQueries({ queryKey: ['sla-policy-tiers', variables.policyId] });
       toast.success('SLA policy tier created successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to create SLA policy tier'),
@@ -94,9 +95,10 @@ export function useUpdateSLAPolicyTier() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ policyId, tierId, data }: { policyId: string; tierId: string; data: Partial<SLAPolicyTierFormData> }) => updateSLAPolicyTier(policyId, tierId, data),
-    onSuccess: (_, variables) => {
+    onSuccess: async (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['sla-policy-tiers', variables.policyId] });
       queryClient.invalidateQueries({ queryKey: ['sla-policy', variables.policyId] });
+      await queryClient.refetchQueries({ queryKey: ['sla-policy-tiers', variables.policyId] });
       toast.success('SLA policy tier updated successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to update SLA policy tier'),
@@ -107,9 +109,10 @@ export function useDeleteSLAPolicyTier() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ policyId, tierId }: { policyId: string; tierId: string }) => deleteSLAPolicyTier(policyId, tierId),
-    onSuccess: (_, variables) => {
+    onSuccess: async (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['sla-policy-tiers', variables.policyId] });
       queryClient.invalidateQueries({ queryKey: ['sla-policy', variables.policyId] });
+      await queryClient.refetchQueries({ queryKey: ['sla-policy-tiers', variables.policyId] });
       toast.success('SLA policy tier deleted successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete SLA policy tier'),
