@@ -165,6 +165,7 @@ class OrderService:
         created = 0
         updated = 0
         errors = []
+        warnings = []
         
         # Column mapping from Excel headers to database fields
         column_mapping = {
@@ -321,12 +322,14 @@ class OrderService:
     def import_excel_tracking(self, file_data: bytes, user_id: str):
         """Import orders from Excel file with Master and Daily Tracking sheets."""
         from io import BytesIO
-        from datetime import datetime, date, time as dt_time
+        from datetime import datetime, date, time as dt_time, timedelta
         import openpyxl
+        from decimal import Decimal
 
         created = 0
         updated = 0
         errors = []
+        warnings = []
         kpi_warnings = []
         import_session_id = str(uuid.uuid4())
         start_time = time.monotonic()
@@ -363,7 +366,9 @@ class OrderService:
 
         tracking_mapping = {
             "Doc Number": "order_number",
+            "Doc No.": "order_number",
             "Date": "actual_delivery_date",
+            "Delivery Date": "actual_delivery_date",
             "Time": "delivery_time",
             "Checker": "checker",
             "Transporter": "transporter",
@@ -394,6 +399,43 @@ class OrderService:
                     if header:
                         row_data[header] = value
                 yield row_idx, row_data
+
+        def chunked(values, size):
+            for i in range(0, len(values), size):
+                yield values[i:i + size]
+
+        def normalize_order_number(value):
+            if value is None:
+                return ""
+            return str(value).strip()
+
+        master_rows_list = list(iter_sheet_rows(master_sheet, "Master"))
+        tracking_rows_list = list(iter_sheet_rows(tracking_sheet, "Daily Tracking"))
+        master_rows = len(master_rows_list)
+        tracking_rows = len(tracking_rows_list)
+
+        master_order_numbers = {
+            normalize_order_number(row_data.get("Doc. No.")).lower()
+            for _, row_data in master_rows_list
+            if normalize_order_number(row_data.get("Doc. No."))
+        }
+        tracking_order_numbers = {
+            normalize_order_number(row_data.get("Doc Number") or row_data.get("Doc No.")).lower()
+            for _, row_data in tracking_rows_list
+            if normalize_order_number(row_data.get("Doc Number") or row_data.get("Doc No."))
+        }
+        all_order_numbers = master_order_numbers.union(tracking_order_numbers)
+
+        existing_orders = {}
+        if all_order_numbers:
+            for number_chunk in chunked(sorted(all_order_numbers), 500):
+                orders = self.db.query(Order).filter(
+                    func.lower(Order.order_number).in_(number_chunk),
+                    Order.deleted_at.is_(None)
+                ).all()
+                for order in orders:
+                    if order.order_number:
+                        existing_orders[order.order_number.lower()] = order
 
         def parse_date_value(value, doc_date_value=None):
             if value is None or value == "":
@@ -440,9 +482,25 @@ class OrderService:
                 return value
             return str(value).strip().upper() not in {"F", "FALSE", "0", "NO", "N"}
 
+        def json_safe(value):
+            if isinstance(value, (datetime, date, dt_time)):
+                return value.isoformat()
+            if isinstance(value, Decimal):
+                return float(value)
+            if isinstance(value, dict):
+                return {str(k): json_safe(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [json_safe(v) for v in value]
+            return value
+
+        working_weekdays = calendar_service.get_working_weekdays()
+
+        mapped_master_rows = []
+        min_master_date = None
+        max_master_date = None
+
         # Process Master sheet
-        for row_idx, row_data in iter_sheet_rows(master_sheet, "Master"):
-            master_rows += 1
+        for row_idx, row_data in master_rows_list:
             try:
                 mapped = {}
                 for header, value in row_data.items():
@@ -461,16 +519,34 @@ class OrderService:
                     errors.append({"row": row_idx, "error": "Doc. No. is required", "data": row_data})
                     continue
                 mapped["order_number"] = order_number
+                order_date_value = mapped.get("order_date")
+                if isinstance(order_date_value, (datetime, date)):
+                    date_value = order_date_value.date() if isinstance(order_date_value, datetime) else order_date_value
+                    min_master_date = date_value if min_master_date is None else min(min_master_date, date_value)
+                    max_master_date = date_value if max_master_date is None else max(max_master_date, date_value)
+                mapped_master_rows.append((row_idx, row_data, mapped))
+            except Exception as exc:
+                errors.append({"row": row_idx, "error": str(exc), "data": row_data})
+
+        holidays_master = set()
+        if min_master_date and max_master_date:
+            holidays_master = calendar_service.get_public_holidays_between(
+                min_master_date,
+                max_master_date + timedelta(days=30),
+            )
+
+        for row_idx, row_data, mapped in mapped_master_rows:
+            try:
                 if mapped.get("order_date"):
                     mapped["promised_delivery_date"] = calendar_service.add_business_days(
-                        mapped["order_date"], 2
+                        mapped["order_date"],
+                        2,
+                        working_weekdays=working_weekdays,
+                        holidays=holidays_master,
                     )
 
-                # Match by order_number (case-insensitive) to update existing instead of creating duplicate
-                existing_order = self.db.query(Order).filter(
-                    func.lower(Order.order_number) == order_number.lower(),
-                    Order.deleted_at.is_(None)
-                ).first()
+                order_number = mapped["order_number"]
+                existing_order = existing_orders.get(order_number.lower())
 
                 if existing_order:
                     for key, value in mapped.items():
@@ -483,12 +559,16 @@ class OrderService:
                     order = Order(**mapped)
                     self.db.add(order)
                     created += 1
+                    existing_orders[order_number.lower()] = order
             except Exception as exc:
                 errors.append({"row": row_idx, "error": str(exc), "data": row_data})
 
+        tracking_updates = []
+        min_tracking_date = None
+        max_tracking_date = None
+
         # Process Daily Tracking sheet
-        for row_idx, row_data in iter_sheet_rows(tracking_sheet, "Daily Tracking"):
-            tracking_rows += 1
+        for row_idx, row_data in tracking_rows_list:
             try:
                 mapped = {}
                 doc_date_value = None
@@ -511,33 +591,35 @@ class OrderService:
                     errors.append({"row": row_idx, "error": "Doc Number is required", "data": row_data})
                     continue
 
-                # Match by order_number (case-insensitive), same as Master sheet
-                order = self.db.query(Order).filter(
-                    func.lower(Order.order_number) == order_number.lower(),
-                    Order.deleted_at.is_(None)
-                ).first()
-
+                order = existing_orders.get(order_number.lower())
                 if not order:
-                    errors.append({"row": row_idx, "error": f"Order '{order_number}' not found in Master sheet", "data": row_data})
+                    warnings.append({"row": row_idx, "warning": f"Order '{order_number}' not found in Master sheet", "data": row_data})
                     continue
 
                 delivery_date = mapped.get("actual_delivery_date")
                 delivery_time = parse_time_value(row_data.get("Time"))
-                if delivery_date and delivery_time:
-                    mapped["actual_delivery_date"] = datetime.combine(delivery_date.date(), delivery_time)
+                if delivery_date:
+                    if delivery_time:
+                        mapped["actual_delivery_date"] = datetime.combine(
+                            delivery_date.date() if isinstance(delivery_date, datetime) else delivery_date,
+                            delivery_time,
+                        )
+                    else:
+                        # Date only: store as midnight for DateTime column
+                        d = delivery_date.date() if isinstance(delivery_date, datetime) else delivery_date
+                        mapped["actual_delivery_date"] = datetime.combine(d, dt_time.min)
+                    delivery_date = mapped["actual_delivery_date"]
 
                 for key, value in mapped.items():
                     if key != "order_number":
                         setattr(order, key, value)
 
-                if order.order_date and order.actual_delivery_date:
-                    delivery_days = calendar_service.business_days_between(
-                        order.order_date, order.actual_delivery_date
-                    )
-                    order.delivery_days = delivery_days
-                    order.kpi_warning = delivery_days > 2
-                    if order.kpi_warning:
-                        kpi_warnings.append({"order_number": order.order_number, "days": delivery_days})
+                if order.order_date and delivery_date:
+                    start_date_value = order.order_date.date() if isinstance(order.order_date, datetime) else order.order_date
+                    end_date_value = delivery_date.date() if isinstance(delivery_date, datetime) else delivery_date
+                    min_tracking_date = start_date_value if min_tracking_date is None else min(min_tracking_date, start_date_value)
+                    max_tracking_date = end_date_value if max_tracking_date is None else max(max_tracking_date, end_date_value)
+                    tracking_updates.append((order, delivery_date))
                 else:
                     order.delivery_days = None
                     order.kpi_warning = False
@@ -547,12 +629,62 @@ class OrderService:
             except Exception as exc:
                 errors.append({"row": row_idx, "error": str(exc), "data": row_data})
 
+        holidays_tracking = set()
+        if min_tracking_date and max_tracking_date:
+            holidays_tracking = calendar_service.get_public_holidays_between(min_tracking_date, max_tracking_date)
+
+        for order, delivery_date in tracking_updates:
+            delivery_days = calendar_service.business_days_between(
+                order.order_date,
+                delivery_date,
+                working_weekdays=working_weekdays,
+                holidays=holidays_tracking,
+            )
+            order.delivery_days = delivery_days
+            order.kpi_warning = delivery_days > 2
+            if order.kpi_warning:
+                kpi_warnings.append({"order_number": order.order_number, "days": delivery_days})
+
         logger.info(
             "Order tracking import: Master rows=%s, Tracking rows=%s, created=%s, updated=%s, errors=%s",
             master_rows, tracking_rows, created, updated, len(errors),
         )
         for i, err in enumerate(errors[:5]):
-            logger.warning("Order tracking import error [%s]: row=%s %s | data keys=%s", i + 1, err.get("row"), err.get("error"), list(err.get("data") or {}).keys())
+            if isinstance(err, dict):
+                data = err.get("data")
+                if isinstance(data, dict):
+                    data_keys = list(data.keys())
+                elif isinstance(data, list):
+                    data_keys = f"list({len(data)})"
+                else:
+                    data_keys = type(data).__name__ if data is not None else None
+                logger.warning(
+                    "Order tracking import error [%s]: row=%s %s | data keys=%s",
+                    i + 1,
+                    err.get("row"),
+                    err.get("error"),
+                    data_keys,
+                )
+            else:
+                logger.warning("Order tracking import error [%s]: %s", i + 1, err)
+        for i, warn in enumerate(warnings[:5]):
+            if isinstance(warn, dict):
+                data = warn.get("data")
+                if isinstance(data, dict):
+                    data_keys = list(data.keys())
+                elif isinstance(data, list):
+                    data_keys = f"list({len(data)})"
+                else:
+                    data_keys = type(data).__name__ if data is not None else None
+                logger.warning(
+                    "Order tracking import warning [%s]: row=%s %s | data keys=%s",
+                    i + 1,
+                    warn.get("row"),
+                    warn.get("warning"),
+                    data_keys,
+                )
+            else:
+                logger.warning("Order tracking import warning [%s]: %s", i + 1, warn)
         if len(errors) > 5:
             logger.warning("Order tracking import: ... and %s more errors", len(errors) - 5)
 
@@ -578,9 +710,9 @@ class OrderService:
                 updated_rows=updated,
                 failed_rows=len(errors),
                 skipped_rows=0,
-                warnings=None,
-                errors=errors,
-                summary={"kpi_warnings": kpi_warnings, "master_rows": master_rows, "tracking_rows": tracking_rows},
+                warnings=json_safe(warnings),
+                errors=json_safe(errors),
+                summary=json_safe({"kpi_warnings": kpi_warnings, "master_rows": master_rows, "tracking_rows": tracking_rows, "warnings": len(warnings)}),
                 imported_by=user_id,
                 duration_ms=duration_ms,
             )
@@ -592,6 +724,7 @@ class OrderService:
             "created": created,
             "updated": updated,
             "errors": errors,
+            "warnings": warnings,
             "kpi_warnings": kpi_warnings,
             "master_rows": master_rows,
             "tracking_rows": tracking_rows,

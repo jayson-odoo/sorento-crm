@@ -28,6 +28,9 @@ export interface Complaint {
   contact_number?: string | null;
   customer_address?: string | null;
   project_title?: string | null;
+  contact_id?: string | null;
+  space_id?: string | null;
+  respond_inbox_url?: string | null;
   attachments: ComplaintAttachment[];
 }
 
@@ -48,6 +51,8 @@ export interface ComplaintFormData {
   contact_number?: string;
   customer_address?: string;
   project_title?: string;
+  contact_id?: string | null;
+  space_id?: string | null;
   attachments?: ComplaintAttachment[];
 }
 

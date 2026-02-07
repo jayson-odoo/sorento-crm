@@ -12,7 +12,6 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Plus, Search, X, ChevronRight, FileDown } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
@@ -25,7 +24,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useStockInquiries } from '../hooks/useStockInquiries';
 import type { StockInquiry } from '../types/stockInquiry.types';
 import { exportStockInquiriesToExcel } from '../utils/exportStockInquiryToExcel';
-import { formatDate } from '@/lib/helpers';
 
 export default function StockInquiriesList() {
   const router = useRouter();
@@ -114,27 +112,24 @@ export default function StockInquiriesList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Delivery Date" column={column} />
         ),
-        cell: ({ row }) =>
-          row.original.delivery_date
-            ? formatDate(new Date(row.original.delivery_date))
-            : '-',
+        cell: ({ row }) => row.original.delivery_date ?? '-',
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
-        accessorKey: 'brand',
+        accessorKey: 'remark',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Brand" column={column} />
+          <DataGridColumnHeader title="Remark" column={column} />
         ),
         cell: ({ row }) => {
-          const brand = row.original.brand;
-          return brand ? (
-            <Badge variant="secondary">{brand}</Badge>
+          const remark = row.original.remark;
+          return remark ? (
+            <span className="line-clamp-2" title={remark}>{remark}</span>
           ) : (
             '-'
           );
         },
-        size: 120,
+        size: 180,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {

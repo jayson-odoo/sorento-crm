@@ -22,8 +22,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { formatDateTime } from '@/lib/helpers';
 import { getImportJob, getImportJobStatus } from '../services/importJobService';
-import { useImportJobStatus } from '../hooks/useImportJobs';
+import { useCancelImportJob, useImportJobStatus } from '../hooks/useImportJobs';
 import type { ImportJob } from '../types/importJob.types';
+import { toast } from 'sonner';
 
 type ImportJobDetailPageProps = {
   params: Promise<{ id: string }>;
@@ -43,6 +44,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
 
   // Poll for status updates if job is still processing
   const { data: statusData } = useImportJobStatus(id, !isLoading && !!job);
+  const cancelJobMutation = useCancelImportJob();
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, { variant: 'primary' | 'secondary' | 'destructive' | 'outline'; appearance?: 'ghost' }> = {
@@ -145,6 +147,8 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
 
   const progress = statusData?.progress;
   const progressPercentage = progress ? progress.percentage : (job.total_rows > 0 ? Math.round((job.processed_rows / job.total_rows) * 100) : 0);
+  const currentStatus = statusData?.status || job.status;
+  const canCancel = ['pending', 'queued', 'started'].includes(currentStatus);
 
   return (
     <>
@@ -174,6 +178,24 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                 <MoveLeft /> Back to Import Jobs
               </Link>
             </Button>
+            {canCancel && (
+              <Button
+                variant="outline"
+                disabled={cancelJobMutation.isPending}
+                onClick={() => {
+                  cancelJobMutation.mutate(id, {
+                    onSuccess: (data) => {
+                      toast.success(data.message || 'Job cancelled');
+                    },
+                    onError: (error) => {
+                      toast.error(error instanceof Error ? error.message : 'Failed to cancel job');
+                    },
+                  });
+                }}
+              >
+                {cancelJobMutation.isPending ? 'Cancelling...' : 'Cancel Job'}
+              </Button>
+            )}
           </ToolbarActions>
         </Toolbar>
       </Container>
@@ -242,6 +264,36 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
               )}
             </CardContent>
           </Card>
+
+          {(statusData?.error || job.error) && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Error</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-destructive whitespace-pre-wrap">
+                  {statusData?.error || job.error}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {job.result?.errors && Array.isArray(job.result.errors) && job.result.errors.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Import Errors</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-2 text-sm">
+                  {job.result.errors.slice(0, 50).map((err: any, index: number) => (
+                    <li key={index} className="text-muted-foreground">
+                      {err?.row ? `Row ${err.row}: ` : ''}{err?.error || 'Unknown error'}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Results Card */}
           <Card>

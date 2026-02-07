@@ -11,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -25,6 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { usePackingLists } from '../hooks/usePackingLists';
 import type { PackingList } from '../types/packingList.types';
 import { formatDate } from '@/lib/helpers';
+import PackingListDeleteDialog from './packing-list-delete-dialog';
 
 export default function PackingListsList() {
   const router = useRouter();
@@ -36,8 +37,10 @@ export default function PackingListsList() {
     { id: 'created_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [packingListToDelete, setPackingListToDelete] =
+    useState<PackingList | null>(null);
 
-  const { data, isLoading } = usePackingLists({
+  const { data, isLoading, refetch } = usePackingLists({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -154,10 +157,25 @@ export default function PackingListsList() {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => (
-          <ChevronRight className="text-muted-foreground/70 size-3.5" />
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+            <Button
+              mode="icon"
+              variant="dim"
+              size="sm"
+              className="size-8"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPackingListToDelete(row.original);
+              }}
+              aria-label="Delete packing list"
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+            <ChevronRight className="text-muted-foreground/70 size-3.5" />
+          </div>
         ),
-        size: 40,
+        size: 80,
       },
     ],
     [],
@@ -191,7 +209,7 @@ export default function PackingListsList() {
           <div className="relative">
             <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
             <Input
-              placeholder="Search packing lists..."
+              placeholder="Search by shipment or container number..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="ps-9 w-64"
@@ -226,6 +244,14 @@ export default function PackingListsList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+      {packingListToDelete && (
+        <PackingListDeleteDialog
+          open
+          closeDialog={() => setPackingListToDelete(null)}
+          packingList={packingListToDelete}
+          onSuccess={() => refetch()}
+        />
+      )}
     </DataGrid>
   );
 }

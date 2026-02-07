@@ -20,9 +20,89 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSPOAllocationsGroupedByShipment } from '../hooks/useSPOAllocations';
-import type { SPOAllocation, ShipmentWithAllocationsGroup } from '../types/spoAllocation.types';
+import type {
+  SPOAllocation,
+  ShipmentWithAllocationsGroup,
+} from '../types/spoAllocation.types';
 import Link from 'next/link';
 import React from 'react';
+
+/**
+ * Build rows for the expanded section:
+ * - One block per product that appears on the packing list (shipment_lines), with qty shipped and its allocations.
+ * - A final "Other (not on packing list)" block for allocations whose product is not on the packing list.
+ */
+function groupByProduct(
+  group: ShipmentWithAllocationsGroup,
+): Array<{
+  productId: string;
+  productName: string;
+  productCode?: string;
+  quantityShipped: number;
+  allocations: SPOAllocation[];
+  isNotOnPackingList?: boolean;
+}> {
+  const lines = group.shipment_lines ?? [];
+  const productIdsOnPackingList = new Set(lines.map((l) => l.product_id));
+  const byProduct = new Map<
+    string,
+    { productName: string; productCode?: string; quantityShipped: number; allocations: SPOAllocation[] }
+  >();
+  for (const line of lines) {
+    const name = line.product?.product_name ?? line.product?.product_code ?? '-';
+    const code = line.product?.product_code;
+    const existing = byProduct.get(line.product_id);
+    if (existing) {
+      existing.quantityShipped += line.quantity_shipped;
+    } else {
+      byProduct.set(line.product_id, {
+        productName: name,
+        productCode: code,
+        quantityShipped: line.quantity_shipped,
+        allocations: [],
+      });
+    }
+  }
+  const otherAllocations: SPOAllocation[] = [];
+  for (const alloc of group.spo_allocations) {
+    const name = alloc.product?.product_name ?? alloc.product?.product_code ?? '-';
+    const code = alloc.product?.product_code;
+    if (productIdsOnPackingList.has(alloc.product_id)) {
+      const existing = byProduct.get(alloc.product_id);
+      if (existing) {
+        existing.allocations.push(alloc);
+      } else {
+        byProduct.set(alloc.product_id, {
+          productName: name,
+          productCode: code,
+          quantityShipped: 0,
+          allocations: [alloc],
+        });
+      }
+    } else {
+      otherAllocations.push(alloc);
+    }
+  }
+  const result = Array.from(byProduct.entries()).map(([productId, data]) => ({
+    productId,
+    productName: data.productName,
+    productCode: data.productCode,
+    quantityShipped: data.quantityShipped,
+    allocations: data.allocations,
+    isNotOnPackingList: false,
+  }));
+  if (otherAllocations.length > 0) {
+    result.push({
+      productId: '__other__',
+      productName: 'Other (not on packing list)',
+      productCode: undefined,
+      quantityShipped: 0,
+      allocations: otherAllocations,
+      isNotOnPackingList: true,
+    });
+  }
+  return result;
+}
 
 export default function SPOAllocationsList() {
   const router = useRouter();
@@ -34,12 +114,14 @@ export default function SPOAllocationsList() {
     { id: 'shipment_number', desc: false },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [productCodeFilter, setProductCodeFilter] = useState('');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const { data, isLoading } = useSPOAllocationsGroupedByShipment({
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
     query: searchQuery || undefined,
+    product_code: productCodeFilter.trim() || undefined,
     sort: sorting[0]?.id ?? 'shipment_number',
     dir: sorting[0]?.desc ? 'desc' : 'asc',
   });
@@ -156,23 +238,41 @@ export default function SPOAllocationsList() {
       isLoading={isLoading}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+        <CardHeader className="flex-row items-center justify-between flex-wrap gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+              <Input
+                placeholder="Search by shipment, SPO number, product..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="ps-9 w-56"
+              />
+              {searchQuery && (
+                <Button
+                  mode="icon"
+                  variant="dim"
+                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                  onClick={() => setSearchQuery('')}
+                >
+                  <X />
+                </Button>
+              )}
+            </div>
             <Input
-              placeholder="Search by shipment number, SPO number, product..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-72"
+              placeholder="Product code"
+              value={productCodeFilter}
+              onChange={(e) => setProductCodeFilter(e.target.value)}
+              className="w-40"
             />
-            {searchQuery && (
+            {productCodeFilter && (
               <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
+                variant="ghost"
+                size="sm"
+                onClick={() => setProductCodeFilter('')}
+                className="text-muted-foreground"
               >
-                <X />
+                <X className="size-4" />
               </Button>
             )}
           </div>
@@ -274,11 +374,14 @@ export default function SPOAllocationsList() {
                               <table className="w-full border-collapse">
                                 <thead>
                                   <tr className="border-b">
-                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[140px]">
-                                      SPO Number
-                                    </th>
                                     <th className="text-left p-2 text-xs font-medium text-muted-foreground min-w-[160px]">
                                       Product
+                                    </th>
+                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[100px]">
+                                      Qty shipped (PL)
+                                    </th>
+                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[140px]">
+                                      SPO Number
                                     </th>
                                     <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[120px]">
                                       Warehouse
@@ -296,47 +399,68 @@ export default function SPOAllocationsList() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {group.spo_allocations.map((allocation) => (
-                                    <tr
-                                      key={allocation.id}
-                                      className="border-b hover:bg-background cursor-pointer"
-                                      onClick={() => handleAllocationClick(allocation)}
-                                    >
-                                      <td className="p-2 text-sm">
-                                        {allocation.spo_number ?? '-'}
-                                      </td>
-                                      <td className="p-2 text-sm">
-                                        {allocation.product?.product_name ?? '-'}
-                                      </td>
-                                      <td className="p-2 text-sm">
-                                        {allocation.warehouse?.warehouse_name ?? '-'}
-                                      </td>
-                                      <td className="p-2 text-sm">
-                                        {allocation.allocated_quantity}
-                                      </td>
-                                      <td className="p-2 text-sm">
-                                        {allocation.quantity_received}
-                                      </td>
-                                      <td className="p-2">
-                                        <Badge
-                                          variant={getStatusBadgeVariant(
-                                            allocation.receipt_status,
-                                          )}
-                                          size="sm"
-                                        >
-                                          {allocation.receipt_status
-                                            ?.split('_')
-                                            .map((w) =>
-                                              w.charAt(0).toUpperCase() + w.slice(1),
-                                            )
-                                            .join(' ') ?? '-'}
-                                        </Badge>
-                                      </td>
-                                      <td className="p-2">
-                                        <ChevronRight className="text-muted-foreground/70 size-3.5" />
-                                      </td>
-                                    </tr>
-                                  ))}
+                                  {groupByProduct(group).map(
+                                    ({
+                                      productId,
+                                      productName,
+                                      productCode,
+                                      quantityShipped,
+                                      allocations,
+                                      isNotOnPackingList,
+                                    }) => (
+                                      <React.Fragment key={productId}>
+                                        <tr className="border-b bg-muted/40">
+                                          <td className="p-2 text-sm font-medium">
+                                            {productCode ? `${productCode}${productName !== productCode ? ` — ${productName}` : ''}` : productName}
+                                          </td>
+                                          <td className="p-2 text-sm text-muted-foreground">
+                                            {isNotOnPackingList ? '—' : quantityShipped}
+                                          </td>
+                                          <td className="p-2" colSpan={6} />
+                                        </tr>
+                                        {allocations.map((allocation) => (
+                                          <tr
+                                            key={allocation.id}
+                                            className="border-b hover:bg-background cursor-pointer"
+                                            onClick={() => handleAllocationClick(allocation)}
+                                          >
+                                            <td className="p-2 text-sm text-muted-foreground" />
+                                            <td className="p-2 text-sm text-muted-foreground" />
+                                            <td className="p-2 text-sm">
+                                              {allocation.spo_number ?? '-'}
+                                            </td>
+                                            <td className="p-2 text-sm">
+                                              {allocation.warehouse?.warehouse_code ?? '-'}
+                                            </td>
+                                            <td className="p-2 text-sm">
+                                              {allocation.allocated_quantity}
+                                            </td>
+                                            <td className="p-2 text-sm">
+                                              {allocation.quantity_received}
+                                            </td>
+                                            <td className="p-2">
+                                              <Badge
+                                                variant={getStatusBadgeVariant(
+                                                  allocation.receipt_status,
+                                                )}
+                                                size="sm"
+                                              >
+                                                {allocation.receipt_status
+                                                  ?.split('_')
+                                                  .map((w) =>
+                                                    w.charAt(0).toUpperCase() + w.slice(1),
+                                                  )
+                                                  .join(' ') ?? '-'}
+                                              </Badge>
+                                            </td>
+                                            <td className="p-2">
+                                              <ChevronRight className="text-muted-foreground/70 size-3.5" />
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </React.Fragment>
+                                    ),
+                                  )}
                                 </tbody>
                               </table>
                             </div>

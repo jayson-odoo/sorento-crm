@@ -12,7 +12,7 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, X, Edit, Trash2, Copy } from 'lucide-react';
+import { ChevronRight, Plus, Search, X, Edit, Trash2, Copy, Upload, Download } from 'lucide-react';
 import { formatDate } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -38,11 +38,27 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useProducts } from '../hooks/useProducts';
 import { useProductFilters } from '../hooks/useProductFilters';
 import type { ProductListItem } from '../types/product.types';
-import { getProducts, type GetProductsParams } from '../services/productService';
+import { getProducts, bulkImportProducts, type GetProductsParams } from '../services/productService';
 import ProductDeleteDialog from './product-delete-dialog';
+import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { generateExcelFile } from '@/lib/excel-utils';
+import type { ColumnOption } from '@/lib/excel-utils';
+
+const PRODUCT_IMPORT_COLUMNS: ColumnOption[] = [
+  { key: 'Item Code', label: 'Item Code', selected: true },
+  { key: 'Description', label: 'Description', selected: true },
+  { key: 'Desc 2', label: 'Desc 2', selected: true },
+  { key: 'Item Group', label: 'Item Group', selected: true },
+  { key: 'Item Brand', label: 'Item Brand', selected: true },
+  { key: 'Price', label: 'Price', selected: true },
+  { key: 'Is Active', label: 'Is Active', selected: true },
+];
 
 const ProductsList = () => {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -56,6 +72,7 @@ const ProductsList = () => {
   const [selectedStatus, setSelectedStatus] = useState<string | null>('all');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<ProductListItem | null>(null);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
 
   const {
     filters,
@@ -514,7 +531,29 @@ const ProductsList = () => {
             </Button>
           )}
         </div>
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            disabled={isLoading}
+            onClick={() => {
+              generateExcelFile(
+                [{}],
+                PRODUCT_IMPORT_COLUMNS,
+                'products_import_template.xlsx',
+              );
+            }}
+          >
+            <Download className="size-4" />
+            Download template
+          </Button>
+          <Button
+            variant="outline"
+            disabled={isLoading}
+            onClick={() => setUploadDialogOpen(true)}
+          >
+            <Upload className="size-4" />
+            Upload
+          </Button>
           <Button
             disabled={isLoading}
             onClick={() => {
@@ -567,6 +606,25 @@ const ProductsList = () => {
           product={productToDelete}
         />
       )}
+      <TemplateUploadDialog
+        open={uploadDialogOpen}
+        onOpenChange={setUploadDialogOpen}
+        onUpload={async (data: Record<string, unknown>[]) => {
+          await bulkImportProducts(data);
+          toast.success(
+            'Import job queued successfully. Processing in background. Refresh or check Import Jobs for status.',
+            {
+              duration: 5000,
+              action: {
+                label: 'View Status',
+                onClick: () => router.push('/system-management/import-jobs'),
+              },
+            },
+          );
+          queryClient.invalidateQueries({ queryKey: ['products'] });
+        }}
+        accept=".xlsx,.xls"
+      />
     </DataGrid>
   );
 };

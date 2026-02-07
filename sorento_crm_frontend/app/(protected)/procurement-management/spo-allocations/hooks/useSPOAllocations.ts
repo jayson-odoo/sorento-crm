@@ -22,6 +22,7 @@ export function useSPOAllocationsGroupedByShipment(params: GroupedByShipmentPara
       params.page,
       params.limit,
       params.query,
+      params.product_code,
       params.warehouse_id,
       params.receipt_status,
       params.sort,

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Link as LinkIcon } from 'lucide-react';
+import { Edit, Trash2, Link as LinkIcon, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,8 +18,10 @@ import {
 import { usePackingList, useDeletePackingList } from '../hooks/usePackingLists';
 import { formatDate } from '@/lib/helpers';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
+import PackingListNavigation from './PackingListNavigation';
 import Link from 'next/link';
 import { Eye, Download } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 
 interface PackingListDetailProps {
@@ -32,6 +34,7 @@ export default function PackingListDetail({
   const router = useRouter();
   const { data: packingList, isLoading } = usePackingList(packingListId);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [shipmentLinesSearch, setShipmentLinesSearch] = useState('');
   const downloadMutation = useDownloadAttachment();
 
   const handleDownload = async (attachmentId: string, filename: string) => {
@@ -140,6 +143,7 @@ export default function PackingListDetail({
           </p>
         </div>
         <div className="flex gap-2">
+          <PackingListNavigation packingListId={packingListId} />
           <Button
             variant="outline"
             onClick={() =>
@@ -332,8 +336,28 @@ export default function PackingListDetail({
       {packingList.shipment_lines &&
         packingList.shipment_lines.length > 0 && (
           <Card>
-            <CardHeader>
+            <CardHeader className="flex-row items-center justify-between gap-3">
               <CardTitle>Shipment Lines</CardTitle>
+              <div className="relative flex items-center gap-2">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Input
+                  placeholder="Search by product code"
+                  value={shipmentLinesSearch}
+                  onChange={(e) => setShipmentLinesSearch(e.target.value)}
+                  className="ps-9 w-56"
+                />
+                {shipmentLinesSearch && (
+                  <Button
+                    mode="icon"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8"
+                    onClick={() => setShipmentLinesSearch('')}
+                  >
+                    <X className="size-4" />
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
@@ -348,7 +372,15 @@ export default function PackingListDetail({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {packingList.shipment_lines.map((line) => (
+                    {packingList.shipment_lines
+                      .filter((line) => {
+                        if (!shipmentLinesSearch.trim()) return true;
+                        const q = shipmentLinesSearch.trim().toLowerCase();
+                        const code = line.product?.product_code?.toLowerCase() ?? '';
+                        const name = line.product?.product_name?.toLowerCase() ?? '';
+                        return code.includes(q) || name.includes(q);
+                      })
+                      .map((line) => (
                       <TableRow key={line.id}>
                         <TableCell>
                           {line.product?.product_code || '-'}

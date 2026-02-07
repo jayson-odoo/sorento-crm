@@ -24,6 +24,9 @@ export interface PurchaseRequest {
   status?: string | null;
   source?: string | null;
   external_reference?: string | null;
+  contact_id?: string | null;
+  space_id?: string | null;
+  respond_inbox_url?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   lines?: PurchaseRequestLine[];
@@ -46,6 +49,8 @@ export interface PurchaseRequestFormData {
   expected_po_date_text?: string;
   requested_by?: string;
   requested_at?: string;
+  contact_id?: string | null;
+  space_id?: string | null;
   products?: PurchaseRequestLineFormData[];
 }
 

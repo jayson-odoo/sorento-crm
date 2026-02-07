@@ -7,6 +7,7 @@ Create Date: 2026-02-03 00:00:00.000000
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+import uuid
 
 
 revision = "027_calendar_and_timestamp"
@@ -45,8 +46,8 @@ def upgrade() -> None:
     )
 
     op.execute(
-        "INSERT INTO work_calendar_configs (config_key, monday, tuesday, wednesday, thursday, friday, saturday, sunday) "
-        "VALUES ('default', true, true, true, true, true, false, false) "
+        "INSERT INTO work_calendar_configs (id, config_key, monday, tuesday, wednesday, thursday, friday, saturday, sunday) "
+        f"VALUES ('{uuid.uuid4()}', 'default', true, true, true, true, true, false, false) "
         "ON CONFLICT (config_key) DO NOTHING"
     )
 

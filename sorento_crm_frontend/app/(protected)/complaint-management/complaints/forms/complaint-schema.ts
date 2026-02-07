@@ -23,6 +23,8 @@ export const ComplaintSchema = z.object({
   contact_number: z.string().max(255).optional().nullable(),
   customer_address: z.string().max(2000).optional().nullable(),
   project_title: z.string().max(255).optional().nullable(),
+  contact_id: z.string().max(500).optional().nullable(),
+  space_id: z.string().max(500).optional().nullable(),
   attachments: z.array(
     z.object({
       id: z.string().optional(),

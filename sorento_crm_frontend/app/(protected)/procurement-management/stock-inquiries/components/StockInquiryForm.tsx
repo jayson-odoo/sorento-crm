@@ -16,13 +16,6 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   useCreateStockInquiry,
@@ -62,9 +55,11 @@ export default function StockInquiryForm({
       project_name: null,
       quantity: null,
       delivery_date: null,
-      brand: null,
+      remark: null,
       additional_remark: null,
       purchasing_response: null,
+      contact_id: null,
+      space_id: null,
     },
     mode: 'onSubmit',
   });
@@ -80,13 +75,13 @@ export default function StockInquiryForm({
         item_description: inquiry.item_description || null,
         project_customer: inquiry.project_customer || null,
         project_name: inquiry.project_name || null,
-        quantity: inquiry.quantity || null,
-        delivery_date: inquiry.delivery_date
-          ? new Date(inquiry.delivery_date)
-          : null,
-        brand: inquiry.brand || null,
+        quantity: inquiry.quantity ?? null,
+        delivery_date: inquiry.delivery_date ?? null,
+        remark: inquiry.remark ?? null,
         additional_remark: inquiry.additional_remark || null,
         purchasing_response: inquiry.purchasing_response || null,
+        contact_id: inquiry.contact_id || null,
+        space_id: inquiry.space_id || null,
       });
       setFormInitialized(true);
     }
@@ -104,11 +99,13 @@ export default function StockInquiryForm({
         item_description: data.item_description || undefined,
         project_customer: data.project_customer || undefined,
         project_name: data.project_name || undefined,
-        quantity: data.quantity || undefined,
-        delivery_date: data.delivery_date || undefined,
-        brand: data.brand || undefined,
+        quantity: data.quantity ?? undefined,
+        delivery_date: data.delivery_date ?? undefined,
+        remark: data.remark ?? undefined,
         additional_remark: data.additional_remark || undefined,
         purchasing_response: data.purchasing_response || undefined,
+        contact_id: data.contact_id || undefined,
+        space_id: data.space_id || undefined,
       };
 
       if (isEditMode && inquiryId) {
@@ -207,17 +204,9 @@ export default function StockInquiryForm({
                       <FormLabel>Quantity</FormLabel>
                       <FormControl>
                         <Input
-                          type="number"
-                          step="0.01"
                           placeholder="Enter quantity"
                           {...field}
-                          value={field.value || ''}
-                          onChange={(e) => {
-                            const value = e.target.value
-                              ? parseFloat(e.target.value)
-                              : null;
-                            field.onChange(value);
-                          }}
+                          value={field.value ?? ''}
                         />
                       </FormControl>
                       <FormMessage />
@@ -233,19 +222,9 @@ export default function StockInquiryForm({
                       <FormLabel>Delivery Date</FormLabel>
                       <FormControl>
                         <Input
-                          type="date"
+                          placeholder="Enter delivery date"
                           {...field}
-                          value={
-                            field.value
-                              ? new Date(field.value).toISOString().split('T')[0]
-                              : ''
-                          }
-                          onChange={(e) => {
-                            const date = e.target.value
-                              ? new Date(e.target.value)
-                              : null;
-                            field.onChange(date);
-                          }}
+                          value={field.value ?? ''}
                         />
                       </FormControl>
                       <FormMessage />
@@ -255,26 +234,18 @@ export default function StockInquiryForm({
 
                 <FormField
                   control={form.control}
-                  name="brand"
+                  name="remark"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Brand</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value || ''}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select brand" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="sorento">Sorento</SelectItem>
-                          <SelectItem value="mocha">Mocha</SelectItem>
-                          <SelectItem value="cabana">Cabana</SelectItem>
-                          <SelectItem value="no logo">No Logo</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <FormLabel>Remark</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Enter remark"
+                          {...field}
+                          value={field.value ?? ''}
+                          rows={3}
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -290,6 +261,19 @@ export default function StockInquiryForm({
                 <CardTitle>Project & Response</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {inquiry?.respond_inbox_url && (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">Respond Inbox</p>
+                    <a
+                      href={inquiry.respond_inbox_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline text-sm break-all"
+                    >
+                      {inquiry.respond_inbox_url}
+                    </a>
+                  </div>
+                )}
                 <FormField
                   control={form.control}
                   name="project_customer"

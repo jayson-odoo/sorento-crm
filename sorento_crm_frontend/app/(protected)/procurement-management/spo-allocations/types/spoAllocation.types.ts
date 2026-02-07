@@ -37,13 +37,26 @@ export interface SPOAllocation {
 
 export interface SPOAllocationDetail extends SPOAllocation {}
 
-/** Inbound shipment with its SPO allocations (grouped list view). */
+/** Shipment line (packing list line) with product and quantity shipped. */
+export interface ShipmentLineForGroup {
+  id: string;
+  product_id: string;
+  quantity_shipped: number;
+  product?: {
+    id: string;
+    product_code: string;
+    product_name: string;
+  };
+}
+
+/** Inbound shipment with its SPO allocations and shipment lines (grouped list view). */
 export interface ShipmentWithAllocationsGroup {
   inbound_shipment: {
     id: string;
     shipment_number: string;
   };
   spo_allocations: SPOAllocation[];
+  shipment_lines?: ShipmentLineForGroup[] | null;
 }
 
 export interface SPOAllocationFormData {

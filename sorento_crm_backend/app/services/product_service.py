@@ -145,6 +145,194 @@ class ProductService:
         self.db.commit()
         return {"message": "Product deleted successfully"}
 
+    def _get_default_uom_id(self) -> str:
+        """Return a default UOM id for bulk import (e.g. EA or first available)."""
+        uom = (
+            self.db.query(UnitOfMeasure)
+            .filter(UnitOfMeasure.uom_code.ilike("ea"))
+            .first()
+        )
+        if uom:
+            return uom.id
+        uom = self.db.query(UnitOfMeasure).first()
+        if not uom:
+            raise ValueError("No unit of measure found. Create at least one UOM (e.g. EA) for product import.")
+        return uom.id
+
+    def _resolve_category_id(self, item_group: Optional[str]) -> Optional[str]:
+        """Resolve category by item_group (match category_code or category_name)."""
+        if not item_group or not str(item_group).strip():
+            return None
+        q = str(item_group).strip()
+        cat = (
+            self.db.query(ProductCategory)
+            .filter(
+                or_(
+                    ProductCategory.category_code.ilike(q),
+                    ProductCategory.category_name.ilike(q),
+                )
+            )
+            .first()
+        )
+        return cat.id if cat else None
+
+    def _resolve_brand_id(self, item_brand: Optional[str]) -> Optional[str]:
+        """Resolve brand by item_brand (match brand_code or brand_name)."""
+        if not item_brand or not str(item_brand).strip():
+            return None
+        q = str(item_brand).strip()
+        brand = (
+            self.db.query(Brand)
+            .filter(
+                or_(
+                    Brand.brand_code.ilike(q),
+                    Brand.brand_name.ilike(q),
+                )
+            )
+            .first()
+        )
+        return brand.id if brand else None
+
+    BULK_IMPORT_CHUNK_SIZE = 500  # Commit every N rows; fewer round-trips
+    _BULK_FETCH_CODES_BATCH = 5000  # Max product_codes per IN query
+
+    def _build_category_map(self) -> dict:
+        """Build item_group -> category_id map from all categories (code and name, case-insensitive)."""
+        rows = self.db.query(ProductCategory.id, ProductCategory.category_code, ProductCategory.category_name).all()
+        m = {}
+        for id_, code, name in rows:
+            if code:
+                m[str(code).strip().lower()] = id_
+            if name:
+                m[str(name).strip().lower()] = id_
+        return m
+
+    def _build_brand_map(self) -> dict:
+        """Build item_brand -> brand_id map from all brands (code and name, case-insensitive)."""
+        rows = self.db.query(Brand.id, Brand.brand_code, Brand.brand_name).all()
+        m = {}
+        for id_, code, name in rows:
+            if code:
+                m[str(code).strip().lower()] = id_
+            if name:
+                m[str(name).strip().lower()] = id_
+        return m
+
+    def _fetch_existing_products_by_codes(self, codes: List[str]) -> dict:
+        """Fetch existing products by product_code; return dict code -> Product."""
+        if not codes:
+            return {}
+        seen = set()
+        unique = [c for c in codes if c and c not in seen and not seen.add(c)]
+        result = {}
+        for i in range(0, len(unique), self._BULK_FETCH_CODES_BATCH):
+            batch = unique[i : i + self._BULK_FETCH_CODES_BATCH]
+            products = self.db.query(Product).filter(Product.product_code.in_(batch)).all()
+            for p in products:
+                result[p.product_code] = p
+        return result
+
+    def bulk_import_products(self, products_data: List[dict], user_id: str) -> dict:
+        """
+        Bulk import products from Excel-style rows.
+        Expects each row: product_code, product_name?, description?, item_group?, item_brand?, list_price?, is_active?
+        item_group is matched to category (code or name); item_brand to brand (code or name).
+        Creates or updates by product_code. Uses default UOM for new products.
+        Optimized: pre-loads categories, brands, and existing products to avoid per-row queries.
+        """
+        created = 0
+        updated = 0
+        errors = []
+        default_uom_id = self._get_default_uom_id()
+        chunk_size = self.BULK_IMPORT_CHUNK_SIZE
+
+        # One-time lookups (3 queries total instead of 3 per row)
+        category_map = self._build_category_map()
+        brand_map = self._build_brand_map()
+        all_codes = []
+        for row in products_data:
+            code = (row.get("product_code") or row.get("Product Code") or row.get("Item Code") or "").strip()
+            if code:
+                all_codes.append(code)
+        existing_by_code = self._fetch_existing_products_by_codes(all_codes)
+
+        for idx, row in enumerate(products_data, start=1):
+            try:
+                product_code = (row.get("product_code") or row.get("Product Code") or row.get("Item Code") or "").strip()
+                if not product_code:
+                    errors.append(f"Row {idx}: product_code / Item Code is required")
+                    continue
+                product_name = (row.get("product_name") or row.get("Product Name") or row.get("Item Code") or product_code).strip() or product_code
+                description = row.get("description") or row.get("Description") or ""
+                desc2 = row.get("desc2") or row.get("Desc 2") or ""
+                if desc2:
+                    description = f"{description} {desc2}".strip()
+                item_group = (row.get("item_group") or row.get("Item Group") or "").strip() or None
+                item_brand = (row.get("item_brand") or row.get("Item Brand") or "").strip() or None
+                raw_price = row.get("list_price") or row.get("Price") or row.get("price")
+                try:
+                    list_price = Decimal(str(raw_price)) if raw_price is not None and str(raw_price).strip() != "" else Decimal("0")
+                except Exception:
+                    list_price = Decimal("0")
+                raw_active = row.get("is_active") or row.get("Is Active") or row.get("Is active")
+                is_active = True
+                if raw_active is not None and str(raw_active).strip().upper() in ("F", "FALSE", "0", "N", "NO"):
+                    is_active = False
+
+                category_id = None
+                if item_group:
+                    category_id = category_map.get(str(item_group).strip().lower())
+                if item_group and not category_id:
+                    errors.append(f"Row {idx} ({product_code}): no category found for item_group '{item_group}'")
+                    continue
+                if not category_id:
+                    errors.append(f"Row {idx} ({product_code}): item_group is required and must match a category")
+                    continue
+
+                brand_id = None
+                if item_brand:
+                    brand_id = brand_map.get(str(item_brand).strip().lower())
+                if item_brand and not brand_id:
+                    errors.append(f"Row {idx} ({product_code}): no brand found for item_brand '{item_brand}'")
+                    continue
+
+                existing = existing_by_code.get(product_code)
+                if existing:
+                    existing.product_name = product_name
+                    existing.description = description or None
+                    existing.category_id = category_id
+                    existing.brand_id = brand_id
+                    existing.list_price = list_price
+                    existing.is_active = is_active
+                    existing.updated_by = user_id
+                    updated += 1
+                else:
+                    product = Product(
+                        product_code=product_code,
+                        product_name=product_name,
+                        description=description or None,
+                        category_id=category_id,
+                        brand_id=brand_id,
+                        base_uom_id=default_uom_id,
+                        list_price=list_price,
+                        is_active=is_active,
+                        created_by=user_id,
+                    )
+                    self.db.add(product)
+                    existing_by_code[product_code] = product  # avoid duplicate add if same code again
+                    created += 1
+
+                if idx % chunk_size == 0:
+                    self.db.commit()
+            except Exception as e:
+                self.db.rollback()
+                errors.append(f"Row {idx} ({row.get('product_code', '')}): {str(e)}")
+                if idx % chunk_size == 0:
+                    self.db.commit()
+
+        self.db.commit()
+        return {"created": created, "updated": updated, "errors": errors}
+
 
 class ProductCategoryService:
     """Service for product category operations."""

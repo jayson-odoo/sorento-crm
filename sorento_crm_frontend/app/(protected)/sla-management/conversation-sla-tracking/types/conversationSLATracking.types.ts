@@ -27,7 +27,8 @@ export interface ConversationSLATracking {
   assigned_to_id?: string | null;
   initiated_at: Date;
   current_tier_started_at: Date;
-  due_at: Date;
+  due_at: Date; // Due at (response): deadline to respond
+  due_at_resolution?: Date | string | null; // Due at (resolution): deadline to resolve
   escalated_at?: Date | null;
   escalation_reason?: string | null;
   is_responded?: boolean;
@@ -59,7 +60,7 @@ export interface ConversationSLATracking {
   time_remaining_response_seconds?: number | null;
   time_in_tier_resolution_seconds?: number | null;
   time_remaining_resolution_seconds?: number | null;
-  resolution_due_at?: Date | string | null;
+  resolution_due_at?: Date | string | null; // Alias / computed resolution deadline
   tier_response_hours?: number | null;
   tier_resolution_hours?: number | null;
 }

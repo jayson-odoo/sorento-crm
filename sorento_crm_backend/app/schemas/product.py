@@ -1,6 +1,6 @@
 """Product schemas."""
 from pydantic import BaseModel, field_validator
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 import uuid
@@ -251,6 +251,31 @@ class ProductAttachmentUpdate(BaseModel):
     is_primary: Optional[bool] = None
     sort_order: Optional[int] = None
     access_levels: Optional[list[str]] = None
+
+
+# Max rows per product import (queued job); kept reasonable to avoid huge request payloads
+BULK_IMPORT_MAX_ROWS_PER_REQUEST = 50_000
+
+
+class BulkImportProductsRequest(BaseModel):
+    """Request schema for product bulk import. Each item is a row (Excel headers as keys). Processed in background as an import job."""
+    products: List[dict]
+
+    @field_validator("products")
+    @classmethod
+    def products_batch_limit(cls, v: List[dict]) -> List[dict]:
+        if len(v) > BULK_IMPORT_MAX_ROWS_PER_REQUEST:
+            raise ValueError(
+                f"Maximum {BULK_IMPORT_MAX_ROWS_PER_REQUEST} rows per import. Reduce the file size and try again."
+            )
+        return v
+
+
+class BulkImportProductsResponse(BaseModel):
+    """Response schema for product bulk import."""
+    created: int = 0
+    updated: int = 0
+    errors: List[str] = []
 
 
 class ProductAttachmentResponse(ProductAttachmentBase):

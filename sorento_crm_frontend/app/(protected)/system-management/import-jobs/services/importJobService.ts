@@ -41,3 +41,14 @@ export async function getImportJobStatus(jobId: string): Promise<{
   if (!response.ok) throw new Error('Failed to fetch job status');
   return response.json();
 }
+
+export async function cancelImportJob(jobId: string): Promise<{ message: string }> {
+  const response = await apiFetch(`/api/v1/system/jobs/${jobId}/cancel`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to cancel import job' }));
+    throw new Error(error.detail || 'Failed to cancel import job');
+  }
+  return response.json();
+}

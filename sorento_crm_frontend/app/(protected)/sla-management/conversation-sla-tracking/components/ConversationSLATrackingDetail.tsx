@@ -274,7 +274,7 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                     </>
                   ) : (
                     <>
-                      <p className="text-sm text-muted-foreground">Time remaining (response)</p>
+                      <p className="text-sm text-muted-foreground">Time remaining</p>
                       <p className={`font-medium text-lg ${getTimeRemainingResponse()?.includes('overdue') ? 'text-destructive' : ''}`}>
                         {getTimeRemainingResponse() ?? '—'}
                       </p>
@@ -284,14 +284,14 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                 <div>
                   {tracking.is_resolved ? (
                     <>
-                      <p className="text-sm text-muted-foreground">Resolution time</p>
+                      <p className="text-sm text-muted-foreground">Resolution duration</p>
                       <p className={`font-medium text-lg ${(tracking.resolution_duration ?? 0) <= (tracking.tier_resolution_hours ?? 0) ? 'text-green-600' : 'text-destructive'}`}>
                         {getResolutionDuration() ?? (tracking.resolution_duration != null ? formatDuration(tracking.resolution_duration * 3600 * 1000) : '—')}
                       </p>
                     </>
                   ) : (
                     <>
-                      <p className="text-sm text-muted-foreground">Time remaining (resolution)</p>
+                      <p className="text-sm text-muted-foreground">Time remaining</p>
                       <p className={`font-medium text-lg ${getTimeRemainingResolution()?.includes('overdue') ? 'text-destructive' : ''}`}>
                         {getTimeRemainingResolution() ?? '—'}
                       </p>
@@ -450,9 +450,41 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                   <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.current_tier_started_at))}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Due At</p>
-                  <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.due_at))}</p>
+                  <p className="text-sm text-muted-foreground">Due at (response)</p>
+                  <p className="font-medium">
+                    {formatDateTime(parseDateTimeAsUTC(tracking.due_at))}
+                    {(() => {
+                      const due = new Date(tracking.due_at).getTime();
+                      const now = Date.now();
+                      const overdue = tracking.is_responded && tracking.responded_at
+                        ? new Date(tracking.responded_at).getTime() > due
+                        : now > due;
+                      return overdue ? (
+                        <span className="ml-2 text-destructive text-sm font-medium">Overdue</span>
+                      ) : null;
+                    })()}
+                  </p>
                 </div>
+                {(tracking.due_at_resolution ?? tracking.resolution_due_at) && (
+                  <div>
+                    <p className="text-sm text-muted-foreground">Due at (resolution)</p>
+                    <p className="font-medium">
+                      {formatDateTime(parseDateTimeAsUTC(tracking.due_at_resolution ?? tracking.resolution_due_at!))}
+                      {(() => {
+                        const dueRes = tracking.due_at_resolution ?? tracking.resolution_due_at;
+                        if (!dueRes) return null;
+                        const due = new Date(dueRes).getTime();
+                        const now = Date.now();
+                        const overdue = tracking.is_resolved && tracking.resolved_at
+                          ? new Date(tracking.resolved_at).getTime() > due
+                          : now > due;
+                        return overdue ? (
+                          <span className="ml-2 text-destructive text-sm font-medium">Overdue</span>
+                        ) : null;
+                      })()}
+                    </p>
+                  </div>
+                )}
                 {tracking.escalated_at && (
                   <div>
                     <p className="text-sm text-muted-foreground">Escalated At</p>

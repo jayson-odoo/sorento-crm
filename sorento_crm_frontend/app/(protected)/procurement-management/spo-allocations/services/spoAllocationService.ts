@@ -14,6 +14,7 @@ export type GroupedByShipmentParams = {
   page?: number;
   limit?: number;
   query?: string;
+  product_code?: string;
   warehouse_id?: string;
   receipt_status?: string;
   sort?: string;
@@ -31,6 +32,7 @@ export async function getSPOAllocationsGroupedByShipment(
     page = 1,
     limit = 50,
     query,
+    product_code,
     warehouse_id,
     receipt_status,
     sort = 'shipment_number',
@@ -42,6 +44,7 @@ export async function getSPOAllocationsGroupedByShipment(
     ...(sort ? { sort } : {}),
     ...(dir ? { dir } : {}),
     ...(query ? { query } : {}),
+    ...(product_code ? { product_code } : {}),
     ...(warehouse_id ? { warehouse_id } : {}),
     ...(receipt_status ? { receipt_status } : {}),
   });

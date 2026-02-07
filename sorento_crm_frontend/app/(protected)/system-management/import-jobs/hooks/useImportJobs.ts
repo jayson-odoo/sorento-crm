@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getImportJobs, getImportJob, getImportJobStatus } from '../services/importJobService';
+import { getImportJobs, getImportJob, getImportJobStatus, cancelImportJob } from '../services/importJobService';
 
 export function useImportJobs(params: DataGridApiFetchParams & { job_type?: string; status?: string }) {
   return useQuery({
@@ -38,5 +38,18 @@ export function useImportJobStatus(jobId: string, enabled: boolean = true) {
     },
     refetchOnWindowFocus: true,
     retry: 1,
+  });
+}
+
+export function useCancelImportJob() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (jobId: string) => cancelImportJob(jobId),
+    onSuccess: (_, jobId) => {
+      queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
+      queryClient.invalidateQueries({ queryKey: ['import-job', jobId] });
+      queryClient.invalidateQueries({ queryKey: ['import-job-status', jobId] });
+    },
   });
 }

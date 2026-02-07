@@ -31,7 +31,10 @@ class Complaint(Base):
     contact_number = Column(Text, nullable=True)
     customer_address = Column(Text, nullable=True)
     project_title = Column(Text, nullable=True)
-    
+    contact_id = Column(Text, nullable=True)
+    space_id = Column(Text, nullable=True)
+    respond_inbox_url = Column(Text, nullable=True)
+
     attachments = relationship("ComplaintAttachment", back_populates="complaint")
     
     __table_args__ = (

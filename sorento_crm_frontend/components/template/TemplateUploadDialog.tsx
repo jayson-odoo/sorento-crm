@@ -16,10 +16,15 @@ import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
 
+export interface TemplateUploadHelpers {
+  setProgress: (percent: number) => void;
+  setStatus?: (label: string) => void;
+}
+
 interface TemplateUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onUpload: (data: any[]) => Promise<void>;
+  onUpload: (data: any[], helpers?: TemplateUploadHelpers) => Promise<void>;
   accept?: string;
   maxRows?: number; // If undefined, no limit
 }
@@ -34,6 +39,7 @@ export function TemplateUploadDialog({
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [statusLabel, setStatusLabel] = useState<string>('');
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -75,12 +81,17 @@ export function TemplateUploadDialog({
         return;
       }
 
-      setProgress(50);
-      
-      // Call the upload handler (now handles queuing and shows toast)
-      await onUpload(data);
-      
+      setProgress(10);
+      setStatusLabel('Uploading…');
+
+      const helpers: TemplateUploadHelpers = {
+        setProgress,
+        setStatus: setStatusLabel,
+      };
+      await onUpload(data, helpers);
+
       setProgress(100);
+      setStatusLabel('Complete');
       // Dialog will be closed by the handler, but ensure it closes
       onOpenChange(false);
       setFile(null);
@@ -89,6 +100,7 @@ export function TemplateUploadDialog({
     } finally {
       setIsUploading(false);
       setProgress(0);
+      setStatusLabel('');
     }
   };
 
@@ -155,7 +167,7 @@ export function TemplateUploadDialog({
             <div className="space-y-2">
               <Progress value={progress} />
               <p className="text-xs text-muted-foreground text-center">
-                Processing file... {progress}%
+                {statusLabel || 'Processing file…'} {progress}%
               </p>
             </div>
           )}

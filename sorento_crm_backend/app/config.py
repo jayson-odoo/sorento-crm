@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # Respond.io
     respond_api_key: str | None = None
     respond_base_url: str = "https://api.respond.io"
+    respond_app_base_url: str = "https://app.respond.io"  # Base URL for inbox links (e.g. /space/{id}/inbox/{contact_id})
     respond_space_id: str | None = None
     
     # External API Access

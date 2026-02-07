@@ -17,6 +17,7 @@ from app.schemas.procurement import (
     PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate,
 )
 from app.services.error_handler import handle_not_found, handle_conflict
+from app.config import settings
 
 
 class SupplierService:
@@ -290,6 +291,7 @@ class SPOAllocationService:
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
+        product_code: Optional[str] = None,
         warehouse_id: Optional[str] = None,
         receipt_status: Optional[str] = None,
         sort_field: str = "shipment_number",
@@ -299,6 +301,7 @@ class SPOAllocationService:
         from sqlalchemy.orm import joinedload
         from app.schemas.procurement import (
             InboundShipmentSimple,
+            InboundShipmentLineResponse,
             SPOAllocationResponse,
             ShipmentWithAllocationsGroup,
         )
@@ -315,6 +318,10 @@ class SPOAllocationService:
             shipment_filters.append(SPOAllocation.warehouse_id == warehouse_id)
         if receipt_status and receipt_status != "all":
             shipment_filters.append(SPOAllocation.receipt_status == receipt_status)
+        if product_code and product_code.strip():
+            shipment_filters.append(
+                SPOAllocation.product.has(Product.product_code.ilike(f"%{product_code.strip()}%"))
+            )
         if query:
             shipment_filters.append(
                 or_(
@@ -332,6 +339,10 @@ class SPOAllocationService:
             allocation_filters.append(SPOAllocation.warehouse_id == warehouse_id)
         if receipt_status and receipt_status != "all":
             allocation_filters.append(SPOAllocation.receipt_status == receipt_status)
+        if product_code and product_code.strip():
+            allocation_filters.append(
+                SPOAllocation.product.has(Product.product_code.ilike(f"%{product_code.strip()}%"))
+            )
 
         sort_map = {
             "shipment_number": InboundShipment.shipment_number,
@@ -354,6 +365,18 @@ class SPOAllocationService:
                 "pagination": {"total": total, "page": page, "limit": limit},
                 "empty": True,
             }
+
+        # Load shipment lines (packing list quantities) in a separate query so they are always
+        # populated regardless of the main query join/distinct
+        lines_query = (
+            self.db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
+            .options(joinedload(InboundShipmentLine.product))
+        )
+        all_lines = lines_query.all()
+        lines_by_shipment: dict[str, list] = {}
+        for line in all_lines:
+            lines_by_shipment.setdefault(line.shipment_id, []).append(line)
 
         # Load all allocations for these shipments (same filters) with relations
         q_alloc = (
@@ -378,10 +401,15 @@ class SPOAllocationService:
         groups = []
         for ship in shipments_page:
             allocs = by_shipment.get(ship.id, [])
+            raw_lines = lines_by_shipment.get(ship.id, [])
+            shipment_lines = [
+                InboundShipmentLineResponse.model_validate(line) for line in raw_lines
+            ]
             groups.append(
                 ShipmentWithAllocationsGroup(
                     inbound_shipment=InboundShipmentSimple.model_validate(ship),
                     spo_allocations=[SPOAllocationResponse.model_validate(a) for a in allocs],
+                    shipment_lines=shipment_lines if shipment_lines else None,
                 )
             )
 
@@ -626,22 +654,45 @@ class StockInquiryService:
             raise handle_not_found("Stock Inquiry", inquiry_id)
         return inquiry
     
+    def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
+        """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""
+        if not contact_id or not space_id:
+            return None
+        base = (settings.respond_app_base_url or "").rstrip("/")
+        if not base:
+            return None
+        return f"{base}/space/{space_id.strip()}/inbox/{contact_id.strip()}"
+
     def create_inquiry(self, inquiry_data: StockInquiryCreate):
         """Create a new stock inquiry."""
-        inquiry = StockInquiry(**inquiry_data.model_dump())
+        data = inquiry_data.model_dump()
+        contact_id = data.get("contact_id")
+        space_id = data.get("space_id")
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+        if respond_inbox_url is not None:
+            data["respond_inbox_url"] = respond_inbox_url
+        inquiry = StockInquiry(**data)
         self.db.add(inquiry)
         self.db.commit()
         self.db.refresh(inquiry)
         return inquiry
-    
+
     def update_inquiry(self, inquiry_id: str, inquiry_data: StockInquiryUpdate):
         """Update a stock inquiry."""
         inquiry = self.get_inquiry(inquiry_id)
-        
+
         update_data = inquiry_data.model_dump(exclude_unset=True)
+        contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
+        space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+        if respond_inbox_url is not None:
+            update_data["respond_inbox_url"] = respond_inbox_url
+        elif contact_id is None and space_id is None:
+            update_data["respond_inbox_url"] = None
+
         for key, value in update_data.items():
             setattr(inquiry, key, value)
-        
+
         self.db.commit()
         self.db.refresh(inquiry)
         return inquiry
@@ -759,6 +810,15 @@ class PurchaseRequestService:
     def __init__(self, db: Session):
         self.db = db
 
+    def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
+        """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""
+        if not contact_id or not space_id:
+            return None
+        base = (settings.respond_app_base_url or "").rstrip("/")
+        if not base:
+            return None
+        return f"{base}/space/{space_id.strip()}/inbox/{contact_id.strip()}"
+
     def _parse_date(self, value: Optional[str | date | datetime]) -> Optional[date]:
         if value is None:
             return None
@@ -783,6 +843,10 @@ class PurchaseRequestService:
         if isinstance(payload.expected_po_date, str):
             expected_po_date_text = payload.expected_po_date.strip() or None
 
+        contact_id = getattr(payload, "contact_id", None) or None
+        space_id = getattr(payload, "space_id", None) or None
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+
         header = PurchaseRequestHeader(
             request_type=payload.request_type,
             request_date=self._parse_date(payload.date),
@@ -795,6 +859,9 @@ class PurchaseRequestService:
             requested_by=payload.requested_by,
             requested_at=self._parse_date(payload.requested_at),
             external_reference=payload.external_reference,
+            contact_id=contact_id,
+            space_id=space_id,
+            respond_inbox_url=respond_inbox_url,
             status="draft",
             source="external",
         )
@@ -882,6 +949,11 @@ class PurchaseRequestService:
         dump = data.model_dump(exclude={"products"})
         dump["status"] = "draft"
         dump["source"] = "manual"
+        contact_id = dump.get("contact_id")
+        space_id = dump.get("space_id")
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+        if respond_inbox_url is not None:
+            dump["respond_inbox_url"] = respond_inbox_url
         header = PurchaseRequestHeader(**{k: v for k, v in dump.items() if hasattr(PurchaseRequestHeader, k)})
         self.db.add(header)
         self.db.flush()
@@ -904,6 +976,13 @@ class PurchaseRequestService:
         """Update purchase request header and optionally replace lines."""
         header = self.get_request(request_id)
         payload = data.model_dump(exclude_unset=True, exclude={"products"})
+        contact_id = payload.get("contact_id") if "contact_id" in payload else header.contact_id
+        space_id = payload.get("space_id") if "space_id" in payload else header.space_id
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+        if respond_inbox_url is not None:
+            payload["respond_inbox_url"] = respond_inbox_url
+        elif contact_id is None and space_id is None:
+            payload["respond_inbox_url"] = None
         for key, value in payload.items():
             if hasattr(header, key):
                 setattr(header, key, value)

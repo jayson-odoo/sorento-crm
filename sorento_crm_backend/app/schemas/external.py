@@ -307,6 +307,8 @@ class PurchaseRequestExternalCreate(BaseModel):
     requested_by: Optional[str] = None
     requested_at: Optional[str | DateType] = None
     external_reference: Optional[str] = None
+    contact_id: Optional[str] = None
+    space_id: Optional[str] = None
 
     @field_validator("request_type")
     @classmethod

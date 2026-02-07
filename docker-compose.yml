@@ -38,7 +38,7 @@ services:
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-sorento-demo-bucket}
       
       # Integration Webhook URL (n8n)
-      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-https://automate.foundryx.my/webhook/e26f935a-0e48-42a1-93ac-703b94b7196f}
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-https://automate-sorento.foundryx.my/webhook/e26f935a-0e48-42a1-93ac-703b94b7196f}
       
       # Redis (RQ queue for import jobs)
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}

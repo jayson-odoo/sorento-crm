@@ -287,6 +287,7 @@ class ShipmentWithAllocationsGroup(BaseModel):
     """Inbound shipment with its SPO allocations for grouped list view."""
     inbound_shipment: InboundShipmentSimple
     spo_allocations: List[SPOAllocationResponse]
+    shipment_lines: Optional[List[InboundShipmentLineResponse]] = None
 
 
 class PickingLineBase(BaseModel):
@@ -396,16 +397,13 @@ class StockInquiryBase(BaseModel):
     item_description: Optional[str] = None
     project_customer: Optional[str] = None
     project_name: Optional[str] = None
-    quantity: Optional[Decimal] = None
-    delivery_date: Optional[date] = None
-    brand: Optional[str] = None
+    quantity: Optional[str] = None
+    delivery_date: Optional[str] = None
+    remark: Optional[str] = None
     additional_remark: Optional[str] = None
     purchasing_response: Optional[str] = None
-
-    @field_validator("delivery_date", mode="before")
-    @classmethod
-    def parse_delivery_date(cls, v: Optional[str | date]) -> Optional[date]:
-        return _parse_date_string(v)
+    contact_id: Optional[str] = None
+    space_id: Optional[str] = None
 
 
 class StockInquiryCreate(StockInquiryBase):
@@ -418,20 +416,18 @@ class StockInquiryUpdate(BaseModel):
     item_description: Optional[str] = None
     project_customer: Optional[str] = None
     project_name: Optional[str] = None
-    quantity: Optional[Decimal] = None
-    delivery_date: Optional[date] = None
-    brand: Optional[str] = None
+    quantity: Optional[str] = None
+    delivery_date: Optional[str] = None
+    remark: Optional[str] = None
     additional_remark: Optional[str] = None
     purchasing_response: Optional[str] = None
-
-    @field_validator("delivery_date", mode="before")
-    @classmethod
-    def parse_delivery_date(cls, v: Optional[str | date]) -> Optional[date]:
-        return _parse_date_string(v)
+    contact_id: Optional[str] = None
+    space_id: Optional[str] = None
 
 
 class StockInquiryResponse(StockInquiryBase):
     id: str
+    respond_inbox_url: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     
@@ -474,6 +470,8 @@ class PurchaseRequestHeaderBase(BaseModel):
     status: Optional[str] = None
     source: Optional[str] = None
     external_reference: Optional[str] = None
+    contact_id: Optional[str] = None
+    space_id: Optional[str] = None
 
 
 class PurchaseRequestHeaderCreate(PurchaseRequestHeaderBase):
@@ -504,6 +502,8 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     requested_by: Optional[str] = None
     requested_at: Optional[date] = None
     status: Optional[str] = None
+    contact_id: Optional[str] = None
+    space_id: Optional[str] = None
     products: Optional[List[PurchaseRequestLineCreate]] = None
 
     @field_validator("request_type", mode="before")
@@ -526,6 +526,7 @@ class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
     """Response for list endpoint (no lines)."""
     id: str
     request_number: Optional[str] = None
+    respond_inbox_url: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -536,6 +537,7 @@ class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
 class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     id: str
     request_number: Optional[str] = None
+    respond_inbox_url: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     lines: Optional[List[PurchaseRequestLineResponse]] = []

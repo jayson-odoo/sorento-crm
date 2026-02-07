@@ -198,6 +198,19 @@ export default function PurchaseRequestDetail({
                     : '-'}
                 </p>
               </div>
+              {request.respond_inbox_url && (
+                <div className="md:col-span-2">
+                  <p className="text-sm text-muted-foreground">Respond conversation</p>
+                  <a
+                    href={request.respond_inbox_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline text-sm break-all font-medium"
+                  >
+                    {request.respond_inbox_url}
+                  </a>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

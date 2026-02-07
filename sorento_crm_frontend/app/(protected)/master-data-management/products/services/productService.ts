@@ -262,6 +262,33 @@ export async function bulkDeleteProducts(ids: string[]): Promise<void> {
 }
 
 /**
+ * Bulk import products from Excel data (queued).
+ * Expected columns: Item Code, Description, Desc 2, Item Group, Item Brand, Price, Is Active (T/F).
+ * Item Group must match a category code or name; Item Brand must match a brand code or name.
+ * Returns job_id for tracking progress in Import Jobs.
+ */
+export async function bulkImportProducts(
+  data: Record<string, unknown>[],
+): Promise<{ job_id: string; status: string; message: string }> {
+  const response = await apiFetch('/api/v1/master-data/products/bulk-import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ products: data }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to queue import job' }));
+    const message =
+      typeof error.detail === 'string'
+        ? error.detail
+        : Array.isArray(error.detail)
+          ? error.detail.map((e: { msg?: string }) => e.msg || String(e)).join('; ')
+          : error.message || 'Failed to queue import job';
+    throw new Error(message);
+  }
+  return response.json();
+}
+
+/**
  * Export products to CSV
  */
 export async function exportProducts(

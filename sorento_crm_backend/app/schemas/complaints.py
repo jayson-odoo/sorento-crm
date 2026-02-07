@@ -49,6 +49,8 @@ class ComplaintBase(BaseModel):
     contact_number: Optional[str] = None
     customer_address: Optional[str] = None
     project_title: Optional[str] = None
+    contact_id: Optional[str] = None
+    space_id: Optional[str] = None
 
 
 class ComplaintCreate(ComplaintBase):
@@ -72,11 +74,14 @@ class ComplaintUpdate(BaseModel):
     contact_number: Optional[str] = None
     customer_address: Optional[str] = None
     project_title: Optional[str] = None
+    contact_id: Optional[str] = None
+    space_id: Optional[str] = None
 
 
 class ComplaintResponse(ComplaintBase):
     id: str
+    respond_inbox_url: Optional[str] = None
     attachments: Optional[list[ComplaintAttachmentResponse]] = []
-    
+
     class Config:
         from_attributes = True

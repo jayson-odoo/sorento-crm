@@ -293,6 +293,7 @@ export default function AttachmentBrowser() {
     manualSorting: true,
     manualFiltering: true,
     enableRowSelection: (row: Row<Attachment>) => !row.original.is_deleted,
+    columnResizeMode: 'onChange',
   });
 
   return (
@@ -302,6 +303,7 @@ export default function AttachmentBrowser() {
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
         onRowClick={(row) => router.push(`/resource-management/attachments/${row.id}`)}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
       >
         <Card>
           <CardHeader className="flex-row items-center justify-between">

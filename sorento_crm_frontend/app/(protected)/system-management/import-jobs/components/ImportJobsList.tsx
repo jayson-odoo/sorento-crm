@@ -18,22 +18,27 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { RefreshCw } from 'lucide-react';
 import { formatDateTime } from '@/lib/helpers';
-import { useImportJobs } from '../hooks/useImportJobs';
+import { useImportJobs, useCancelImportJob } from '../hooks/useImportJobs';
 import type { ImportJob } from '../types/importJob.types';
+import { toast } from 'sonner';
 
 export default function ImportJobsList() {
   const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [jobType, setJobType] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [cancelingJobId, setCancelingJobId] = useState<string | null>(null);
 
-  const { data, isLoading } = useImportJobs({
+  const { data, isLoading, refetch } = useImportJobs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     job_type: jobType || undefined,
     status: statusFilter || undefined,
   });
+  const cancelJobMutation = useCancelImportJob();
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, { variant: 'primary' | 'secondary' | 'destructive' | 'outline'; appearance?: 'ghost' }> = {
@@ -134,8 +139,42 @@ export default function ImportJobsList() {
         cell: ({ row }) => row.original.completed_at ? formatDateTime(new Date(row.original.completed_at)) : '-',
         size: 200,
       },
+      {
+        accessorKey: 'actions',
+        header: '',
+        cell: ({ row }) => {
+          const status = row.original.status;
+          const canCancel = ['pending', 'queued', 'started'].includes(status);
+          if (!canCancel) return null;
+          const isLoading = cancelingJobId === row.original.job_id && cancelJobMutation.isPending;
+          return (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isLoading}
+              onClick={(event) => {
+                event.stopPropagation();
+                setCancelingJobId(row.original.job_id);
+                cancelJobMutation.mutate(row.original.job_id, {
+                  onSuccess: (data) => {
+                    toast.success(data.message || 'Job cancelled');
+                    setCancelingJobId(null);
+                  },
+                  onError: (error) => {
+                    toast.error(error instanceof Error ? error.message : 'Failed to cancel job');
+                    setCancelingJobId(null);
+                  },
+                });
+              }}
+            >
+              {isLoading ? 'Cancelling...' : 'Cancel'}
+            </Button>
+          );
+        },
+        size: 120,
+      },
     ],
-    [],
+    [cancelJobMutation.isPending, cancelingJobId],
   );
 
   const table = useReactTable({
@@ -176,6 +215,18 @@ export default function ImportJobsList() {
               onChange={(e) => setStatusFilter(e.target.value)}
               className="w-48"
             />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                refetch();
+                toast.success('List refreshed');
+              }}
+              disabled={isLoading}
+            >
+              <RefreshCw className={`size-4 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
           </div>
         </CardHeader>
         <CardTable>

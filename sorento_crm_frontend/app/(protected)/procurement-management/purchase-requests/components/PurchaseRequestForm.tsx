@@ -100,6 +100,8 @@ export default function PurchaseRequestForm({
       expected_po_date_text: null,
       requested_by: null,
       requested_at: null,
+      contact_id: null,
+      space_id: null,
       products: [{ item_code: null, quantity: null, remark: null }],
     },
     mode: 'onSubmit',
@@ -143,6 +145,8 @@ export default function PurchaseRequestForm({
         requested_at: request.requested_at
           ? new Date(request.requested_at).toISOString().split('T')[0]
           : null,
+        contact_id: request.contact_id ?? null,
+        space_id: request.space_id ?? null,
         products,
       });
       setFormInitialized(true);
@@ -166,6 +170,8 @@ export default function PurchaseRequestForm({
         expected_po_date_text: data.expected_po_date_text || undefined,
         requested_by: data.requested_by || undefined,
         requested_at: data.requested_at || undefined,
+        contact_id: data.contact_id || undefined,
+        space_id: data.space_id || undefined,
         products: data.products
           .filter((p) => p.item_code != null || p.quantity != null)
           .map((p) => ({
@@ -370,6 +376,64 @@ export default function PurchaseRequestForm({
                       <FormLabel>Requested At</FormLabel>
                       <FormControl>
                         <Input type="date" {...field} value={field.value ?? ''} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Respond conversation</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Optional: set Contact ID and Space ID (from respond.io) to build the conversation inbox URL.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {request?.respond_inbox_url && (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">Respond Inbox</p>
+                    <a
+                      href={request.respond_inbox_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline text-sm break-all"
+                    >
+                      {request.respond_inbox_url}
+                    </a>
+                  </div>
+                )}
+                <FormField
+                  control={form.control}
+                  name="contact_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Contact ID</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="Respond.io contact ID"
+                          {...field}
+                          value={field.value ?? ''}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="space_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Space ID</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="Respond.io space ID"
+                          {...field}
+                          value={field.value ?? ''}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

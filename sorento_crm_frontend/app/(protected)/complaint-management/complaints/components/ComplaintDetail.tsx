@@ -196,6 +196,19 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               </p>
             </div>
           )}
+          {complaint.respond_inbox_url && (
+            <div>
+              <p className="text-sm text-muted-foreground">Respond conversation</p>
+              <a
+                href={complaint.respond_inbox_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline text-sm break-all font-medium"
+              >
+                {complaint.respond_inbox_url}
+              </a>
+            </div>
+          )}
         </CardContent>
       </Card>
 

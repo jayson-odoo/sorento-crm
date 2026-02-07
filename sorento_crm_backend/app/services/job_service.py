@@ -60,7 +60,8 @@ class JobService:
         successful_rows: int = 0,
         failed_rows: int = 0,
         skipped_rows: int = 0,
-        processed_rows: int = 0
+        processed_rows: int = 0,
+        total_rows: Optional[int] = None,
     ) -> Optional[ImportJob]:
         """Mark job as completed."""
         job = self.db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
@@ -72,6 +73,10 @@ class JobService:
             job.failed_rows = failed_rows
             job.skipped_rows = skipped_rows
             job.processed_rows = processed_rows
+            if total_rows is not None:
+                job.total_rows = total_rows
+            elif job.total_rows == 0 and processed_rows > 0:
+                job.total_rows = processed_rows
             self.db.commit()
         return job
     

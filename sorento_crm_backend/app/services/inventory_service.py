@@ -172,6 +172,7 @@ class StockService:
         self,
         page: int = 1,
         limit: int = 50,
+        query: Optional[str] = None,
         warehouse_id: Optional[str] = None,
         product_id: Optional[str] = None,
         quantity_operator: Optional[str] = None,
@@ -185,7 +186,8 @@ class StockService:
             quantity_operator: One of 'gt', 'gte', 'lt', 'lte', 'eq' for available quantity filtering
             quantity_value: Numeric value to compare against available quantity
         """
-        from sqlalchemy import case
+        from sqlalchemy import case, or_
+        from app.models.product import Product
         
         q = self.db.query(Stock)
         
@@ -194,6 +196,14 @@ class StockService:
         
         if product_id:
             q = q.filter(Stock.product_id == product_id)
+
+        if query:
+            q = q.join(Stock.product).filter(
+                or_(
+                    Product.product_code.ilike(f"%{query}%"),
+                    Product.product_name.ilike(f"%{query}%"),
+                )
+            )
         
         # Filter by available quantity using the quantity_available column
         if quantity_operator and quantity_value:
@@ -388,12 +398,20 @@ class StockService:
             'Product ID': 'product_id',
             'product_code': 'product_code',  # For lookup
             'Product Code': 'product_code',
+            'Item Code': 'product_code',
+            'Item code': 'product_code',
+            'item code': 'product_code',
+            'ItemCode': 'product_code',
             'warehouse_id': 'warehouse_id',
             'Warehouse ID': 'warehouse_id',
             'warehouse': 'warehouse_name',  # For lookup
             'Warehouse': 'warehouse_name',
             'warehouse_name': 'warehouse_name',
             'Warehouse Name': 'warehouse_name',
+            'warehouse_code': 'warehouse_code',
+            'Warehouse Code': 'warehouse_code',
+            'Location': 'warehouse_code',
+            'location': 'warehouse_code',
             'zone_id': 'zone_id',
             'Zone ID': 'zone_id',
             'quantity_on_hand': 'quantity_on_hand',
@@ -404,6 +422,10 @@ class StockService:
             'Total Quantity': 'quantity_on_hand',
             'total quantity': 'quantity_on_hand',  # Lowercase variant
             'total': 'quantity_on_hand',  # Lowercase variant
+            'On Hand Qty': 'quantity_on_hand',
+            'On hand qty': 'quantity_on_hand',
+            'on hand qty': 'quantity_on_hand',
+            'On Hand': 'quantity_on_hand',
             'reserved_quantity': 'quantity_reserved',
             'Reserved Quantity': 'quantity_reserved',
             'quantity_reserved': 'quantity_reserved',
@@ -419,6 +441,9 @@ class StockService:
             'reorder_point': 'reorder_point',
             'Reorder Point': 'reorder_point',
             'reorder point': 'reorder_point',  # Lowercase variant
+            'Item Description': 'item_description',
+            'Item description': 'item_description',
+            'item description': 'item_description',
         }
         
         def parse_int(value):
@@ -440,6 +465,7 @@ class StockService:
         # Step 1: Build lookup dictionaries for products and warehouses (bulk lookup)
         product_codes_to_lookup = set()
         warehouse_names_to_lookup = set()
+        warehouse_codes_to_lookup = set()
         stock_ids_to_lookup = set()
         
         # First pass: collect all lookup values
@@ -450,6 +476,8 @@ class StockService:
                     product_codes_to_lookup.add(str(value).strip())
                 elif db_key == 'warehouse_name' and value:
                     warehouse_names_to_lookup.add(str(value).strip())
+                elif db_key == 'warehouse_code' and value:
+                    warehouse_codes_to_lookup.add(str(value).strip())
                 elif db_key == 'id' and value:
                     stock_ids_to_lookup.add(str(value).strip())
         
@@ -467,15 +495,24 @@ class StockService:
                 product_code_map[p.product_code] = p.id
                 product_code_lower_map[p.product_code.lower()] = p.id
         
-        # Bulk lookup warehouses by name (case-insensitive)
+        # Bulk lookup warehouses by code (case-insensitive)
+        warehouse_code_map = {}
+        warehouse_code_lower_map = {}
+        if warehouse_codes_to_lookup:
+            warehouses = self.db.query(Warehouse).filter(
+                func.lower(Warehouse.warehouse_code).in_([code.lower() for code in warehouse_codes_to_lookup])
+            ).all()
+            for w in warehouses:
+                warehouse_code_map[w.warehouse_code] = w.id
+                warehouse_code_lower_map[w.warehouse_code.lower()] = w.id
+
+        # Bulk lookup warehouses by name (case-insensitive) - fallback
         warehouse_name_map = {}
         warehouse_name_lower_map = {}
         if warehouse_names_to_lookup:
-            # Use case-insensitive matching for warehouse names
             warehouses = self.db.query(Warehouse).filter(
                 func.lower(Warehouse.warehouse_name).in_([name.lower() for name in warehouse_names_to_lookup])
             ).all()
-            # Create maps: one with original case, one with lowercase
             for w in warehouses:
                 warehouse_name_map[w.warehouse_name] = w.id
                 warehouse_name_lower_map[w.warehouse_name.lower()] = w.id
@@ -497,6 +534,7 @@ class StockService:
                 mapped_data = {}
                 product_code = None
                 warehouse_name = None
+                warehouse_code = None
                 stock_id = None
                 
                 for excel_key, value in row_data.items():
@@ -525,8 +563,13 @@ class StockService:
                         mapped_data[db_key] = parse_int(value)
                     elif db_key == 'product_code':
                         product_code = str(value).strip() if value and str(value).strip() else None
+                    elif db_key == 'item_description':
+                        # Not persisted; kept for future logging if needed
+                        pass
                     elif db_key == 'warehouse_name':
                         warehouse_name = str(value).strip() if value and str(value).strip() else None
+                    elif db_key == 'warehouse_code':
+                        warehouse_code = str(value).strip() if value and str(value).strip() else None
                     elif db_key in ['product_id', 'warehouse_id', 'zone_id']:
                         mapped_data[db_key] = str(value).strip() if value and str(value).strip() else None
                     elif db_key == 'id':
@@ -540,12 +583,28 @@ class StockService:
                     elif product_code_lower in product_code_lower_map:
                         mapped_data['product_id'] = product_code_lower_map[product_code_lower]
                     else:
-                        message = f"Row {idx}: Product with code '{product_code}' not found"
+                        message = f"Row {idx}: Product not found (code '{product_code}')"
                         errors.append(message)
                         error_records.append({"row": idx, "error": message, "data": row_data})
                         continue
                 
-                # Look up warehouse_id from warehouse_name (case-insensitive)
+                # Look up warehouse_id from warehouse_code (case-insensitive)
+                if not mapped_data.get('warehouse_id') and warehouse_code:
+                    warehouse_code_lower = warehouse_code.lower()
+                    if warehouse_code in warehouse_code_map:
+                        mapped_data['warehouse_id'] = warehouse_code_map[warehouse_code]
+                    elif warehouse_code_lower in warehouse_code_lower_map:
+                        mapped_data['warehouse_id'] = warehouse_code_lower_map[warehouse_code_lower]
+                    else:
+                        message = (
+                            f"Row {idx}: Warehouse not found (code '{warehouse_code}', "
+                            f"product '{product_code or '-'}')"
+                        )
+                        errors.append(message)
+                        error_records.append({"row": idx, "error": message, "data": row_data})
+                        continue
+
+                # Look up warehouse_id from warehouse_name (case-insensitive) - fallback
                 if not mapped_data.get('warehouse_id') and warehouse_name:
                     warehouse_name_lower = warehouse_name.lower()
                     if warehouse_name in warehouse_name_map:
@@ -553,20 +612,27 @@ class StockService:
                     elif warehouse_name_lower in warehouse_name_lower_map:
                         mapped_data['warehouse_id'] = warehouse_name_lower_map[warehouse_name_lower]
                     else:
-                        message = f"Row {idx}: Warehouse with name '{warehouse_name}' not found"
+                        message = (
+                            f"Row {idx}: Warehouse not found (name '{warehouse_name}', "
+                            f"product '{product_code or '-'}')"
+                        )
                         errors.append(message)
                         error_records.append({"row": idx, "error": message, "data": row_data})
                         continue
                 
                 # Validate required fields
                 if not mapped_data.get('product_id'):
-                    message = f"Row {idx}: Product ID or Product Code is required"
+                    message = f"Row {idx}: Product is required (code '{product_code or '-'}')"
                     errors.append(message)
                     error_records.append({"row": idx, "error": message, "data": row_data})
                     continue
                 
                 if not mapped_data.get('warehouse_id'):
-                    message = f"Row {idx}: Warehouse ID or Warehouse Name is required"
+                    message = (
+                        f"Row {idx}: Warehouse is required "
+                        f"(code '{warehouse_code or '-'}', name '{warehouse_name or '-'}', "
+                        f"product '{product_code or '-'}')"
+                    )
                     errors.append(message)
                     error_records.append({"row": idx, "error": message, "data": row_data})
                     continue

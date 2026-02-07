@@ -1,33 +1,15 @@
 /**
  * Export stock inquiry to Excel in the STOCK INQUIRY FORM layout.
- * Uses ExcelJS for borders, alignment, and bold (label column + selected brand).
+ * Uses ExcelJS for borders, alignment, and bold (label column).
  */
 
 import ExcelJS from 'exceljs';
 import { formatDate } from '@/lib/helpers';
 import type { StockInquiryDetail, StockInquiry } from '../types/stockInquiry.types';
 
-const CUSTOMER_BUDGET_BRANDS = ['SORENTO', 'MOCHA', 'CABANA', 'NO LOGO'] as const;
-
-/** Return 0-based column index (B=0, C=1, D=2, E=3) for the chosen brand, or -1 if no match */
-function getBrandColumnIndex(brand: string | null | undefined): number {
-  if (brand == null || brand === '') return -1;
-  const normalized = String(brand).toUpperCase().trim();
-  const idx = CUSTOMER_BUDGET_BRANDS.indexOf(normalized as (typeof CUSTOMER_BUDGET_BRANDS)[number]);
-  return idx >= 0 ? idx : -1;
-}
-
-/** Selected brand cell gets "★ BRAND", others stay as-is; chosen one will be bolded via style */
-function buildBrandsRow(brand: string | null | undefined): (string | number)[] {
-  const colIndex = getBrandColumnIndex(brand);
-  return [
-    '',
-    ...CUSTOMER_BUDGET_BRANDS.map((name, i) => (i === colIndex ? `★ ${name}` : name)),
-  ];
-}
-
 function formatDateForExport(value: Date | string | null | undefined): string {
   if (value == null) return '';
+  if (typeof value === 'string') return value;
   try {
     return formatDate(value);
   } catch {
@@ -42,9 +24,6 @@ function buildFormRows(inquiry: StockInquiryDetail | StockInquiry): (string | nu
   const dateStr = inquiry.created_at
     ? formatDateForExport(inquiry.created_at)
     : '';
-  const deliveryStr = inquiry.delivery_date
-    ? formatDateForExport(inquiry.delivery_date)
-    : '';
   const rows: (string | number)[][] = [
     ['STOCK INQUIRY FORM'],
     [],
@@ -55,25 +34,14 @@ function buildFormRows(inquiry: StockInquiryDetail | StockInquiry): (string | nu
     ['PROJECT CUSTOMER:', inquiry.project_customer ?? ''],
     ['PROJECT NAME:', inquiry.project_name ?? ''],
     ['QTY:', inquiry.quantity ?? ''],
-    ['DELIVERY DATE:', deliveryStr],
+    ['DELIVERY DATE:', inquiry.delivery_date ?? ''],
+    ['REMARK:', inquiry.remark ?? ''],
     [],
-    ['REMARK:'],
+    [],
+    ['REQUEST:'],
+    ['', 'E.T.A', 'MOQ', 'PRICE', 'LEAD TIME', 'NEW ITEM'],
+    [],
   ];
-  rows.push([]);
-  rows.push([]);
-  rows.push([]);
-  rows.push([]);
-
-  rows.push(['CUSTOMER BUDGET PRICE:']);
-  rows.push(buildBrandsRow(inquiry.brand));
-  rows.push([]);
-
-  rows.push(['REQUEST:']);
-  rows.push(['', 'E.T.A', 'MOQ', 'PRICE', 'LEAD TIME', 'NEW ITEM']);
-  rows.push([]);
-
-  rows.push(['COMPETITOR BRAND:', '']);
-  rows.push([]);
 
   rows.push(['ADDITIONAL REMARK:']);
   const additionalLines = (inquiry.additional_remark ?? '').split('\n');
@@ -99,18 +67,13 @@ const thinBlackBorder = {
   right: { style: 'thin' as const },
 };
 
-/** Row index (1-based) of the CUSTOMER BUDGET PRICE brands row */
-const BRANDS_ROW = 18;
 /** Row index (1-based) of the REQUEST sub-headings row (E.T.A, MOQ, ...) */
-const REQUEST_HEADER_ROW = 21;
+const REQUEST_HEADER_ROW = 16;
 
 function applyStylesToSheet(
   worksheet: ExcelJS.Worksheet,
   rows: (string | number)[][],
-  brand: string | null | undefined,
 ): void {
-  const brandColIndex = getBrandColumnIndex(brand);
-
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
     const excelRow = r + 1;
@@ -121,23 +84,14 @@ function applyStylesToSheet(
       cell.border = thinBlackBorder;
 
       const isColA = c === 0;
-      const isBrandRow = excelRow === BRANDS_ROW;
       const isRequestHeaderRow = excelRow === REQUEST_HEADER_ROW;
-      const isBrandCellInBrandRow = isBrandRow && c >= 1 && c <= 4;
-      const isChosenBrandCell = isBrandRow && c >= 1 && c - 1 === brandColIndex;
 
       if (isColA) {
-        // Left column labels: bold, left-aligned, vertical center
         cell.font = { bold: true };
         cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-      } else if (isBrandCellInBrandRow || isRequestHeaderRow) {
-        // Brand names and request sub-headings: horizontal center
+      } else if (isRequestHeaderRow) {
         cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-        if (isChosenBrandCell) {
-          cell.font = { bold: true };
-        }
       } else {
-        // Other value cells: left-aligned
         cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
       }
     }
@@ -166,7 +120,7 @@ export async function exportStockInquiryToExcel(
     excelRow.commit();
   }
 
-  applyStylesToSheet(worksheet, rows, inquiry.brand);
+  applyStylesToSheet(worksheet, rows);
 
   worksheet.getColumn(1).width = 28;
   worksheet.getColumn(2).width = 24;
@@ -216,7 +170,7 @@ export async function exportStockInquiriesToExcel(
       excelRow.commit();
     }
 
-    applyStylesToSheet(worksheet, rows, inquiry.brand);
+    applyStylesToSheet(worksheet, rows);
 
     worksheet.getColumn(1).width = 28;
     worksheet.getColumn(2).width = 24;

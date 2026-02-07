@@ -2,6 +2,7 @@
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, inspect
 from typing import Optional, Any
+from app.config import settings
 from app.models.complaints import Complaint, ComplaintAttachment
 from app.models.resources import Attachment, AttachmentType
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
@@ -55,6 +56,15 @@ class ComplaintService:
         """Return attachment_type id for code 'complaint_document'."""
         row = self.db.query(AttachmentType.id).filter(AttachmentType.code == "complaint_document").first()
         return row[0] if row else None
+
+    def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
+        """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""
+        if not contact_id or not space_id:
+            return None
+        base = (settings.respond_app_base_url or "").rstrip("/")
+        if not base:
+            return None
+        return f"{base}/space/{space_id.strip()}/inbox/{contact_id.strip()}"
 
     def _serialize_complaint(self, complaint: Complaint) -> dict:
         """Serialize complaint with attachments from complaint_attachments table only."""
@@ -134,6 +144,11 @@ class ComplaintService:
     def create_complaint(self, complaint_data: ComplaintCreate):
         """Create a new complaint with attachments (each becomes Attachment + ComplaintAttachment link)."""
         complaint_dict = complaint_data.model_dump(exclude={"attachments"})
+        contact_id = complaint_dict.get("contact_id")
+        space_id = complaint_dict.get("space_id")
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+        if respond_inbox_url is not None:
+            complaint_dict["respond_inbox_url"] = respond_inbox_url
         complaint = Complaint(**complaint_dict)
         self.db.add(complaint)
         self.db.flush()
@@ -170,11 +185,19 @@ class ComplaintService:
     def update_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
         """Update a complaint."""
         complaint = self.get_complaint(complaint_id)
-        
+
         update_data = complaint_data.model_dump(exclude_unset=True)
+        contact_id = update_data.get("contact_id") if "contact_id" in update_data else complaint.contact_id
+        space_id = update_data.get("space_id") if "space_id" in update_data else complaint.space_id
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+        if respond_inbox_url is not None:
+            update_data["respond_inbox_url"] = respond_inbox_url
+        elif contact_id is None and space_id is None:
+            update_data["respond_inbox_url"] = None
+
         for key, value in update_data.items():
             setattr(complaint, key, value)
-        
+
         self.db.commit()
         self.db.refresh(complaint)
         return complaint

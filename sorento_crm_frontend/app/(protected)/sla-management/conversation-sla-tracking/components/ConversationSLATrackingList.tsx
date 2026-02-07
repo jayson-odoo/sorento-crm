@@ -97,6 +97,28 @@ export default function ConversationSLATrackingList() {
     return Math.max(0, Math.min(100, (remaining / total) * 100));
   };
 
+  /** Response overdue: not responded and now > due_at, OR responded after due_at */
+  const isResponseOverdue = (o: ConversationSLATracking) => {
+    const due = new Date(o.due_at).getTime();
+    const now = Date.now();
+    if (o.is_responded && o.responded_at) {
+      return new Date(o.responded_at).getTime() > due;
+    }
+    return now > due;
+  };
+
+  /** Resolution overdue: not resolved and now > due_at_resolution, OR resolved after due_at_resolution */
+  const isResolutionOverdue = (o: ConversationSLATracking) => {
+    const dueRes = o.due_at_resolution ?? o.resolution_due_at;
+    if (!dueRes) return false;
+    const due = new Date(dueRes).getTime();
+    const now = Date.now();
+    if (o.is_resolved && o.resolved_at) {
+      return new Date(o.resolved_at).getTime() > due;
+    }
+    return now > due;
+  };
+
   const formatSecondsToDuration = (seconds: number | null | undefined) => {
     if (seconds == null) return '—';
     return formatDuration(seconds * 1000);
@@ -176,16 +198,40 @@ export default function ConversationSLATrackingList() {
       },
       {
         accessorKey: 'due_at',
-        header: ({ column }) => <DataGridColumnHeader title="Due At" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Due at (response)" column={column} />,
         cell: ({ row }) => {
-          const timeRemaining = getTimeRemaining(row.original.due_at);
-          const isOverdue = timeRemaining.startsWith('-');
+          const o = row.original;
+          const overdue = isResponseOverdue(o);
           return (
             <div className="space-y-1">
-              <div className={isOverdue ? 'text-destructive font-medium' : ''}>
-                {formatDateTime(new Date(row.original.due_at))}
+              <div className={overdue ? 'text-destructive font-medium' : ''}>
+                {formatDateTime(new Date(o.due_at))}
               </div>
-              {isOverdue && (
+              {overdue && (
+                <div className="text-xs text-destructive flex items-center gap-1">
+                  <AlertCircle className="size-3" />
+                  Overdue
+                </div>
+              )}
+            </div>
+          );
+        },
+        size: 180,
+      },
+      {
+        accessorKey: 'due_at_resolution',
+        header: ({ column }) => <DataGridColumnHeader title="Due at (resolution)" column={column} />,
+        cell: ({ row }) => {
+          const o = row.original;
+          const dueRes = o.due_at_resolution ?? o.resolution_due_at;
+          if (!dueRes) return '—';
+          const overdue = isResolutionOverdue(o);
+          return (
+            <div className="space-y-1">
+              <div className={overdue ? 'text-destructive font-medium' : ''}>
+                {formatDateTime(new Date(dueRes))}
+              </div>
+              {overdue && (
                 <div className="text-xs text-destructive flex items-center gap-1">
                   <AlertCircle className="size-3" />
                   Overdue
@@ -217,28 +263,32 @@ export default function ConversationSLATrackingList() {
       },
       {
         accessorKey: 'time_remaining_response',
-        header: ({ column }) => <DataGridColumnHeader title="Time remaining (response)" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Response" column={column} />,
         cell: ({ row }) => {
           const o = row.original;
           if (o.is_responded) {
-            const withinKpi = (o.response_time ?? 0) <= (o.tier_response_hours ?? 0);
+            const overdue = isResponseOverdue(o);
             const hours = o.response_time ?? 0;
-            const str = hours < 1 ? formatSecondsToDuration(hours * 3600) : `${hours.toFixed(1)}h`;
+            const str = hours < 1 ? formatSecondsToDurationWithSeconds((o.response_time ?? 0) * 3600) : `${hours.toFixed(1)}h`;
             return (
-              <span className={`text-sm font-medium ${withinKpi ? 'text-green-600' : 'text-destructive'}`}>
-                {str}
-              </span>
+              <div className="space-y-0.5">
+                <div className="text-xs text-muted-foreground">Response time</div>
+                <span className={`text-sm font-medium ${overdue ? 'text-destructive' : 'text-green-600'}`}>
+                  {str}
+                </span>
+              </div>
             );
           }
           const timeRemaining = getTimeRemaining(o.due_at, o.time_remaining_response_seconds);
           const percent = getTimeRemainingPercent(o.due_at, o.current_tier_started_at);
-          const isOverdue = timeRemaining.startsWith('-');
+          const overdue = timeRemaining.startsWith('-');
           return (
             <div className="space-y-1 w-40">
+              <div className="text-xs text-muted-foreground">Time remaining</div>
               <div className="flex items-center gap-2">
-                <Clock className={`size-4 ${isOverdue ? 'text-destructive' : 'text-muted-foreground'}`} />
-                <span className={`text-sm ${isOverdue ? 'text-destructive font-medium' : ''}`}>
-                  {isOverdue ? `${timeRemaining.substring(1)} overdue` : `${timeRemaining} left`}
+                <Clock className={`size-4 ${overdue ? 'text-destructive' : 'text-muted-foreground'}`} />
+                <span className={`text-sm ${overdue ? 'text-destructive font-medium' : ''}`}>
+                  {overdue ? `${timeRemaining.substring(1)} overdue` : `${timeRemaining} left`}
                 </span>
               </div>
               <Progress value={percent} className="h-2" />
@@ -249,28 +299,35 @@ export default function ConversationSLATrackingList() {
       },
       {
         accessorKey: 'time_remaining_resolution',
-        header: ({ column }) => <DataGridColumnHeader title="Time remaining (resolution)" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Resolution" column={column} />,
         cell: ({ row }) => {
           const o = row.original;
           if (o.is_resolved) {
-            const withinKpi = (o.resolution_duration ?? 0) <= (o.tier_resolution_hours ?? 0);
+            const overdue = isResolutionOverdue(o);
             const hours = o.resolution_duration ?? 0;
-            const str = hours < 1 ? formatSecondsToDuration(hours * 3600) : `${hours.toFixed(1)}h`;
+            const str = hours < 1 ? formatSecondsToDurationWithSeconds((o.resolution_duration ?? 0) * 3600) : `${hours.toFixed(1)}h`;
             return (
-              <span className={`text-sm font-medium ${withinKpi ? 'text-green-600' : 'text-destructive'}`}>
-                {str}
-              </span>
+              <div className="space-y-0.5">
+                <div className="text-xs text-muted-foreground">Resolution duration</div>
+                <span className={`text-sm font-medium ${overdue ? 'text-destructive' : 'text-green-600'}`}>
+                  {str}
+                </span>
+              </div>
             );
           }
           const sec = o.time_remaining_resolution_seconds;
           const str = formatSecondsToDuration(sec ?? undefined);
+          const overdue = isResolutionOverdue(o);
           return (
-            <span className="text-sm">
-              {str} left
-            </span>
+            <div className="space-y-0.5">
+              <div className="text-xs text-muted-foreground">Time remaining</div>
+              <span className={`text-sm ${overdue ? 'text-destructive font-medium' : ''}`}>
+                {overdue ? 'Overdue' : `${str} left`}
+              </span>
+            </div>
           );
         },
-        size: 180,
+        size: 200,
       },
       {
         accessorKey: 'is_resolved',

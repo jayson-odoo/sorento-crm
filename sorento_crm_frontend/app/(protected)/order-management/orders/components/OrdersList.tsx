@@ -119,10 +119,48 @@ export default function OrdersList() {
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        accessorKey: 'debtor_name',
+        header: ({ column }) => <DataGridColumnHeader title="Debtor Name" column={column} />,
+        cell: ({ row }) => row.original.debtor_name || '-',
+        size: 200,
+        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+      },
+      {
         accessorKey: 'order_date',
         header: ({ column }) => <DataGridColumnHeader title="Order Date" column={column} />,
         cell: ({ row }) => row.original.order_date ? formatDate(new Date(row.original.order_date)) : '-',
         size: 120,
+        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
+        accessorKey: 'promised_delivery_date',
+        header: ({ column }) => <DataGridColumnHeader title="Promised Delivery" column={column} />,
+        cell: ({ row }) => row.original.promised_delivery_date ? formatDate(new Date(row.original.promised_delivery_date)) : '-',
+        size: 150,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        accessorKey: 'actual_delivery_date',
+        header: ({ column }) => <DataGridColumnHeader title="Actual Delivery" column={column} />,
+        cell: ({ row }) => row.original.actual_delivery_date ? formatDate(new Date(row.original.actual_delivery_date)) : '-',
+        size: 150,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        accessorKey: 'delivery_days',
+        header: ({ column }) => <DataGridColumnHeader title="Delivery Days (2)" column={column} />,
+        cell: ({ row }) => {
+          if (row.original.delivery_days === null || row.original.delivery_days === undefined) return '-';
+          return (
+            <div className="flex items-center gap-2">
+              <span>{row.original.delivery_days}</span>
+              {row.original.kpi_warning && (
+                <AlertTriangle className="size-4 text-amber-500" />
+              )}
+            </div>
+          );
+        },
+        size: 130,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
@@ -131,13 +169,6 @@ export default function OrdersList() {
         cell: ({ row }) => row.original.debtor_code || '-',
         size: 120,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        accessorKey: 'debtor_name',
-        header: ({ column }) => <DataGridColumnHeader title="Debtor Name" column={column} />,
-        cell: ({ row }) => row.original.debtor_name || '-',
-        size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'agent',
@@ -157,7 +188,8 @@ export default function OrdersList() {
         accessorKey: 'remarks_cs',
         header: ({ column }) => <DataGridColumnHeader title="Remarks CS" column={column} />,
         cell: ({ row }) => row.original.remarks_cs || '-',
-        size: 130,
+        size: 220,
+        minSize: 80,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
@@ -180,30 +212,6 @@ export default function OrdersList() {
         },
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        accessorKey: 'promised_delivery_date',
-        header: ({ column }) => <DataGridColumnHeader title="Promised Delivery" column={column} />,
-        cell: ({ row }) => row.original.promised_delivery_date ? formatDate(new Date(row.original.promised_delivery_date)) : '-',
-        size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        accessorKey: 'delivery_days',
-        header: ({ column }) => <DataGridColumnHeader title="Delivery Days (2)" column={column} />,
-        cell: ({ row }) => {
-          if (row.original.delivery_days === null || row.original.delivery_days === undefined) return '-';
-          return (
-            <div className="flex items-center gap-2">
-              <span>{row.original.delivery_days}</span>
-              {row.original.kpi_warning && (
-                <AlertTriangle className="size-4 text-amber-500" />
-              )}
-            </div>
-          );
-        },
-        size: 130,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'total_amount',
@@ -239,10 +247,18 @@ export default function OrdersList() {
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
+    <DataGrid
+      table={table}
+      recordCount={data?.pagination.total || 0}
+      isLoading={isLoading}
+      onRowClick={handleRowClick}
+      tableLayout={{ width: 'fixed', columnsResizable: true }}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">

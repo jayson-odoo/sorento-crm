@@ -16,6 +16,7 @@ router = APIRouter()
 async def get_stock_balance(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
+    query: Optional[str] = Query(None),
     warehouse_id: Optional[str] = Query(None),
     product_id: Optional[str] = Query(None),
     quantity_operator: Optional[str] = Query(None),
@@ -29,6 +30,7 @@ async def get_stock_balance(
         result = service.list_stock(
             page=page,
             limit=limit,
+            query=query,
             warehouse_id=warehouse_id,
             product_id=product_id,
             quantity_operator=quantity_operator,

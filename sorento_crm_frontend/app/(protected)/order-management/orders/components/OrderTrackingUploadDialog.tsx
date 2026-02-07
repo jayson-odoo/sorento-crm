@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Upload, X, FileSpreadsheet, AlertTriangle } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Upload, X, FileSpreadsheet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -35,6 +36,7 @@ export function OrderTrackingUploadDialog({
   onUpload,
   accept = '.xlsx,.xls',
 }: OrderTrackingUploadDialogProps) {
+  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -85,14 +87,16 @@ export function OrderTrackingUploadDialog({
       setProgress(40);
       const importResult = await onUpload(file);
       setProgress(100);
-      // Job has been queued - show success message and close dialog
-      toast.success(
-        'Import job queued. Check the backend terminal for the import log (rows read, created, updated, errors). Refresh the page after a moment to see updated orders.',
-        { duration: 8000 }
-      );
       onOpenChange(false);
       setFile(null);
       setSheetSummary(null);
+      toast.success('Import job queued. You can track progress on the import job page.', {
+        duration: 5000,
+        action: {
+          label: 'View Status',
+          onClick: () => router.push(`/system-management/import-jobs/${importResult.job_id}`),
+        },
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to upload file');
     } finally {

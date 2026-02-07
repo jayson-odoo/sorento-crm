@@ -226,6 +226,18 @@ export default function SmartLinkageList() {
                 <SelectItem value="n8n">n8n</SelectItem>
               </SelectContent>
             </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                refetch();
+                toast.success('List refreshed');
+              }}
+              disabled={isLoading}
+            >
+              <RefreshCw className={`size-4 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
           </div>
         </CardHeader>
         <CardTable>

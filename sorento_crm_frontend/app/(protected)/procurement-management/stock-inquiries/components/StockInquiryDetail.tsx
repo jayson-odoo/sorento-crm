@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { Edit, Trash2, FileDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { exportStockInquiryToExcel } from '../utils/exportStockInquiryToExcel';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockInquiry } from '../hooks/useStockInquiries';
@@ -151,23 +150,15 @@ export default function StockInquiryDetail({
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Quantity</p>
-                <p className="font-medium">{inquiry.quantity || '-'}</p>
+                <p className="font-medium">{inquiry.quantity ?? '-'}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Delivery Date</p>
-                <p className="font-medium">
-                  {inquiry.delivery_date
-                    ? formatDate(new Date(inquiry.delivery_date))
-                    : '-'}
-                </p>
+                <p className="font-medium">{inquiry.delivery_date ?? '-'}</p>
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Brand</p>
-                {inquiry.brand ? (
-                  <Badge variant="secondary">{inquiry.brand}</Badge>
-                ) : (
-                  <p className="font-medium">-</p>
-                )}
+                <p className="text-sm text-muted-foreground">Remark</p>
+                <p className="font-medium whitespace-pre-wrap">{inquiry.remark ?? '-'}</p>
               </div>
             </div>
             {inquiry.additional_remark && (
@@ -186,6 +177,19 @@ export default function StockInquiryDetail({
             <CardTitle>Project & Response</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {inquiry.respond_inbox_url && (
+              <div>
+                <p className="text-sm text-muted-foreground">Respond Inbox</p>
+                <a
+                  href={inquiry.respond_inbox_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline text-sm break-all font-medium"
+                >
+                  {inquiry.respond_inbox_url}
+                </a>
+              </div>
+            )}
             <div>
               <p className="text-sm text-muted-foreground">Project Customer</p>
               <p className="font-medium">{inquiry.project_customer || '-'}</p>
@@ -194,16 +198,14 @@ export default function StockInquiryDetail({
               <p className="text-sm text-muted-foreground">Project Name</p>
               <p className="font-medium">{inquiry.project_name || '-'}</p>
             </div>
-            {inquiry.purchasing_response && (
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  Purchasing Response
-                </p>
-                <p className="font-medium whitespace-pre-wrap">
-                  {inquiry.purchasing_response}
-                </p>
-              </div>
-            )}
+            <div>
+              <p className="text-sm text-muted-foreground">
+                Purchasing Response
+              </p>
+              <p className="font-medium whitespace-pre-wrap">
+                {inquiry.purchasing_response ?? '-'}
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>

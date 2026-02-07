@@ -64,6 +64,8 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       contact_number: null,
       customer_address: null,
       project_title: null,
+      contact_id: null,
+      space_id: null,
       attachments: [],
     },
     mode: 'onSubmit',
@@ -93,6 +95,8 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         contact_number: complaint.contact_number || null,
         customer_address: complaint.customer_address || null,
         project_title: complaint.project_title || null,
+        contact_id: complaint.contact_id ?? null,
+        space_id: complaint.space_id ?? null,
         attachments: complaint.attachments || [],
       });
       setFormInitialized(true);
@@ -137,6 +141,8 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         contact_number: data.contact_number || undefined,
         customer_address: data.customer_address || undefined,
         project_title: data.project_title || undefined,
+        contact_id: data.contact_id || undefined,
+        space_id: data.space_id || undefined,
         attachments: validAttachments.length > 0 ? validAttachments : undefined,
       };
 
@@ -501,6 +507,64 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                           placeholder="Enter project title"
                           {...field}
                           value={field.value || ''}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Respond conversation</CardTitle>
+                <FormDescription>
+                  Optional: set Contact ID and Space ID (from respond.io) to build the conversation inbox URL. When provided on create/update, the URL is generated automatically.
+                </FormDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {complaint?.respond_inbox_url && (
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">Respond Inbox</p>
+                    <a
+                      href={complaint.respond_inbox_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline text-sm break-all"
+                    >
+                      {complaint.respond_inbox_url}
+                    </a>
+                  </div>
+                )}
+                <FormField
+                  control={form.control}
+                  name="contact_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Contact ID</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="Respond.io contact ID"
+                          {...field}
+                          value={field.value ?? ''}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="space_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Space ID</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="Respond.io space ID"
+                          {...field}
+                          value={field.value ?? ''}
                         />
                       </FormControl>
                       <FormMessage />
