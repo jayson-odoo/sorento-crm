@@ -28,11 +28,11 @@ class IntegrationLog(Base):
     correlation_id = Column(UUID(as_uuid=False), nullable=True)
     retry_count = Column(Integer, default=0, nullable=False)
     max_retry_allowed = Column(Integer, default=3, nullable=False)
-    next_retry_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    next_retry_at = Column(DateTime(timezone=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)
-    processed_at = Column(DateTime(timezone=True), nullable=True)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    processed_at = Column(DateTime(timezone=False), nullable=True)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     __table_args__ = (
         Index("ix_integration_log_business_table_business_id", "business_table", "business_id"),

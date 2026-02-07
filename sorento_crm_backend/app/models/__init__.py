@@ -15,6 +15,7 @@ from app.models.resources import Attachment, AttachmentType
 from app.models.access import AccessAgent, ContactAgentAccess, UserAgentAccess
 from app.models.integration import IntegrationLog
 from app.models.import_log import ImportLog
+from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob
 
 __all__ = [
@@ -71,4 +72,6 @@ __all__ = [
     "ImportLog",
     "ImportJob",
     "VerificationToken",
+    "PublicHoliday",
+    "WorkCalendarConfig",
 ]

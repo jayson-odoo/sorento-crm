@@ -15,8 +15,8 @@ class SLAPolicy(Base):
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     tiers = relationship("SLAPolicyTier", back_populates="policy")
     tracking = relationship("ConversationSLATracking", back_populates="policy")
@@ -36,8 +36,8 @@ class SLAPolicyTier(Base):
     tier_name = Column(Text, nullable=False)
     response_hours = Column(Integer, nullable=False)
     resolution_hours = Column(Integer, nullable=False, server_default="24")
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     policy = relationship("SLAPolicy", back_populates="tiers")
     
@@ -55,24 +55,24 @@ class ConversationSLATracking(Base):
     current_tier = Column(Integer, nullable=False)
     assigned_to = Column(Text, nullable=True)  # Keep for backward compatibility
     assigned_to_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # FK to users
-    initiated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    current_tier_started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    due_at = Column(DateTime(timezone=True), nullable=False)  # Response deadline: current_tier_started_at + tier.response_hours
-    due_at_resolution = Column(DateTime(timezone=True), nullable=True)  # Resolution deadline: initiated_at + tier.resolution_hours
-    escalated_at = Column(DateTime(timezone=True), nullable=True)
+    initiated_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    current_tier_started_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    due_at = Column(DateTime(timezone=False), nullable=False)  # Response deadline: current_tier_started_at + tier.response_hours
+    due_at_resolution = Column(DateTime(timezone=False), nullable=True)  # Resolution deadline: initiated_at + tier.resolution_hours
+    escalated_at = Column(DateTime(timezone=False), nullable=True)
     escalation_reason = Column(Text, nullable=True)
     is_responded = Column(Boolean, default=False, nullable=False)
-    responded_at = Column(DateTime(timezone=True), nullable=True)
+    responded_at = Column(DateTime(timezone=False), nullable=True)
     responded_by = Column(Text, nullable=True)
     response_time = Column(Numeric(10, 2), nullable=True)
     is_resolved = Column(Boolean, default=False, nullable=False)
-    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_at = Column(DateTime(timezone=False), nullable=True)
     resolved_by = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     respond_contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)  # FK to respond_contacts
     synced_to_excel = Column(Boolean, default=False, nullable=False)
-    last_synced_to_excel = Column(DateTime(timezone=True), nullable=True)
+    last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     resolution_duration = Column(Numeric(10, 2), nullable=True)
     
     policy = relationship("SLAPolicy", back_populates="tracking")
@@ -101,18 +101,18 @@ class ConversationSLAEventLog(Base):
     event_type = Column(Text, nullable=False)  # escalation, response, resolution
     from_tier = Column(Integer, nullable=True)
     to_tier = Column(Integer, nullable=True)
-    event_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)  # Timestamptz, stores UTC
-    from_time = Column(DateTime(timezone=True), nullable=True)  # Timestamptz, stores UTC
+    event_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)  # Stored without time zone
+    from_time = Column(DateTime(timezone=False), nullable=True)  # Stored without time zone
     duration = Column(Numeric(10, 2), nullable=True)  # Duration in hours
     reason = Column(Text, nullable=True)
     assigned_to = Column(Text, nullable=True)  # Keep for backward compatibility
     assigned_to_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # FK to users
-    due_at = Column(DateTime(timezone=True), nullable=True)
+    due_at = Column(DateTime(timezone=False), nullable=True)
     response_time = Column(Numeric(10, 2), nullable=True)
     resolution_time = Column(Numeric(10, 2), nullable=True)
     reminder_count = Column(Integer, default=0, nullable=False)
-    last_reminder_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    last_reminder_at = Column(DateTime(timezone=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     
     tracking = relationship("ConversationSLATracking", back_populates="event_logs")
     assigned_user = relationship("User", foreign_keys=[assigned_to_id])

@@ -43,9 +43,9 @@ class ImportJob(Base):
     error = Column(Text, nullable=True)  # Store error message
     
     # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    started_at = Column(DateTime(timezone=True), nullable=True)
-    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    started_at = Column(DateTime(timezone=False), nullable=True)
+    completed_at = Column(DateTime(timezone=False), nullable=True)
     
     # Additional metadata
     job_metadata = Column('metadata', JSONB, nullable=True)  # Store additional job metadata

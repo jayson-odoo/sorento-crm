@@ -16,7 +16,7 @@ class AttachmentType(Base):
     description = Column(Text, nullable=True)
     allowed_extensions = Column(String(255), nullable=False)
     max_file_size_mb = Column(Integer, default=10, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     
     attachments = relationship("Attachment", back_populates="attachment_type")
 
@@ -35,9 +35,9 @@ class Attachment(Base):
     entity_type = Column(String(100), nullable=True)
     entity_id = Column(String, nullable=True)
     uploaded_by = Column(String, nullable=True)
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    uploaded_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False)
-    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    deleted_at = Column(DateTime(timezone=False), nullable=True)
     deleted_by = Column(String, nullable=True)
     
     attachment_type = relationship("AttachmentType", back_populates="attachments")

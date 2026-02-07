@@ -1685,6 +1685,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/system-management/work-calendar/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/system-management/work-calendar">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/system-management/work-calendar/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/(protected)/user-management/access-agents/[id]/edit/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/user-management/access-agents/[id]/edit">> = Specific

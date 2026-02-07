@@ -5,7 +5,7 @@ import time
 from typing import Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
+from sqlalchemy import or_, and_, func
 from decimal import Decimal
 from app.models.order import Order, OrderStatus, Customer
 from app.schemas.order import (
@@ -14,6 +14,7 @@ from app.schemas.order import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.import_log_service import ImportLogService
+from app.services.calendar_service import CalendarService
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +332,7 @@ class OrderService:
         start_time = time.monotonic()
         master_rows = 0
         tracking_rows = 0
+        calendar_service = CalendarService(self.db)
 
         try:
             workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
@@ -454,13 +456,19 @@ class OrderService:
                     else:
                         mapped[db_key] = str(value).strip() if value is not None else None
 
-                order_number = mapped.get("order_number")
+                order_number = (mapped.get("order_number") or "").strip()
                 if not order_number:
                     errors.append({"row": row_idx, "error": "Doc. No. is required", "data": row_data})
                     continue
+                mapped["order_number"] = order_number
+                if mapped.get("order_date"):
+                    mapped["promised_delivery_date"] = calendar_service.add_business_days(
+                        mapped["order_date"], 2
+                    )
 
+                # Match by order_number (case-insensitive) to update existing instead of creating duplicate
                 existing_order = self.db.query(Order).filter(
-                    Order.order_number == order_number,
+                    func.lower(Order.order_number) == order_number.lower(),
                     Order.deleted_at.is_(None)
                 ).first()
 
@@ -498,13 +506,14 @@ class OrderService:
                     else:
                         mapped[db_key] = str(value).strip() if value is not None else None
 
-                order_number = mapped.get("order_number")
+                order_number = (mapped.get("order_number") or "").strip()
                 if not order_number:
                     errors.append({"row": row_idx, "error": "Doc Number is required", "data": row_data})
                     continue
 
+                # Match by order_number (case-insensitive), same as Master sheet
                 order = self.db.query(Order).filter(
-                    Order.order_number == order_number,
+                    func.lower(Order.order_number) == order_number.lower(),
                     Order.deleted_at.is_(None)
                 ).first()
 
@@ -522,7 +531,9 @@ class OrderService:
                         setattr(order, key, value)
 
                 if order.order_date and order.actual_delivery_date:
-                    delivery_days = (order.actual_delivery_date.date() - order.order_date.date()).days
+                    delivery_days = calendar_service.business_days_between(
+                        order.order_date, order.actual_delivery_date
+                    )
                     order.delivery_days = delivery_days
                     order.kpi_warning = delivery_days > 2
                     if order.kpi_warning:

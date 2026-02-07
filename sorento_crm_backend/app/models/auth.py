@@ -10,4 +10,4 @@ class VerificationToken(Base):
     
     identifier = Column(String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     token = Column(String, primary_key=True)
-    expires = Column(DateTime(timezone=True), nullable=False)
+    expires = Column(DateTime(timezone=False), nullable=False)

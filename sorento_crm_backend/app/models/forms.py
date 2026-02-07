@@ -20,8 +20,8 @@ class Form(Base):
     attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True)
     # created_by column doesn't exist in database, removed from model
     # created_by = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     sections = relationship("FormSection", back_populates="form")
     versions = relationship("FormVersion", back_populates="form")
@@ -40,7 +40,7 @@ class FormSection(Base):
     form_id = Column(UUID(as_uuid=False), ForeignKey("forms.id", ondelete="CASCADE"), nullable=False)
     section_name = Column(String(255), nullable=False)
     section_order = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     
     form = relationship("Form", back_populates="sections")
     fields = relationship("FormField", back_populates="section")
@@ -68,7 +68,7 @@ class FormField(Base):
     default_value = Column(Text, nullable=True)
     conditional_logic = Column(JSONB, nullable=True)
     field_order = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     
     section = relationship("FormSection", back_populates="fields")
     
@@ -88,7 +88,7 @@ class FormVersion(Base):
     change_summary = Column(Text, nullable=True)
     is_active = Column(Boolean, default=False, nullable=False)
     created_by = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     
     form = relationship("Form", back_populates="versions")
     
@@ -106,8 +106,8 @@ class FormSubmission(Base):
     status = Column(String(50), default="draft", nullable=False)
     submission_data = Column(JSONB, nullable=False)
     created_by = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     form = relationship("Form")
 

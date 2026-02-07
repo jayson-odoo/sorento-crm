@@ -50,7 +50,7 @@ class ComplaintAttachment(Base):
     attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="CASCADE"), nullable=False)
     is_primary = Column(Boolean, default=False, nullable=False)
     sort_order = Column(Integer, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     
     complaint = relationship("Complaint", back_populates="attachments")
@@ -69,7 +69,7 @@ class ComplaintManualAttachment(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     complaint_id = Column(UUID(as_uuid=False), ForeignKey("complaints.id", ondelete="CASCADE"), nullable=False)
     attachment_id = Column(UUID(as_uuid=False), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_complaint_manual_attachments_complaint_id", "complaint_id"),

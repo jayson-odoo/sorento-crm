@@ -56,12 +56,19 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
   const { data: navigationData } = useOrders(navigationParams);
   const navigationItems = navigationData?.data ?? [];
 
+  const defaultOrderDate = new Date();
+  const defaultPromisedDate = (() => {
+    const d = new Date(defaultOrderDate);
+    d.setDate(d.getDate() + 2);
+    return d;
+  })();
+
   const form = useForm<OrderSchemaType>({
     resolver: zodResolver(OrderSchema),
     defaultValues: {
       order_number: '',
-      order_date: new Date(),
-      promised_delivery_date: undefined,
+      order_date: defaultOrderDate,
+      promised_delivery_date: defaultPromisedDate,
       actual_delivery_date: undefined,
       customer_id: '',
       order_status_id: '',
@@ -85,7 +92,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
       salesman: '',
       trips: undefined,
       warehouse: '',
-      delivery_days: undefined,
+      delivery_days: 2,
       kpi_warning: false,
       subtotal_amount: 0,
       discount_amount: 0,
@@ -103,6 +110,17 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
   const subtotal = form.watch('subtotal_amount');
   const discount = form.watch('discount_amount') || 0;
   const tax = form.watch('tax_amount') || 0;
+
+  // Keep promised_delivery_date 2 days after order date when order date changes
+  const orderDate = form.watch('order_date');
+  const orderDateTime = orderDate instanceof Date && !isNaN(orderDate.getTime()) ? orderDate.getTime() : null;
+  useEffect(() => {
+    if (orderDateTime !== null && orderDate instanceof Date) {
+      const promised = new Date(orderDate);
+      promised.setDate(promised.getDate() + 2);
+      form.setValue('promised_delivery_date', promised);
+    }
+  }, [orderDateTime, orderDate, form]);
 
   // Auto-calculate total when financial fields change
   useEffect(() => {
@@ -153,7 +171,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
             salesman: order.salesman || '',
             trips: order.trips ?? undefined,
             warehouse: order.warehouse || '',
-            delivery_days: order.delivery_days ?? undefined,
+            delivery_days: order.delivery_days ?? 2,
             kpi_warning: order.kpi_warning ?? false,
             subtotal_amount: order.subtotal_amount,
             discount_amount: order.discount_amount || 0,
@@ -918,14 +936,14 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                 </div>
 
                 <div className="space-y-4">
-                  <h4 className="text-sm font-semibold text-muted-foreground">KPI</h4>
+                  <h4 className="text-sm font-semibold text-muted-foreground">Delivery Days (2)</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <FormField
                       control={form.control}
                       name="delivery_days"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Delivery Days</FormLabel>
+                          <FormLabel>Delivery Days (2)</FormLabel>
                           <FormControl>
                             <Input value={field.value ?? ''} disabled />
                           </FormControl>
@@ -937,7 +955,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                       name="kpi_warning"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>KPI Warning</FormLabel>
+                          <FormLabel>Over 2 days</FormLabel>
                           <FormControl>
                             <Input value={field.value ? 'Yes' : 'No'} disabled />
                           </FormControl>

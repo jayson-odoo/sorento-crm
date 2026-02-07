@@ -190,7 +190,7 @@ export default function OrdersList() {
       },
       {
         accessorKey: 'delivery_days',
-        header: ({ column }) => <DataGridColumnHeader title="Delivery Days" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Delivery Days (2)" column={column} />,
         cell: ({ row }) => {
           if (row.original.delivery_days === null || row.original.delivery_days === undefined) return '-';
           return (

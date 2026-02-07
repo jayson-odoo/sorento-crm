@@ -32,8 +32,8 @@ class Supplier(Base):
     country = Column(String(100), nullable=True)
     payment_terms_days = Column(Integer, default=30, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
     
     product_suppliers = relationship("ProductSupplier", back_populates="supplier")
     inbound_shipments = relationship("InboundShipment", back_populates="supplier")
@@ -52,7 +52,7 @@ class ProductSupplier(Base):
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False)
     standard_lead_time_days = Column(Integer, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     
     product = relationship("Product", back_populates="product_suppliers")
     supplier = relationship("Supplier", back_populates="product_suppliers")
@@ -80,12 +80,12 @@ class InboundShipment(Base):
     total_items_shipped = Column(Integer, nullable=True)
     total_cartons = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(String, nullable=True)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="RESTRICT"), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
-    last_synced_to_excel = Column(DateTime(timezone=True), nullable=True)
+    last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     
     supplier = relationship("Supplier", back_populates="inbound_shipments")
     attachment = relationship("Attachment")
@@ -141,10 +141,10 @@ class InboundShipmentLine(Base):
     cartons_count = Column(Integer, default=1, nullable=False)
     weight_per_carton = Column(Numeric(10, 2), nullable=True)
     unit_cost = Column(Numeric(12, 2), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
-    last_synced_to_excel = Column(DateTime(timezone=True), nullable=True)
-    updated_at = Column(DateTime(timezone=True), nullable=True)
+    last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
     
     shipment = relationship("InboundShipment", back_populates="shipment_lines")
     product = relationship("Product", back_populates="inbound_shipment_lines")
@@ -177,12 +177,12 @@ class SPOAllocation(Base):
     quantity_received = Column(Integer, default=0, nullable=False)
     quantity_rejected = Column(Integer, default=0, nullable=False)
     allocation_notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(String, nullable=True)
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=True)
-    last_synced_to_excel = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
+    last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     
     inbound_shipment_line = relationship("InboundShipmentLine", back_populates="spo_allocations")
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
@@ -213,14 +213,14 @@ class PickingHeader(Base):
     inspection_status = Column(String(50), default="pending", nullable=False)
     quality_remarks = Column(Text, nullable=True)
     inspected_by_user_id = Column(String, nullable=True)
-    inspection_date = Column(DateTime(timezone=True), nullable=True)
+    inspection_date = Column(DateTime(timezone=False), nullable=True)
     picking_status = Column(String(50), default="draft", nullable=False)
     total_items_picked = Column(Integer, nullable=True)
     total_items_discrepancy = Column(Integer, nullable=True)
     total_cost = Column(Numeric(15, 2), nullable=True)
     notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     picking_lines = relationship("PickingLine", back_populates="picking_header")
     
@@ -248,12 +248,12 @@ class PickingLine(Base):
     expiry_date = Column(Date, nullable=True)
     unit_cost = Column(Numeric(12, 2), nullable=True)
     line_total = Column(Numeric(15, 2), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     source_warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True)
     destination_warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
-    last_synced_to_excel = Column(DateTime(timezone=True), nullable=True)
-    updated_at = Column(DateTime(timezone=True), nullable=True)
+    last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
     
     picking_header = relationship("PickingHeader", back_populates="picking_lines")
     spo_allocation = relationship("SPOAllocation", back_populates="picking_lines")
@@ -283,8 +283,8 @@ class StockInquiry(Base):
     brand = Column(Text, nullable=True)
     additional_remark = Column(Text, nullable=True)
     purchasing_response = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=True)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=True)
     
     __table_args__ = (
         Index("ix_stock_inquiries_product_code", "product_code"),
@@ -311,8 +311,8 @@ class PurchaseRequestHeader(Base):
     status = Column(String(50), default="draft", nullable=False)
     source = Column(String(50), default="external", nullable=False)
     external_reference = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     lines = relationship(
         "PurchaseRequestLine",
@@ -340,7 +340,7 @@ class PurchaseRequestLine(Base):
     quantity = Column(Numeric(15, 2), nullable=True)
     remark = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     purchase_request = relationship("PurchaseRequestHeader", back_populates="lines")
 

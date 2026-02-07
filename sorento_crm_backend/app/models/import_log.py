@@ -25,7 +25,7 @@ class ImportLog(Base):
     errors = Column(JSONB, nullable=True)
     summary = Column(JSONB, nullable=True)
     imported_by = Column(String, nullable=True)
-    imported_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    imported_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     duration_ms = Column(Integer, nullable=True)
 
     __table_args__ = (

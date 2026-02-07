@@ -26,8 +26,8 @@ class ProductCategory(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     display_order = Column(Integer, default=0, nullable=True)
     created_by = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
     
     parent = relationship("ProductCategory", remote_side=[id], back_populates="children")
     children = relationship("ProductCategory", back_populates="parent")
@@ -51,8 +51,8 @@ class Brand(Base):
     logo_url = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_by = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
     
     products = relationship("Product", back_populates="brand")
     
@@ -70,8 +70,8 @@ class UnitOfMeasure(Base):
     base_uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
     conversion_factor = Column(Numeric(10, 4), nullable=True)
     description = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
     
     base_uom = relationship("UnitOfMeasure", remote_side=[id], back_populates="alternate_uoms")
     alternate_uoms = relationship("UnitOfMeasure", back_populates="base_uom")
@@ -108,8 +108,8 @@ class Product(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_by = Column(String, nullable=True)
     updated_by = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
     
     category = relationship("ProductCategory", back_populates="products")
     brand = relationship("Brand", back_populates="products")
@@ -141,11 +141,11 @@ class ProductAttachment(Base):
     is_primary = Column(Boolean, default=False, nullable=True)
     sort_order = Column(Integer, nullable=True)
     access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     synced_to_excel = Column(Boolean, default=False, nullable=True)
-    last_synced_to_excel = Column(DateTime(timezone=True), nullable=True)
-    updated_at = Column(DateTime(timezone=True), nullable=True)
+    last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
     
     product = relationship("Product", back_populates="product_attachments")
     attachment = relationship("Attachment", foreign_keys=[attachment_id])

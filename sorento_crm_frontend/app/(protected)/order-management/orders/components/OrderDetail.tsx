@@ -284,7 +284,7 @@ export default function OrderDetail({ orderId }: OrderDetailProps) {
               <p className="font-medium">{order.trips ?? '-'}</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">KPI</p>
+              <p className="text-sm text-muted-foreground">Delivery Days (2)</p>
               <p className={`font-medium ${order.kpi_warning ? 'text-amber-600' : ''}`}>
                 {order.delivery_days ?? '-'} day(s)
               </p>

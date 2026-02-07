@@ -25,10 +25,10 @@ class User(Base):
     name = Column(String, nullable=True)
     role_id = Column(String, ForeignKey("user_roles.id"), nullable=False)
     status = Column(String, default=UserStatus.INACTIVE.value, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-    last_sign_in_at = Column(DateTime(timezone=True), nullable=True)
-    email_verified_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+    last_sign_in_at = Column(DateTime(timezone=False), nullable=True)
+    email_verified_at = Column(DateTime(timezone=False), nullable=True)
     is_trashed = Column(Boolean, default=False, nullable=False)
     avatar = Column(String, nullable=True)
     invited_by_user_id = Column(String, nullable=True)
@@ -59,7 +59,7 @@ class UserRole(Base):
     description = Column(Text, nullable=True)
     is_trashed = Column(Boolean, default=False, nullable=False)
     created_by_user_id = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     is_protected = Column(Boolean, default=False, nullable=False)
     is_default = Column(Boolean, default=False, nullable=False)
     
@@ -75,7 +75,7 @@ class UserPermission(Base):
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     created_by_user_id = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     
     roles = relationship("UserRolePermission", back_populates="permission")
 
@@ -86,7 +86,7 @@ class UserRolePermission(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     role_id = Column(String, ForeignKey("user_roles.id", ondelete="CASCADE"), nullable=False)
     permission_id = Column(String, ForeignKey("user_permissions.id", ondelete="CASCADE"), nullable=False)
-    assigned_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    assigned_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     
     role = relationship("UserRole", back_populates="permissions")
     permission = relationship("UserPermission", back_populates="roles")
@@ -101,7 +101,7 @@ class SystemLog(Base):
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     entity_id = Column(String, nullable=True)
     entity_type = Column(String, nullable=True)
     event = Column(String, nullable=True)
