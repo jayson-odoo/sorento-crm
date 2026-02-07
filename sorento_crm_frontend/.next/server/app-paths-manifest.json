@@ -1,9 +1,9 @@
 {
-  "/api/auth/token/route": "app/api/auth/token/route.js",
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
+  "/api/auth/token/route": "app/api/auth/token/route.js",
   "/(protected)/system-management/work-calendar/page": "app/(protected)/system-management/work-calendar/page.js",
-  "/(protected)/system-management/import-jobs/page": "app/(protected)/system-management/import-jobs/page.js",
-  "/(protected)/order-management/orders/[id]/page": "app/(protected)/order-management/orders/[id]/page.js",
   "/(protected)/order-management/orders/page": "app/(protected)/order-management/orders/page.js",
+  "/(protected)/order-management/orders/[id]/page": "app/(protected)/order-management/orders/[id]/page.js",
+  "/(protected)/system-management/import-jobs/page": "app/(protected)/system-management/import-jobs/page.js",
   "/(protected)/user-management/settings/page": "app/(protected)/user-management/settings/page.js"
 }

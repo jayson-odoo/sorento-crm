@@ -115,8 +115,6 @@ export default function PublicHolidaysList() {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
-        pagination={pagination}
-        onPaginationChange={setPagination}
       >
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
