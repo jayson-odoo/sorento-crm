@@ -30,6 +30,31 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/user-management/settings/route.js"
+    ],
+    "/(protected)/system-management/work-calendar/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/system-management/work-calendar/page.js"
+    ],
+    "/api/auth/token/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/auth/token/route.js"
+    ],
+    "/(protected)/order-management/orders/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/order-management/orders/page.js"
+    ],
+    "/(protected)/order-management/orders/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/order-management/orders/[id]/page.js"
+    ],
+    "/(protected)/system-management/import-jobs/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/system-management/import-jobs/page.js"
     ]
   }
 }

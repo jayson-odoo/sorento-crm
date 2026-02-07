@@ -548,6 +548,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Import Logs',
         path: '/system-management/import-logs',
       },
+      {
+        title: 'Work Calendar',
+        path: '/system-management/work-calendar',
+      },
     ],
   },
   // Hidden: Store - Client
