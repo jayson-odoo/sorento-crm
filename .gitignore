@@ -18,3 +18,5 @@ sorento_crm_backend/.next/*
 
 # Compressed files
 *.gz
+*.old
+*.pack
