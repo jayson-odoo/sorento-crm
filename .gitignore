@@ -20,3 +20,4 @@ sorento_crm_backend/.next/*
 *.gz
 *.old
 *.pack
+*.pyc

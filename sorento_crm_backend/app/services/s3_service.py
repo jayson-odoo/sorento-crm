@@ -36,10 +36,17 @@ class S3Service:
         self.region = os.getenv("AWS_REGION", "us-east-1")
         self.bucket_name = os.getenv("AWS_S3_BUCKET_NAME")
         
-        if not all([self.access_key_id, self.secret_access_key, self.bucket_name]):
+        missing = []
+        if not (self.access_key_id and self.access_key_id.strip()):
+            missing.append("AWS_ACCESS_KEY_ID")
+        if not (self.secret_access_key and self.secret_access_key.strip()):
+            missing.append("AWS_SECRET_ACCESS_KEY")
+        if not (self.bucket_name and self.bucket_name.strip()):
+            missing.append("AWS_S3_BUCKET_NAME")
+        if missing:
             raise ValueError(
-                "Missing required S3 configuration. Please set AWS_ACCESS_KEY_ID, "
-                "AWS_SECRET_ACCESS_KEY, and AWS_S3_BUCKET_NAME environment variables."
+                "S3 configuration incomplete: set the following in the backend environment: "
+                + ", ".join(missing)
             )
         
         # Configure boto3 with retry settings

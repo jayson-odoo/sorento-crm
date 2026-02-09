@@ -39,28 +39,43 @@ export async function uploadAttachment(
     formData.append('access_levels', JSON.stringify(accessLevels));
   }
 
-  // Debug: Log FormData contents
-  console.log('FormData entries:');
-  Array.from(formData.entries()).forEach(([key, value]) => {
-    console.log(`  ${key}:`, value instanceof File ? `File(${value.name}, ${value.size} bytes)` : value);
-  });
-
-  // For FormData, we need to ensure no Content-Type is set
-  // The apiFetch function should handle this, but let's be explicit
   const response = await apiFetch('/api/v1/resource-management/attachments', {
     method: 'POST',
     body: formData,
-    // Don't set headers here - apiFetch will handle it
-    // The browser will automatically set Content-Type: multipart/form-data; boundary=...
   });
-  
-  console.log('Response status:', response.status);
-  console.log('Response headers:', Object.fromEntries(response.headers.entries()));
-  
+
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to upload attachment' }));
-    console.error('Upload error:', error);
-    throw new Error(error.detail || error.message || 'Failed to upload attachment');
+    const contentType = response.headers.get('content-type') || '';
+    let message = 'Failed to upload attachment';
+    try {
+      if (contentType.includes('application/json')) {
+        const error = await response.json();
+        // FastAPI uses "detail" (string or array of validation errors)
+        const detail = error.detail;
+        if (typeof detail === 'string') {
+          message = detail;
+        } else if (Array.isArray(detail) && detail.length > 0) {
+          const first = detail[0];
+          message = typeof first === 'string' ? first : (first?.msg || first?.message || JSON.stringify(first));
+        } else if (error.message) {
+          message = error.message;
+        }
+      } else {
+        const text = await response.text();
+        if (text) message = text.slice(0, 200);
+      }
+    } catch {
+      // ignore parse errors, use default message
+    }
+    if (response.status === 401) {
+      message = message || 'Not signed in or session expired. Please sign in again.';
+    } else if (response.status === 413) {
+      message =
+        'File too large. The server limits upload size (often 1MB by default). Try a smaller file or ask your admin to increase nginx client_max_body_size.';
+    } else if (response.status >= 500) {
+      message = message || 'Server error. Try again or contact support.';
+    }
+    throw new Error(message);
   }
   return response.json();
 }

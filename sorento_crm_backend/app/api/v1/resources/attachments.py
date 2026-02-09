@@ -242,11 +242,11 @@ async def create_attachment(
     except HTTPException:
         raise
     except ValueError as e:
-        # S3 configuration error
+        # S3 configuration error (missing or empty env vars)
         logger.error(f"S3 configuration error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="S3 storage is not properly configured. Please contact administrator."
+            detail=str(e) or "S3 storage is not properly configured. Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_BUCKET_NAME in the backend environment."
         )
     except Exception as e:
         import traceback
