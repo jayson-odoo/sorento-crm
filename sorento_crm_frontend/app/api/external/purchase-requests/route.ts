@@ -1,0 +1,11 @@
+import { NextRequest } from 'next/server';
+import { proxyToFastAPI } from '@/lib/api-proxy';
+
+export async function POST(request: NextRequest) {
+  const body = await request.json();
+  return proxyToFastAPI(request, '/api/v1/external/purchase-requests', {
+    method: 'POST',
+    body,
+    requireAuth: false, // API key validated by backend via X-API-Key header
+  });
+}

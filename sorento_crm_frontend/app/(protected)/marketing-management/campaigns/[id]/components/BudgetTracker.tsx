@@ -27,19 +27,19 @@ export default function BudgetTracker({ campaignId }: BudgetTrackerProps) {
           <div>
             <p className="text-sm text-muted-foreground">Total Budget</p>
             <p className="font-medium text-lg">
-              {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(total_budget)}
+              {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(total_budget)}
             </p>
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Spent to Date</p>
             <p className="font-medium text-lg">
-              {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(spent_to_date)}
+              {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(spent_to_date)}
             </p>
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Remaining</p>
             <p className="font-medium text-lg">
-              {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(remaining_budget)}
+              {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(remaining_budget)}
             </p>
           </div>
         </div>
@@ -53,7 +53,7 @@ export default function BudgetTracker({ campaignId }: BudgetTrackerProps) {
         <div>
           <p className="text-sm text-muted-foreground">Burn Rate</p>
           <p className="font-medium">
-            {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(burn_rate)} / day
+            {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(burn_rate)} / day
           </p>
         </div>
         {progress_percent > 90 && (

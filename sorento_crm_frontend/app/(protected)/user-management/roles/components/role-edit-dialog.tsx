@@ -180,7 +180,7 @@ const RoleEditDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>{role ? 'Edit Role' : 'Add Role'}</DialogTitle>
         </DialogHeader>

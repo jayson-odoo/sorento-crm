@@ -1,8 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import dynamic from 'next/dynamic';
 import {
   RemixiconComponentType,
   RiFacebookCircleLine,
@@ -10,9 +9,11 @@ import {
   RiYoutubeLine,
 } from '@remixicon/react';
 import { Dribbble, LucideIcon, MapPinHouse } from 'lucide-react';
-import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+
+// Dynamically import the map component with SSR disabled
+const CompanyMap = dynamic(() => import('./company-map').then((mod) => mod.CompanyMap), { ssr: false });
 
 interface IProfileRow {
   icon: LucideIcon | RemixiconComponentType;
@@ -27,6 +28,9 @@ interface IProfileProduct {
 type IProfileProducts = Array<IProfileProduct>;
 
 const CompanyProfile = () => {
+// #region agent log
+typeof window !== 'undefined' && fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'company-profile.tsx:31',message:'CompanyProfile render start',data:{windowDefined:typeof window!=='undefined',hasCompanyMap:!!CompanyMap},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
+// #endregion
   const rows: IProfileRows = [
     {
       icon: Dribbble,
@@ -96,14 +100,6 @@ const CompanyProfile = () => {
     );
   };
 
-  const customIcon = L.divIcon({
-    html: `<i class="ki-solid ki-geolocation text-3xl text-green-500"></i>`,
-    className: 'leaflet-marker',
-    bgPos: [10, 10],
-    iconAnchor: [20, 37],
-    popupAnchor: [0, -37],
-  });
-
   return (
     <Card>
       <CardHeader>
@@ -114,19 +110,7 @@ const CompanyProfile = () => {
           Headquarter
         </h3>
         <div className="flex flex-wrap items-center gap-5 mb-10">
-          <MapContainer
-            center={[40.725, -73.985]}
-            zoom={30}
-            className="rounded-xl w-full md:w-80 min-h-52"
-          >
-            <TileLayer
-              attribution='&copy; <a href="https://osm.org/copyright">OpenStreetMap</a> contributors'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-            <Marker position={[40.724716, -73.984789]} icon={customIcon}>
-              <Popup>430 E 6th St, New York, 10009.</Popup>
-            </Marker>
-          </MapContainer>
+          <CompanyMap />
           <div className="flex flex-col gap-2.5">
             {rows.map((row, index) => {
               return renderRows(row, index);

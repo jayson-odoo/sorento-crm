@@ -1,15 +1,19 @@
 'use client';
 
+import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2 } from 'lucide-react';
+import { Edit, Trash2, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useProduct } from '../../hooks/useProducts';
+import { useProduct, useProducts } from '../../hooks/useProducts';
 import { formatDate } from '@/lib/helpers';
 import { DataGrid } from '@/components/ui/data-grid';
+import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
+import ProductStockTab from './ProductStockTab';
+import RecordNavigation from '../../../../../../components/common/RecordNavigation';
 
 interface ProductDetailProps {
   productId: string;
@@ -18,6 +22,20 @@ interface ProductDetailProps {
 export default function ProductDetail({ productId }: ProductDetailProps) {
   const router = useRouter();
   const { data: product, isLoading } = useProduct(productId);
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+      category_id: undefined,
+      brand_id: undefined,
+      status: 'all' as const,
+    }),
+    [],
+  );
+  const { data: navigationData } = useProducts(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
 
   if (isLoading) {
     return (
@@ -63,6 +81,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
+          <RecordNavigation
+            currentId={productId}
+            items={navigationItems}
+            basePath="/master-data-management/products"
+          />
           <Button
             variant="outline"
             onClick={() => router.push(`/master-data-management/products/${productId}/edit`)}
@@ -105,7 +128,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                 <p className="font-medium text-lg">
                   {new Intl.NumberFormat('en-US', {
                     style: 'currency',
-                    currency: 'USD',
+                    currency: 'MYR',
                   }).format(product.list_price)}
                 </p>
               </div>
@@ -140,6 +163,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="stock">Stock</TabsTrigger>
+              <TabsTrigger value="attachments">Attachments</TabsTrigger>
               <TabsTrigger value="related">Related Data</TabsTrigger>
               <TabsTrigger value="audit">Audit Trail</TabsTrigger>
             </TabsList>
@@ -179,7 +203,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                         <p className="font-medium text-lg">
                           {new Intl.NumberFormat('en-US', {
                             style: 'currency',
-                            currency: 'USD',
+                            currency: 'MYR',
                           }).format(product.list_price)}
                         </p>
                       </div>
@@ -189,7 +213,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                           <p className="font-medium text-lg">
                             {new Intl.NumberFormat('en-US', {
                               style: 'currency',
-                              currency: 'USD',
+                              currency: 'MYR',
                             }).format(product.cost_price)}
                           </p>
                         </div>
@@ -247,17 +271,12 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
             {/* Tab: Stock */}
             <TabsContent value="stock">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Stock Information</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {/* TODO: Stock by warehouse grid, low stock alerts, stock movement chart */}
-                  <div className="text-sm text-muted-foreground">
-                    Stock information will be displayed here
-                  </div>
-                </CardContent>
-              </Card>
+              <ProductStockTab productId={productId} />
+            </TabsContent>
+
+            {/* Tab: Attachments */}
+            <TabsContent value="attachments">
+              <ProductAttachmentsTab productId={productId} isEditMode={false} />
             </TabsContent>
 
             {/* Tab: Related Data */}

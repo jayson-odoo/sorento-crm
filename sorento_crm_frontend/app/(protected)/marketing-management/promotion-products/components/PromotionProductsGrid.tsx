@@ -37,7 +37,7 @@ export default function PromotionProductsGrid({ promotionId }: PromotionProducts
         header: 'List Price',
         cell: ({ row }) => {
           const price = row.original.product?.list_price || 0;
-          return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(price);
+          return new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(price);
         },
       },
       {
@@ -45,7 +45,7 @@ export default function PromotionProductsGrid({ promotionId }: PromotionProducts
         header: 'Promo Price',
         cell: ({ row }) => {
           const price = row.original.promotion_price || row.original.product?.list_price || 0;
-          return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(price);
+          return new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(price);
         },
       },
       {
@@ -54,7 +54,7 @@ export default function PromotionProductsGrid({ promotionId }: PromotionProducts
         cell: ({ row }) => {
           const discount = row.original.discount_amount || 0;
           return discount > 0 ? (
-            <Badge variant="success">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(discount)}</Badge>
+            <Badge variant="success">{new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(discount)}</Badge>
           ) : (
             '-'
           );

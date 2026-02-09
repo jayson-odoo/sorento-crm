@@ -17,7 +17,7 @@ export const ProductSchema = z.object({
   category_id: z.string().uuid({ message: 'Category is required.' }),
   brand_id: z.string().uuid().optional().nullable(),
   item_type: z.enum(['product', 'bundle', 'service', 'other']).optional().nullable(),
-  is_active: z.boolean().default(true),
+  is_active: z.boolean(),
 
   // Tab 2: Pricing
   list_price: z
@@ -64,18 +64,16 @@ export const ProductSchema = z.object({
     .min(0, { message: 'Warranty months cannot be negative.' })
     .optional()
     .nullable(),
-  has_serial_tracking: z.boolean().default(false),
-  has_batch_tracking: z.boolean().default(false),
+  has_serial_tracking: z.boolean(),
+  has_batch_tracking: z.boolean(),
   reorder_level: z
     .number()
     .int({ message: 'Reorder level must be an integer.' })
-    .min(0, { message: 'Reorder level cannot be negative.' })
-    .default(10),
+    .min(0, { message: 'Reorder level cannot be negative.' }),
   reorder_quantity: z
     .number()
     .int({ message: 'Reorder quantity must be an integer.' })
-    .min(0, { message: 'Reorder quantity cannot be negative.' })
-    .default(50),
+    .min(0, { message: 'Reorder quantity cannot be negative.' }),
 
   // Tab 4: Unit of Measure
   base_uom_id: z.string().uuid({ message: 'Base unit of measure is required.' }),

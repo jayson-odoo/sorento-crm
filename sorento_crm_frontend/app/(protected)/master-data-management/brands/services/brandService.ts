@@ -16,7 +16,7 @@ export async function getBrands(
     ...(searchQuery ? { query: searchQuery } : {}),
   });
 
-  const response = await apiFetch(`/api/master-data/brands?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/master-data/brands?${queryParams.toString()}`);
 
   if (!response.ok) {
     throw new Error('Failed to fetch brands');
@@ -26,13 +26,13 @@ export async function getBrands(
 }
 
 export async function getBrand(id: string): Promise<Brand> {
-  const response = await apiFetch(`/api/master-data/brands/${id}`);
+  const response = await apiFetch(`/api/v1/master-data/brands/${id}`);
   if (!response.ok) throw new Error('Failed to fetch brand');
   return response.json();
 }
 
 export async function createBrand(data: BrandFormData): Promise<Brand> {
-  const response = await apiFetch('/api/master-data/brands', {
+  const response = await apiFetch('/api/v1/master-data/brands', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -45,7 +45,7 @@ export async function createBrand(data: BrandFormData): Promise<Brand> {
 }
 
 export async function updateBrand(id: string, data: Partial<BrandFormData>): Promise<Brand> {
-  const response = await apiFetch(`/api/master-data/brands/${id}`, {
+  const response = await apiFetch(`/api/v1/master-data/brands/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -58,7 +58,7 @@ export async function updateBrand(id: string, data: Partial<BrandFormData>): Pro
 }
 
 export async function deleteBrand(id: string): Promise<void> {
-  const response = await apiFetch(`/api/master-data/brands/${id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/master-data/brands/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete brand' }));
     throw new Error(error.message);

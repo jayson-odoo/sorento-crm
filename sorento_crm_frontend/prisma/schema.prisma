@@ -5,7 +5,6 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 // User Module
@@ -32,15 +31,22 @@ model User {
   avatar          String?
   invitedByUserId String?    @map("invited_by_user_id")
   isProtected     Boolean    @default(false) @map("is_protected")
+  respondUserId   String?    @map("respond_user_id")
+  respondSynced   String     @default("pending") @map("respond_synced")
+  superiorId      String?    @map("superior_id")
 
   role      UserRole    @relation(fields: [roleId], references: [id])
   systemLog SystemLog[]
   accounts  Account[]
   Session   Session[]
+  superior  User?       @relation("UserSuperior", fields: [superiorId], references: [id])
+  subordinates User[]   @relation("UserSuperior")
+  agentAccesses UserAgentAccess[]
 
   @@index([invitedByUserId], map: "users_invited_by_user_id_idx")
   @@index([roleId], map: "users_role_id_idx")
   @@index([status], map: "users_status_idx")
+  @@index([respondSynced], map: "users_respond_synced_idx")
   @@map("users")
 }
 
@@ -186,7 +192,7 @@ model SystemSetting {
 }
 
 // ============================================
-// Master Data Management - Products
+// Product Management - Products
 // ============================================
 
 model ProductCategory {
@@ -239,9 +245,12 @@ model UnitOfMeasure {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime? @map("updated_at")
 
-  baseUom       UnitOfMeasure?  @relation("UOMHierarchy", fields: [baseUomId], references: [id], onDelete: SetNull)
-  alternateUoms UnitOfMeasure[] @relation("UOMHierarchy")
-  products      Product[]       @relation("BaseUOM")
+  baseUom              UnitOfMeasure?         @relation("UOMHierarchy", fields: [baseUomId], references: [id], onDelete: SetNull)
+  alternateUoms        UnitOfMeasure[]       @relation("UOMHierarchy")
+  products             Product[]              @relation("BaseUOM")
+  inboundShipmentLines InboundShipmentLine[]  @relation("InboundShipmentLineUOM")
+  spoAllocations       SPOAllocation[]        @relation("SPOAllocationUOM")
+  pickingLines         PickingLine[]          @relation("PickingLineUOM")
 
   @@index([baseUomId])
   @@map("units_of_measure")
@@ -266,8 +275,8 @@ model Product {
   warrantyMonths    Int?      @map("warranty_months")
   hasSerialTracking Boolean   @default(false) @map("has_serial_tracking")
   hasBatchTracking  Boolean   @default(false) @map("has_batch_tracking")
-  reorderLevel      Int       @default(10) @map("reorder_level")
-  reorderQuantity   Int       @default(50) @map("reorder_quantity")
+  reorderLevel      Int?      @map("reorder_level")
+  reorderQuantity   Int?      @map("reorder_quantity")
   isActive          Boolean   @default(true) @map("is_active")
   createdBy         String?   @map("created_by")
   updatedBy         String?   @map("updated_by")
@@ -277,10 +286,13 @@ model Product {
   category          ProductCategory    @relation(fields: [categoryId], references: [id])
   brand             Brand?             @relation(fields: [brandId], references: [id], onDelete: SetNull)
   baseUom           UnitOfMeasure      @relation("BaseUOM", fields: [baseUomId], references: [id])
-  productSuppliers  ProductSupplier[]
-  stock             Stock[]
-  stockBatches      StockBatch[]
-  promotionProducts PromotionProduct[]
+  productSuppliers     ProductSupplier[]
+  stock                Stock[]
+  stockBatches          StockBatch[]
+  promotionProducts     PromotionProduct[]
+  inboundShipmentLines InboundShipmentLine[]
+  spoAllocations        SPOAllocation[]
+  pickingLines          PickingLine[]
 
   @@index([categoryId])
   @@index([brandId])
@@ -291,7 +303,7 @@ model Product {
 }
 
 // ============================================
-// Procurement Management
+// Procurement
 // ============================================
 
 model Supplier {
@@ -314,6 +326,7 @@ model Supplier {
   updatedAt        DateTime? @map("updated_at")
 
   productSuppliers ProductSupplier[]
+  inboundShipments InboundShipment[]
 
   @@index([isActive])
   @@index([country])
@@ -350,9 +363,12 @@ model Warehouse {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime? @map("updated_at")
 
-  storageZones StorageZone[]
-  stock        Stock[]
-  stockBatches StockBatch[]
+  storageZones        StorageZone[]
+  stock               Stock[]
+  stockBatches        StockBatch[]
+  spoAllocations      SPOAllocation[]
+  sourcePickingLines  PickingLine[]         @relation("SourceWarehouse")
+  destinationPickingLines PickingLine[]      @relation("DestinationWarehouse")
 
   @@index([isActive])
   @@index([managerId])
@@ -366,10 +382,10 @@ model StorageZone {
   zoneName     String?  @map("zone_name") @db.VarChar(150)
   zoneType     String   @map("zone_type") @db.VarChar(100) // shelf, rack, bin, pallet
   capacity     Int?     @default(0)
-  displayOrder Int      @default(0) @map("display_order")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  warehouse    Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  warehouse      Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  spoAllocations SPOAllocation[]
 
   @@unique([warehouseId, zoneCode])
   @@index([warehouseId])
@@ -378,11 +394,20 @@ model StorageZone {
 }
 
 model Stock {
-  id               String   @id @default(uuid())
-  productId        String   @map("product_id")
-  warehouseId      String   @map("warehouse_id")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime? @map("updated_at")
+  id                  String    @id @default(uuid())
+  productId           String    @map("product_id")
+  warehouseId         String    @map("warehouse_id")
+  zoneId              String?   @map("zone_id")
+  quantityOnHand      Int       @default(0) @map("quantity_on_hand")
+  quantityReserved    Int       @default(0) @map("quantity_reserved")
+  quantityAvailable   Int       @default(0) @map("quantity_available")
+  quantityDamaged     Int       @default(0) @map("quantity_damaged")
+  reorderPoint        Int?      @map("reorder_point")
+  lastCountDate       DateTime? @map("last_count_date")
+  syncedToExcel       Boolean   @default(false) @map("synced_to_excel")
+  lastSyncedToExcel   DateTime? @map("last_synced_to_excel")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime? @map("updated_at")
 
   product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouse Warehouse     @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
@@ -427,19 +452,11 @@ model StockBatch {
 // Marketing Management
 // ============================================
 
-enum PromotionType {
-  price_override
-  discount_percent
-  discount_amount
-  bundle
-  other
-}
-
 model Promotion {
   id          String        @id @default(uuid())
   promoCode   String        @unique @map("promo_code") @db.VarChar(50)
   name        String        @db.VarChar(255)
-  promoType   PromotionType @map("promo_type")
+  promoType   String        @map("promo_type") @db.VarChar(50)
   description String?       @db.Text
   startDate   DateTime      @map("start_date")
   endDate     DateTime      @map("end_date")
@@ -458,11 +475,14 @@ model Promotion {
 }
 
 model PromotionProduct {
-  id          String    @id @default(uuid())
-  promotionId String    @map("promotion_id")
-  productId    String    @map("product_id")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime? @map("updated_at")
+  id              String    @id @default(uuid())
+  promotionId     String    @map("promotion_id")
+  productId       String    @map("product_id")
+  promotionPrice  Decimal?  @map("promo_selling_price") @db.Decimal(12, 2)
+  discountAmount  Decimal?  @map("discount_amount") @db.Decimal(12, 2)
+  discountPercent Decimal?  @map("discount_percent") @db.Decimal(5, 2)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime? @map("updated_at")
 
   promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
   product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -475,11 +495,11 @@ model PromotionProduct {
 
 model CampaignType {
   id          String   @id @default(uuid())
-  typeCode    String   @unique @map("type_code") @db.VarChar(50)
+  typeCode    String   @unique @default(uuid()) @map("type_code") @db.VarChar(50)
   typeName    String   @map("type_name") @db.VarChar(150)
   description String?  @db.Text
   createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 
   campaigns MarketingCampaign[]
 
@@ -631,11 +651,508 @@ model Attachment {
   deletedAt        DateTime? @map("deleted_at")
   deletedBy        String?   @map("deleted_by")
 
-  attachmentType AttachmentType? @relation(fields: [attachmentTypeId], references: [id], onDelete: SetNull)
+  attachmentType   AttachmentType? @relation(fields: [attachmentTypeId], references: [id], onDelete: SetNull)
+  inboundShipments InboundShipment[]
 
   @@index([entityType, entityId])
   @@index([uploadedBy])
   @@index([isDeleted])
   @@index([fileHash])
   @@map("attachments")
+}
+
+// ============================================
+// Order Management
+// ============================================
+
+model OrderStatus {
+  id            String    @id @default(uuid())
+  statusCode    String    @unique @map("status_code") @db.VarChar(50)
+  statusName    String    @map("status_name") @db.VarChar(100)
+  description   String?   @db.Text
+  sequence      Int       @default(0)
+  isFinalStatus Boolean   @default(false) @map("is_final_status")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  orders Order[]
+
+  @@index([sequence])
+  @@index([isFinalStatus])
+  @@map("order_statuses")
+}
+
+model Customer {
+  id           String   @id @default(uuid())
+  customerCode String   @unique @map("customer_code") @db.VarChar(50)
+  customerName String   @map("customer_name") @db.VarChar(255)
+  email        String?  @db.VarChar(150)
+  phoneNumber  String?  @map("phone_number") @db.VarChar(50)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdBy    String?  @map("created_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime? @map("updated_at")
+
+  orders Order[]
+
+  @@index([isActive])
+  @@index([customerCode])
+  @@map("customers")
+}
+
+model Order {
+  id                    String    @id @default(uuid())
+  orderNumber           String    @unique @map("order_number") @db.VarChar(100)
+  orderDate             DateTime? @map("order_date")
+  promisedDeliveryDate  DateTime? @map("promised_delivery_date")
+  actualDeliveryDate    DateTime? @map("actual_delivery_date")
+  customerId            String?   @map("customer_id")
+  orderStatusId         String?   @map("order_status_id")
+  createdBy             String?   @map("created_by")
+  updatedBy             String?   @map("updated_by")
+  billingAddressId      String?   @map("billing_address_id")
+  shippingAddressId     String?   @map("shipping_address_id")
+  subtotalAmount        Decimal   @default(0) @map("subtotal_amount") @db.Decimal(15, 2)
+  discountAmount        Decimal   @default(0) @map("discount_amount") @db.Decimal(15, 2)
+  taxAmount             Decimal   @default(0) @map("tax_amount") @db.Decimal(15, 2)
+  totalAmount           Decimal   @default(0) @map("total_amount") @db.Decimal(15, 2)
+  remarks               String?   @db.Text
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  deletedAt             DateTime? @map("deleted_at")
+  syncedToExcel         Boolean   @default(false) @map("synced_to_excel")
+  lastSyncedToExcel     DateTime? @map("last_synced_to_excel")
+
+  customer    Customer?    @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  orderStatus OrderStatus? @relation(fields: [orderStatusId], references: [id], onDelete: SetNull)
+
+  @@index([customerId])
+  @@index([orderStatusId])
+  @@index([orderDate])
+  @@index([orderNumber])
+  @@index([createdBy])
+  @@index([deletedAt])
+  @@map("orders")
+}
+
+// ============================================
+// User Management - Access Control
+// ============================================
+
+model AccessAgent {
+  id                String    @id @default(uuid())
+  code              String    @unique @map("code") @db.Text
+  name              String    @map("name") @db.Text
+  description       String?   @db.Text
+  isActive          Boolean   @default(true) @map("is_active")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  syncedToExcel     Boolean   @default(false) @map("synced_to_excel")
+  lastSyncedToExcel DateTime? @map("last_synced_to_excel")
+  picRespondUserId  String?   @map("pic_respond_user_id") @db.Text
+
+  contactAccesses ContactAgentAccess[]
+  userAccesses    UserAgentAccess[]
+
+  @@index([isActive])
+  @@index([code])
+  @@map("access_agents")
+}
+
+model UserAgentAccess {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  agentId   String    @map("agent_id")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent AccessAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, agentId])
+  @@index([userId])
+  @@index([agentId])
+  @@map("user_agent_access")
+}
+
+model ContactAgentAccess {
+  id                String       @id @default(uuid())
+  respondContactPhone  String       @map("respond_contact_phone") @db.Text
+  respondContactName   String?      @map("respond_contact_name") @db.Text
+  agentId           String       @map("agent_id")
+  isAllowed         Boolean      @default(true) @map("is_allowed")
+  validFrom         DateTime?    @map("valid_from")
+  validTo           DateTime?    @map("valid_to")
+  createdAt         DateTime     @default(now()) @map("created_at")
+  createdBy         String?      @map("created_by") @db.Text
+  syncedToExcel     Boolean      @default(false) @map("synced_to_excel")
+  lastSyncedToExcel DateTime?    @map("last_synced_to_excel")
+  updatedAt         DateTime?    @map("updated_at")
+
+  agent AccessAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([respondContactPhone, agentId])
+  @@index([agentId])
+  @@index([respondContactPhone])
+  @@map("contact_agent_access")
+}
+
+// ============================================
+// SLA Management
+// ============================================
+
+model SLAPolicy {
+  id          String    @id @default(uuid())
+  code        String    @unique @map("code") @db.Text
+  name        String    @map("name") @db.Text
+  description String?   @db.Text
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  tiers    SLAPolicyTier[]
+  tracking ConversationSLATracking[]
+
+  @@index([isActive])
+  @@index([code])
+  @@map("sla_policies")
+}
+
+model SLAPolicyTier {
+  id            String    @id @default(uuid())
+  policyId      String    @map("policy_id")
+  tierLevel     Int       @map("tier_level")
+  tierName      String    @map("tier_name") @db.Text
+  responseHours Int       @map("response_hours")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  policy SLAPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, tierLevel])
+  @@index([policyId])
+  @@map("sla_policy_tiers")
+}
+
+model ConversationSLATracking {
+  id                  String    @id @default(uuid())
+  policyId            String    @map("policy_id")
+  currentTier         Int       @map("current_tier")
+  assignedTo          String?   @map("assigned_to") @db.Text
+  initiatedAt         DateTime  @default(now()) @map("initiated_at")
+  currentTierStartedAt DateTime @default(now()) @map("current_tier_started_at")
+  dueAt               DateTime  @map("due_at")
+  escalatedAt         DateTime? @map("escalated_at")
+  escalationReason    String?   @map("escalation_reason") @db.Text
+  isResponded         Boolean   @default(false) @map("is_responded")
+  respondedAt         DateTime? @map("responded_at")
+  responseTime        Decimal?  @map("response_time") @db.Decimal(10, 2)
+  isResolved          Boolean   @default(false) @map("is_resolved")
+  resolvedAt          DateTime? @map("resolved_at")
+  resolvedBy          String?   @map("resolved_by") @db.Text
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  respondContactPhone String    @map("respond_contact_phone") @db.Text
+  respondContactName  String?   @map("respond_contact_name") @db.Text
+  syncedToExcel       Boolean   @default(false) @map("synced_to_excel")
+  lastSyncedToExcel   DateTime? @map("last_synced_to_excel")
+  resolutionDuration  Decimal?  @map("resolution_duration") @db.Decimal(10, 2)
+
+  policy        SLAPolicy                    @relation(fields: [policyId], references: [id])
+  eventLogs ConversationSLAEventLog[]
+
+  @@unique([respondContactPhone])
+  @@index([policyId])
+  @@index([isResolved])
+  @@index([assignedTo])
+  @@map("conversation_sla_tracking")
+}
+
+model ConversationSLAEventLog {
+  id            String    @id @default(uuid())
+  slaTrackingId String    @map("sla_tracking_id")
+  eventType     String    @map("event_type") @db.Text
+  fromTier      Int?      @map("from_tier")
+  toTier        Int?      @map("to_tier")
+  eventAt       DateTime  @default(now()) @map("event_at")
+  reason        String?   @map("reason") @db.Text
+  assignedTo    String?   @map("assigned_to") @db.Text
+  dueAt         DateTime? @map("due_at")
+  responseTime  Decimal?  @map("response_time") @db.Decimal(10, 2)
+  resolutionTime Decimal? @map("resolution_time") @db.Decimal(10, 2)
+  reminderCount Int       @default(0) @map("reminder_count")
+  lastReminderAt DateTime? @map("last_reminder_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  tracking ConversationSLATracking @relation(fields: [slaTrackingId], references: [id], onDelete: Cascade)
+
+  @@index([slaTrackingId])
+  @@index([eventAt])
+  @@index([eventType])
+  @@map("conversation_sla_event_log")
+}
+
+// ============================================
+// Complaint Management
+// ============================================
+
+model Complaint {
+  id                  String   @id @default(uuid())
+  deliveryOrderNumber String?  @map("delivery_order_number") @db.Text
+  complaintDate       DateTime? @map("complaint_date") @db.Date
+  customerType        String?   @map("customer_type") @db.Text
+  customerTypeOthers  String?   @map("customer_type_others") @db.Text
+  withinWarranty      String?   @map("within_warranty") @db.Text
+  productType         String?   @map("product_type") @db.Text
+  defectsDiscovered   String?   @map("defects_discovered") @db.Text
+  complaintType       String?   @map("complaint_type") @db.Text
+  defectDescription   String?   @map("defect_description") @db.Text
+  productCode         String?   @map("product_code") @db.Text
+  salesperson         String?   @db.Text
+  customerName        String?   @map("customer_name") @db.Text
+  contactPerson       String?   @map("contact_person") @db.Text
+  contactNumber       String?   @map("contact_number") @db.Text
+  customerAddress     String?   @map("customer_address") @db.Text
+  projectTitle        String?   @map("project_title") @db.Text
+
+  attachments ComplaintAttachment[]
+
+  @@index([deliveryOrderNumber])
+  @@index([complaintDate])
+  @@index([customerName])
+  @@map("complaints")
+}
+
+model ComplaintAttachment {
+  id            String    @id @default(uuid())
+  complaintId   String    @map("complaint_id")
+  fileName      String?   @map("file_name") @db.Text
+  fileUrl       String?   @map("file_url") @db.Text
+  fileSizeBytes Decimal?  @map("file_size_bytes") @db.Decimal(20, 0)
+  uploadedAt    DateTime  @default(now()) @map("uploaded_at") @db.Timestamptz
+
+  complaint Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+
+  @@index([complaintId])
+  @@map("complaint_attachments")
+}
+
+model ComplaintCategory {
+  id            String   @id @default(uuid())
+  categoryCode  String   @unique @map("category_code") @db.VarChar(50)
+  categoryName  String   @map("category_name") @db.VarChar(150)
+  description   String?  @db.Text
+  severity      String?  @db.VarChar(50)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("complaint_categories")
+}
+
+model ComplaintStatus {
+  id            String   @id @default(uuid())
+  statusCode    String   @unique @map("status_code") @db.VarChar(50)
+  statusName    String   @map("status_name") @db.VarChar(150)
+  description   String?  @db.Text
+  sequence      Int      @default(0)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("complaint_statuses")
+}
+
+// ============================================
+// Procurement - Packing Lists
+// ============================================
+
+model InboundShipment {
+  id                      String    @id @default(uuid())
+  shipmentNumber          String    @unique @map("shipment_number") @db.VarChar(50)
+  supplierId               String    @map("supplier_id")
+  shipmentDate            DateTime  @map("shipment_date") @db.Date
+  expectedArrivalDate     DateTime? @map("expected_arrival_date") @db.Date
+  actualArrivalDate       DateTime? @map("actual_arrival_date") @db.Date
+  billOfLadingNumber      String?   @map("bill_of_lading_number") @db.VarChar(100)
+  shippingContainerNumber String?   @map("shipping_container_number") @db.VarChar(100)
+  invoiceNumber           String?   @map("invoice_number") @db.VarChar(100)
+  shipmentStatus          String    @default("in_transit") @map("shipment_status") @db.VarChar(50)
+  totalItemsShipped       Int?            @map("total_items_shipped")
+  totalCartons            Int?            @map("total_cartons")
+  notes                   String?         @db.Text
+  createdAt               DateTime        @default(now()) @map("created_at")
+  createdBy               String?         @map("created_by")
+  updatedAt               DateTime        @updatedAt @map("updated_at")
+  attachmentId             String          @map("attachment_id")
+  syncedToExcel            Boolean         @default(false) @map("synced_to_excel")
+  lastSyncedToExcel       DateTime?       @map("last_synced_to_excel")
+
+  supplier            Supplier              @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  attachment          Attachment            @relation(fields: [attachmentId], references: [id], onDelete: Restrict)
+  shipmentLines       InboundShipmentLine[]
+  spoAllocations      SPOAllocation[]
+
+  @@index([supplierId])
+  @@index([shipmentNumber])
+  @@index([shipmentStatus])
+  @@map("inbound_shipments")
+}
+
+model InboundShipmentLine {
+  id                  String    @id @default(uuid())
+  shipmentId          String    @map("shipment_id")
+  productId           String    @map("product_id")
+  quantityShipped     Int       @map("quantity_shipped")
+  uomId               String?   @map("uom_id")
+  batchNumber         String?   @map("batch_number") @db.VarChar(100)
+  serialNumberRangeFrom String? @map("serial_number_range_from") @db.VarChar(100)
+  serialNumberRangeTo   String? @map("serial_number_range_to") @db.VarChar(100)
+  cartonNumber        String?   @map("carton_number") @db.VarChar(50)
+  cartonsCount        Int       @default(1) @map("cartons_count")
+  weightPerCarton     Decimal?  @map("weight_per_carton") @db.Decimal(10, 2)
+  unitCost            Decimal?  @map("unit_cost") @db.Decimal(12, 2)
+  createdAt           DateTime  @default(now()) @map("created_at")
+  syncedToExcel       Boolean   @default(false) @map("synced_to_excel")
+  lastSyncedToExcel   DateTime? @map("last_synced_to_excel")
+  updatedAt           DateTime? @map("updated_at")
+
+  shipment      InboundShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  product       Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  uom           UnitOfMeasure? @relation("InboundShipmentLineUOM", fields: [uomId], references: [id], onDelete: SetNull)
+  spoAllocations SPOAllocation[]
+
+  @@index([shipmentId])
+  @@index([productId])
+  @@map("inbound_shipment_lines")
+}
+
+// ============================================
+// Procurement - SPO Allocations
+// ============================================
+
+model SPOAllocation {
+  id                    String   @id @default(uuid())
+  spoNumber             String?  @map("spo_number") @db.VarChar(50)
+  spoLineNumber         Int?     @map("spo_line_number")
+  inboundShipmentLinesId String? @map("inbound_shipment_lines_id")
+  inboundShipmentId     String   @map("inbound_shipment_id")
+  warehouseId           String   @map("warehouse_id")
+  storageZoneId         String?  @map("storage_zone_id")
+  allocatedQuantity     Int      @map("allocated_quantity")
+  uomId                 String?  @map("uom_id")
+  receiptStatus         String   @default("pending") @map("receipt_status") @db.VarChar(50)
+  quantityReceived      Int            @default(0) @map("quantity_received")
+  quantityRejected      Int            @default(0) @map("quantity_rejected")
+  allocationNotes       String?        @map("allocation_notes") @db.Text
+  createdAt             DateTime       @default(now()) @map("created_at")
+  createdBy             String?        @map("created_by")
+  productId             String         @map("product_id")
+  syncedToExcel         Boolean        @default(false) @map("synced_to_excel")
+  updatedAt             DateTime?       @map("updated_at")
+  lastSyncedToExcel     DateTime?      @map("last_synced_to_excel")
+
+  inboundShipmentLine InboundShipmentLine? @relation(fields: [inboundShipmentLinesId], references: [id], onDelete: Cascade)
+  inboundShipment     InboundShipment     @relation(fields: [inboundShipmentId], references: [id], onDelete: Cascade)
+  warehouse           Warehouse           @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  storageZone         StorageZone?       @relation(fields: [storageZoneId], references: [id], onDelete: SetNull)
+  product              Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  uom                  UnitOfMeasure?     @relation("SPOAllocationUOM", fields: [uomId], references: [id], onDelete: SetNull)
+  pickingLines         PickingLine[]
+
+  @@unique([spoNumber, spoLineNumber], map: "uk_spo_allocations_spo_number_line_number")
+  @@index([inboundShipmentId])
+  @@index([warehouseId])
+  @@index([productId])
+  @@map("spo_allocations")
+}
+
+// ============================================
+// Procurement - GRN (Goods Receipt Note)
+// ============================================
+
+model PickingHeader {
+  id                  String   @id @default(uuid())
+  pickingNumber       String   @unique @map("picking_number") @db.VarChar(50)
+  pickingType         String   @map("picking_type") @db.VarChar(50)
+  sourceEntityType    String?  @map("source_entity_type") @db.VarChar(50)
+  sourceEntityId      String?  @map("source_entity_id")
+  pickingDate         DateTime @default(now()) @map("picking_date") @db.Date
+  pickedByUserId      String?  @map("picked_by_user_id")
+  inspectionStatus    String   @default("pending") @map("inspection_status") @db.VarChar(50)
+  qualityRemarks      String?  @map("quality_remarks") @db.Text
+  inspectedByUserId   String?  @map("inspected_by_user_id")
+  inspectionDate       DateTime? @map("inspection_date")
+  pickingStatus       String   @default("draft") @map("picking_status") @db.VarChar(50)
+  totalItemsPicked     Int?            @map("total_items_picked")
+  totalItemsDiscrepancy Int?          @map("total_items_discrepancy")
+  totalCost            Decimal?         @map("total_cost") @db.Decimal(15, 2)
+  notes                String?         @db.Text
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+
+  pickingLines PickingLine[]
+
+  @@index([pickingType])
+  @@index([pickingNumber])
+  @@index([pickingStatus])
+  @@map("picking_headers")
+}
+
+model PickingLine {
+  id                    String          @id @default(uuid())
+  pickingHeaderId       String          @map("picking_header_id")
+  spoAllocationId       String?         @map("spo_allocation_id")
+  productId             String          @map("product_id")
+  quantityExpected      Int             @map("quantity_expected")
+  quantityPicked        Int             @map("quantity_picked")
+  quantityDiscrepancy   Int             @map("quantity_discrepancy") // Generated column
+  uomId                 String?  @map("uom_id")
+  pickedCondition       String   @default("good") @map("picked_condition") @db.VarChar(50)
+  conditionRemarks      String?         @map("condition_remarks") @db.Text
+  batchNumberPicked     String?         @map("batch_number_picked") @db.VarChar(100)
+  expiryDate            DateTime?       @map("expiry_date") @db.Date
+  unitCost              Decimal?        @map("unit_cost") @db.Decimal(12, 2)
+  lineTotal             Decimal?        @map("line_total") @db.Decimal(15, 2)
+  createdAt             DateTime        @default(now()) @map("created_at")
+  sourceWarehouseId     String?         @map("source_warehouse_id")
+  destinationWarehouseId String?       @map("destination_warehouse_id")
+  syncedToExcel         Boolean         @default(false) @map("synced_to_excel")
+  lastSyncedToExcel     DateTime?       @map("last_synced_to_excel")
+  updatedAt             DateTime?       @map("updated_at")
+
+  pickingHeader         PickingHeader      @relation(fields: [pickingHeaderId], references: [id], onDelete: Cascade)
+  spoAllocation         SPOAllocation?     @relation(fields: [spoAllocationId], references: [id], onDelete: SetNull)
+  product               Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
+  uom                   UnitOfMeasure?     @relation("PickingLineUOM", fields: [uomId], references: [id], onDelete: SetNull)
+  sourceWarehouse       Warehouse?         @relation("SourceWarehouse", fields: [sourceWarehouseId], references: [id], onDelete: Restrict)
+  destinationWarehouse  Warehouse?        @relation("DestinationWarehouse", fields: [destinationWarehouseId], references: [id], onDelete: Restrict)
+
+  @@index([pickingHeaderId])
+  @@index([productId])
+  @@index([spoAllocationId])
+  @@map("picking_lines")
+}
+
+// ============================================
+// Procurement - Stock Inquiries
+// ============================================
+
+model StockInquiry {
+  id                 String   @id @default(uuid())
+  salesperson        String?  @db.Text
+  productCode        String?  @map("product_code") @db.Text
+  itemDescription    String?  @map("item_description") @db.Text
+  projectCustomer    String?  @map("project_customer") @db.Text
+  projectName        String?  @map("project_name") @db.Text
+  quantity           Decimal? @db.Decimal(15, 2)
+  deliveryDate       DateTime? @map("delivery_date") @db.Date
+  brand              String?  @db.Text
+  additionalRemark   String?  @map("additional_remark") @db.Text
+  purchasingResponse String?  @map("purchasing_response") @db.Text
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@index([productCode])
+  @@index([deliveryDate])
+  @@index([createdAt])
+  @@map("stock_inquiries")
 }

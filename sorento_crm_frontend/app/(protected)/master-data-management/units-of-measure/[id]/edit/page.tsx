@@ -43,7 +43,7 @@ export default function EditUOMPage({
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Master Data Management</BreadcrumbPage>
+                  <BreadcrumbPage>Product Management</BreadcrumbPage>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>

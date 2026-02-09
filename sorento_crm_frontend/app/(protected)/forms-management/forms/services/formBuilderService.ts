@@ -2,7 +2,7 @@ import { apiFetch } from '@/lib/api';
 import type { FormSection, FormField } from '../types/form.types';
 
 export async function createFormSection(formId: string, sectionName: string, sectionOrder: number): Promise<FormSection> {
-  const response = await apiFetch(`/api/forms-management/forms/${formId}/sections`, {
+  const response = await apiFetch(`/api/v1/forms-management/forms/${formId}/sections`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ section_name: sectionName, section_order: sectionOrder }),
@@ -15,7 +15,7 @@ export async function createFormSection(formId: string, sectionName: string, sec
 }
 
 export async function updateFormSection(sectionId: string, data: Partial<{ section_name: string; section_order: number }>): Promise<FormSection> {
-  const response = await apiFetch(`/api/forms-management/form-sections/${sectionId}`, {
+  const response = await apiFetch(`/api/v1/forms-management/form-sections/${sectionId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -28,7 +28,7 @@ export async function updateFormSection(sectionId: string, data: Partial<{ secti
 }
 
 export async function deleteFormSection(sectionId: string): Promise<void> {
-  const response = await apiFetch(`/api/forms-management/form-sections/${sectionId}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/forms-management/form-sections/${sectionId}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete form section' }));
     throw new Error(error.message);
@@ -36,7 +36,7 @@ export async function deleteFormSection(sectionId: string): Promise<void> {
 }
 
 export async function createFormField(sectionId: string, fieldData: Partial<FormField>): Promise<FormField> {
-  const response = await apiFetch(`/api/forms-management/form-sections/${sectionId}/fields`, {
+  const response = await apiFetch(`/api/v1/forms-management/form-sections/${sectionId}/fields`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fieldData),
@@ -49,7 +49,7 @@ export async function createFormField(sectionId: string, fieldData: Partial<Form
 }
 
 export async function updateFormField(fieldId: string, fieldData: Partial<FormField>): Promise<FormField> {
-  const response = await apiFetch(`/api/forms-management/form-fields/${fieldId}`, {
+  const response = await apiFetch(`/api/v1/forms-management/form-fields/${fieldId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fieldData),
@@ -62,7 +62,7 @@ export async function updateFormField(fieldId: string, fieldData: Partial<FormFi
 }
 
 export async function deleteFormField(fieldId: string): Promise<void> {
-  const response = await apiFetch(`/api/forms-management/form-fields/${fieldId}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/forms-management/form-fields/${fieldId}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete form field' }));
     throw new Error(error.message);
@@ -70,7 +70,7 @@ export async function deleteFormField(fieldId: string): Promise<void> {
 }
 
 export async function reorderFormSections(formId: string, sectionOrders: Array<{ section_id: string; section_order: number }>): Promise<void> {
-  const response = await apiFetch(`/api/forms-management/forms/${formId}/sections/reorder`, {
+  const response = await apiFetch(`/api/v1/forms-management/forms/${formId}/sections/reorder`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ section_orders: sectionOrders }),
@@ -82,7 +82,7 @@ export async function reorderFormSections(formId: string, sectionOrders: Array<{
 }
 
 export async function reorderFormFields(sectionId: string, fieldOrders: Array<{ field_id: string; field_order: number }>): Promise<void> {
-  const response = await apiFetch(`/api/forms-management/form-sections/${sectionId}/fields/reorder`, {
+  const response = await apiFetch(`/api/v1/forms-management/form-sections/${sectionId}/fields/reorder`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ field_orders: fieldOrders }),

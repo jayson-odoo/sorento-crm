@@ -100,8 +100,8 @@ export default function Page() {
     language: settings?.language || 'en',
     supportEmail: settings?.supportEmail || '',
     supportPhone: settings?.supportPhone || '',
-    currency: settings?.currency || 'USD',
-    currencyFormat: settings?.currencyFormat || '$ {value}',
+    currency: settings?.currency || 'MYR',
+    currencyFormat: settings?.currencyFormat || 'RM {value}',
     timezone: settings?.timezone || 'Europe/London',
   };
 
@@ -535,6 +535,7 @@ export default function Page() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
+                          <SelectItem value="MYR">MYR - Malaysian Ringgit</SelectItem>
                           <SelectItem value="USD">USD - US Dollar</SelectItem>
                           <SelectItem value="EUR">EUR - Euro</SelectItem>
                           <SelectItem value="GBP">
@@ -546,7 +547,6 @@ export default function Page() {
                           <SelectItem value="INR">
                             INR - Indian Rupee
                           </SelectItem>
-                          {/* Add more currencies as needed */}
                         </SelectGroup>
                       </SelectContent>
                     </Select>
@@ -576,6 +576,9 @@ export default function Page() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
+                          <SelectItem value="RM {value}">
+                            RM {`{value}`}
+                          </SelectItem>
                           <SelectItem value="$ {value}">
                             $ {`{value}`}
                           </SelectItem>

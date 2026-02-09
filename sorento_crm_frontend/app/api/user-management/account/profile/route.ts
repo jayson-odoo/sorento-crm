@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { getClientIP } from '@/lib/api';
-import { prisma } from '@/lib/prisma';
 import { deleteFromS3, uploadToS3 } from '@/lib/s3-upload';
-import { systemLog } from '@/services/system-log';
+import { proxyToFastAPI } from '@/lib/api-proxy';
 import { AccountProfileSchema } from '@/app/(protected)/user-management/account/forms/account-profile-schema';
 import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
 
@@ -14,7 +13,7 @@ export async function POST(request: NextRequest) {
     if (!session) {
       return NextResponse.json(
         { message: 'Unauthorized request' },
-        { status: 401 }, // Unauthorized
+        { status: 401 },
       );
     }
 
@@ -65,31 +64,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Save or update the user in the database
-    const updatedUser = await prisma.user.update({
-      where: { id: session.user.id },
-      data: {
-        name,
-        avatar:
-          avatarAction === 'remove'
-            ? null
-            : avatarAction === 'save'
-              ? avatarUrl
-              : undefined,
-      },
-    });
+    // Update user via FastAPI (file upload handled above)
+    const body: Record<string, any> = { name };
+    if (avatarAction === 'remove') {
+      body.avatar = null;
+    } else if (avatarAction === 'save' && avatarUrl) {
+      body.avatar = avatarUrl;
+    }
 
-    // Log the event
-    await systemLog({
-      event: 'update',
-      userId: session.user.id,
-      entityId: session.user.id,
-      entityType: 'user.account',
-      description: 'User account updated.',
-      ipAddress: clientIp,
+    return proxyToFastAPI(request, '/api/v1/user-management/users/me/profile', {
+      method: 'PUT',
+      body,
     });
-
-    return NextResponse.json(updatedUser);
   } catch {
     return NextResponse.json(
       { message: 'Oops! Something went wrong. Please try again in a moment.' },

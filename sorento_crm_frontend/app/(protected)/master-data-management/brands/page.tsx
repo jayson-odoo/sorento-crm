@@ -35,7 +35,7 @@ export default async function BrandsPage() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Master Data Management</BreadcrumbPage>
+                  <BreadcrumbPage>Product Management</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>

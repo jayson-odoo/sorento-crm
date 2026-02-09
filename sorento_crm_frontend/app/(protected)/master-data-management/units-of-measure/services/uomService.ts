@@ -12,19 +12,19 @@ export async function getUOMs(params: DataGridApiFetchParams): Promise<DataGridA
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
   });
-  const response = await apiFetch(`/api/master-data/units-of-measure?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/master-data/units-of-measure?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch UOMs');
   return response.json();
 }
 
 export async function getUOM(id: string): Promise<UnitOfMeasure> {
-  const response = await apiFetch(`/api/master-data/units-of-measure/${id}`);
+  const response = await apiFetch(`/api/v1/master-data/units-of-measure/${id}`);
   if (!response.ok) throw new Error('Failed to fetch UOM');
   return response.json();
 }
 
 export async function createUOM(data: UOMFormData): Promise<UnitOfMeasure> {
-  const response = await apiFetch('/api/master-data/units-of-measure', {
+  const response = await apiFetch('/api/v1/master-data/units-of-measure', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -37,7 +37,7 @@ export async function createUOM(data: UOMFormData): Promise<UnitOfMeasure> {
 }
 
 export async function updateUOM(id: string, data: Partial<UOMFormData>): Promise<UnitOfMeasure> {
-  const response = await apiFetch(`/api/master-data/units-of-measure/${id}`, {
+  const response = await apiFetch(`/api/v1/master-data/units-of-measure/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -50,7 +50,7 @@ export async function updateUOM(id: string, data: Partial<UOMFormData>): Promise
 }
 
 export async function deleteUOM(id: string): Promise<void> {
-  const response = await apiFetch(`/api/master-data/units-of-measure/${id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/master-data/units-of-measure/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete UOM' }));
     throw new Error(error.message);

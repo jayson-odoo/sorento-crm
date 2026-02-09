@@ -71,6 +71,38 @@ const UserProfile = ({
               <Skeleton className="h-5 w-36" />
             </dd>
           </div>
+          <div className="grid grid-cols-subgrid col-span-2 items-baseline">
+            <dt>
+              <Skeleton className="h-5 w-32" />
+            </dt>
+            <dd>
+              <Skeleton className="h-5 w-24" />
+            </dd>
+          </div>
+          <div className="grid grid-cols-subgrid col-span-2 items-baseline">
+            <dt>
+              <Skeleton className="h-5 w-36" />
+            </dt>
+            <dd>
+              <Skeleton className="h-5 w-20" />
+            </dd>
+          </div>
+          <div className="grid grid-cols-subgrid col-span-2 items-baseline">
+            <dt>
+              <Skeleton className="h-5 w-32" />
+            </dt>
+            <dd>
+              <Skeleton className="h-5 w-24" />
+            </dd>
+          </div>
+          <div className="grid grid-cols-subgrid col-span-2 items-baseline">
+            <dt>
+              <Skeleton className="h-5 w-36" />
+            </dt>
+            <dd>
+              <Skeleton className="h-5 w-20" />
+            </dd>
+          </div>
         </dl>
         <Skeleton className="h-9 w-32" />
       </CardContent>
@@ -139,6 +171,49 @@ const UserProfile = ({
                   : 'Never'}
               </dd>
             </div>
+            <div className="grid grid-cols-subgrid col-span-2 items-baseline">
+              <dt>Respond User ID:</dt>
+              <dd>
+                {user.respondUserId ? (
+                  <span className="font-mono">{user.respondUserId}</span>
+                ) : (
+                  <span className="text-muted-foreground">Not set</span>
+                )}
+              </dd>
+            </div>
+            <div className="grid grid-cols-subgrid col-span-2 items-baseline">
+              <dt>Respond Sync Status:</dt>
+              <dd>
+                {user.respondSynced ? (
+                  <Badge
+                    variant={
+                      user.respondSynced === 'successful'
+                        ? 'success'
+                        : user.respondSynced === 'failed'
+                          ? 'destructive'
+                          : user.respondSynced === 'pending'
+                            ? 'warning'
+                            : 'secondary'
+                    }
+                    appearance="light"
+                  >
+                    {user.respondSynced.charAt(0).toUpperCase() + user.respondSynced.slice(1)}
+                  </Badge>
+                ) : (
+                  <span className="text-muted-foreground">Not synced</span>
+                )}
+              </dd>
+            </div>
+            {user.superiorId && (
+              <div className="grid grid-cols-subgrid col-span-2 items-baseline">
+                <dt>Superior:</dt>
+                <dd>
+                  <span>
+                    {user.superiorName || user.superiorId}
+                  </span>
+                </dd>
+              </div>
+            )}
           </dl>
           <Button
             variant="outline"

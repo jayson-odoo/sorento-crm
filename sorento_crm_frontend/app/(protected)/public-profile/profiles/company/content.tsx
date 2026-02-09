@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import {
   RiFacebookCircleLine,
   RiTwitterXLine,
@@ -11,7 +12,6 @@ import { Contributions } from '@/app/(protected)/public-profile/profiles/default
 import { Projects } from '@/app/(protected)/public-profile/profiles/default/components/projects';
 import { Tags } from '@/app/(protected)/public-profile/profiles/default/components/tags';
 import {
-  CompanyProfile,
   Highlights,
   INetworkItems,
   IStatisticsItems,
@@ -20,6 +20,12 @@ import {
   OpenJobs,
   Statistics,
 } from './components';
+
+// Dynamically import CompanyProfile to prevent Leaflet from being analyzed during SSR
+const CompanyProfile = dynamic(() => import('./components/company-profile').then((mod) => mod.CompanyProfile), { 
+  ssr: false,
+  loading: () => <div className="h-96 bg-muted animate-pulse rounded-lg" />
+});
 
 export function ProfileCompanyContent() {
   const items: IStatisticsItems = [

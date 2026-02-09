@@ -14,7 +14,7 @@ export const WarehouseSchema = z.object({
     .max(150, { message: 'Warehouse name must not exceed 150 characters.' }),
   location: z.string().max(255, { message: 'Location must not exceed 255 characters.' }).optional().nullable(),
   manager_id: z.string().uuid().optional().nullable(),
-  is_active: z.boolean().default(true),
+  is_active: z.boolean(),
 });
 
 export type WarehouseSchemaType = z.infer<typeof WarehouseSchema>;

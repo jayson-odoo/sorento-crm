@@ -1,4 +1,4 @@
-import type { Product } from '../../master-data-management/products/types/product.types';
+import type { Product } from '@/app/(protected)/master-data-management/products/types/product.types';
 
 export type PromotionType = 'price_override' | 'discount_percent' | 'discount_amount' | 'bundle' | 'other';
 
@@ -11,6 +11,7 @@ export interface Promotion {
   start_date: Date;
   end_date: Date;
   is_active: boolean;
+  access_levels?: string[] | null;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
@@ -25,6 +26,7 @@ export interface PromotionFormData {
   start_date: Date;
   end_date: Date;
   is_active: boolean;
+  access_levels?: string[] | null;
   // Type-specific fields
   new_price?: number;
   discount_percentage?: number;

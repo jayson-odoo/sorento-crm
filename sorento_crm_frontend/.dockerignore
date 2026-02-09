@@ -1,0 +1,82 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Next.js
+.next/
+out/
+build/
+.vercel
+
+# Testing
+coverage/
+.nyc_output/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation
+*.md
+!README.md
+
+# Large media files that don't change often (optional - uncomment if you don't need them during build)
+# These are already in public/, so excluding might save copy time
+# But they're needed at runtime, so keep them unless you use CDN
+# public/media/**/*.svg
+# public/media/**/*.jpg  
+# public/media/**/*.png
+
+# Logs
+*.log
+logs/
+
+# TypeScript
+*.tsbuildinfo
+
+# Misc
+.cache/
+.turbo/
+
+# Large media files (if not needed for build)
+# Uncomment if you don't need these during build:
+# public/media/**/*.svg
+# public/media/**/*.jpg
+# public/media/**/*.png
+
+# Source maps and debug files
+*.map
+*.d.ts.map
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup

@@ -15,19 +15,19 @@ export async function getForms(params: DataGridApiFetchParams & { language?: str
     ...(status ? { status } : {}),
     ...(purpose ? { purpose } : {}),
   });
-  const response = await apiFetch(`/api/forms-management/forms?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/forms-management/forms?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch forms');
   return response.json();
 }
 
 export async function getForm(id: string): Promise<Form> {
-  const response = await apiFetch(`/api/forms-management/forms/${id}`);
+  const response = await apiFetch(`/api/v1/forms-management/forms/${id}`);
   if (!response.ok) throw new Error('Failed to fetch form');
   return response.json();
 }
 
 export async function createForm(data: FormFormData): Promise<Form> {
-  const response = await apiFetch('/api/forms-management/forms', {
+  const response = await apiFetch('/api/v1/forms-management/forms', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -40,7 +40,7 @@ export async function createForm(data: FormFormData): Promise<Form> {
 }
 
 export async function updateForm(id: string, data: Partial<FormFormData>): Promise<Form> {
-  const response = await apiFetch(`/api/forms-management/forms/${id}`, {
+  const response = await apiFetch(`/api/v1/forms-management/forms/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -53,7 +53,7 @@ export async function updateForm(id: string, data: Partial<FormFormData>): Promi
 }
 
 export async function deleteForm(id: string): Promise<void> {
-  const response = await apiFetch(`/api/forms-management/forms/${id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/forms-management/forms/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete form' }));
     throw new Error(error.message);
@@ -61,7 +61,7 @@ export async function deleteForm(id: string): Promise<void> {
 }
 
 export async function duplicateForm(id: string, newCode: string): Promise<Form> {
-  const response = await apiFetch(`/api/forms-management/forms/${id}/duplicate`, {
+  const response = await apiFetch(`/api/v1/forms-management/forms/${id}/duplicate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code: newCode }),
@@ -74,7 +74,7 @@ export async function duplicateForm(id: string, newCode: string): Promise<Form> 
 }
 
 export async function publishForm(id: string): Promise<void> {
-  const response = await apiFetch(`/api/forms-management/forms/${id}/publish`, { method: 'POST' });
+  const response = await apiFetch(`/api/v1/forms-management/forms/${id}/publish`, { method: 'POST' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to publish form' }));
     throw new Error(error.message);
@@ -82,7 +82,7 @@ export async function publishForm(id: string): Promise<void> {
 }
 
 export async function getFormVersions(formId: string): Promise<FormVersion[]> {
-  const response = await apiFetch(`/api/forms-management/forms/${formId}/versions`);
+  const response = await apiFetch(`/api/v1/forms-management/forms/${formId}/versions`);
   if (!response.ok) throw new Error('Failed to fetch form versions');
   return response.json();
 }

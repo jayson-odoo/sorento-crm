@@ -1,9 +1,11 @@
-import { $Enums } from '@prisma/client';
 import { SystemSetting } from './system';
 
 // Enums
-export const UserStatus = $Enums.UserStatus;
-export type UserStatus = $Enums.UserStatus;
+export enum UserStatus {
+  INACTIVE = 'INACTIVE',
+  ACTIVE = 'ACTIVE',
+  BLOCKED = 'BLOCKED',
+}
 
 // Models
 export interface User {
@@ -23,9 +25,26 @@ export interface User {
   avatar?: string | null;
   invitedByUserId?: string | null;
   isProtected: boolean;
+  respondUserId?: string | null;
+  respondSynced?: string | null;
+  superiorId?: string | null;
+  superiorName?: string | null;
   role: UserRole;
   sessions?: Session[];
   accounts?: Account[];
+  agentAccesses?: UserAgentAccess[];
+}
+
+export interface UserAgentAccess {
+  id: string;
+  userId: string;
+  agentId: string;
+  createdAt: Date;
+  agent?: {
+    id: string;
+    code: string;
+    name: string;
+  };
 }
 
 export interface UserRole {

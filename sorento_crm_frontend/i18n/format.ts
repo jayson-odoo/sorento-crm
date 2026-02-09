@@ -1,7 +1,7 @@
 import i18n from 'i18next';
 
-// Default currency, but you can make this dynamic as well.
-const DEFAULT_CURRENCY = 'USD';
+// Default currency (MYR - Malaysian Ringgit).
+const DEFAULT_CURRENCY = 'MYR';
 
 /**
  * Get the current locale from i18n.

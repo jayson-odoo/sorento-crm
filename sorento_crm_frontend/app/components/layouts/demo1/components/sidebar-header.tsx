@@ -22,26 +22,26 @@ export function SidebarHeader() {
       <Link href="/">
         <div className="dark:hidden">
           <img
-            src={toAbsoluteUrl('/media/app/default-logo.svg')}
+            src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRCvRJCJ62G4a9FSbiX0OrF-x-WdQzgGhbwqA&s"
             className="default-logo h-[22px] max-w-none"
-            alt="Default Logo"
+            alt="Logo"
           />
           <img
-            src={toAbsoluteUrl('/media/app/mini-logo.svg')}
+            src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRCvRJCJ62G4a9FSbiX0OrF-x-WdQzgGhbwqA&s"
             className="small-logo h-[22px] max-w-none"
-            alt="Mini Logo"
+            alt="Logo"
           />
         </div>
         <div className="hidden dark:block">
           <img
-            src={toAbsoluteUrl('/media/app/default-logo-dark.svg')}
+            src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRCvRJCJ62G4a9FSbiX0OrF-x-WdQzgGhbwqA&s"
             className="default-logo h-[22px] max-w-none"
-            alt="Default Dark Logo"
+            alt="Logo"
           />
           <img
-            src={toAbsoluteUrl('/media/app/mini-logo.svg')}
+            src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRCvRJCJ62G4a9FSbiX0OrF-x-WdQzgGhbwqA&s"
             className="small-logo h-[22px] max-w-none"
-            alt="Mini Logo"
+            alt="Logo"
           />
         </div>
       </Link>

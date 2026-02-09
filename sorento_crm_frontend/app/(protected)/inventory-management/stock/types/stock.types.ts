@@ -2,11 +2,14 @@ export interface Stock {
   id: string;
   product_id: string;
   warehouse_id: string;
-  quantity: number;
-  reserved_quantity: number;
-  uom_id: string;
+  quantity_on_hand: number;
+  quantity_reserved: number;
+  quantity_available: number;
+  quantity_damaged?: number;
+  zone_id?: string | null;
+  reorder_point?: number | null;
   created_at: Date;
-  updated_at: Date;
+  updated_at?: Date | null;
   product?: {
     id: string;
     product_code: string;
@@ -18,7 +21,10 @@ export interface Stock {
     id: string;
     warehouse_name: string;
   };
-  available?: number; // quantity - reserved_quantity
+  // Legacy fields for backward compatibility
+  quantity?: number; // Maps to quantity_on_hand
+  reserved_quantity?: number; // Maps to quantity_reserved
+  available?: number; // Maps to quantity_available
   status?: 'low' | 'critical' | 'normal' | 'overstock';
 }
 

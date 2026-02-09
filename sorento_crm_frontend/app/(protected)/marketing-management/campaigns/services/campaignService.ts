@@ -18,25 +18,25 @@ export async function getCampaigns(params: DataGridApiFetchParams & { campaign_t
     ...(budget_min ? { budget_min: String(budget_min) } : {}),
     ...(budget_max ? { budget_max: String(budget_max) } : {}),
   });
-  const response = await apiFetch(`/api/marketing/campaigns?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/marketing/campaigns?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch campaigns');
   return response.json();
 }
 
 export async function getCampaign(id: string): Promise<CampaignDetail> {
-  const response = await apiFetch(`/api/marketing/campaigns/${id}`);
+  const response = await apiFetch(`/api/v1/marketing/campaigns/${id}`);
   if (!response.ok) throw new Error('Failed to fetch campaign');
   return response.json();
 }
 
 export async function getCampaignTypes(): Promise<CampaignType[]> {
-  const response = await apiFetch('/api/marketing/campaign-types');
+  const response = await apiFetch('/api/v1/marketing/campaign-types');
   if (!response.ok) throw new Error('Failed to fetch campaign types');
   return response.json();
 }
 
 export async function createCampaign(data: CampaignFormData): Promise<Campaign> {
-  const response = await apiFetch('/api/marketing/campaigns', {
+  const response = await apiFetch('/api/v1/marketing/campaigns', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -49,7 +49,7 @@ export async function createCampaign(data: CampaignFormData): Promise<Campaign> 
 }
 
 export async function updateCampaign(id: string, data: Partial<CampaignFormData>): Promise<Campaign> {
-  const response = await apiFetch(`/api/marketing/campaigns/${id}`, {
+  const response = await apiFetch(`/api/v1/marketing/campaigns/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -62,7 +62,7 @@ export async function updateCampaign(id: string, data: Partial<CampaignFormData>
 }
 
 export async function deleteCampaign(id: string): Promise<void> {
-  const response = await apiFetch(`/api/marketing/campaigns/${id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/marketing/campaigns/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete campaign' }));
     throw new Error(error.message);

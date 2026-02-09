@@ -1,26 +1,14 @@
-import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth/next';
-import { prisma } from '@/lib/prisma';
-import authOptions from '@/app/api/auth/[...nextauth]/auth-options';
+import { NextRequest } from 'next/server';
+import { proxyToFastAPI } from '@/lib/api-proxy';
 
-export async function GET() {
-  try {
-    const session = await getServerSession(authOptions);
+export async function GET(req: NextRequest) {
+  return proxyToFastAPI(req, '/api/v1/marketing/campaign-types');
+}
 
-    if (!session) {
-      return NextResponse.json(
-        { message: 'Unauthorized request' },
-        { status: 401 },
-      );
-    }
-
-    // TODO: Implement once Prisma models are added
-    return NextResponse.json([]);
-  } catch (error) {
-    console.error('Error fetching campaign types:', error);
-    return NextResponse.json(
-      { message: 'Oops! Something went wrong. Please try again in a moment.' },
-      { status: 500 },
-    );
-  }
+export async function POST(request: NextRequest) {
+  const body = await request.json();
+  return proxyToFastAPI(request, '/api/v1/marketing/campaign-types', {
+    method: 'POST',
+    body,
+  });
 }

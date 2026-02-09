@@ -14,13 +14,13 @@ export async function getProductSuppliers(params: DataGridApiFetchParams & { pro
     ...(product_id ? { product_id } : {}),
     ...(supplier_id ? { supplier_id } : {}),
   });
-  const response = await apiFetch(`/api/procurement/product-suppliers?${queryParams.toString()}`);
+  const response = await apiFetch(`/api/v1/procurement/product-suppliers?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch product suppliers');
   return response.json();
 }
 
 export async function createProductSupplier(data: ProductSupplierFormData): Promise<ProductSupplier> {
-  const response = await apiFetch('/api/procurement/product-suppliers', {
+  const response = await apiFetch('/api/v1/procurement/product-suppliers', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -33,7 +33,7 @@ export async function createProductSupplier(data: ProductSupplierFormData): Prom
 }
 
 export async function updateProductSupplier(id: string, data: Partial<ProductSupplierFormData>): Promise<ProductSupplier> {
-  const response = await apiFetch(`/api/procurement/product-suppliers/${id}`, {
+  const response = await apiFetch(`/api/v1/procurement/product-suppliers/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -46,17 +46,26 @@ export async function updateProductSupplier(id: string, data: Partial<ProductSup
 }
 
 export async function deleteProductSupplier(id: string): Promise<void> {
-  const response = await apiFetch(`/api/procurement/product-suppliers/${id}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/v1/procurement/product-suppliers/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete product supplier' }));
     throw new Error(error.message);
   }
 }
 
+export async function getProductSuppliersByProductId(productId: string): Promise<ProductSupplier[]> {
+  const response = await apiFetch(`/api/v1/procurement/product-suppliers/product/${productId}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to fetch product suppliers' }));
+    throw new Error(error.message || 'Failed to fetch product suppliers');
+  }
+  return response.json();
+}
+
 export async function bulkUploadProductSuppliers(file: File): Promise<{ success: number; errors: any[] }> {
   const formData = new FormData();
   formData.append('file', file);
-  const response = await apiFetch('/api/procurement/product-suppliers/bulk-upload', {
+  const response = await apiFetch('/api/v1/procurement/product-suppliers/bulk-upload', {
     method: 'POST',
     body: formData,
   });

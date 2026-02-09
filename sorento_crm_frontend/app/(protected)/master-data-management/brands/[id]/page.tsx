@@ -63,7 +63,7 @@ export default function BrandDetailPage({
                   </BreadcrumbItem>
                   <BreadcrumbSeparator />
                   <BreadcrumbItem>
-                    <BreadcrumbPage>Master Data Management</BreadcrumbPage>
+                    <BreadcrumbPage>Product Management</BreadcrumbPage>
                   </BreadcrumbItem>
                   <BreadcrumbSeparator />
                   <BreadcrumbItem>
@@ -107,7 +107,7 @@ export default function BrandDetailPage({
                   </BreadcrumbItem>
                   <BreadcrumbSeparator />
                   <BreadcrumbItem>
-                    <BreadcrumbPage>Master Data Management</BreadcrumbPage>
+                    <BreadcrumbPage>Product Management</BreadcrumbPage>
                   </BreadcrumbItem>
                   <BreadcrumbSeparator />
                   <BreadcrumbItem>
@@ -157,7 +157,7 @@ export default function BrandDetailPage({
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Master Data Management</BreadcrumbPage>
+                  <BreadcrumbPage>Product Management</BreadcrumbPage>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>

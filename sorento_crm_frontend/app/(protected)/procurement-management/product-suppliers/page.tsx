@@ -35,7 +35,7 @@ export default async function ProductSuppliersPage() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Procurement Management</BreadcrumbPage>
+                  <BreadcrumbPage>Procurement</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>

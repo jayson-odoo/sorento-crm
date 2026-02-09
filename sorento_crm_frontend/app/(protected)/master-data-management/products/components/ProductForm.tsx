@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -27,11 +27,15 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCreateProduct, useUpdateProduct, useProduct } from '../hooks/useProducts';
+import { useCreateProduct, useUpdateProduct, useProduct, useProducts } from '../hooks/useProducts';
 import { ProductSchema, type ProductSchemaType } from '../forms/product-schema';
+import type { ProductFormData } from '../types/product.types';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import { useUOMSelectQuery } from '../../shared/hooks/use-uom-select-query';
+import ProductSuppliersSection from './ProductSuppliersSection';
+import ProductAttachmentsTab from './ProductAttachmentsTab';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface ProductFormProps {
   productId?: string;
@@ -47,6 +51,23 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
   const { data: uoms } = useUOMSelectQuery();
   const createMutation = useCreateProduct();
   const updateMutation = useUpdateProduct();
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+      category_id: undefined,
+      brand_id: undefined,
+      status: 'all' as const,
+      price_min: undefined,
+      price_max: undefined,
+      item_type: undefined,
+    }),
+    [],
+  );
+  const { data: navigationData } = useProducts(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
 
   const form = useForm<ProductSchemaType>({
     resolver: zodResolver(ProductSchema),
@@ -75,33 +96,54 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
     mode: 'onSubmit',
   });
 
-  // Load product data when editing
+  // Track if form has been initialized to prevent multiple resets
+  const [formInitialized, setFormInitialized] = useState(false);
+
+  // Load product data when editing - initialize form as soon as product data is available
   useEffect(() => {
-    if (product && isEditMode) {
-      form.reset({
-        product_code: product.product_code,
-        product_name: product.product_name,
-        description: product.description || '',
-        category_id: product.category_id,
-        brand_id: product.brand_id || null,
-        item_type: product.item_type || null,
-        is_active: product.is_active,
-        list_price: product.list_price,
-        cost_price: product.cost_price || null,
-        invoice_price: product.invoice_price || null,
-        weight: product.weight || null,
-        dimensions_length: product.dimensions_length || null,
-        dimensions_width: product.dimensions_width || null,
-        dimensions_height: product.dimensions_height || null,
-        warranty_months: product.warranty_months || null,
-        has_serial_tracking: product.has_serial_tracking,
-        has_batch_tracking: product.has_batch_tracking,
-        reorder_level: product.reorder_level,
-        reorder_quantity: product.reorder_quantity,
-        base_uom_id: product.base_uom_id,
-      });
+    if (product && isEditMode && !formInitialized) {
+      // Ensure values are strings for proper matching
+      const categoryId = String(product.category_id || '');
+      const brandId = product.brand_id ? String(product.brand_id) : null;
+      const uomId = String(product.base_uom_id || '');
+
+      // Initialize form immediately with product data
+      // Select components will handle values even if options haven't loaded yet
+      const timeoutId = setTimeout(() => {
+        form.reset({
+          product_code: product.product_code,
+          product_name: product.product_name,
+          description: product.description || '',
+          category_id: categoryId,
+          brand_id: brandId,
+          item_type: product.item_type || null,
+          is_active: product.is_active,
+          list_price: product.list_price,
+          cost_price: product.cost_price || null,
+          invoice_price: product.invoice_price || null,
+          weight: product.weight || null,
+          dimensions_length: product.dimensions_length || null,
+          dimensions_width: product.dimensions_width || null,
+          dimensions_height: product.dimensions_height || null,
+          warranty_months: product.warranty_months || null,
+          has_serial_tracking: product.has_serial_tracking,
+          has_batch_tracking: product.has_batch_tracking,
+          reorder_level: product.reorder_level,
+          reorder_quantity: product.reorder_quantity,
+          base_uom_id: uomId,
+        });
+        
+        setFormInitialized(true);
+      }, 0);
+
+      return () => clearTimeout(timeoutId);
     }
-  }, [product, isEditMode, form]);
+  }, [product, isEditMode, form, formInitialized]);
+
+  // Reset formInitialized when productId changes
+  useEffect(() => {
+    setFormInitialized(false);
+  }, [productId]);
 
   // Auto-save draft to localStorage every 30 seconds
   useEffect(() => {
@@ -117,10 +159,34 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
 
   const onSubmit = async (data: ProductSchemaType) => {
     try {
+      // Transform data to ensure proper format - keep null values as null for optional fields
+      const formData: ProductFormData = {
+        product_code: data.product_code,
+        product_name: data.product_name,
+        description: data.description || undefined,
+        category_id: data.category_id,
+        brand_id: data.brand_id ?? undefined,
+        base_uom_id: data.base_uom_id,
+        list_price: typeof data.list_price === 'number' ? data.list_price : Number(data.list_price),
+        cost_price: data.cost_price ? (typeof data.cost_price === 'number' ? data.cost_price : Number(data.cost_price)) : undefined,
+        invoice_price: data.invoice_price ? (typeof data.invoice_price === 'number' ? data.invoice_price : Number(data.invoice_price)) : undefined,
+        weight: data.weight ?? undefined,
+        dimensions_length: data.dimensions_length ?? undefined,
+        dimensions_width: data.dimensions_width ?? undefined,
+        dimensions_height: data.dimensions_height ?? undefined,
+        warranty_months: data.warranty_months ?? undefined,
+        has_serial_tracking: data.has_serial_tracking,
+        has_batch_tracking: data.has_batch_tracking,
+        reorder_level: data.reorder_level,
+        reorder_quantity: data.reorder_quantity,
+        item_type: data.item_type ?? undefined,
+        is_active: data.is_active,
+      };
+
       if (isEditMode && productId) {
-        await updateMutation.mutateAsync({ id: productId, data });
+        await updateMutation.mutateAsync({ id: productId, data: formData });
       } else {
-        await createMutation.mutateAsync(data);
+        await createMutation.mutateAsync(formData);
       }
       localStorage.removeItem('product-form-draft');
       if (onSuccess) {
@@ -130,6 +196,7 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
       }
     } catch (error) {
       // Error is handled by the mutation hook
+      console.error('Product form submission error:', error);
     }
   };
 
@@ -146,12 +213,22 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {isEditMode && productId && (
+          <div className="flex justify-end">
+            <RecordNavigation
+              currentId={productId}
+              items={navigationItems}
+              basePath="/master-data-management/products"
+            />
+          </div>
+        )}
         <Tabs defaultValue="basic" className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="basic">Basic Information</TabsTrigger>
             <TabsTrigger value="pricing">Pricing</TabsTrigger>
             <TabsTrigger value="specifications">Specifications</TabsTrigger>
             <TabsTrigger value="uom">Unit of Measure</TabsTrigger>
+            <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
             <TabsTrigger value="attachments">Attachments</TabsTrigger>
           </TabsList>
 
@@ -220,58 +297,108 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
                   <FormField
                     control={form.control}
                     name="category_id"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Category *</FormLabel>
-                        <Select
-                          onValueChange={field.onChange}
-                          value={field.value}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select category" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {categories?.map((category) => (
-                              <SelectItem key={category.id} value={category.id}>
-                                {category.category_name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
+                    render={({ field }) => {
+                      const selectedCategory =
+                        categories?.find((cat) => cat.id === field.value) ||
+                        (product?.category
+                          ? {
+                              id: product.category.id,
+                              category_code: product.category.category_code,
+                            }
+                          : null);
+                      return (
+                        <FormItem>
+                          <FormLabel>Category *</FormLabel>
+                          <Select
+                            onValueChange={field.onChange}
+                            value={field.value || ''}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select category" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {categories?.map((category) => (
+                                <SelectItem key={category.id} value={category.id}>
+                                  {category.category_code}
+                                </SelectItem>
+                              ))}
+                              {/* Include product's category if not in the list (e.g., inactive) */}
+                              {product?.category &&
+                                !categories?.some(
+                                  (cat) => cat.id === product.category?.id
+                                ) && (
+                                  <SelectItem
+                                    key={product.category.id}
+                                    value={product.category.id}
+                                  >
+                                    {product.category.category_code}
+                                  </SelectItem>
+                                )}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
                   />
 
                   <FormField
                     control={form.control}
                     name="brand_id"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Brand</FormLabel>
-                        <Select
-                          onValueChange={(value) => field.onChange(value === '__none__' ? null : value)}
-                          value={field.value || '__none__'}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select brand" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="__none__">None</SelectItem>
-                            {brands?.map((brand) => (
-                              <SelectItem key={brand.id} value={brand.id}>
-                                {brand.brand_name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
+                    render={({ field }) => {
+                      const selectedBrand =
+                        brands?.find((brand) => brand.id === field.value) ||
+                        (product?.brand && field.value
+                          ? {
+                              id: product.brand.id,
+                              brand_code: product.brand.brand_code,
+                            }
+                          : null);
+                      const displayValue = field.value
+                        ? selectedBrand?.brand_code || ''
+                        : 'None';
+                      return (
+                        <FormItem>
+                          <FormLabel>Brand</FormLabel>
+                          <Select
+                            onValueChange={(value) =>
+                              field.onChange(value === '__none__' ? null : value)
+                            }
+                            value={field.value || '__none__'}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select brand" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="__none__">None</SelectItem>
+                              {brands?.map((brand) => (
+                                <SelectItem key={brand.id} value={brand.id}>
+                                  {brand.brand_code}
+                                </SelectItem>
+                              ))}
+                              {/* Include product's brand if not in the list (e.g., inactive) */}
+                              {product?.brand &&
+                                field.value &&
+                                !brands?.some(
+                                  (brand) => brand.id === product.brand?.id
+                                ) && (
+                                  <SelectItem
+                                    key={product.brand.id}
+                                    value={product.brand.id}
+                                  >
+                                    {product.brand.brand_code}
+                                  </SelectItem>
+                                )}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
                   />
                 </div>
 
@@ -348,7 +475,16 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
                           step="0.01"
                           placeholder="0.00"
                           {...field}
-                          onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                          value={field.value ?? ''}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (value === '') {
+                              field.onChange(0);
+                            } else {
+                              const numValue = parseFloat(value);
+                              field.onChange(isNaN(numValue) ? 0 : numValue);
+                            }
+                          }}
                         />
                       </FormControl>
                       <FormMessage />
@@ -622,29 +758,51 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
                 <FormField
                   control={form.control}
                   name="base_uom_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Base Unit of Measure *</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select base UOM" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {uoms?.map((uom) => (
-                            <SelectItem key={uom.id} value={uom.id}>
-                              {uom.uom_name} ({uom.uom_code})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  render={({ field }) => {
+                    const selectedUOM =
+                      uoms?.find((uom) => uom.id === field.value) ||
+                      (product?.base_uom
+                        ? {
+                            id: product.base_uom.id,
+                            uom_code: product.base_uom.uom_code,
+                          }
+                        : null);
+                    return (
+                      <FormItem>
+                        <FormLabel>Base Unit of Measure *</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value || ''}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select base UOM" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {uoms?.map((uom) => (
+                              <SelectItem key={uom.id} value={uom.id}>
+                                {uom.uom_code}
+                              </SelectItem>
+                            ))}
+                            {/* Include product's UOM if not in the list */}
+                            {product?.base_uom &&
+                              !uoms?.some(
+                                (uom) => uom.id === product.base_uom?.id
+                              ) && (
+                                <SelectItem
+                                  key={product.base_uom.id}
+                                  value={product.base_uom.id}
+                                >
+                                  {product.base_uom.uom_code}
+                                </SelectItem>
+                              )}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    );
+                  }}
                 />
 
                 {/* TODO: Alternative UOMs table with conversion factors */}
@@ -655,19 +813,17 @@ export default function ProductForm({ productId, onSuccess }: ProductFormProps) 
             </Card>
           </TabsContent>
 
-          {/* Tab 5: Attachments */}
+          {/* Tab 5: Suppliers */}
+          <TabsContent value="suppliers">
+            <ProductSuppliersSection
+              productId={productId}
+              isEditMode={isEditMode}
+            />
+          </TabsContent>
+
+          {/* Tab 6: Attachments */}
           <TabsContent value="attachments">
-            <Card>
-              <CardHeader>
-                <CardTitle>Attachments</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {/* TODO: FileUploadZone component (to be created in Resource Management module) */}
-                <div className="text-sm text-muted-foreground">
-                  File upload zone will be displayed here
-                </div>
-              </CardContent>
-            </Card>
+            <ProductAttachmentsTab productId={productId} isEditMode={isEditMode} />
           </TabsContent>
         </Tabs>
 

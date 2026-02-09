@@ -11,6 +11,7 @@ import {
   CalendarCheck,
   Captions,
   CheckCircle,
+  Clock,
   Code,
   Codepen,
   Coffee,
@@ -292,7 +293,7 @@ export const MENU_SIDEBAR: MenuConfig = [
     icon: ShieldUser,
     children: [
       {
-        title: 'Users',
+        title: 'Administrative Users',
         path: '/user-management/users',
       },
       {
@@ -302,6 +303,14 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Permissions',
         path: '/user-management/permissions',
+      },
+      {
+        title: 'AI Agents',
+        path: '/user-management/access-agents',
+      },
+      {
+        title: 'Internal Users',
+        path: '/user-management/contact-access-agents',
       },
       {
         title: 'Account',
@@ -318,29 +327,84 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
-    title: 'Master Data Management',
-    icon: Package,
+    title: 'Order Management',
+    icon: ShoppingCart,
     children: [
       {
-        title: 'Products',
-        path: '/master-data-management/products',
+        title: 'Orders',
+        path: '/order-management/orders',
       },
       {
-        title: 'Product Categories',
-        path: '/master-data-management/product-categories',
+        title: 'Order Status',
+        path: '/order-management/order-statuses',
       },
       {
-        title: 'Brands',
-        path: '/master-data-management/brands',
-      },
-      {
-        title: 'Units of Measure',
-        path: '/master-data-management/units-of-measure',
+        title: 'Customers',
+        path: '/order-management/customers',
       },
     ],
   },
   {
-    title: 'Procurement Management',
+    title: 'Complaint Management',
+    icon: AlertCircle,
+    children: [
+      {
+        title: 'Complaints',
+        path: '/complaint-management/complaints',
+      },
+    ],
+  },
+  {
+    title: 'SLA Management',
+    icon: Clock,
+    children: [
+      {
+        title: 'SLA Policies',
+        path: '/sla-management/sla-policies',
+      },
+      {
+        title: 'Conversation SLA Tracking',
+        path: '/sla-management/conversation-sla-tracking',
+      },
+      {
+        title: 'SLA Event Logs',
+        path: '/sla-management/escalation-logs',
+      },
+    ],
+  },
+  {
+    title: 'Product Management',
+    icon: Package,
+    children: [
+    {
+      title: 'Products',
+      children: [
+        {
+          title: 'All Products',
+          path: '/master-data-management/products',
+        },
+        {
+          title: 'Product Attachments',
+          path: '/master-data-management/product-attachments',
+        },
+      ],
+    },
+    {
+      title: 'Product Categories',
+      path: '/master-data-management/product-categories',
+    },
+    {
+      title: 'Brands',
+      path: '/master-data-management/brands',
+    },
+    {
+      title: 'Units of Measure',
+      path: '/master-data-management/units-of-measure',
+    },
+    ],
+  },
+  {
+    title: 'Procurement',
     icon: ShoppingBag,
     children: [
       {
@@ -350,6 +414,30 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
+      },
+      {
+        title: 'Packing Lists',
+        path: '/procurement-management/packing-lists',
+      },
+      {
+        title: 'SPO Allocations',
+        path: '/procurement-management/spo-allocations',
+      },
+      {
+        title: 'GRN',
+        path: '/procurement-management/grn',
+      },
+      {
+        title: 'Stock Inquiries',
+        path: '/procurement-management/stock-inquiries',
+      },
+      {
+        title: 'Purchase Requests',
+        path: '/procurement-management/purchase-requests',
+      },
+      {
+        title: 'Sponsorship Forms',
+        path: '/procurement-management/sponsorship-forms',
       },
     ],
   },
@@ -373,6 +461,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Stock Batches',
         path: '/inventory-management/stock-batches',
       },
+      {
+        title: 'Stock Ledger',
+        path: '/inventory-management/stock-ledger',
+      },
     ],
   },
   {
@@ -381,7 +473,16 @@ export const MENU_SIDEBAR: MenuConfig = [
     children: [
       {
         title: 'Promotions',
-        path: '/marketing-management/promotions',
+        children: [
+          {
+            title: 'All Promotions',
+            path: '/marketing-management/promotions',
+          },
+          {
+            title: 'Promotion Attachments',
+            path: '/marketing-management/promotion-attachments',
+          },
+        ],
       },
       {
         title: 'Promotion Products',
@@ -401,6 +502,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Forms',
         path: '/forms-management/forms',
       },
+      {
+        title: 'KOL Video Request',
+        path: '/forms-management/kol-video-request',
+      },
     ],
   },
   {
@@ -414,6 +519,38 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Attachment Types',
         path: '/resource-management/attachment-types',
+      },
+      {
+        title: 'Smart Linkage',
+        path: '/resource-management/smart-linkage',
+      },
+    ],
+  },
+  {
+    title: 'Integration Management',
+    icon: Plug,
+    children: [
+      {
+        title: 'Integration Logs',
+        path: '/integration-management/integration-logs',
+      },
+    ],
+  },
+  {
+    title: 'System Management',
+    icon: Settings,
+    children: [
+      {
+        title: 'Import Jobs',
+        path: '/system-management/import-jobs',
+      },
+      {
+        title: 'Import Logs',
+        path: '/system-management/import-logs',
+      },
+      {
+        title: 'Work Calendar',
+        path: '/system-management/work-calendar',
       },
     ],
   },
@@ -790,7 +927,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     icon: ShieldUser,
     children: [
       {
-        title: 'Users',
+        title: 'Administrative Users',
         path: '/user-management/users',
       },
       {
@@ -800,6 +937,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Permissions',
         path: '/user-management/permissions',
+      },
+      {
+        title: 'AI Agents',
+        path: '/user-management/access-agents',
+      },
+      {
+        title: 'Internal Users',
+        path: '/user-management/contact-access-agents',
       },
       {
         title: 'Account',
@@ -816,29 +961,84 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     ],
   },
   {
-    title: 'Master Data Management',
-    icon: Package,
+    title: 'Order Management',
+    icon: ShoppingCart,
     children: [
       {
-        title: 'Products',
-        path: '/master-data-management/products',
+        title: 'Orders',
+        path: '/order-management/orders',
       },
       {
-        title: 'Product Categories',
-        path: '/master-data-management/product-categories',
+        title: 'Order Status',
+        path: '/order-management/order-statuses',
       },
       {
-        title: 'Brands',
-        path: '/master-data-management/brands',
-      },
-      {
-        title: 'Units of Measure',
-        path: '/master-data-management/units-of-measure',
+        title: 'Customers',
+        path: '/order-management/customers',
       },
     ],
   },
   {
-    title: 'Procurement Management',
+    title: 'Complaint Management',
+    icon: AlertCircle,
+    children: [
+      {
+        title: 'Complaints',
+        path: '/complaint-management/complaints',
+      },
+    ],
+  },
+  {
+    title: 'SLA Management',
+    icon: Clock,
+    children: [
+      {
+        title: 'SLA Policies',
+        path: '/sla-management/sla-policies',
+      },
+      {
+        title: 'Conversation SLA Tracking',
+        path: '/sla-management/conversation-sla-tracking',
+      },
+      {
+        title: 'SLA Event Logs',
+        path: '/sla-management/escalation-logs',
+      },
+    ],
+  },
+  {
+    title: 'Product Management',
+    icon: Package,
+    children: [
+    {
+      title: 'Products',
+      children: [
+        {
+          title: 'All Products',
+          path: '/master-data-management/products',
+        },
+        {
+          title: 'Product Attachments',
+          path: '/master-data-management/product-attachments',
+        },
+      ],
+    },
+    {
+      title: 'Product Categories',
+      path: '/master-data-management/product-categories',
+    },
+    {
+      title: 'Brands',
+      path: '/master-data-management/brands',
+    },
+    {
+      title: 'Units of Measure',
+      path: '/master-data-management/units-of-measure',
+    },
+    ],
+  },
+  {
+    title: 'Procurement',
     icon: ShoppingBag,
     children: [
       {
@@ -848,6 +1048,30 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
+      },
+      {
+        title: 'Packing Lists',
+        path: '/procurement-management/packing-lists',
+      },
+      {
+        title: 'SPO Allocations',
+        path: '/procurement-management/spo-allocations',
+      },
+      {
+        title: 'GRN',
+        path: '/procurement-management/grn',
+      },
+      {
+        title: 'Stock Inquiries',
+        path: '/procurement-management/stock-inquiries',
+      },
+      {
+        title: 'Purchase Requests',
+        path: '/procurement-management/purchase-requests',
+      },
+      {
+        title: 'Sponsorship Forms',
+        path: '/procurement-management/sponsorship-forms',
       },
     ],
   },
@@ -871,6 +1095,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Stock Batches',
         path: '/inventory-management/stock-batches',
       },
+      {
+        title: 'Stock Ledger',
+        path: '/inventory-management/stock-ledger',
+      },
     ],
   },
   {
@@ -879,7 +1107,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     children: [
       {
         title: 'Promotions',
-        path: '/marketing-management/promotions',
+        children: [
+          {
+            title: 'All Promotions',
+            path: '/marketing-management/promotions',
+          },
+          {
+            title: 'Promotion Attachments',
+            path: '/marketing-management/promotion-attachments',
+          },
+        ],
       },
       {
         title: 'Promotion Products',
@@ -899,6 +1136,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Forms',
         path: '/forms-management/forms',
       },
+      {
+        title: 'KOL Video Request',
+        path: '/forms-management/kol-video-request',
+      },
     ],
   },
   {
@@ -912,6 +1153,20 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Attachment Types',
         path: '/resource-management/attachment-types',
+      },
+      {
+        title: 'Smart Linkage',
+        path: '/resource-management/smart-linkage',
+      },
+    ],
+  },
+  {
+    title: 'Integration Management',
+    icon: Plug,
+    children: [
+      {
+        title: 'Integration Logs',
+        path: '/integration-management/integration-logs',
       },
     ],
   },
@@ -1316,7 +1571,7 @@ export const MENU_MEGA: MenuConfig = [
           {
             children: [
               {
-                title: 'Users',
+                title: 'Administrative Users',
                 path: '/user-management/users',
               },
               {

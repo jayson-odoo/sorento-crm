@@ -129,7 +129,7 @@ const UserRestoreDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
-      <DialogContent showCloseButton={false}>
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>Confirm Restore</DialogTitle>
         </DialogHeader>

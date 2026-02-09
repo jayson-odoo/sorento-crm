@@ -23,6 +23,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RecordNavigation from '@/components/common/RecordNavigation';
 import { UserProvider } from './components/user-context';
 import UserHero from './components/user-hero';
 
@@ -93,7 +94,23 @@ export default function UserLayout({
         throw new Error(message);
       }
 
-      return response.json();
+      const data = await response.json();
+      // Transform snake_case from backend to camelCase for frontend
+      return {
+        ...data,
+        roleId: data.role_id || data.roleId,
+        respondUserId: data.respond_user_id || data.respondUserId,
+        respondSynced: data.respond_synced || data.respondSynced,
+        superiorId: data.superior_id || data.superiorId,
+        superiorName: data.superior_name || data.superiorName,
+        createdAt: data.created_at || data.createdAt,
+        updatedAt: data.updated_at || data.updatedAt,
+        lastSignInAt: data.last_sign_in_at || data.lastSignInAt,
+        emailVerifiedAt: data.email_verified_at || data.emailVerifiedAt,
+        isTrashed: data.is_trashed !== undefined ? data.is_trashed : data.isTrashed,
+        invitedByUserId: data.invited_by_user_id || data.invitedByUserId,
+        isProtected: data.is_protected !== undefined ? data.is_protected : data.isProtected,
+      };
     },
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
@@ -101,6 +118,53 @@ export default function UserLayout({
     refetchOnReconnect: false,
     retry: 1,
   });
+
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'createdAt', desc: true }],
+      searchQuery: '',
+      selectedRole: null,
+      selectedStatus: null,
+    }),
+    [],
+  );
+  const { data: navigationData } = useQuery({
+    queryKey: ['user-users-nav', navigationParams],
+    queryFn: async () => {
+      const sortField = navigationParams.sorting?.[0]?.id || '';
+      const sortDirection = navigationParams.sorting?.[0]?.desc ? 'desc' : 'asc';
+      const params = new URLSearchParams();
+      params.set('page', String(navigationParams.pageIndex + 1));
+      params.set('limit', String(navigationParams.pageSize));
+      if (sortField) {
+        params.set('sort', sortField);
+        params.set('dir', sortDirection);
+      }
+      if (navigationParams.searchQuery) {
+        params.set('query', navigationParams.searchQuery);
+      }
+      if (navigationParams.selectedRole && navigationParams.selectedRole !== 'all') {
+        params.set('roleId', navigationParams.selectedRole);
+      }
+      if (navigationParams.selectedStatus && navigationParams.selectedStatus !== 'all') {
+        params.set('status', navigationParams.selectedStatus);
+      }
+
+      const response = await apiFetch(`/api/user-management/users?${params.toString()}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch users');
+      }
+      return response.json();
+    },
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: 1,
+  });
+  const navigationItems = navigationData?.data ?? [];
 
   // Handler for tab click: instantly update active tab then navigate.
   const handleTabClick = (key: string, path: string) => {
@@ -132,6 +196,11 @@ export default function UserLayout({
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
+            <RecordNavigation
+              currentId={id}
+              items={navigationItems}
+              basePath="/user-management/users"
+            />
             <Button asChild variant="outline">
               <Link href="/user-management/users">
                 <MoveLeft /> Back to users

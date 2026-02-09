@@ -1,0 +1,37 @@
+"""Stock ledger API routes."""
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+from typing import Optional
+from app.database import get_db
+from app.dependencies import get_current_user
+from app.services.inventory_service import StockService
+from app.schemas.inventory import StockLedgerResponse
+from app.schemas.common import ListResponse
+from app.services.error_handler import handle_internal_error
+
+router = APIRouter()
+
+
+@router.get("/", response_model=ListResponse[StockLedgerResponse])
+async def get_stock_ledger(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    product_id: Optional[str] = Query(None),
+    warehouse_id: Optional[str] = Query(None),
+    transaction_type: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get stock ledger entries with pagination and filtering."""
+    try:
+        service = StockService(db)
+        result = service.list_stock_ledger(
+            page=page,
+            limit=limit,
+            product_id=product_id,
+            warehouse_id=warehouse_id,
+            transaction_type=transaction_type
+        )
+        return result
+    except Exception as e:
+        raise handle_internal_error(str(e))

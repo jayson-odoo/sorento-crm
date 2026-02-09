@@ -12,7 +12,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Plus, Search, X, ChevronRight } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
@@ -44,13 +44,25 @@ export default function PromotionsList() {
       {
         accessorKey: 'promo_code',
         header: ({ column }) => <DataGridColumnHeader title="Promo Code" column={column} />,
-        size: 250,
+        cell: ({ row }) => (
+          <div className="min-w-0 max-w-full truncate" title={row.original.promo_code || ''}>
+            {row.original.promo_code || '-'}
+          </div>
+        ),
+        size: 180,
+        minSize: 120,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'name',
         header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
-        size: 250,
+        cell: ({ row }) => (
+          <div className="min-w-0 max-w-full truncate" title={row.original.name || ''}>
+            {row.original.name || '-'}
+          </div>
+        ),
+        size: 220,
+        minSize: 150,
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
@@ -70,6 +82,25 @@ export default function PromotionsList() {
         size: 150,
       },
       {
+        accessorKey: 'access_levels',
+        header: ({ column }) => <DataGridColumnHeader title="Access" column={column} />,
+        cell: ({ row }) => {
+          const levels = row.original.access_levels || [];
+          if (!levels.length) return '-';
+          return (
+            <div className="flex flex-wrap gap-2">
+              {levels.map((level) => (
+                <Badge key={level} variant="secondary">
+                  {level === 'dealer' ? 'Dealer' : 'End User'}
+                </Badge>
+              ))}
+            </div>
+          );
+        },
+        size: 160,
+        minSize: 120,
+      },
+      {
         accessorKey: 'start_date',
         header: ({ column }) => <DataGridColumnHeader title="Start Date" column={column} />,
         cell: ({ row }) => formatDate(new Date(row.original.start_date)),
@@ -86,6 +117,7 @@ export default function PromotionsList() {
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
           <Badge variant={row.original.is_active ? 'success' : 'secondary'} appearance="ghost">
+            <BadgeDot />
             {row.original.is_active ? 'Active' : 'Inactive'}
           </Badge>
         ),
@@ -106,6 +138,11 @@ export default function PromotionsList() {
     [],
   );
 
+  const handleRowClick = (row: Promotion) => {
+    const promotionId = row.id;
+    router.push(`/marketing-management/promotions/${promotionId}`);
+  };
+
   const table = useReactTable({
     columns,
     data: data?.data || [],
@@ -123,7 +160,7 @@ export default function PromotionsList() {
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">

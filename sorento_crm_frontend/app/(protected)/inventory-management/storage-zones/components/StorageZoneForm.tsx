@@ -29,6 +29,9 @@ import {
 import { Button } from '@/components/ui/button';
 import { useCreateStorageZone, useUpdateStorageZone } from '../hooks/useStorageZones';
 import type { StorageZoneFormData } from '../types/storageZone.types';
+import { useQuery } from '@tanstack/react-query';
+import { getWarehouses } from '../../warehouses/services/warehouseService';
+import type { Warehouse } from '../../warehouses/types/warehouse.types';
 
 const StorageZoneSchema = z.object({
   warehouse_id: z.string().uuid('Warehouse is required'),
@@ -36,7 +39,7 @@ const StorageZoneSchema = z.object({
   zone_name: z.string().max(150).optional().nullable(),
   zone_type: z.enum(['shelf', 'rack', 'bin', 'pallet']),
   capacity: z.number().int().positive('Capacity must be a positive number'),
-  is_active: z.boolean().default(true),
+  is_active: z.boolean(),
 });
 
 interface StorageZoneFormProps {
@@ -48,6 +51,21 @@ interface StorageZoneFormProps {
 export default function StorageZoneForm({ open, onOpenChange, zoneId }: StorageZoneFormProps) {
   const createMutation = useCreateStorageZone();
   const updateMutation = useUpdateStorageZone();
+  
+  // Fetch warehouses for dropdown
+  const { data: warehousesData } = useQuery({
+    queryKey: ['warehouses-select'],
+    queryFn: async () => {
+      const response = await getWarehouses({
+        pageIndex: 0,
+        pageSize: 1000,
+        sorting: [],
+        searchQuery: '',
+      });
+      return response.data || [];
+    },
+    staleTime: 1000 * 60 * 5, // 5 minutes
+  });
 
   const form = useForm<StorageZoneFormData>({
     resolver: zodResolver(StorageZoneSchema),
@@ -102,7 +120,11 @@ export default function StorageZoneForm({ open, onOpenChange, zoneId }: StorageZ
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {/* TODO: Populate from warehouses */}
+                      {(warehousesData || []).map((warehouse: Warehouse) => (
+                        <SelectItem key={warehouse.id} value={warehouse.id}>
+                          {warehouse.warehouse_name} ({warehouse.warehouse_code})
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <FormMessage />

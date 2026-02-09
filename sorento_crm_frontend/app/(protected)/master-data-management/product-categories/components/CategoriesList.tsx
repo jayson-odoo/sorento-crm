@@ -8,11 +8,33 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCategoriesTree } from '../hooks/useProductCategories';
 import CategoryTree from './CategoryTree';
 import CategoryForm from './CategoryForm';
+import CategoryDeleteDialog from './category-delete-dialog';
+import type { CategoryTreeItem } from '../types/category.types';
 
 export default function CategoriesList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | undefined>(undefined);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState<CategoryTreeItem | null>(null);
   const { data: categories, isLoading } = useCategoriesTree();
+
+  const handleEdit = (category: CategoryTreeItem) => {
+    setEditingCategoryId(category.id);
+    setFormOpen(true);
+  };
+
+  const handleDelete = (category: CategoryTreeItem) => {
+    setCategoryToDelete(category);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleFormClose = (open: boolean) => {
+    setFormOpen(open);
+    if (!open) {
+      setEditingCategoryId(undefined);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -27,7 +49,10 @@ export default function CategoriesList() {
               className="ps-9 w-64"
             />
           </div>
-          <Button onClick={() => setFormOpen(true)}>
+          <Button onClick={() => {
+            setEditingCategoryId(undefined);
+            setFormOpen(true);
+          }}>
             <Plus className="size-4" />
             Create Category
           </Button>
@@ -36,15 +61,32 @@ export default function CategoriesList() {
           {isLoading ? (
             <div className="text-center py-8 text-muted-foreground">Loading categories...</div>
           ) : (
-            <CategoryTree categories={categories || []} searchQuery={searchQuery} />
+            <CategoryTree
+              categories={categories || []}
+              searchQuery={searchQuery}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+            />
           )}
         </CardContent>
       </Card>
 
       <CategoryForm
         open={formOpen}
-        onOpenChange={setFormOpen}
+        onOpenChange={handleFormClose}
+        categoryId={editingCategoryId}
       />
+
+      {categoryToDelete && (
+        <CategoryDeleteDialog
+          open={deleteDialogOpen}
+          closeDialog={() => {
+            setDeleteDialogOpen(false);
+            setCategoryToDelete(null);
+          }}
+          category={categoryToDelete}
+        />
+      )}
     </div>
   );
 }

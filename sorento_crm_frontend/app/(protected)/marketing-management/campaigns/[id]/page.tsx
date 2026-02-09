@@ -1,5 +1,7 @@
+import { use } from 'react';
 import CampaignDashboard from './components/CampaignDashboard';
 
-export default function CampaignDetailPage({ params }: { params: { id: string } }) {
-  return <CampaignDashboard campaignId={params.id} />;
+export default function CampaignDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  return <CampaignDashboard campaignId={id} />;
 }

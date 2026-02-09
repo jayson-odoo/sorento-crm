@@ -100,4 +100,4 @@ const Demo7Layout = ({ children }: { children: ReactNode }) => {
   );
 };
 
-export { Demo7Layout };
+export default Demo7Layout;

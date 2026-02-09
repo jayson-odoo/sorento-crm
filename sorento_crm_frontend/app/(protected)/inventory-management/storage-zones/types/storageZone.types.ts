@@ -18,7 +18,7 @@ export interface StorageZone {
 export interface StorageZoneFormData {
   warehouse_id: string;
   zone_code: string;
-  zone_name?: string;
+  zone_name?: string | null;
   zone_type: 'shelf' | 'rack' | 'bin' | 'pallet';
   capacity: number;
   is_active: boolean;

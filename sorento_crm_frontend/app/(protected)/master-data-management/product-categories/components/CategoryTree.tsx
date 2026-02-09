@@ -10,9 +10,11 @@ interface CategoryTreeProps {
   categories: CategoryTreeItem[];
   searchQuery?: string;
   level?: number;
+  onEdit?: (category: CategoryTreeItem) => void;
+  onDelete?: (category: CategoryTreeItem) => void;
 }
 
-export default function CategoryTree({ categories, searchQuery = '', level = 0 }: CategoryTreeProps) {
+export default function CategoryTree({ categories, searchQuery = '', level = 0, onEdit, onDelete }: CategoryTreeProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const toggleExpand = (id: string) => {
@@ -66,10 +68,26 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0 }
                 </Badge>
               )}
               <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                <Button variant="ghost" size="sm" className="h-6">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit?.(category);
+                  }}
+                >
                   Edit
                 </Button>
-                <Button variant="ghost" size="sm" className="h-6">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete?.(category);
+                  }}
+                >
                   Delete
                 </Button>
               </div>
@@ -79,6 +97,8 @@ export default function CategoryTree({ categories, searchQuery = '', level = 0 }
                 categories={category.children || []}
                 searchQuery={searchQuery}
                 level={level + 1}
+                onEdit={onEdit}
+                onDelete={onDelete}
               />
             )}
           </div>

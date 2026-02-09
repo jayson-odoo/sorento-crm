@@ -12,6 +12,8 @@ export const UserAddSchema = z.object({
   roleId: z.string().nonempty({
     message: 'Role ID is required.',
   }),
+  agent_ids: z.array(z.string()).optional(),
+  superior_id: z.string().optional().nullable(),
 });
 
 export type UserAddSchemaType = z.infer<typeof UserAddSchema>;

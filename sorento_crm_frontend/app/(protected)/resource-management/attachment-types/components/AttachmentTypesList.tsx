@@ -10,7 +10,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Plus, Search, X, Edit2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
@@ -22,11 +22,17 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAttachmentTypes } from '../hooks/useAttachmentTypes';
 import type { AttachmentType } from '../types/attachmentType.types';
+import AttachmentTypeFormDialog from './AttachmentTypeFormDialog';
+import AttachmentTypeDeleteDialog from './AttachmentTypeDeleteDialog';
 
 export default function AttachmentTypesList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [selectedTypeId, setSelectedTypeId] = useState<string | null>(null);
+  const [selectedTypeForDelete, setSelectedTypeForDelete] = useState<AttachmentType | null>(null);
 
   const { data, isLoading } = useAttachmentTypes({
     pageIndex: pagination.pageIndex,
@@ -60,10 +66,40 @@ export default function AttachmentTypesList() {
         size: 150,
       },
       {
-        accessorKey: 'actions',
+        id: 'actions',
         header: '',
-        cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
-        size: 40,
+        cell: ({ row }) => {
+          const type = row.original;
+          return (
+            <div className="flex items-center gap-2">
+              <Button
+                mode="icon"
+                variant="ghost"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedTypeId(type.id);
+                  setIsFormDialogOpen(true);
+                }}
+              >
+                <Edit2 className="size-4" />
+              </Button>
+              <Button
+                mode="icon"
+                variant="ghost"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedTypeForDelete(type);
+                  setIsDeleteDialogOpen(true);
+                }}
+              >
+                <Trash2 className="size-4 text-destructive" />
+              </Button>
+            </div>
+          );
+        },
+        size: 100,
       },
     ],
     [],
@@ -108,10 +144,12 @@ export default function AttachmentTypesList() {
               </Button>
             )}
           </div>
-          <Button onClick={() => {
-            // TODO: Open attachment type form
-            console.log('Create attachment type');
-          }}>
+          <Button
+            onClick={() => {
+              setSelectedTypeId(null);
+              setIsFormDialogOpen(true);
+            }}
+          >
             <Plus />
             Create Attachment Type
           </Button>
@@ -126,6 +164,28 @@ export default function AttachmentTypesList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+
+      <AttachmentTypeFormDialog
+        open={isFormDialogOpen}
+        onOpenChange={(open) => {
+          setIsFormDialogOpen(open);
+          if (!open) {
+            setSelectedTypeId(null);
+          }
+        }}
+        attachmentTypeId={selectedTypeId}
+      />
+
+      <AttachmentTypeDeleteDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setIsDeleteDialogOpen(open);
+          if (!open) {
+            setSelectedTypeForDelete(null);
+          }
+        }}
+        attachmentType={selectedTypeForDelete}
+      />
     </DataGrid>
   );
 }

@@ -120,4 +120,4 @@ const Demo6Layout = ({ children }: { children: ReactNode }) => {
   );
 };
 
-export { Demo6Layout };
+export default Demo6Layout;

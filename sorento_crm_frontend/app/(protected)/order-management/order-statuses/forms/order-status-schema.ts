@@ -1,0 +1,23 @@
+import { z } from 'zod';
+
+export const OrderStatusSchema = z.object({
+  status_code: z
+    .string()
+    .min(1, { message: 'Status code is required.' })
+    .max(50, { message: 'Status code must not exceed 50 characters.' })
+    .regex(/^[A-Za-z0-9_-]+$/, {
+      message: 'Status code can only contain alphanumeric characters, dashes, and underscores.',
+    }),
+  status_name: z
+    .string()
+    .min(1, { message: 'Status name is required.' })
+    .max(100, { message: 'Status name must not exceed 100 characters.' }),
+  description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
+  sequence: z
+    .number()
+    .int({ message: 'Sequence must be a whole number.' })
+    .min(0, { message: 'Sequence cannot be negative.' }),
+  is_final_status: z.boolean(),
+});
+
+export type OrderStatusSchemaType = z.infer<typeof OrderStatusSchema>;
