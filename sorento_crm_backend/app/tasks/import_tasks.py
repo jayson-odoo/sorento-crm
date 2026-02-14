@@ -1,16 +1,41 @@
 """Background tasks for imports."""
+import io
+import json
+import time
+import zipfile
+import hashlib
+import uuid
+import mimetypes
+import logging
+from datetime import date, datetime, time as dt_time
+from decimal import Decimal
+from typing import Optional, List
+
 from app.database import SessionLocal
 from app.services.inventory_service import StockService
 from app.services.order_service import OrderService
 from app.services.product_service import ProductService
 from app.services.import_log_service import ImportLogService
 from app.services.job_service import JobService
+from app.services.resources_service import (
+    AttachmentDirectoryService,
+    AttachmentService,
+    AttachmentTypeService,
+)
+from app.services.s3_service import S3Service
+from app.services.attachment_webhook_helper import create_and_send_webhook
 from app.models.job import JobStatus
-import logging
-from datetime import date, datetime, time as dt_time
-from decimal import Decimal
+from app.schemas.resources import AttachmentCreate
 
 logger = logging.getLogger(__name__)
+
+# Batch size for attachment bulk import (files per batch); sleep between batches to avoid overload
+ATTACHMENT_BULK_IMPORT_BATCH_SIZE = 5
+ATTACHMENT_BULK_IMPORT_BATCH_DELAY_SECONDS = 0.5
+
+
+def _normalize_zip_path(name: str) -> str:
+    return name.replace("\\", "/").strip("/")
 
 
 def _json_safe(value):
@@ -230,5 +255,208 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
             )
         except Exception:
             pass
+    finally:
+        db.close()
+
+
+def process_attachment_bulk_import(
+    db_job_id: str,
+    zip_content: bytes,
+    attachment_type_id: str,
+    access_levels_json: str,
+    parent_directory_id: Optional[str],
+    user_id: str,
+):
+    """Process attachment bulk import (ZIP) in background with batch processing."""
+    from rq import get_current_job
+
+    db = SessionLocal()
+    job_service = JobService(db)
+
+    rq_job = get_current_job()
+    rq_job_id = rq_job.id if rq_job else None
+
+    job = job_service.get_job_by_db_id(db_job_id) if db_job_id else None
+    if not job and rq_job_id:
+        job = job_service.get_job(rq_job_id)
+
+    if not job:
+        logger.error("Attachment bulk import job not found: db_job_id=%s, rq_job_id=%s", db_job_id, rq_job_id)
+        db.close()
+        return
+
+    job_id_str = job.job_id
+    dir_service = AttachmentDirectoryService(db)
+    attachment_service = AttachmentService(db)
+    type_service = AttachmentTypeService(db)
+    s3_service = S3Service()
+
+    access_levels_payload = None
+    try:
+        parsed = json.loads(access_levels_json or "[]")
+        if isinstance(parsed, list):
+            access_levels_payload = parsed
+    except Exception:
+        pass
+
+    try:
+        job_service.start_job(job_id_str)
+
+        try:
+            attachment_type = type_service.get_type(attachment_type_id)
+        except Exception:
+            job_service.fail_job(job_id_str, "Invalid attachment type ID")
+            db.close()
+            return
+
+        allowed_extensions = set(
+            ext.strip().lower().replace(".", "")
+            for ext in (attachment_type.allowed_extensions or "").split(",")
+            if ext.strip()
+        )
+        max_bytes = (attachment_type.max_file_size_mb or 10) * 1024 * 1024
+
+        with zipfile.ZipFile(io.BytesIO(zip_content), "r") as zf:
+            all_names = [_normalize_zip_path(n) for n in zf.namelist()]
+
+        dir_paths = set()
+        file_paths: List[str] = []
+        for name in all_names:
+            if not name:
+                continue
+            if name.endswith("/"):
+                dir_path = name.rstrip("/")
+                if dir_path:
+                    dir_paths.add(dir_path)
+            else:
+                file_paths.append(name)
+
+        # Create all directories first
+        for dir_path in sorted(dir_paths):
+            parts = [p for p in dir_path.split("/") if p.strip()]
+            if parts:
+                dir_service.get_or_create_path(parent_directory_id, parts)
+
+        total_files = len(file_paths)
+        job_service.update_job_progress(job_id_str, total_rows=total_files, result={"directories_created": len(dir_paths)})
+
+        created_attachments: List[dict] = []
+        errors: List[str] = []
+        successful = 0
+        failed = 0
+        skipped = 0
+        processed = 0
+
+        for i in range(0, len(file_paths), ATTACHMENT_BULK_IMPORT_BATCH_SIZE):
+            batch = file_paths[i : i + ATTACHMENT_BULK_IMPORT_BATCH_SIZE]
+            for file_path in batch:
+                try:
+                    with zipfile.ZipFile(io.BytesIO(zip_content), "r") as zf:
+                        raw_name = next((n for n in zf.namelist() if _normalize_zip_path(n) == file_path), None)
+                    if not raw_name:
+                        errors.append(f"Not found in zip: {file_path}")
+                        failed += 1
+                        processed += 1
+                        continue
+                    with zipfile.ZipFile(io.BytesIO(zip_content), "r") as zf:
+                        with zf.open(raw_name, "r") as entry:
+                            file_content = entry.read()
+
+                    original_filename = file_path.split("/")[-1]
+                    ext = (original_filename.split(".")[-1] or "").lower()
+                    if allowed_extensions and ext not in allowed_extensions:
+                        errors.append(f"Skipped (extension .{ext} not allowed): {file_path}")
+                        skipped += 1
+                        processed += 1
+                        continue
+                    if len(file_content) > max_bytes:
+                        errors.append(f"Skipped (file too large): {file_path}")
+                        skipped += 1
+                        processed += 1
+                        continue
+
+                    file_uuid = str(uuid.uuid4())
+                    safe_filename = "".join(
+                        c for c in original_filename if c.isalnum() or c in (" ", "-", "_", ".")
+                    ).strip()
+                    stored_filename = f"{file_uuid}-{safe_filename}"
+                    entity_type = (attachment_type.type_name or "general").lower().replace(" ", "_")
+                    s3_file_path = f"{entity_type}/{stored_filename}"
+                    guessed_type, _ = mimetypes.guess_type(original_filename)
+                    s3_key, s3_url = s3_service.upload_file(
+                        file_content=file_content,
+                        file_path=s3_file_path,
+                        content_type=guessed_type,
+                    )
+                    dir_parts = [p for p in file_path.split("/")[:-1] if p.strip()]
+                    directory_id = dir_service.get_or_create_path(parent_directory_id, dir_parts)
+
+                    attachment_data = AttachmentCreate(
+                        attachment_type_id=attachment_type_id,
+                        original_filename=original_filename,
+                        stored_filename=stored_filename,
+                        file_path=s3_url,
+                        file_size_bytes=len(file_content),
+                        mime_type=guessed_type or "application/octet-stream",
+                        file_hash=hashlib.sha256(file_content).hexdigest(),
+                        entity_type=None,
+                        entity_id=None,
+                        directory_id=directory_id,
+                    )
+                    attachment = attachment_service.create_attachment(attachment_data, user_id)
+                    try:
+                        create_and_send_webhook(
+                            db, attachment, attachment_type, access_levels_payload, user_id
+                        )
+                    except Exception as e:
+                        logger.warning("Webhook creation failed for %s: %s", attachment.id, e)
+                    created_attachments.append({"id": attachment.id, "path": file_path})
+                    successful += 1
+                except Exception as e:
+                    errors.append(f"{file_path}: {e}")
+                    logger.exception("Bulk import file failed: %s", file_path)
+                    failed += 1
+                processed += 1
+
+            job_service.update_job_progress(
+                job_id_str,
+                processed_rows=processed,
+                successful_rows=successful,
+                failed_rows=failed,
+                skipped_rows=skipped,
+                result={
+                    "directories_created": len(dir_paths),
+                    "attachments_created": len(created_attachments),
+                    "attachments": created_attachments[-100:],  # Last 100 for response size
+                    "errors": errors[-50:],
+                },
+            )
+            if i + len(batch) < len(file_paths):
+                time.sleep(ATTACHMENT_BULK_IMPORT_BATCH_DELAY_SECONDS)
+
+        result = {
+            "message": "Bulk import completed",
+            "directories_created": len(dir_paths),
+            "attachments_created": len(created_attachments),
+            "attachments": created_attachments,
+            "errors": errors,
+        }
+        job_service.complete_job(
+            job_id=job_id_str,
+            result=result,
+            successful_rows=successful,
+            failed_rows=failed,
+            skipped_rows=skipped,
+            processed_rows=processed,
+            total_rows=total_files,
+        )
+        logger.info(
+            "Attachment bulk import job %s completed: %s files, %s created, %s failed, %s skipped",
+            job_id_str, processed, successful, failed, skipped,
+        )
+        return result
+    except Exception as e:
+        logger.exception("Attachment bulk import job %s failed", job_id_str)
+        job_service.fail_job(job_id_str, str(e))
     finally:
         db.close()

@@ -74,6 +74,27 @@ export async function updateComplaint(
   return response.json();
 }
 
+export async function updateComplaintAndReply(
+  id: string,
+  data: Partial<ComplaintFormData>,
+): Promise<Complaint> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/${id}/update-and-reply`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to update and reply' }));
+    throw new Error(error.detail || error.message || 'Failed to update and reply');
+  }
+  return response.json();
+}
+
 export async function deleteComplaint(id: string): Promise<void> {
   const response = await apiFetch(
     `/api/v1/complaints-management/complaints/${id}`,

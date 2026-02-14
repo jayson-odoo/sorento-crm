@@ -2,6 +2,7 @@
 from fastapi import APIRouter
 from app.api.v1 import (
     auth,
+    audit,
     master_data,
     order_management,
     inventory,
@@ -16,6 +17,7 @@ from app.api.v1 import (
     test_auth,
     system,
     external,
+    public,
 )
 
 api_router = APIRouter()
@@ -23,6 +25,7 @@ api_router = APIRouter()
 # Include all module routers
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 # Auth endpoints: /login, /signup, /reset-password, /change-password, /verify-email
+api_router.include_router(audit.router, prefix="/audit", tags=["audit"])
 api_router.include_router(master_data.router, prefix="/master-data", tags=["master-data"])
 api_router.include_router(order_management.router, prefix="/order-management", tags=["order-management"])
 api_router.include_router(inventory.router, prefix="/inventory", tags=["inventory"])
@@ -39,3 +42,4 @@ api_router.include_router(integrations.logs.router, prefix="/integration-managem
 api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(test_auth.router, tags=["test"])
 api_router.include_router(external.router, prefix="/external", tags=["external"])
+api_router.include_router(public.router, prefix="/public", tags=["public"])

@@ -270,8 +270,11 @@ class PickingLine(Base):
 
 
 class StockInquiry(Base):
+    """Stock inquiry model. Set __audit_track__ = True for automatic audit logging of changes."""
     __tablename__ = "stock_inquiries"
-    
+    __audit_track__ = True
+    __audit_entity_type__ = "stock_inquiry"
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     salesperson = Column(Text, nullable=True)
     product_code = Column(Text, nullable=True)
@@ -286,6 +289,9 @@ class StockInquiry(Base):
     contact_id = Column(Text, nullable=True)
     space_id = Column(Text, nullable=True)
     respond_inbox_url = Column(Text, nullable=True)
+    status = Column(String(50), default="new", nullable=False)
+    last_responded_by = Column(Text, nullable=True)
+    last_responded_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=True)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=True)
     
@@ -297,7 +303,10 @@ class StockInquiry(Base):
 
 
 class PurchaseRequestHeader(Base):
+    """Purchase request / sponsorship form header. Set __audit_track__ = True for automatic audit logging."""
     __tablename__ = "purchase_requests"
+    __audit_track__ = True
+    __audit_entity_type__ = "purchase_request"  # API uses this entity_type for both PR and sponsorship
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     request_type = Column(String(50), nullable=False)  # purchase_request | sponsorship_form
@@ -317,6 +326,13 @@ class PurchaseRequestHeader(Base):
     contact_id = Column(Text, nullable=True)
     space_id = Column(Text, nullable=True)
     respond_inbox_url = Column(Text, nullable=True)
+    approver_user_id = Column(String(100), nullable=True)
+    approver_email = Column(String(255), nullable=True)
+    approval_status = Column(String(50), nullable=True)  # pending | approved | rejected
+    approved_at = Column(DateTime(timezone=False), nullable=True)
+    approved_by = Column(Text, nullable=True)
+    approval_signature_ref = Column(Text, nullable=True)
+    approval_comments = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -352,4 +368,21 @@ class PurchaseRequestLine(Base):
 
     __table_args__ = (
         Index("ix_purchase_request_lines_purchase_request_id", "purchase_request_id"),
+    )
+
+
+class ApprovalToken(Base):
+    """One-time token for public approval/sign links (no login)."""
+    __tablename__ = "approval_tokens"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    entity_type = Column(String(50), nullable=False)
+    entity_id = Column(String(100), nullable=False)
+    token = Column(String(255), unique=True, nullable=False, index=True)
+    expires = Column(DateTime(timezone=False), nullable=False)
+    used_at = Column(DateTime(timezone=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_approval_tokens_entity_type_entity_id", "entity_type", "entity_id"),
     )

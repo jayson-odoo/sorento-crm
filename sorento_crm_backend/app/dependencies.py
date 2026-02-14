@@ -30,7 +30,7 @@ def extract_token_from_request(request: Request) -> Optional[str]:
 async def get_current_user(
     request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> dict:
     """
     Validate JWT token from NextAuth and return user information.
@@ -82,7 +82,7 @@ async def get_current_user(
                 detail="Invalid token: missing user ID"
             )
         
-        return {
+        user = {
             "id": user_id,
             "email": email,
             "role_id": role_id,
@@ -91,6 +91,10 @@ async def get_current_user(
             "status": payload.get("status"),
             "role_name": payload.get("roleName"),
         }
+        from app.audit_context import set_audit_context
+        ip = request.client.host if request.client else None
+        set_audit_context(user_id, ip)
+        return user
     except JWTError as e:
         # Log the error for debugging
         import logging
@@ -194,7 +198,7 @@ async def get_current_user_or_api_key(
             )
         
         # Return a system user dict for API key access
-        return {
+        user = {
             "id": "system",
             "email": "api@system",
             "role_id": "system",
@@ -203,7 +207,11 @@ async def get_current_user_or_api_key(
             "status": "ACTIVE",
             "role_name": "API",
         }
-    
+        from app.audit_context import set_audit_context
+        ip = request.client.host if request.client else None
+        set_audit_context(user["id"], ip)
+        return user
+
     # Otherwise, try JWT token authentication
     if not token:
         token = extract_token_from_request(request)
@@ -232,7 +240,7 @@ async def get_current_user_or_api_key(
                 detail="Invalid token: missing user ID"
             )
         
-        return {
+        user = {
             "id": user_id,
             "email": email,
             "role_id": role_id,
@@ -241,6 +249,10 @@ async def get_current_user_or_api_key(
             "status": payload.get("status"),
             "role_name": payload.get("roleName"),
         }
+        from app.audit_context import set_audit_context
+        ip = request.client.host if request.client else None
+        set_audit_context(user_id, ip)
+        return user
     except JWTError as e:
         logger.error(f"JWT validation failed: {str(e)}")
         raise HTTPException(

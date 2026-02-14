@@ -195,9 +195,153 @@ class ComplaintService:
         elif contact_id is None and space_id is None:
             update_data["respond_inbox_url"] = None
 
+        if "technical_team_response" in update_data and getattr(complaint, "status", None) != "responded":
+            update_data["status"] = "updated"
+
         for key, value in update_data.items():
             setattr(complaint, key, value)
 
+        self.db.commit()
+        self.db.refresh(complaint)
+        return complaint
+
+    def _identifier_from_respond_inbox_url(self, respond_inbox_url: Optional[str]) -> Optional[str]:
+        """Extract contact identifier from respond_inbox_url (last path segment)."""
+        if not respond_inbox_url or not respond_inbox_url.strip():
+            return None
+        parts = [p for p in respond_inbox_url.rstrip("/").split("/") if p]
+        return parts[-1] if parts else None
+
+    def update_complaint_and_reply(
+        self,
+        complaint_id: str,
+        complaint_data: "ComplaintUpdate",
+        respond_user_id: str,
+        request_url: str = "",
+    ):
+        """
+        Update complaint, send technical team response to Respond.io, update SLA tracking to responded, set status=responded.
+        All integration calls are logged via IntegrationLogService.
+        """
+        import logging
+        from datetime import datetime, timezone
+        from app.services.integration_service import RespondClient, IntegrationLogService
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.sla_service import ConversationSLATrackingService
+        from app.schemas.sla import ConversationSLATrackingUpdate
+
+        logger = logging.getLogger(__name__)
+        log_service = IntegrationLogService(self.db)
+
+        complaint = self.get_complaint(complaint_id)
+        update_data = complaint_data.model_dump(exclude_unset=True)
+        contact_id = update_data.get("contact_id") if "contact_id" in update_data else complaint.contact_id
+        space_id = update_data.get("space_id") if "space_id" in update_data else complaint.space_id
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+        if respond_inbox_url is not None:
+            update_data["respond_inbox_url"] = respond_inbox_url
+        elif contact_id is None and space_id is None:
+            update_data["respond_inbox_url"] = None
+
+        message_text = update_data.get("technical_team_response") or getattr(complaint, "technical_team_response", None)
+        if not (message_text and str(message_text).strip()):
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error("technical_team_response is required to reply.")
+
+        for key, value in update_data.items():
+            setattr(complaint, key, value)
+        self.db.flush()
+
+        identifier = self._identifier_from_respond_inbox_url(getattr(complaint, "respond_inbox_url", None))
+        if not identifier:
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error("respond_inbox_url is missing or invalid; cannot send message.")
+
+        display_message = f"There has been an update in your account. {str(message_text).strip()[:200]}"
+        if len(str(message_text).strip()) > 200:
+            display_message += "..."
+
+        try:
+            client = RespondClient()
+            response = client.send_message(identifier, display_message)
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="complaints",
+                    business_id=complaint_id,
+                    external_reference=identifier,
+                    direction="outbound",
+                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                    http_method="POST",
+                    status="success",
+                    response_payload=str(response)[:50000] if response else None,
+                ),
+                request_payload_dict={"message": {"type": "text", "text": display_message}},
+            )
+        except Exception as e:
+            logger.exception("Respond.io send_message failed for complaint %s", complaint_id)
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="complaints",
+                    business_id=complaint_id,
+                    external_reference=identifier or "",
+                    direction="outbound",
+                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                    http_method="POST",
+                    status="failed",
+                    error_message=str(e),
+                ),
+                request_payload_dict={"message": {"type": "text", "text": display_message}},
+            )
+            raise
+
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        sla_service = ConversationSLATrackingService(self.db)
+        tracking = sla_service.get_tracking_by_source_entity("complaint", complaint_id)
+        if tracking:
+            try:
+                sla_service.update_tracking(
+                    str(tracking.id),
+                    ConversationSLATrackingUpdate(
+                        is_responded=True,
+                        responded_at=now_utc,
+                        responded_by=respond_user_id,
+                    ),
+                )
+                log_service.create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="sla_management",
+                        business_table="conversation_sla_tracking",
+                        business_id=str(tracking.id),
+                        external_reference=complaint_id,
+                        direction="inbound",
+                        endpoint=request_url or "/api/v1/complaints-management/complaints/update-and-reply",
+                        http_method="POST",
+                        status="success",
+                    ),
+                    request_payload_dict={"is_responded": True, "responded_by": respond_user_id},
+                )
+            except Exception as sla_err:
+                logger.warning("SLA tracking update failed for complaint %s: %s", complaint_id, sla_err)
+                log_service.create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="sla_management",
+                        business_table="conversation_sla_tracking",
+                        business_id=str(tracking.id),
+                        external_reference=complaint_id,
+                        direction="inbound",
+                        endpoint=request_url or "/api/v1/complaints-management/complaints/update-and-reply",
+                        http_method="POST",
+                        status="failed",
+                        error_message=str(sla_err),
+                    ),
+                    request_payload_dict={"is_responded": True, "responded_by": respond_user_id},
+                )
+
+        complaint.status = "responded"
+        complaint.last_responded_by = respond_user_id
+        complaint.last_responded_at = now_utc
         self.db.commit()
         self.db.refresh(complaint)
         return complaint

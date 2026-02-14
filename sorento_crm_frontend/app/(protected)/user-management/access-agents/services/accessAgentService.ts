@@ -112,3 +112,45 @@ export async function deleteContactAgentAccess(agentId: string, contactId: strin
     throw new Error(error.message);
   }
 }
+
+// Agent team assignments (code -> team for round-robin next-assignee)
+export interface AgentTeamAssignment {
+  code: string;
+  team_id: string;
+}
+
+export async function getAgentTeams(agentId: string): Promise<{ assignments: AgentTeamAssignment[] }> {
+  const response = await apiFetch(`/api/user-management/access-agents/${agentId}/teams`);
+  if (!response.ok) throw new Error('Failed to fetch agent teams');
+  const data = await response.json();
+  return { assignments: data.assignments ?? [] };
+}
+
+export async function setAgentTeams(
+  agentId: string,
+  assignments: AgentTeamAssignment[],
+): Promise<{ assignments: AgentTeamAssignment[] }> {
+  const response = await apiFetch(`/api/user-management/access-agents/${agentId}/teams`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ assignments }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to set agent teams');
+  }
+  return response.json();
+}
+
+export interface Team {
+  id: string;
+  name: string;
+  description?: string | null;
+  created_at: string;
+}
+
+export async function getTeams(): Promise<Team[]> {
+  const response = await apiFetch('/api/user-management/teams');
+  if (!response.ok) throw new Error('Failed to fetch teams');
+  return response.json();
+}

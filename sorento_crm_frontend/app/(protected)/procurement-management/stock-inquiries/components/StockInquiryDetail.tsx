@@ -4,12 +4,16 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, FileDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { exportStockInquiryToExcel } from '../utils/exportStockInquiryToExcel';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useStockInquiry } from '../hooks/useStockInquiries';
+import { useStockInquiry, useStockInquiryNeighbours } from '../hooks/useStockInquiries';
 import { formatDate } from '@/lib/helpers';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
+import AuditTrail from '@/components/audit/AuditTrail';
+import RecordNavigation from '@/components/common/RecordNavigation';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 
 interface StockInquiryDetailProps {
   inquiryId: string;
@@ -23,6 +27,7 @@ export default function StockInquiryDetail({
   const { data: inquiry, isLoading } = useStockInquiry(
     isValidId ? inquiryId : null,
   );
+  const { data: neighbours } = useStockInquiryNeighbours(isValidId ? inquiryId : null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -88,17 +93,36 @@ export default function StockInquiryDetail({
             {inquiry.created_at
               ? formatDate(new Date(inquiry.created_at))
               : '-'}
+            {inquiry.status && (
+              <>
+                {' · '}
+                <span className="capitalize font-medium">{inquiry.status}</span>
+              </>
+            )}
           </p>
+          {inquiry.last_responded_at && (
+            <p className="text-sm text-muted-foreground">
+              Last responded: {formatDate(new Date(inquiry.last_responded_at))}
+              {inquiry.last_responded_by && ` by ${inquiry.last_responded_by}`}
+            </p>
+          )}
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={handleExportExcel}
-            disabled={exporting}
-          >
-            <FileDown className="size-4" />
-            {exporting ? 'Exporting…' : 'Export to Excel'}
-          </Button>
+        <div className="flex items-center gap-2">
+          <DetailActionsMenu ariaLabel="Stock inquiry actions">
+            <DropdownMenuItem
+              onClick={handleExportExcel}
+              disabled={exporting}
+            >
+              <FileDown className="size-4" />
+              {exporting ? 'Exporting…' : 'Export to Excel'}
+            </DropdownMenuItem>
+          </DetailActionsMenu>
+          <RecordNavigation
+            basePath="/procurement-management/stock-inquiries"
+            prevId={neighbours?.prev_id ?? null}
+            nextId={neighbours?.next_id ?? null}
+            ariaLabel="stock inquiry"
+          />
           <Button
             variant="outline"
             onClick={() =>
@@ -206,9 +230,26 @@ export default function StockInquiryDetail({
                 {inquiry.purchasing_response ?? '-'}
               </p>
             </div>
+            {inquiry.status && (
+              <div>
+                <p className="text-sm text-muted-foreground">Status</p>
+                <p className="font-medium capitalize">{inquiry.status}</p>
+              </div>
+            )}
+            {inquiry.last_responded_at && (
+              <div>
+                <p className="text-sm text-muted-foreground">Last responded</p>
+                <p className="font-medium">
+                  {formatDate(new Date(inquiry.last_responded_at))}
+                  {inquiry.last_responded_by && ` by ${inquiry.last_responded_by}`}
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
     </div>
   );
 }

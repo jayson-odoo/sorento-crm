@@ -3,7 +3,21 @@ import type {
   PurchaseRequest,
   PurchaseRequestFormData,
   PurchaseRequestDetail,
+  SendApprovalLinkRequest,
+  SendApprovalLinkResponse,
 } from '../types/purchaseRequest.types';
+
+export interface UserForSelect {
+  id: string;
+  name: string | null;
+  email: string;
+}
+
+export async function getUsersForApproverSelect(): Promise<UserForSelect[]> {
+  const response = await apiFetch('/api/user-management/users/select');
+  if (!response.ok) throw new Error('Failed to fetch users');
+  return response.json();
+}
 import type {
   DataGridApiFetchParams,
   DataGridApiResponse,
@@ -33,6 +47,19 @@ export async function getPurchaseRequests(
 export async function getPurchaseRequest(id: string): Promise<PurchaseRequestDetail> {
   const response = await apiFetch(`/api/v1/procurement/purchase-requests/${id}`);
   if (!response.ok) throw new Error('Failed to fetch purchase request');
+  return response.json();
+}
+
+export async function getPurchaseRequestNeighbours(
+  requestId: string,
+  requestType?: string | null,
+): Promise<{ prev_id: string | null; next_id: string | null }> {
+  const params = new URLSearchParams({ id: requestId });
+  if (requestType) params.set('request_type', requestType);
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/neighbours?${params.toString()}`,
+  );
+  if (!response.ok) return { prev_id: null, next_id: null };
   return response.json();
 }
 
@@ -103,4 +130,43 @@ export async function deletePurchaseRequest(id: string): Promise<void> {
       .catch(() => ({ message: 'Failed to delete purchase request' }));
     throw new Error(error.detail || error.message);
   }
+}
+
+export async function sendApprovalLink(
+  id: string,
+  data: SendApprovalLinkRequest,
+): Promise<SendApprovalLinkResponse> {
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/${id}/send-approval-link`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        approver_email: data.approver_email ?? undefined,
+        approver_user_id: data.approver_user_id ?? undefined,
+        expires_hours: data.expires_hours ?? 24,
+      }),
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to create approval link' }));
+    throw new Error(error.detail || error.message);
+  }
+  return response.json();
+}
+
+export async function setPendingApproval(id: string): Promise<PurchaseRequest> {
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/${id}/set-pending-approval`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to set pending approval' }));
+    throw new Error(error.detail || error.message);
+  }
+  return response.json();
 }

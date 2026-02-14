@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Save } from 'lucide-react';
+import { LoaderCircleIcon, Plus, Save, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Form,
@@ -26,7 +26,9 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useRespondSyncedUsers, useAccessAgents } from '../hooks/useAccessAgents';
+import { useQueryClient } from '@tanstack/react-query';
+import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useRespondSyncedUsers, useAccessAgents, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
+import { setAgentTeams } from '../services/accessAgentService';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
 import type { AccessAgentFormData } from '../types/accessAgent.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
@@ -38,6 +40,7 @@ interface AccessAgentFormProps {
 
 export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgentFormProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const isEditMode = !!accessAgentId;
   const { data: accessAgent, isLoading: isLoadingAccessAgent } = useAccessAgent(accessAgentId || null);
   const createMutation = useCreateAccessAgent();
@@ -55,6 +58,15 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
   );
   const { data: navigationData } = useAccessAgents(navigationParams);
   const navigationItems = navigationData?.data ?? [];
+  const { data: agentTeamsData } = useAgentTeams(isEditMode ? accessAgentId ?? null : null);
+  const { data: teamsList = [] } = useTeams();
+  const [localAssignments, setLocalAssignments] = useState<{ code: string; team_id: string }[]>([]);
+
+  useEffect(() => {
+    const fromServer = agentTeamsData?.assignments;
+    setLocalAssignments(fromServer ? [...fromServer] : []);
+  }, [agentTeamsData?.assignments]);
+
 
   const form = useForm<AccessAgentSchemaType>({
     resolver: zodResolver(AccessAgentSchema),
@@ -97,7 +109,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
 
   const onSubmit = async (data: AccessAgentSchemaType) => {
     try {
-      // Transform data to ensure proper format
       const formData: AccessAgentFormData = {
         code: data.code,
         name: data.name,
@@ -108,6 +119,11 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
 
       if (isEditMode && accessAgentId) {
         await updateMutation.mutateAsync({ id: accessAgentId, data: formData });
+        const validAssignments = localAssignments
+          .filter((a) => a.code.trim() && a.team_id)
+          .map((a) => ({ code: String(a.code).trim(), team_id: String(a.team_id) }));
+        await setAgentTeams(accessAgentId, validAssignments);
+        queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
       } else {
         await createMutation.mutateAsync(formData);
       }
@@ -118,7 +134,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
         router.push('/user-management/access-agents');
       }
     } catch (error) {
-      // Error is handled by the mutation hook
       console.error('Access agent form submission error:', error);
     }
   };
@@ -281,37 +296,127 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
               />
             </div>
 
-            <div className="flex justify-end gap-4 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  if (onSuccess) {
-                    onSuccess();
-                  } else {
-                    router.push('/user-management/access-agents');
-                  }
-                }}
-                disabled={isLoading}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={isLoading}>
-                {isLoading ? (
-                  <>
-                    <LoaderCircleIcon className="mr-2 size-4 animate-spin" />
-                    {isEditMode ? 'Updating...' : 'Creating...'}
-                  </>
-                ) : (
-                  <>
-                    <Save className="mr-2 size-4" />
-                    {isEditMode ? 'Update Access Agent' : 'Create Access Agent'}
-                  </>
-                )}
-              </Button>
-            </div>
           </CardContent>
         </Card>
+
+        {isEditMode && accessAgentId && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Team Assignments</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Assign teams by context code (e.g. code=marketing → Marketing Team). n8n can call next-assignee with agent_id + code. Add members under User Management → Teams.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {teamsList.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No teams yet. Create teams under User Management → Teams.</p>
+              ) : (
+                <div className="space-y-4">
+                  {localAssignments.map((a: { code: string; team_id: string }, idx: number) => (
+                    <div
+                      key={idx}
+                      className="flex flex-wrap items-center gap-3 rounded-md border p-3"
+                    >
+                      <div className="flex-1 min-w-[140px]">
+                        <label className="text-xs text-muted-foreground mb-1 block">Code</label>
+                        <Input
+                          placeholder="e.g. marketing"
+                          value={a.code}
+                          disabled={isLoading}
+                          onChange={(e) => {
+                            const next = [...localAssignments];
+                            next[idx] = { ...next[idx], code: e.target.value };
+                            setLocalAssignments(next);
+                          }}
+                          className="font-mono text-sm"
+                        />
+                      </div>
+                      <div className="flex-1 min-w-[180px]">
+                        <label className="text-xs text-muted-foreground mb-1 block">Team</label>
+                        <Select
+                          value={a.team_id}
+                          disabled={isLoading}
+                          onValueChange={(teamId) => {
+                            const next = [...localAssignments];
+                            next[idx] = { ...next[idx], team_id: teamId };
+                            setLocalAssignments(next);
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select team" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {teamsList.map((team: { id: string; name: string }) => (
+                              <SelectItem key={team.id} value={team.id}>
+                                {team.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive hover:text-destructive mt-6"
+                        disabled={isLoading}
+                        onClick={() => {
+                          setLocalAssignments(localAssignments.filter((_, i) => i !== idx));
+                        }}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={isLoading || teamsList.length === 0}
+                    onClick={() => {
+                      setLocalAssignments([
+                        ...localAssignments,
+                        { code: '', team_id: teamsList[0]?.id ?? '' },
+                      ]);
+                    }}
+                  >
+                    <Plus className="mr-2 size-4" />
+                    Add assignment
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="flex justify-end gap-4 pt-4">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              if (onSuccess) {
+                onSuccess();
+              } else {
+                router.push('/user-management/access-agents');
+              }
+            }}
+            disabled={isLoading}
+          >
+            Cancel
+          </Button>
+          <Button type="submit" disabled={isLoading}>
+            {isLoading ? (
+              <>
+                <LoaderCircleIcon className="mr-2 size-4 animate-spin" />
+                {isEditMode ? 'Updating...' : 'Creating...'}
+              </>
+            ) : (
+              <>
+                <Save className="mr-2 size-4" />
+                {isEditMode ? 'Update Access Agent' : 'Create Access Agent'}
+              </>
+            )}
+          </Button>
+        </div>
       </form>
     </Form>
   );

@@ -4,11 +4,20 @@ from sqlalchemy import or_
 from typing import Optional
 from datetime import datetime
 from app.models.user import User, UserRole, UserPermission, UserRolePermission
-from app.models.access import AccessAgent, ContactAgentAccess, UserAgentAccess
+from app.models.access import (
+    AccessAgent,
+    ContactAgentAccess,
+    UserAgentAccess,
+    Team,
+    TeamMember,
+    AgentTeam,
+    AgentTeamRoundRobinCursor,
+)
 from app.schemas.user import (
     UserCreate, UserUpdate, UserRoleCreate, UserRoleUpdate,
     UserPermissionCreate, UserPermissionUpdate, AccessAgentCreate, AccessAgentUpdate,
-    ContactAgentAccessCreate, ContactAgentAccessUpdate
+    ContactAgentAccessCreate, ContactAgentAccessUpdate,
+    TeamCreate, TeamUpdate,
 )
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.integration_service import RespondClient
@@ -498,7 +507,9 @@ class AccessAgentService:
     
     def update_agent(self, agent_id: str, agent_data: AccessAgentUpdate):
         """Update an access agent."""
-        agent = self.get_agent(agent_id)
+        agent = self.db.query(AccessAgent).filter(AccessAgent.id == agent_id).first()
+        if not agent:
+            raise handle_not_found("Access Agent", agent_id)
         
         update_data = agent_data.model_dump(exclude_unset=True)
         for key, value in update_data.items():
@@ -733,3 +744,179 @@ class AccessAgentService:
         
         self.db.commit()
         return {"message": "User agent accesses updated successfully"}
+
+    def get_next_assignee(self, agent_id: str, team_id: str) -> Optional[dict]:
+        """
+        Return the next assignee for (agent_id, team_id) using round-robin.
+        Uses SELECT ... FOR UPDATE on the cursor for concurrency safety.
+        Returns dict with id, email, name or None if no eligible members.
+        """
+        from sqlalchemy import and_
+        # Check agent is linked to this team
+        link = (
+            self.db.query(AgentTeam)
+            .filter(
+                and_(
+                    AgentTeam.agent_id == agent_id,
+                    AgentTeam.team_id == team_id,
+                )
+            )
+            .first()
+        )
+        if not link:
+            return None
+        # Get team members (user_ids) in order
+        members = (
+            self.db.query(TeamMember)
+            .filter(TeamMember.team_id == team_id)
+            .order_by(TeamMember.sort_order.asc().nullslast(), TeamMember.user_id.asc())
+            .all()
+        )
+        if not members:
+            return None
+        user_ids = [m.user_id for m in members]
+        # Get or create cursor and lock it
+        cursor = (
+            self.db.query(AgentTeamRoundRobinCursor)
+            .filter(
+                and_(
+                    AgentTeamRoundRobinCursor.agent_id == agent_id,
+                    AgentTeamRoundRobinCursor.team_id == team_id,
+                )
+            )
+            .with_for_update()
+            .first()
+        )
+        if not cursor:
+            cursor = AgentTeamRoundRobinCursor(
+                agent_id=agent_id,
+                team_id=team_id,
+                last_assigned_user_id=None,
+            )
+            self.db.add(cursor)
+            self.db.flush()
+        # Find next index: after last_assigned_user_id, wrap around
+        try:
+            idx = user_ids.index(cursor.last_assigned_user_id) if cursor.last_assigned_user_id else -1
+        except ValueError:
+            idx = -1
+        next_idx = (idx + 1) % len(user_ids)
+        next_user_id = user_ids[next_idx]
+        cursor.last_assigned_user_id = next_user_id
+        self.db.commit()
+        # Load user for response
+        user = self.db.query(User).filter(User.id == next_user_id).first()
+        if not user:
+            return {"id": next_user_id, "email": None, "name": None}
+        return {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name or user.email,
+        }
+
+    def list_agent_teams(self, agent_id: str) -> list[dict]:
+        """Return list of {code, team_id} assignments for this agent."""
+        rows = (
+            self.db.query(AgentTeam.code, AgentTeam.team_id)
+            .filter(AgentTeam.agent_id == agent_id)
+            .all()
+        )
+        return [{"code": r[0], "team_id": str(r[1])} for r in rows]
+
+    def set_agent_teams(self, agent_id: str, assignments: list[dict]) -> None:
+        """Replace agent's team links with the given assignments [{code, team_id}...]."""
+        self.db.query(AgentTeam).filter(AgentTeam.agent_id == agent_id).delete()
+        for a in assignments or []:
+            code = a.get("code")
+            team_id = a.get("team_id")
+            if code and team_id:
+                self.db.add(AgentTeam(agent_id=agent_id, code=code, team_id=team_id))
+        self.db.commit()
+
+    def get_team_id_by_code(self, agent_id: str, code: str) -> str | None:
+        """Resolve team_id for agent+code. Returns None if not found."""
+        row = (
+            self.db.query(AgentTeam.team_id)
+            .filter(AgentTeam.agent_id == agent_id, AgentTeam.code == code)
+            .first()
+        )
+        return str(row[0]) if row else None
+
+
+class TeamService:
+    """Service for team and team member operations."""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def list_teams(self):
+        """List all teams."""
+        return self.db.query(Team).order_by(Team.name.asc()).all()
+
+    def get_team(self, team_id: str) -> Team:
+        """Get team by ID."""
+        t = self.db.query(Team).filter(Team.id == team_id).first()
+        if not t:
+            raise handle_not_found("Team", team_id)
+        return t
+
+    def create_team(self, data: TeamCreate) -> Team:
+        """Create a team."""
+        t = Team(**data.model_dump())
+        self.db.add(t)
+        self.db.commit()
+        self.db.refresh(t)
+        return t
+
+    def update_team(self, team_id: str, data: TeamUpdate) -> Team:
+        """Update a team."""
+        t = self.get_team(team_id)
+        for k, v in data.model_dump(exclude_unset=True).items():
+            setattr(t, k, v)
+        self.db.commit()
+        self.db.refresh(t)
+        return t
+
+    def delete_team(self, team_id: str) -> None:
+        """Delete a team (cascades to members and agent_teams)."""
+        t = self.get_team(team_id)
+        self.db.delete(t)
+        self.db.commit()
+
+    def list_team_members(self, team_id: str):
+        """List members of a team ordered by sort_order, user_id."""
+        self.get_team(team_id)
+        return (
+            self.db.query(TeamMember)
+            .filter(TeamMember.team_id == team_id)
+            .order_by(TeamMember.sort_order.asc().nullslast(), TeamMember.user_id.asc())
+            .all()
+        )
+
+    def add_team_member(self, team_id: str, user_id: str, sort_order: Optional[int] = None) -> TeamMember:
+        """Add a user to a team."""
+        self.get_team(team_id)
+        existing = (
+            self.db.query(TeamMember)
+            .filter(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+            .first()
+        )
+        if existing:
+            raise handle_conflict("User is already a member of this team.")
+        m = TeamMember(team_id=team_id, user_id=user_id, sort_order=sort_order)
+        self.db.add(m)
+        self.db.commit()
+        self.db.refresh(m)
+        return m
+
+    def remove_team_member(self, team_id: str, user_id: str) -> None:
+        """Remove a user from a team."""
+        m = (
+            self.db.query(TeamMember)
+            .filter(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+            .first()
+        )
+        if not m:
+            raise handle_not_found("Team member", f"{team_id}/{user_id}")
+        self.db.delete(m)
+        self.db.commit()

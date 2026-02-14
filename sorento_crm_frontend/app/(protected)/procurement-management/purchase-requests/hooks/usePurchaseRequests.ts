@@ -4,6 +4,7 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   getPurchaseRequests,
   getPurchaseRequest,
+  getPurchaseRequestNeighbours,
   createPurchaseRequest,
   updatePurchaseRequest,
   deletePurchaseRequest,
@@ -39,6 +40,21 @@ export function usePurchaseRequest(id: string | null) {
     },
     enabled: !!id,
     retry: 1,
+  });
+}
+
+export function usePurchaseRequestNeighbours(
+  requestId: string | null,
+  requestType?: string | null,
+) {
+  return useQuery({
+    queryKey: ['purchase-request-neighbours', requestId, requestType],
+    queryFn: () => {
+      if (!requestId) return { prev_id: null, next_id: null };
+      return getPurchaseRequestNeighbours(requestId, requestType);
+    },
+    enabled: !!requestId,
+    staleTime: 60 * 1000,
   });
 }
 

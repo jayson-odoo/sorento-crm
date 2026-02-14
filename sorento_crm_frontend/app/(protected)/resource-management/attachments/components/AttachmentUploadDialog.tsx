@@ -31,6 +31,8 @@ interface AttachmentUploadDialogProps {
   onSuccess?: (attachmentId?: string) => void;
   entityType?: string;
   entityId?: string;
+  /** When opening from browser with a folder selected, uploads go to this directory. */
+  defaultDirectoryId?: string | null;
 }
 
 export default function AttachmentUploadDialog({
@@ -39,6 +41,7 @@ export default function AttachmentUploadDialog({
   onSuccess,
   entityType: propEntityType,
   entityId: propEntityId,
+  defaultDirectoryId,
 }: AttachmentUploadDialogProps) {
   const [selectedTypeId, setSelectedTypeId] = useState<string>('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -240,6 +243,7 @@ export default function AttachmentUploadDialog({
             entityType: entityType || propEntityType || undefined,
             entityId: entityId || propEntityId || undefined,
             accessLevels,
+            directoryId: defaultDirectoryId ?? undefined,
           });
           
           uploadedIds.push(attachment.id);

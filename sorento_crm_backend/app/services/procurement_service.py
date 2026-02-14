@@ -1,11 +1,13 @@
 """Procurement service for business logic."""
+import secrets
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
 from typing import Optional
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
-    PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine
+    PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine,
+    ApprovalToken,
 )
 from app.models.product import Product
 from app.models.resources import Attachment
@@ -653,6 +655,24 @@ class StockInquiryService:
         if not inquiry:
             raise handle_not_found("Stock Inquiry", inquiry_id)
         return inquiry
+
+    def get_neighbour_ids(self, inquiry_id: str) -> dict:
+        """Return prev_id and next_id for the given inquiry (order: id desc, same as default list)."""
+        inquiry = self.db.query(StockInquiry).filter(StockInquiry.id == inquiry_id).first()
+        if not inquiry:
+            return {"prev_id": None, "next_id": None}
+        q_desc = (
+            self.db.query(StockInquiry.id)
+            .order_by(StockInquiry.id.desc())
+        )
+        ids = [r[0] for r in q_desc.all()]
+        try:
+            idx = ids.index(inquiry_id)
+        except ValueError:
+            return {"prev_id": None, "next_id": None}
+        prev_id = ids[idx - 1] if idx > 0 else None
+        next_id = ids[idx + 1] if idx < len(ids) - 1 else None
+        return {"prev_id": prev_id, "next_id": next_id}
     
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
         """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""
@@ -677,8 +697,15 @@ class StockInquiryService:
         self.db.refresh(inquiry)
         return inquiry
 
+    def _identifier_from_respond_inbox_url(self, respond_inbox_url: Optional[str]) -> Optional[str]:
+        """Extract contact identifier from respond_inbox_url (last path segment)."""
+        if not respond_inbox_url or not respond_inbox_url.strip():
+            return None
+        parts = [p for p in respond_inbox_url.rstrip("/").split("/") if p]
+        return parts[-1] if parts else None
+
     def update_inquiry(self, inquiry_id: str, inquiry_data: StockInquiryUpdate):
-        """Update a stock inquiry."""
+        """Update a stock inquiry. Sets status to 'updated' when purchasing_response is changed."""
         inquiry = self.get_inquiry(inquiry_id)
 
         update_data = inquiry_data.model_dump(exclude_unset=True)
@@ -690,9 +717,148 @@ class StockInquiryService:
         elif contact_id is None and space_id is None:
             update_data["respond_inbox_url"] = None
 
+        if "purchasing_response" in update_data and inquiry.status != "responded":
+            update_data["status"] = "updated"
+
         for key, value in update_data.items():
             setattr(inquiry, key, value)
 
+        self.db.commit()
+        self.db.refresh(inquiry)
+        return inquiry
+
+    def update_inquiry_and_reply(
+        self,
+        inquiry_id: str,
+        inquiry_data: StockInquiryUpdate,
+        respond_user_id: str,
+        request_url: str = "",
+    ):
+        """
+        Update inquiry, send message to Respond.io, update SLA tracking to responded, set status=responded.
+        All integration calls are logged via IntegrationLogService.
+        """
+        import logging
+        from datetime import datetime, timezone
+        from app.services.integration_service import RespondClient, IntegrationLogService
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.sla_service import ConversationSLATrackingService
+        from app.schemas.sla import ConversationSLATrackingUpdate
+
+        logger = logging.getLogger(__name__)
+        log_service = IntegrationLogService(self.db)
+
+        inquiry = self.get_inquiry(inquiry_id)
+        update_data = inquiry_data.model_dump(exclude_unset=True)
+        contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
+        space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+        if respond_inbox_url is not None:
+            update_data["respond_inbox_url"] = respond_inbox_url
+        elif contact_id is None and space_id is None:
+            update_data["respond_inbox_url"] = None
+
+        message_text = update_data.get("purchasing_response") or inquiry.purchasing_response
+        if not (message_text and str(message_text).strip()):
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error("purchasing_response is required to reply.")
+
+        for key, value in update_data.items():
+            setattr(inquiry, key, value)
+        self.db.flush()
+
+        identifier = self._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
+        if not identifier:
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error("respond_inbox_url is missing or invalid; cannot send message.")
+
+        product_code = (inquiry.product_code or "this inquiry").strip()
+        response_snippet = str(message_text).strip()[:200]
+        display_message = f"Please find your response on stock inquiry on {product_code}. {response_snippet}"
+        if len(str(message_text).strip()) > 200:
+            display_message += "..."
+
+        try:
+            client = RespondClient()
+            response = client.send_message(identifier, display_message)
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="stock_inquiries",
+                    business_id=inquiry_id,
+                    external_reference=identifier,
+                    direction="outbound",
+                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                    http_method="POST",
+                    status="success",
+                    response_payload=str(response)[:50000] if response else None,
+                ),
+                request_payload_dict={"message": {"type": "text", "text": display_message}},
+            )
+        except Exception as e:
+            logger.exception("Respond.io send_message failed for stock_inquiry %s", inquiry_id)
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="stock_inquiries",
+                    business_id=inquiry_id,
+                    external_reference=identifier or "",
+                    direction="outbound",
+                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                    http_method="POST",
+                    status="failed",
+                    error_message=str(e),
+                ),
+                request_payload_dict={"message": {"type": "text", "text": display_message}},
+            )
+            raise
+
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        sla_service = ConversationSLATrackingService(self.db)
+        tracking = sla_service.get_tracking_by_source_entity("stock_inquiry", inquiry_id)
+        if tracking:
+            try:
+                sla_service.update_tracking(
+                    str(tracking.id),
+                    ConversationSLATrackingUpdate(
+                        is_responded=True,
+                        responded_at=now_utc,
+                        responded_by=respond_user_id,
+                    ),
+                )
+                log_service.create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="sla_management",
+                        business_table="conversation_sla_tracking",
+                        business_id=str(tracking.id),
+                        external_reference=inquiry_id,
+                        direction="inbound",
+                        endpoint=request_url or "/api/v1/procurement/stock-inquiries/update-and-reply",
+                        http_method="POST",
+                        status="success",
+                    ),
+                    request_payload_dict={"is_responded": True, "responded_by": respond_user_id},
+                )
+            except Exception as sla_err:
+                logger.warning("SLA tracking update failed for stock_inquiry %s: %s", inquiry_id, sla_err)
+                log_service.create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="sla_management",
+                        business_table="conversation_sla_tracking",
+                        business_id=str(tracking.id),
+                        external_reference=inquiry_id,
+                        direction="inbound",
+                        endpoint=request_url or "/api/v1/procurement/stock-inquiries/update-and-reply",
+                        http_method="POST",
+                        status="failed",
+                        error_message=str(sla_err),
+                    ),
+                    request_payload_dict={"is_responded": True, "responded_by": respond_user_id},
+                )
+
+        inquiry.status = "responded"
+        inquiry.last_responded_by = respond_user_id
+        inquiry.last_responded_at = now_utc
         self.db.commit()
         self.db.refresh(inquiry)
         return inquiry
@@ -944,6 +1110,26 @@ class PurchaseRequestService:
             raise handle_not_found("Purchase request", request_id)
         return header
 
+    def get_neighbour_ids(
+        self, request_id: str, request_type: Optional[str] = None
+    ) -> dict:
+        """Return prev_id and next_id for the given request (order: request_date desc, same as list)."""
+        header = self.get_request(request_id)
+        q = self.db.query(PurchaseRequestHeader.id).order_by(
+            PurchaseRequestHeader.request_date.desc().nullslast(),
+            PurchaseRequestHeader.id.desc(),
+        )
+        if request_type and request_type.strip() in ("purchase_request", "sponsorship_form"):
+            q = q.filter(PurchaseRequestHeader.request_type == request_type.strip())
+        ids = [r[0] for r in q.all()]
+        try:
+            idx = ids.index(header.id)
+        except ValueError:
+            return {"prev_id": None, "next_id": None}
+        prev_id = ids[idx - 1] if idx > 0 else None
+        next_id = ids[idx + 1] if idx < len(ids) - 1 else None
+        return {"prev_id": prev_id, "next_id": next_id}
+
     def create_request(self, data: PurchaseRequestHeaderCreate):
         """Create purchase request header + lines (internal API)."""
         dump = data.model_dump(exclude={"products"})
@@ -1010,3 +1196,130 @@ class PurchaseRequestService:
         header = self.get_request(request_id)
         self.db.delete(header)
         self.db.commit()
+
+    def set_pending_approval(self, request_id: str):
+        """Set request to pending approval (clears approval fields if previously approved/rejected). Returns updated header."""
+        header = self.get_request(request_id)
+        header.approval_status = "pending"
+        header.approved_at = None
+        header.approved_by = None
+        header.approval_signature_ref = None
+        header.approval_comments = None
+        try:
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            raise
+        # Re-query with relationships loaded to avoid expired instance issues
+        return self.get_request(request_id)
+
+    def create_approval_token(
+        self,
+        request_id: str,
+        approver_email: Optional[str] = None,
+        approver_user_id: Optional[str] = None,
+        expires_hours: int = 24,
+        base_url: str = "",
+    ) -> tuple[ApprovalToken, str]:
+        """Create one-time approval token for a purchase request. Returns (token row, approval_url)."""
+        from app.models.user import User
+
+        header = self.get_request(request_id)
+        if approver_user_id:
+            header.approver_user_id = approver_user_id
+            user = self.db.query(User).filter(User.id == approver_user_id).first()
+            if user:
+                header.approver_email = approver_email or user.email or header.approver_email
+            elif approver_email:
+                header.approver_email = approver_email
+        else:
+            header.approver_user_id = None
+            if approver_email:
+                header.approver_email = approver_email
+        # When resending after approved/rejected, clear previous approval so request is back in "pending approval"
+        if header.approval_status in ("approved", "rejected"):
+            header.approved_at = None
+            header.approved_by = None
+            header.approval_signature_ref = None
+            header.approval_comments = None
+        header.approval_status = "pending"
+        self.db.flush()
+
+        token_value = secrets.token_urlsafe(32)
+        expires = datetime.utcnow() + timedelta(hours=expires_hours)
+        approval_token = ApprovalToken(
+            entity_type="purchase_request",
+            entity_id=request_id,
+            token=token_value,
+            expires=expires,
+        )
+        self.db.add(approval_token)
+        self.db.commit()
+        self.db.refresh(approval_token)
+
+        approval_url = f"{base_url.rstrip('/')}/approval?token={token_value}" if base_url else f"/approval?token={token_value}"
+        return approval_token, approval_url
+
+    def get_approval_summary_by_token(self, token_value: str):
+        """Validate token and return request summary for public approval page. Raises if invalid/expired/used."""
+        approval_token = (
+            self.db.query(ApprovalToken)
+            .filter(ApprovalToken.token == token_value)
+            .first()
+        )
+        if not approval_token:
+            raise handle_not_found("Approval link", "(invalid token)")
+        if approval_token.used_at is not None:
+            raise handle_conflict("This approval link has already been used.")
+        now = datetime.utcnow()
+        if approval_token.expires <= now:
+            raise handle_conflict("This approval link has expired.")
+        header = self.get_request(approval_token.entity_id)
+        return {
+            "entity_type": approval_token.entity_type,
+            "entity_id": approval_token.entity_id,
+            "request_number": header.request_number,
+            "request_type": header.request_type,
+            "customer_name": header.customer_name,
+            "project_title": header.project_title,
+            "purpose": header.purpose,
+            "requested_by": header.requested_by,
+            "expires_at": approval_token.expires,
+        }
+
+    def submit_approval(
+        self,
+        token_value: str,
+        action: str,
+        approved_by: Optional[str] = None,
+        approval_signature_ref: Optional[str] = None,
+        approval_comments: Optional[str] = None,
+    ):
+        """Consume token and update purchase request with approval/rejection. Returns updated header."""
+        approval_token = (
+            self.db.query(ApprovalToken)
+            .filter(ApprovalToken.token == token_value)
+            .first()
+        )
+        if not approval_token:
+            raise handle_not_found("Approval link", "(invalid token)")
+        if approval_token.used_at is not None:
+            raise handle_conflict("This approval link has already been used.")
+        now = datetime.now(timezone.utc)
+        if approval_token.expires.tzinfo is None:
+            now = datetime.now()
+        if approval_token.expires <= now:
+            raise handle_conflict("This approval link has expired.")
+        if action not in ("approved", "rejected"):
+            raise handle_conflict("action must be 'approved' or 'rejected'.")
+
+        header = self.get_request(approval_token.entity_id)
+        approval_token.used_at = datetime.utcnow()
+        header.approval_status = action
+        header.approved_at = now
+        header.approved_by = approved_by or header.approver_email or ""
+        header.approval_signature_ref = approval_signature_ref
+        header.approval_comments = approval_comments
+        self.db.commit()
+        self.db.refresh(header)
+        return header

@@ -27,6 +27,7 @@ import { useIntegrationLogs, useRetryIntegrationLog } from '../hooks/useIntegrat
 import type { IntegrationLog } from '../types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
+import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 
 export default function IntegrationLogsList() {
   const router = useRouter();
@@ -113,20 +114,26 @@ export default function IntegrationLogsList() {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Created" column={column} />,
         cell: ({ row }) => {
-          const date = new Date(row.original.created_at);
-          return formatDistanceToNow(date, { addSuffix: true });
+          const utcDate = parseDateTimeAsUTC(row.original.created_at);
+          const malaysiaTime = formatDateTimeInMalaysia(row.original.created_at);
+          const relative = formatDistanceToNow(utcDate, { addSuffix: true });
+          return (
+            <span title={relative}>
+              {malaysiaTime}
+            </span>
+          );
         },
-        size: 150,
+        size: 180,
       },
       {
         accessorKey: 'processed_at',
         header: ({ column }) => <DataGridColumnHeader title="Processed" column={column} />,
         cell: ({ row }) => {
           if (!row.original.processed_at) return '-';
-          const date = new Date(row.original.processed_at);
-          return formatDistanceToNow(date, { addSuffix: true });
+          const malaysiaTime = formatDateTimeInMalaysia(row.original.processed_at);
+          return malaysiaTime;
         },
-        size: 150,
+        size: 180,
       },
       {
         accessorKey: 'actions',

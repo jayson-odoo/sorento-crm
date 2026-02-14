@@ -14,6 +14,7 @@ from app.schemas.user import (
     ContactAgentAccessResponse,
     RespondContactLookupRequest,
     RespondContactLookupResponse,
+    AgentTeamsUpdate,
 )
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -133,6 +134,45 @@ async def delete_access_agent(
         return {"message": "Access agent deleted successfully"}
     except HTTPException:
         raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{agent_id}/teams")
+async def get_agent_teams(
+    agent_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List assignments (code + team_id) for this agent."""
+    try:
+        service = AccessAgentService(db)
+        assignments = service.list_agent_teams(agent_id)
+        return {"assignments": assignments}
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{agent_id}/teams")
+async def set_agent_teams(
+    agent_id: str,
+    body: AgentTeamsUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set the team assignments for this agent (replaces existing). Body: assignments=[{code, team_id}]."""
+    try:
+        service = AccessAgentService(db)
+        if body.assignments is not None:
+            payload = [{"code": a.code, "team_id": a.team_id} for a in body.assignments]
+            service.set_agent_teams(agent_id, payload)
+            return {"assignments": payload}
+        if body.team_ids is not None:
+            payload = [{"code": tid, "team_id": tid} for tid in body.team_ids]
+            service.set_agent_teams(agent_id, payload)
+            return {"assignments": payload}
+        service.set_agent_teams(agent_id, [])
+        return {"assignments": []}
     except Exception as e:
         raise handle_internal_error(str(e))
 

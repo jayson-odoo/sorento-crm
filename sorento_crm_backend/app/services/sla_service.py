@@ -502,6 +502,17 @@ class ConversationSLATrackingService:
             tracking.event_logs.sort(key=lambda x: x.event_at, reverse=True)
         
         return tracking
+
+    def get_tracking_by_source_entity(self, source_entity_type: str, source_entity_id: str) -> Optional[ConversationSLATracking]:
+        """Get a tracking record by source entity (e.g. stock_inquiry, complaint)."""
+        return (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_entity_type == source_entity_type,
+                ConversationSLATracking.source_entity_id == source_entity_id,
+            )
+            .first()
+        )
     
     def create_tracking(self, tracking_data: ConversationSLATrackingCreate):
         """Create a new tracking record."""
@@ -891,67 +902,92 @@ class ConversationSLATrackingService:
     
     def get_dashboard_metrics(self):
         """Get dashboard metrics for SLA tracking."""
-        from datetime import datetime, timedelta
+        from datetime import datetime, timedelta, timezone
         from decimal import Decimal
-        
+
+        def _safe_resolution_hours(t):
+            try:
+                if t.resolution_duration is None:
+                    return 0.0
+                if isinstance(t.resolution_duration, Decimal):
+                    return float(t.resolution_duration)
+                return float(t.resolution_duration)
+            except (TypeError, ValueError):
+                return 0.0
+
+        def _initiated_at_date(t):
+            """Return date part of initiated_at whether it's datetime or date."""
+            if t.initiated_at is None:
+                return None
+            if isinstance(t.initiated_at, datetime):
+                return t.initiated_at.date()
+            if hasattr(t.initiated_at, "isoformat"):  # date-like
+                return t.initiated_at
+            return None
+
+        def _initiated_at_aware(t):
+            """Return timezone-aware datetime for comparison, or None."""
+            if t.initiated_at is None:
+                return None
+            if isinstance(t.initiated_at, datetime):
+                return _to_aware_utc(t.initiated_at)
+            if hasattr(t.initiated_at, "year"):  # date -> treat as UTC midnight
+                return datetime.combine(t.initiated_at, datetime.min.time()).replace(tzinfo=timezone.utc)
+            return None
+
         # Get all trackings
         all_trackings = self.db.query(ConversationSLATracking).all()
-        
+
         total_trackings = len(all_trackings)
         resolved_count = sum(1 for t in all_trackings if t.is_resolved)
         pending_count = sum(1 for t in all_trackings if not t.is_resolved and not t.escalated_at)
         escalated_count = sum(1 for t in all_trackings if t.escalated_at is not None)
-        
+
         # Calculate average resolution time (in hours)
         resolved_trackings = [t for t in all_trackings if t.is_resolved and t.resolution_duration]
         average_resolution_time = 0.0
         if resolved_trackings:
-            total_duration = sum(
-                float(t.resolution_duration) if isinstance(t.resolution_duration, Decimal)
-                else float(t.resolution_duration or 0)
-                for t in resolved_trackings
-            )
+            total_duration = sum(_safe_resolution_hours(t) for t in resolved_trackings)
             average_resolution_time = total_duration / len(resolved_trackings)
-        
+
         # Calculate escalation rate
         escalation_rate = float(escalated_count / total_trackings * 100) if total_trackings > 0 else 0.0
-        
+
         # Response time trends (last 30 days) — UTC
         thirty_days_ago = _now_utc() - timedelta(days=30)
         recent_trackings = [
             t for t in all_trackings
-            if t.initiated_at and _to_aware_utc(t.initiated_at) >= thirty_days_ago
+            if _initiated_at_aware(t) is not None and _initiated_at_aware(t) >= thirty_days_ago
         ]
-        
+
         response_time_trends = []
         for i in range(30):
             date = _now_utc() - timedelta(days=29 - i)
             date_str = date.date().isoformat()
-            
+
             day_trackings = [
                 t for t in recent_trackings
-                if t.initiated_at and t.initiated_at.date().isoformat() == date_str
+                if _initiated_at_date(t) is not None and _initiated_at_date(t).isoformat() == date_str
             ]
-            
+
             avg_response_time = 0.0
             if day_trackings:
-                total_duration = sum(
-                    float(t.resolution_duration) if isinstance(t.resolution_duration, Decimal)
-                    else float(t.resolution_duration or 0)
-                    for t in day_trackings
-                )
+                total_duration = sum(_safe_resolution_hours(t) for t in day_trackings)
                 avg_response_time = total_duration / len(day_trackings)
-            
+
             response_time_trends.append({
                 "date": date_str,
                 "average_response_time": avg_response_time,
             })
-        
+
         # Escalation rates by tier
         escalation_by_tier = {}
         for t in all_trackings:
             if t.escalated_at and t.current_tier is not None:
-                tier_level = int(t.current_tier) if isinstance(t.current_tier, (int, str)) else 0
+                try:
+                    tier_level = int(t.current_tier) if isinstance(t.current_tier, (int, str)) else int(float(t.current_tier))
+                except (TypeError, ValueError):
+                    tier_level = 0
                 escalation_by_tier[tier_level] = escalation_by_tier.get(tier_level, 0) + 1
         
         escalation_rates_by_tier = [

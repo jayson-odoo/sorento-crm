@@ -154,6 +154,48 @@ export function parseDateTimeAsUTC(dateString: string | Date): Date {
   return new Date(s + 'Z');
 }
 
+/** Malaysia timezone (UTC+8) for display of API timestamps stored as UTC in DB */
+const MALAYSIA_TZ = 'Asia/Kuala_Lumpur';
+
+function toUTCDate(input: Date | string | number): Date {
+  if (input instanceof Date) return input;
+  if (typeof input === 'number') return new Date(input);
+  return parseDateTimeAsUTC(input);
+}
+
+/**
+ * Format a UTC datetime (from API/DB) as date only in Malaysia timezone.
+ * Pass naive UTC strings from the backend; they are parsed as UTC then displayed in Malaysia.
+ */
+export function formatDateInMalaysia(input: Date | string | number): string {
+  const date = toUTCDate(input);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: MALAYSIA_TZ,
+  }).format(date);
+}
+
+/**
+ * Format a UTC datetime (from API/DB) as date and time in Malaysia timezone.
+ * Pass naive UTC strings from the backend; they are parsed as UTC then displayed in Malaysia.
+ */
+export function formatDateTimeInMalaysia(input: Date | string | number): string {
+  const date = toUTCDate(input);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: MALAYSIA_TZ,
+  }).format(date);
+}
+
 export function formatDateTime(input: Date | string | number): string {
   // Always use parseNaiveDateTimeAsLocal to handle naive and UTC dates correctly
   const date = typeof input === 'string'

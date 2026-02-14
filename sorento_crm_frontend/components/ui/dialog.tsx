@@ -50,6 +50,19 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
   );
 }
 
+function hasDialogTitleInChildren(children: React.ReactNode): boolean {
+  const check = (nodes: React.ReactNode): boolean => {
+    return React.Children.toArray(nodes).some((child) => {
+      if (!React.isValidElement(child)) return false;
+      if (child.type === DialogTitle) return true;
+      const grandChildren = (child.props as { children?: React.ReactNode })?.children;
+      if (grandChildren !== undefined) return check(grandChildren);
+      return false;
+    });
+  };
+  return check(children);
+}
+
 function DialogContent({
   className,
   children,
@@ -62,6 +75,7 @@ function DialogContent({
     showCloseButton?: boolean;
     overlay?: boolean;
   }) {
+  const needsFallbackTitle = !hasDialogTitleInChildren(children);
   return (
     <DialogPortal>
       {overlay && <DialogOverlay />}
@@ -70,6 +84,9 @@ function DialogContent({
         className={cn(dialogContentVariants({ variant }), className)}
         {...props}
       >
+        {needsFallbackTitle ? (
+          <DialogPrimitive.Title className="sr-only">Dialog</DialogPrimitive.Title>
+        ) : null}
         {children}
         {showCloseButton && (
           <DialogClose className="cursor-pointer outline-0 absolute end-5 top-5 rounded-sm opacity-60 ring-offset-background transition-opacity hover:opacity-100 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">

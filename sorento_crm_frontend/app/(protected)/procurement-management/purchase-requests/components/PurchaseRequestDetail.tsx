@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2 } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,10 +14,43 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Command,
+  CommandCheck,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
-import { usePurchaseRequest } from '../hooks/usePurchaseRequests';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { usePurchaseRequest, usePurchaseRequestNeighbours } from '../hooks/usePurchaseRequests';
 import { formatDate } from '@/lib/helpers';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
+import AuditTrail from '@/components/audit/AuditTrail';
+import RecordNavigation from '@/components/common/RecordNavigation';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import {
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
+import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect } from '../services/purchaseRequestService';
+import { toast } from 'sonner';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
@@ -40,10 +73,33 @@ export default function PurchaseRequestDetail({
 }: PurchaseRequestDetailProps) {
   const router = useRouter();
   const isValidId = requestId && requestId !== 'new' && requestId !== 'edit';
+  const queryClient = useQueryClient();
   const { data: request, isLoading } = usePurchaseRequest(
     isValidId ? requestId : null,
   );
+  const requestTypeForNav = basePath.includes('sponsorship-forms')
+    ? 'sponsorship_form'
+    : 'purchase_request';
+  const { data: neighbours } = usePurchaseRequestNeighbours(
+    isValidId ? requestId : null,
+    requestTypeForNav,
+  );
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
+  const [approverUserId, setApproverUserId] = useState<string>('');
+  const [approverEmail, setApproverEmail] = useState('');
+  const [approvalLink, setApprovalLink] = useState<string | null>(null);
+  const [approvalSending, setApprovalSending] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [approverComboboxOpen, setApproverComboboxOpen] = useState(false);
+  const [settingPending, setSettingPending] = useState(false);
+
+  const { data: usersForApprover = [] } = useQuery({
+    queryKey: ['users-for-approver'],
+    queryFn: getUsersForApproverSelect,
+    enabled: approvalDialogOpen,
+  });
 
   const listLabel =
     basePath.includes('sponsorship-forms') ? 'Sponsorship Forms' : 'Purchase Requests';
@@ -115,7 +171,50 @@ export default function PurchaseRequestDetail({
             · {typeLabel}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <DetailActionsMenu ariaLabel="Request actions">
+            {request.approval_status === 'pending' ? (
+              <DropdownMenuItem
+                onClick={() => {
+                  setApprovalLink(null);
+                  setApprovalError(null);
+                  setApproverUserId(request.approver_user_id ?? '');
+                  setApproverEmail(request.approver_email ?? '');
+                  setApprovalDialogOpen(true);
+                }}
+              >
+                <Send className="size-4" />
+                Send for approval
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem
+                disabled={settingPending}
+                onClick={async () => {
+                  if (!requestId) return;
+                  setSettingPending(true);
+                  try {
+                    await setPendingApproval(requestId);
+                    queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+                    queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
+                    toast.success('Status set to Pending approval');
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : 'Failed to set pending approval');
+                  } finally {
+                    setSettingPending(false);
+                  }
+                }}
+              >
+                <Clock className="size-4" />
+                {settingPending ? 'Updating…' : 'Change to pending approval'}
+              </DropdownMenuItem>
+            )}
+          </DetailActionsMenu>
+          <RecordNavigation
+            basePath={basePath}
+            prevId={neighbours?.prev_id ?? null}
+            nextId={neighbours?.next_id ?? null}
+            ariaLabel="purchase request"
+          />
           <Button
             variant="outline"
             onClick={() => router.push(`${basePath}/${requestId}/edit`)}
@@ -129,6 +228,157 @@ export default function PurchaseRequestDetail({
           </Button>
         </div>
       </div>
+
+      <Dialog open={approvalDialogOpen} onOpenChange={setApprovalDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send for approval</DialogTitle>
+            <DialogDescription>
+              Choose a user to pull their email, or enter an email if the approver is not in the system. A one-time approval link will be created.
+            </DialogDescription>
+          </DialogHeader>
+          {!approvalLink ? (
+            <>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Choose approver (optional)</Label>
+                  <Popover open={approverComboboxOpen} onOpenChange={setApproverComboboxOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        className="w-full justify-between font-normal"
+                      >
+                        <span className="truncate">
+                          {approverUserId
+                            ? (() => {
+                                const u = usersForApprover.find((x) => x.id === approverUserId);
+                                return u ? `${u.name?.trim() || u.email} (${u.email})` : 'Select approver';
+                              })()
+                            : 'Select approver'}
+                        </span>
+                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search approver..." />
+                        <CommandList>
+                          <CommandEmpty>No approver found.</CommandEmpty>
+                          <CommandGroup>
+                            <CommandItem
+                              value="Enter email only not in system"
+                              onSelect={() => {
+                                setApproverUserId('');
+                                setApproverComboboxOpen(false);
+                              }}
+                            >
+                              Enter email only (not in system)
+                              {!approverUserId && <CommandCheck />}
+                            </CommandItem>
+                            {usersForApprover.map((u) => {
+                              const label = `${u.name?.trim() || u.email} ${u.email}`.trim();
+                              return (
+                                <CommandItem
+                                  key={u.id}
+                                  value={label}
+                                  onSelect={() => {
+                                    setApproverUserId(u.id);
+                                    setApproverEmail(u.email ?? '');
+                                    setApproverComboboxOpen(false);
+                                  }}
+                                >
+                                  <span className="truncate">
+                                    {u.name?.trim() || u.email} ({u.email})
+                                  </span>
+                                  {approverUserId === u.id && <CommandCheck />}
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="approver_email">Approver email</Label>
+                  <Input
+                    id="approver_email"
+                    type="email"
+                    value={approverEmail}
+                    onChange={(e) => setApproverEmail(e.target.value)}
+                    placeholder="approver@example.com"
+                  />
+                </div>
+              </div>
+              {approvalError && (
+                <p className="text-sm text-destructive">{approvalError}</p>
+              )}
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setApprovalDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  disabled={!approverEmail.trim() || approvalSending}
+                  onClick={async () => {
+                    setApprovalError(null);
+                    setApprovalSending(true);
+                    try {
+                      const res = await sendApprovalLink(requestId, {
+                        approver_email: approverEmail.trim(),
+                        approver_user_id: approverUserId || undefined,
+                        expires_hours: 24,
+                      });
+                      const url = res.approval_url.startsWith('http')
+                        ? res.approval_url
+                        : typeof window !== 'undefined'
+                          ? `${window.location.origin}${res.approval_url.startsWith('/') ? res.approval_url : `/${res.approval_url}`}`
+                          : res.approval_url;
+                      setApprovalLink(url);
+                      void queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+                    } catch (e) {
+                      setApprovalError(e instanceof Error ? e.message : 'Failed to create link');
+                    } finally {
+                      setApprovalSending(false);
+                    }
+                  }}
+                >
+                  {approvalSending ? 'Creating...' : 'Create link'}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <Label>Approval link (one-time use)</Label>
+                <div className="flex gap-2">
+                  <Input readOnly value={approvalLink} className="font-mono text-sm" />
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(approvalLink);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    }}
+                  >
+                    {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+                  </Button>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button onClick={() => { setApprovalDialogOpen(false); setApprovalLink(null); }}>
+                  Done
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <PurchaseRequestDeleteDialog
         open={deleteDialogOpen}
@@ -149,6 +399,50 @@ export default function PurchaseRequestDetail({
                 <p className="text-sm text-muted-foreground">Type</p>
                 <Badge variant="secondary">{typeLabel}</Badge>
               </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Status</p>
+                <Badge
+                  variant={
+                    request.approval_status === 'approved'
+                      ? 'primary'
+                      : request.approval_status === 'rejected'
+                        ? 'destructive'
+                        : 'secondary'
+                  }
+                >
+                  {!request.approval_status || request.approval_status === ''
+                    ? 'Draft'
+                    : request.approval_status === 'pending'
+                      ? 'Pending approval'
+                      : request.approval_status === 'approved'
+                        ? 'Approved'
+                        : request.approval_status === 'rejected'
+                          ? 'Rejected'
+                          : request.approval_status}
+                </Badge>
+              </div>
+              {request.approved_at && (
+                <div>
+                  <p className="text-sm text-muted-foreground">Approved at</p>
+                  <p className="font-medium">{formatDate(new Date(request.approved_at))}</p>
+                </div>
+              )}
+              {request.approved_by && (
+                <div>
+                  <p className="text-sm text-muted-foreground">Approved by</p>
+                  <p className="font-medium">{request.approved_by}</p>
+                </div>
+              )}
+              {(request.approver_email || request.approver_user_id) && !request.approved_at && (
+                <div>
+                  <p className="text-sm text-muted-foreground">Approver</p>
+                  <p className="font-medium">
+                    {request.approver_display_name
+                      ? `${request.approver_display_name} (${request.approver_email})`
+                      : request.approver_email}
+                  </p>
+                </div>
+              )}
               <div>
                 <p className="text-sm text-muted-foreground">Request Date</p>
                 <p className="font-medium">
@@ -246,6 +540,8 @@ export default function PurchaseRequestDetail({
             )}
           </CardContent>
         </Card>
+
+        <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
       </div>
     </div>
   );

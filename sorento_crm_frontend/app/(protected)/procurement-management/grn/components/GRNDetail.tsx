@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Edit, Trash2 } from 'lucide-react';
@@ -16,9 +16,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useGRN } from '../hooks/useGRN';
+import { useGRN, useGRNs } from '../hooks/useGRN';
 import { formatDate } from '@/lib/helpers';
 import GRNDeleteDialog from './grn-delete-dialog';
+import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface GRNDetailProps {
   grnId: string;
@@ -28,6 +29,17 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
   const router = useRouter();
   const { data: grn, isLoading } = useGRN(grnId);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const navParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'picking_date', desc: true }],
+      searchQuery: '',
+    }),
+    [],
+  );
+  const { data: grnListData } = useGRNs(navParams);
+  const grnListItems = grnListData?.data ?? [];
 
   if (isLoading) {
     return (
@@ -119,6 +131,12 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
+          <RecordNavigation
+            basePath="/procurement-management/grn"
+            currentId={grnId}
+            items={grnListItems}
+            ariaLabel="GRN"
+          />
           <Button
             variant="outline"
             onClick={() =>

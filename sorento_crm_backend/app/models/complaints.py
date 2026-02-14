@@ -12,8 +12,11 @@ if TYPE_CHECKING:
 
 
 class Complaint(Base):
+    """Complaint model. Set __audit_track__ = True for automatic audit logging of changes."""
     __tablename__ = "complaints"
-    
+    __audit_track__ = True
+    __audit_entity_type__ = "complaint"
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     delivery_order_number = Column(Text, nullable=True)
     complaint_date = Column(Date, nullable=True)
@@ -34,6 +37,10 @@ class Complaint(Base):
     contact_id = Column(Text, nullable=True)
     space_id = Column(Text, nullable=True)
     respond_inbox_url = Column(Text, nullable=True)
+    technical_team_response = Column(Text, nullable=True)
+    status = Column(String(50), default="new", nullable=False)
+    last_responded_by = Column(Text, nullable=True)
+    last_responded_at = Column(DateTime(timezone=False), nullable=True)
 
     attachments = relationship("ComplaintAttachment", back_populates="complaint")
     

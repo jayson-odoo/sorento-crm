@@ -13,7 +13,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw } from 'lucide-react';
+import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw, FolderOpen } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -22,12 +22,28 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable, DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAttachments, useDeleteAttachment, useDownloadAttachment, useResubmitAttachmentWebhook } from '../hooks/useAttachments';
+import { useAttachments, useDeleteAttachment, useDownloadAttachment, useResubmitAttachmentWebhook, useDirectoryTree } from '../hooks/useAttachments';
 import type { Attachment } from '../types/attachment.types';
+import type { AttachmentDirectoryTreeNode } from '../services/directoryService';
+
+function flattenDirectoryTree(nodes: AttachmentDirectoryTreeNode[], prefix = ''): { id: string; label: string }[] {
+  return nodes.flatMap((n) => [
+    { id: n.id, label: prefix ? `${prefix} / ${n.name}` : n.name },
+    ...flattenDirectoryTree(n.children, prefix ? `${prefix} / ${n.name}` : n.name),
+  ]);
+}
 import { formatDate } from '@/lib/helpers';
 import AttachmentUploadDialog from './AttachmentUploadDialog';
+import AttachmentBulkImportDialog from './AttachmentBulkImportDialog';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
 import AttachmentBulkDeleteDialog from './AttachmentBulkDeleteDialog';
 
@@ -37,16 +53,20 @@ export default function AttachmentBrowser() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'uploaded_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [directoryId, setDirectoryId] = useState<string | null>(null);
 
+  const { data: directoryTree = [] } = useDirectoryTree();
   const { data, isLoading } = useAttachments({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
+    directory_id: directoryId ?? undefined,
   });
 
   const deleteMutation = useDeleteAttachment();
@@ -152,7 +172,7 @@ export default function AttachmentBrowser() {
       {
         accessorKey: 'uploaded_by_user.name',
         header: ({ column }) => <DataGridColumnHeader title="Uploaded By" column={column} />,
-        cell: ({ row }) => row.original.uploaded_by_user?.name || '-',
+        cell: ({ row }) => row.original.uploaded_by_user?.name ?? row.original.uploaded_by_user?.email ?? '-',
         size: 150,
       },
       {
@@ -307,24 +327,43 @@ export default function AttachmentBrowser() {
       >
         <Card>
           <CardHeader className="flex-row items-center justify-between">
-            <div className="relative">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-              <Input
-                placeholder="Search attachments..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-9 w-64"
-              />
-              {searchQuery && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => setSearchQuery('')}
-                >
-                  <X />
-                </Button>
-              )}
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search attachments..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+              <Select
+                value={directoryId ?? '__all__'}
+                onValueChange={(v) => setDirectoryId(v === '__all__' ? null : v)}
+              >
+                <SelectTrigger className="w-[200px]">
+                  <FolderOpen className="size-4 opacity-70 mr-1" />
+                  <SelectValue placeholder="All folders" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All folders</SelectItem>
+                  {flattenDirectoryTree(directoryTree).map((d) => (
+                    <SelectItem key={d.id} value={d.id}>
+                      {d.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="flex items-center gap-2">
               {selectedDeletableIds.length > 0 && (
@@ -340,6 +379,10 @@ export default function AttachmentBrowser() {
               <Button onClick={() => setUploadDialogOpen(true)}>
                 <Plus className="size-4 mr-2" />
                 Create Attachment
+              </Button>
+              <Button variant="outline" onClick={() => setBulkImportDialogOpen(true)}>
+                <FileArchive className="size-4 mr-2" />
+                Bulk import (ZIP)
               </Button>
             </div>
           </CardHeader>
@@ -358,10 +401,13 @@ export default function AttachmentBrowser() {
     <AttachmentUploadDialog
       open={uploadDialogOpen}
       onOpenChange={setUploadDialogOpen}
-      onSuccess={() => {
-        // Refresh the attachments list
-        // The query will automatically refetch due to query invalidation in the mutation
-      }}
+      defaultDirectoryId={directoryId}
+      onSuccess={() => {}}
+    />
+    <AttachmentBulkImportDialog
+      open={bulkImportDialogOpen}
+      onOpenChange={setBulkImportDialogOpen}
+      defaultParentDirectoryId={directoryId}
     />
 
     <AttachmentDeleteDialog

@@ -89,6 +89,36 @@ class JobService:
             job.error = error
             self.db.commit()
         return job
+
+    def update_job_progress(
+        self,
+        job_id: str,
+        processed_rows: Optional[int] = None,
+        successful_rows: Optional[int] = None,
+        failed_rows: Optional[int] = None,
+        skipped_rows: Optional[int] = None,
+        total_rows: Optional[int] = None,
+        result: Optional[dict] = None,
+    ) -> Optional[ImportJob]:
+        """Update job progress (for long-running tasks)."""
+        job = self.db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
+        if not job:
+            return None
+        if processed_rows is not None:
+            job.processed_rows = processed_rows
+        if successful_rows is not None:
+            job.successful_rows = successful_rows
+        if failed_rows is not None:
+            job.failed_rows = failed_rows
+        if skipped_rows is not None:
+            job.skipped_rows = skipped_rows
+        if total_rows is not None:
+            job.total_rows = total_rows
+        if result is not None:
+            job.result = result
+        self.db.commit()
+        self.db.refresh(job)
+        return job
     
     def get_job(self, job_id: str) -> Optional[ImportJob]:
         """Get job by RQ job ID."""

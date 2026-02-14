@@ -27,6 +27,12 @@ class RespondClient:
             return {}
         return {"Authorization": f"Bearer {self.api_key}"}
 
+    def _contact_api_identifier(self, identifier: str) -> str:
+        """Format contact identifier for API path: use id:xxxx for plain IDs, keep phone: etc. as-is."""
+        if not identifier or ":" in identifier:
+            return identifier or ""
+        return f"id:{identifier}"
+
     def get_user_by_id(self, user_id: str) -> dict:
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
@@ -39,7 +45,8 @@ class RespondClient:
     def get_contact_by_identifier(self, identifier: str) -> dict:
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
-        url = f"{self.base_url}/v2/contact/{identifier}"
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}"
         with httpx.Client(timeout=15) as client:
             response = client.get(url, headers=self._headers())
             # Check status and raise with response attached for error handling
@@ -75,6 +82,18 @@ class RespondClient:
             if isinstance(data, dict):
                 return data.get("data", data.get("users", []))
             return data if isinstance(data, list) else []
+
+    def send_message(self, identifier: str, text: str) -> dict:
+        """Send a text message to a contact. identifier = last segment of respond inbox URL (e.g. contact_id). Uses id: prefix for API."""
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}/message"
+        payload = {"message": {"type": "text", "text": text}}
+        with httpx.Client(timeout=15) as client:
+            response = client.post(url, headers=self._headers(), json=payload)
+            response.raise_for_status()
+            return response.json() if response.content else {}
 
 
 class IntegrationLogService:

@@ -34,6 +34,16 @@ export async function getStockInquiry(id: string): Promise<StockInquiryDetail> {
   return response.json();
 }
 
+export async function getStockInquiryNeighbours(
+  id: string,
+): Promise<{ prev_id: string | null; next_id: string | null }> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/neighbours?id=${encodeURIComponent(id)}`,
+  );
+  if (!response.ok) return { prev_id: null, next_id: null };
+  return response.json();
+}
+
 export async function createStockInquiry(
   data: StockInquiryFormData,
 ): Promise<StockInquiry> {
@@ -65,6 +75,27 @@ export async function updateStockInquiry(
       .json()
       .catch(() => ({ message: 'Failed to update stock inquiry' }));
     throw new Error(error.message);
+  }
+  return response.json();
+}
+
+export async function updateStockInquiryAndReply(
+  id: string,
+  data: Partial<StockInquiryFormData>,
+): Promise<StockInquiry> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${id}/update-and-reply`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to update and reply' }));
+    throw new Error(error.detail || error.message || 'Failed to update and reply');
   }
   return response.json();
 }

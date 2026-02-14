@@ -404,6 +404,9 @@ class StockInquiryBase(BaseModel):
     purchasing_response: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
+    status: Optional[str] = None
+    last_responded_by: Optional[str] = None
+    last_responded_at: Optional[datetime] = None
 
 
 class StockInquiryCreate(StockInquiryBase):
@@ -423,11 +426,17 @@ class StockInquiryUpdate(BaseModel):
     purchasing_response: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
+    status: Optional[str] = None
+    last_responded_by: Optional[str] = None
+    last_responded_at: Optional[datetime] = None
 
 
 class StockInquiryResponse(StockInquiryBase):
     id: str
     respond_inbox_url: Optional[str] = None
+    status: Optional[str] = None
+    last_responded_by: Optional[str] = None
+    last_responded_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     
@@ -472,6 +481,13 @@ class PurchaseRequestHeaderBase(BaseModel):
     external_reference: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
+    approver_user_id: Optional[str] = None
+    approver_email: Optional[str] = None
+    approval_status: Optional[str] = None  # pending | approved | rejected
+    approved_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
+    approval_signature_ref: Optional[str] = None
+    approval_comments: Optional[str] = None
 
 
 class PurchaseRequestHeaderCreate(PurchaseRequestHeaderBase):
@@ -504,6 +520,8 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     status: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
+    approver_user_id: Optional[str] = None
+    approver_email: Optional[str] = None
     products: Optional[List[PurchaseRequestLineCreate]] = None
 
     @field_validator("request_type", mode="before")
@@ -538,9 +556,43 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     id: str
     request_number: Optional[str] = None
     respond_inbox_url: Optional[str] = None
+    approver_display_name: Optional[str] = None  # Resolved from User when approver_user_id is set
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     lines: Optional[List[PurchaseRequestLineResponse]] = []
 
     class Config:
         from_attributes = True
+
+
+class SendApprovalLinkRequest(BaseModel):
+    """Request to create approval token and get public link (optionally email is sent from frontend)."""
+    approver_email: Optional[str] = None
+    approver_user_id: Optional[str] = None
+    expires_hours: Optional[int] = 24
+
+
+class SendApprovalLinkResponse(BaseModel):
+    approval_url: str
+    expires_at: datetime
+    token_id: str
+
+
+class PublicApprovalSummaryResponse(BaseModel):
+    """Summary of request for public approval page (no sensitive data)."""
+    entity_type: str
+    entity_id: str
+    request_number: Optional[str] = None
+    request_type: str
+    customer_name: Optional[str] = None
+    project_title: Optional[str] = None
+    purpose: Optional[str] = None
+    requested_by: Optional[str] = None
+    expires_at: datetime
+
+
+class PublicApprovalSubmitRequest(BaseModel):
+    action: str  # approved | rejected
+    approved_by: Optional[str] = None
+    approval_signature_ref: Optional[str] = None
+    approval_comments: Optional[str] = None

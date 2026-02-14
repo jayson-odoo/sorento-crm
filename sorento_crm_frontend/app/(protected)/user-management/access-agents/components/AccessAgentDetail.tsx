@@ -6,8 +6,16 @@ import { Edit, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAccessAgent, useAccessAgents } from '../hooks/useAccessAgents';
+import { useAccessAgent, useAccessAgents, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
 import { formatDate } from '@/lib/helpers';
 import AccessAgentDeleteDialog from './access-agent-delete-dialog';
 import ContactAccessAgentsTable from './ContactAccessAgentsTable';
@@ -32,7 +40,16 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
   );
   const { data: navigationData } = useAccessAgents(navigationParams);
   const navigationItems = navigationData?.data ?? [];
+  const { data: agentTeamsData } = useAgentTeams(accessAgentId);
+  const { data: teamsList = [] } = useTeams();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  const assignments = agentTeamsData?.assignments ?? [];
+  const teamNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    teamsList.forEach((t: { id: string; name: string }) => m.set(t.id, t.name));
+    return m;
+  }, [teamsList]);
 
   if (isLoading) {
     return (
@@ -144,6 +161,33 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
             </div>
           </div>
         </CardContent>
+      </Card>
+
+      {/* Team Assignments */}
+      <Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Team Assignments</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Code</TableHead>
+                  <TableHead>Team</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {assignments.map((a: { code: string; team_id: string }) => (
+                  <TableRow key={a.code}>
+                    <TableCell className="font-mono">{a.code}</TableCell>
+                    <TableCell>{teamNameMap.get(a.team_id) ?? a.team_id}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       </Card>
 
       {/* Contact Access Agents Table */}

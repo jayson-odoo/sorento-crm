@@ -9,6 +9,7 @@ from app.api.v1.external import (
     forms,
     complaint_attachments,
     purchase_requests,
+    next_assignee,
 )
 
 router = APIRouter()
@@ -21,3 +22,4 @@ router.include_router(promotions.router, prefix="/promotions", tags=["external"]
 router.include_router(forms.router, prefix="/forms", tags=["external"])
 router.include_router(complaint_attachments.router, prefix="/complaint-attachments", tags=["external"])
 router.include_router(purchase_requests.router, prefix="/purchase-requests", tags=["external"])
+router.include_router(next_assignee.router, prefix="/next-assignee", tags=["external"])

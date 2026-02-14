@@ -1,17 +1,21 @@
 """Attachments API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Form, Response, Request, BackgroundTasks
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 import uuid
 import hashlib
 import logging
 import os
 import json
+import zipfile
+import io
+import threading
+import mimetypes
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.services.resources_service import AttachmentService, AttachmentTypeService
+from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
 from app.services.integration_service import IntegrationLogService
-from app.schemas.resources import AttachmentCreate, AttachmentUpdate, AttachmentResponse, AttachmentBulkDeleteRequest
+from app.schemas.resources import AttachmentCreate, AttachmentUpdate, AttachmentResponse, AttachmentBulkDeleteRequest, AttachmentReorderRequest
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -21,27 +25,86 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _create_and_send_webhook(
+    db: Session,
+    attachment,
+    attachment_type,
+    access_levels_payload: Optional[list],
+    current_user_id: str,
+):
+    """Delegate to shared helper (used by single upload and bulk-import task)."""
+    from app.services.attachment_webhook_helper import create_and_send_webhook
+    create_and_send_webhook(db, attachment, attachment_type, access_levels_payload, current_user_id)
+
+
 @router.get("/", response_model=ListResponse[AttachmentResponse])
 async def get_attachments(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
+    query: Optional[str] = Query(None),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query(None),
     entity_type: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
+    directory_id: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get attachments with pagination and filtering."""
+    """Get attachments with pagination and filtering (optional directory_id, query by filename)."""
     try:
         service = AttachmentService(db)
         result = service.list_attachments(
             page=page,
             limit=limit,
+            query=query,
+            sort=sort,
+            dir=dir or "desc",
             entity_type=entity_type,
-            entity_id=entity_id
+            entity_id=entity_id,
+            directory_id=directory_id,
         )
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+def _attachment_response_with_linked_entities(service: AttachmentService, attachment) -> dict:
+    """Build attachment response dict including linked entities from product_attachments, promotion_attachments, forms."""
+    from app.schemas.resources import AttachmentResponse, LinkedEntityRef, UploadedByUser
+    from app.models.user import User
+
+    attachment_id = str(attachment.id) if attachment.id else attachment.id
+    data = AttachmentResponse.model_validate(attachment).model_dump()
+    linked = service.get_linked_entities(attachment_id)
+    data["linked_products"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_products"]]
+    data["linked_promotions"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_promotions"]]
+    data["linked_form"] = LinkedEntityRef.model_validate(linked["linked_form"]).model_dump() if linked["linked_form"] else None
+    if linked["linked_products"]:
+        data["entity_display_name"] = linked["linked_products"][0]["name"]
+    elif linked["linked_promotions"]:
+        data["entity_display_name"] = linked["linked_promotions"][0]["name"]
+    elif linked["linked_form"]:
+        data["entity_display_name"] = linked["linked_form"]["name"]
+    else:
+        data["entity_display_name"] = service.get_entity_display_name(
+            attachment.entity_type, attachment.entity_id
+        )
+    uploaded_by = getattr(attachment, "uploaded_by", None)
+    if uploaded_by:
+        try:
+            user_id = str(uploaded_by)
+            user = service.db.query(User).filter(User.id == user_id).first()
+            if user:
+                # Prefer name from users table; fall back to email so UI never shows raw UUID
+                display_name = (user.name or "").strip() or (user.email or None)
+                data["uploaded_by_user"] = UploadedByUser(
+                    id=str(user.id),
+                    name=display_name,
+                    email=user.email or None,
+                ).model_dump()
+        except Exception as e:
+            logger.warning("Could not resolve uploaded_by user for attachment %s: %s", attachment_id, e)
+    return data
 
 
 @router.get("/{attachment_id}", response_model=AttachmentResponse)
@@ -54,7 +117,7 @@ async def get_attachment(
     try:
         service = AttachmentService(db)
         attachment = service.get_attachment(attachment_id)
-        return attachment
+        return _attachment_response_with_linked_entities(service, attachment)
     except HTTPException:
         raise
     except Exception as e:
@@ -69,6 +132,7 @@ async def create_attachment(
     attachment_type_id: str = Form(...),
     entity_type: Optional[str] = Form(None),
     entity_id: Optional[str] = Form(None),
+    directory_id: Optional[str] = Form(None),
     access_levels: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -163,80 +227,16 @@ async def create_attachment(
             mime_type=file.content_type or "application/octet-stream",  # Default if None
             file_hash=file_hash,
             entity_type=entity_type,  # Store original entity_type if provided
-            entity_id=entity_id
+            entity_id=entity_id,
+            directory_id=directory_id,
         )
         
         service = AttachmentService(db)
         attachment = service.create_attachment(attachment_data, current_user["id"])
-        
-        # Create integration log for n8n webhook after successful S3 upload and attachment creation
         try:
-            n8n_webhook_url = os.getenv("N8N_WEBHOOK_URL", "").strip()
-            if n8n_webhook_url:
-                # Validate and fix URL - ensure it has http:// or https:// protocol
-                if not n8n_webhook_url.startswith(('http://', 'https://')):
-                    if n8n_webhook_url.startswith('//'):
-                        n8n_webhook_url = 'https:' + n8n_webhook_url
-                    elif '://' not in n8n_webhook_url:
-                        # Auto-add https:// if no protocol specified
-                        n8n_webhook_url = 'https://' + n8n_webhook_url
-                        logger.warning(f"N8N_WEBHOOK_URL missing protocol, auto-adding https://. Fixed URL: {n8n_webhook_url}")
-                integration_service = IntegrationLogService(db)
-                
-                # Create integration log with pending status first
-                integration_log_data = IntegrationLogCreate(
-                    integration_channel="n8n",
-                    business_table="attachments",
-                    business_id=attachment.id,
-                    direction="outbound",
-                    endpoint=n8n_webhook_url,
-                    http_method="POST",
-                    created_by=current_user["id"],
-                    status="pending"
-                )
-                
-                integration_log = integration_service.create_integration_log(integration_log_data)
-                
-                # Prepare webhook payload with actual integration_log_id and attachment_type name
-                webhook_payload = {
-                    "integration_log_id": integration_log.id,
-                    "s3_url": s3_url,
-                    "attachment_id": attachment.id,
-                    "attachment_filename": attachment.original_filename,
-                    "attachment_type": attachment_type.type_name if attachment_type else None,
-                    "access_levels": access_levels_payload,
-                }
-                
-                # Update log with payload containing the correct integration_log_id
-                integration_log.request_payload = json.dumps(webhook_payload)
-                db.commit()
-                db.refresh(integration_log)
-                
-                # Send webhook asynchronously in background (non-blocking)
-                # Using threading to ensure true async execution
-                import threading
-                def send_webhook_async():
-                    try:
-                        # Get a new database session for background task
-                        from app.database import SessionLocal
-                        bg_db = SessionLocal()
-                        try:
-                            bg_service = IntegrationLogService(bg_db)
-                            bg_service.send_webhook_for_log(integration_log.id)
-                        finally:
-                            bg_db.close()
-                    except Exception as e:
-                        logger.error(f"Background webhook send failed for log {integration_log.id}: {str(e)}", exc_info=True)
-                
-                # Start background thread
-                thread = threading.Thread(target=send_webhook_async, daemon=True)
-                thread.start()
-                
-                logger.info(f"Created integration log {integration_log.id} for attachment {attachment.id}")
+            _create_and_send_webhook(db, attachment, attachment_type, access_levels_payload, current_user["id"])
         except Exception as e:
-            # Don't fail attachment upload if integration log creation fails
-            logger.error(f"Failed to create integration log for attachment {attachment.id}: {str(e)}", exc_info=True)
-        
+            logger.error("Failed to create integration log for attachment %s: %s", attachment.id, e, exc_info=True)
         return attachment
     
     except HTTPException:
@@ -262,6 +262,73 @@ async def create_attachment(
             )
         
         raise handle_internal_error(error_msg)
+
+
+def _normalize_zip_path(name: str) -> str:
+    """Normalize zip entry name: strip slashes, use forward slash."""
+    return name.replace("\\", "/").strip("/")
+
+
+@router.post("/bulk-import", status_code=status.HTTP_202_ACCEPTED)
+async def bulk_import_attachments(
+    file: UploadFile = File(..., description="ZIP file containing folders and files"),
+    attachment_type_id: str = Form(...),
+    access_levels: Optional[str] = Form(None),
+    parent_directory_id: Optional[str] = Form(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue a ZIP import job. Import runs in the background with batch processing. Poll GET /api/v1/system/jobs/{job_id}/status for progress."""
+    if not file or not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A ZIP file is required")
+
+    type_service = AttachmentTypeService(db)
+    try:
+        type_service.get_type(attachment_type_id)
+    except HTTPException:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid attachment type ID")
+
+    zip_content = await file.read()
+    try:
+        with zipfile.ZipFile(io.BytesIO(zip_content), "r") as zf:
+            zf.testzip()
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or corrupted ZIP file")
+
+    from app.services.job_service import JobService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.import_tasks import process_attachment_bulk_import
+
+    job_service = JobService(db)
+    job = job_service.create_job(
+        job_type="attachment_bulk_import",
+        user_id=current_user["id"],
+        filename=file.filename,
+        metadata={
+            "attachment_type_id": attachment_type_id,
+            "parent_directory_id": parent_directory_id,
+        },
+    )
+    db.commit()
+
+    rq_job = enqueue_job(
+        process_attachment_bulk_import,
+        str(job.id),
+        zip_content,
+        attachment_type_id,
+        access_levels or "[]",
+        parent_directory_id,
+        current_user["id"],
+        queue_name="imports",
+        job_timeout=7200,
+    )
+    job_service.update_job_with_rq_id(job, rq_job.id)
+
+    return {
+        "message": "Import started. Processing in the background. You can close this dialog.",
+        "job_id": job.job_id,
+        "id": str(job.id),
+    }
 
 
 @router.put("/{attachment_id}", response_model=AttachmentResponse)
@@ -325,7 +392,7 @@ async def get_attachment_metadata(
     try:
         service = AttachmentService(db)
         attachment = service.get_attachment(attachment_id)
-        return attachment
+        return _attachment_response_with_linked_entities(service, attachment)
     except HTTPException:
         raise
     except Exception as e:
@@ -359,6 +426,23 @@ async def bulk_delete_attachments(
     try:
         service = AttachmentService(db)
         result = service.delete_attachments(body.attachment_ids, current_user["id"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/reorder", status_code=status.HTTP_200_OK)
+async def reorder_attachments(
+    body: AttachmentReorderRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Reorder attachments within a folder (sets sort_order by list position)."""
+    try:
+        service = AttachmentService(db)
+        result = service.reorder_attachments(body.attachment_ids, body.directory_id)
         return result
     except HTTPException:
         raise

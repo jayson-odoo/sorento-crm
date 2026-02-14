@@ -1,3 +1,9 @@
+export interface LinkedEntityRef {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
 export interface Attachment {
   id: string;
   attachment_type_id?: string | null;
@@ -9,6 +15,10 @@ export interface Attachment {
   file_hash?: string | null;
   entity_type: string | null;
   entity_id: string | null;
+  entity_display_name?: string | null;
+  linked_products?: LinkedEntityRef[];
+  linked_promotions?: LinkedEntityRef[];
+  linked_form?: LinkedEntityRef | null;
   uploaded_by?: string | null;
   uploaded_at: Date;
   is_deleted: boolean;
@@ -50,6 +60,10 @@ export interface AttachmentResponse {
   file_hash?: string | null;
   entity_type?: string | null;
   entity_id?: string | null;
+  entity_display_name?: string | null;
+  linked_products?: LinkedEntityRef[];
+  linked_promotions?: LinkedEntityRef[];
+  linked_form?: LinkedEntityRef | null;
   uploaded_by?: string | null;
   uploaded_at: Date | string;
   is_deleted: boolean;

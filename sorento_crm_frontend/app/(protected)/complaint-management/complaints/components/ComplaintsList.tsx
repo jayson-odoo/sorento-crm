@@ -116,6 +116,18 @@ export default function ComplaintsList() {
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
+        accessorKey: 'status',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Status" column={column} />
+        ),
+        size: 110,
+        cell: ({ row }) => {
+          const s = row.original.status;
+          return s ? <span className="capitalize">{s}</span> : '-';
+        },
+        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
+      },
+      {
         accessorKey: 'attachments',
         header: ({ column }) => (
           <DataGridColumnHeader title="Attachments" column={column} />

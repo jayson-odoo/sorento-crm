@@ -17,6 +17,7 @@ from app.models.integration import IntegrationLog
 from app.models.import_log import ImportLog
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob
+from app.models.audit import AuditLog
 
 __all__ = [
     "User",
@@ -74,4 +75,5 @@ __all__ = [
     "VerificationToken",
     "PublicHoliday",
     "WorkCalendarConfig",
+    "AuditLog",
 ]
