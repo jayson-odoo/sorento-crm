@@ -26,11 +26,6 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/master-data-management/products/[id]/page.js"
     ],
-    "/(protected)/resource-management/attachment-directories/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/resource-management/attachment-directories/page.js"
-    ],
     "/(protected)/system-management/import-jobs/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -56,10 +51,15 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/integration-management/integration-logs/[id]/page.js"
     ],
-    "/(protected)/resource-management/trash/page": [
+    "/(protected)/resource-management/attachment-directories/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/resource-management/trash/page.js"
+      "static/chunks/app/(protected)/resource-management/attachment-directories/page.js"
+    ],
+    "/(protected)/master-data-management/products/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/master-data-management/products/page.js"
     ]
   }
 }
