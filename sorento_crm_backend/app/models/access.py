@@ -1,5 +1,5 @@
 """Access control models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -46,7 +46,8 @@ class AccessAgent(Base):
     
     contact_accesses = relationship("ContactAgentAccess", back_populates="agent")
     user_accesses = relationship("UserAgentAccess", back_populates="agent")
-    
+    agent_teams = relationship("AgentTeam", back_populates="agent", cascade="all, delete-orphan")
+
     __table_args__ = (
         Index("ix_access_agents_is_active", "is_active"),
         Index("ix_access_agents_code", "code"),
@@ -100,4 +101,75 @@ class UserAgentAccess(Base):
         Index("ix_user_agent_access_user_id", "user_id"),
         Index("ix_user_agent_access_agent_id", "agent_id"),
         Index("uq_user_agent_access_user_id_agent_id", "user_id", "agent_id", unique=True),
+    )
+
+
+class Team(Base):
+    """Team of users for round-robin assignment."""
+    __tablename__ = "teams"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(255), nullable=False)
+    description = Column(Text(), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    members = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan")
+    agent_teams = relationship("AgentTeam", back_populates="team", cascade="all, delete-orphan")
+
+    __table_args__ = (Index("ix_teams_name", "name"),)
+
+
+class TeamMember(Base):
+    """User membership in a team (ordered for round-robin)."""
+    __tablename__ = "team_members"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    team_id = Column(UUID(as_uuid=False), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String(100), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    sort_order = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    team = relationship("Team", back_populates="members")
+    user = relationship("User", backref="team_memberships")
+
+    __table_args__ = (
+        Index("ix_team_members_team_id", "team_id"),
+        Index("ix_team_members_user_id", "user_id"),
+        Index("uq_team_members_team_user", "team_id", "user_id", unique=True),
+    )
+
+
+class AgentTeam(Base):
+    """Link access agent to a team with a context code (e.g. marketing -> Marketing Team)."""
+    __tablename__ = "agent_teams"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="CASCADE"), nullable=False)
+    code = Column(Text, nullable=False)  # Context code (e.g. marketing, sales)
+    team_id = Column(UUID(as_uuid=False), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    agent = relationship("AccessAgent", back_populates="agent_teams")
+    team = relationship("Team", back_populates="agent_teams")
+
+    __table_args__ = (
+        Index("ix_agent_teams_agent_id", "agent_id"),
+        Index("ix_agent_teams_team_id", "team_id"),
+        Index("ix_agent_teams_code", "code"),
+        Index("uq_agent_teams_agent_code", "agent_id", "code", unique=True),
+    )
+
+
+class AgentTeamRoundRobinCursor(Base):
+    """Per (agent, team) cursor for round-robin next assignee."""
+    __tablename__ = "agent_team_round_robin_cursors"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="CASCADE"), nullable=False)
+    team_id = Column(UUID(as_uuid=False), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    last_assigned_user_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_agent_team_round_robin_cursors_agent_team", "agent_id", "team_id", unique=True),
     )

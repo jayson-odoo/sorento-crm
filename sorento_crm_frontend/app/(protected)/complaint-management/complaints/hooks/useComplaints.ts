@@ -6,6 +6,7 @@ import {
   getComplaint,
   createComplaint,
   updateComplaint,
+  updateComplaintAndReply,
   deleteComplaint,
   linkComplaintAttachment,
   deleteComplaintAttachment,
@@ -71,6 +72,26 @@ export function useUpdateComplaint() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to update complaint'),
+  });
+}
+
+export function useUpdateComplaintAndReply() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: Partial<ComplaintFormData>;
+    }) => updateComplaintAndReply(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      toast.success('Reply sent to customer successfully');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to update and reply'),
   });
 }
 

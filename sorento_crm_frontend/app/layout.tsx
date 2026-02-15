@@ -1,15 +1,8 @@
 import { ReactNode, Suspense } from 'react';
 import { Inter } from 'next/font/google';
 import { cn } from '@/lib/utils';
-import { SettingsProvider } from '@/providers/settings-provider';
-import { TooltipsProvider } from '@/providers/tooltips-provider';
-import { Toaster } from '@/components/ui/sonner';
 import { Metadata } from 'next';
-import { AuthProvider } from '@/providers/auth-provider';
-import { I18nProvider } from '@/providers/i18n-provider';
-import { ModulesProvider } from '@/providers/modules-provider';
-import { QueryProvider } from '@/providers/query-provider';
-import { ThemeProvider } from '@/providers/theme-provider';
+import { DynamicClientProviders } from '@/components/DynamicClientProviders';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -36,22 +29,9 @@ export default async function RootLayout({
           inter.className,
         )}
       >
-        <QueryProvider>
-          <AuthProvider>
-            <SettingsProvider>
-              <ThemeProvider>
-                <I18nProvider>
-                  <TooltipsProvider>
-                    <ModulesProvider>
-                      <Suspense>{children}</Suspense>
-                      <Toaster />
-                    </ModulesProvider>
-                  </TooltipsProvider>
-                </I18nProvider>
-              </ThemeProvider>
-            </SettingsProvider>
-          </AuthProvider>
-        </QueryProvider>
+        <DynamicClientProviders>
+          <Suspense>{children}</Suspense>
+        </DynamicClientProviders>
       </body>
     </html>
   );

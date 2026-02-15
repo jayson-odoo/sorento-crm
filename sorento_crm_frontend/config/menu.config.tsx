@@ -309,6 +309,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/user-management/access-agents',
       },
       {
+        title: 'Teams',
+        path: '/user-management/teams',
+      },
+      {
         title: 'Internal Users',
         path: '/user-management/contact-access-agents',
       },
@@ -515,6 +519,14 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Attachments',
         path: '/resource-management/attachments',
+      },
+      {
+        title: 'Attachment Directories',
+        path: '/resource-management/attachment-directories',
+      },
+      {
+        title: 'Trash',
+        path: '/resource-management/trash',
       },
       {
         title: 'Attachment Types',
@@ -943,6 +955,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/user-management/access-agents',
       },
       {
+        title: 'Teams',
+        path: '/user-management/teams',
+      },
+      {
         title: 'Internal Users',
         path: '/user-management/contact-access-agents',
       },
@@ -1149,6 +1165,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Attachments',
         path: '/resource-management/attachments',
+      },
+      {
+        title: 'Attachment Directories',
+        path: '/resource-management/attachment-directories',
+      },
+      {
+        title: 'Trash',
+        path: '/resource-management/trash',
       },
       {
         title: 'Attachment Types',

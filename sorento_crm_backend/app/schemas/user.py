@@ -213,3 +213,46 @@ class RespondContactLookupRequest(BaseModel):
 
 class RespondContactLookupResponse(BaseModel):
     contact_name: Optional[str] = None
+
+
+# Team schemas (for round-robin assignee)
+class TeamBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+class TeamCreate(TeamBase):
+    pass
+
+
+class TeamUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class TeamResponse(TeamBase):
+    id: str
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+
+class TeamMemberResponse(BaseModel):
+    id: str
+    team_id: str
+    user_id: str
+    sort_order: Optional[int] = None
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+
+class AgentTeamAssignment(BaseModel):
+    code: str
+    team_id: str
+
+
+class AgentTeamsUpdate(BaseModel):
+    """Legacy: team_ids for backwards compat. Use assignments instead."""
+    team_ids: list[str] | None = None
+    assignments: list[AgentTeamAssignment] | None = None

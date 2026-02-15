@@ -19,6 +19,17 @@ from app.services.error_handler import handle_internal_error
 router = APIRouter()
 
 
+def _respond_user_id_from_current_user(current_user: dict) -> str:
+    """Get respond_user_id for SLA/response tracking; fallback to user id."""
+    rid = (current_user or {}).get("respond_user_id") or (current_user or {}).get("respondUserId")
+    if rid and str(rid).strip():
+        return str(rid).strip()
+    uid = (current_user or {}).get("id")
+    if uid and str(uid).strip():
+        return str(uid).strip()
+    raise HTTPException(status_code=400, detail="User respond_user_id or id is required for Update & Reply.")
+
+
 @router.get("/", response_model=ListResponse[ComplaintResponse])
 async def get_complaints(
     page: int = Query(1, ge=1),
@@ -104,6 +115,7 @@ async def get_complaint(
 @router.post("/", response_model=ComplaintResponse, status_code=status.HTTP_201_CREATED)
 async def create_complaint(
     complaint_data: ComplaintCreate,
+    request: Request,
     current_user: dict = Depends(get_current_user_or_api_key),  # Support both JWT and API key
     db: Session = Depends(get_db)
 ):
@@ -114,6 +126,7 @@ async def create_complaint(
     try:
         service = ComplaintService(db)
         complaint = service.create_complaint(complaint_data)
+        db.commit()
         return complaint
     except HTTPException:
         raise
@@ -156,6 +169,7 @@ async def create_complaint_integration(
 async def update_complaint(
     complaint_id: str,
     complaint_data: ComplaintUpdate,
+    request: Request,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -163,6 +177,33 @@ async def update_complaint(
     try:
         service = ComplaintService(db)
         complaint = service.update_complaint(complaint_id, complaint_data)
+        db.commit()
+        return complaint
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{complaint_id}/update-and-reply", response_model=ComplaintResponse)
+async def update_complaint_and_reply(
+    complaint_id: str,
+    complaint_data: ComplaintUpdate,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update complaint, send technical team response to customer via Respond.io, and mark SLA as responded."""
+    try:
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = ComplaintService(db)
+        complaint = service.update_complaint_and_reply(
+            complaint_id,
+            complaint_data,
+            respond_user_id=respond_user_id,
+            request_url=str(request.url) if request else "",
+        )
+        db.commit()
         return complaint
     except HTTPException:
         raise

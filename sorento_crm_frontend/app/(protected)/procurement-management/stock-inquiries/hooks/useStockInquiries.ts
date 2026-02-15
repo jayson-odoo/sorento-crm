@@ -4,8 +4,10 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   getStockInquiries,
   getStockInquiry,
+  getStockInquiryNeighbours,
   createStockInquiry,
   updateStockInquiry,
+  updateStockInquiryAndReply,
   deleteStockInquiry,
 } from '../services/stockInquiryService';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
@@ -39,6 +41,18 @@ export function useStockInquiry(id: string | null) {
   });
 }
 
+export function useStockInquiryNeighbours(id: string | null) {
+  return useQuery({
+    queryKey: ['stock-inquiry-neighbours', id],
+    queryFn: () => {
+      if (!id) return { prev_id: null, next_id: null };
+      return getStockInquiryNeighbours(id);
+    },
+    enabled: !!id,
+    staleTime: 60 * 1000,
+  });
+}
+
 export function useCreateStockInquiry() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -69,6 +83,26 @@ export function useUpdateStockInquiry() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to update stock inquiry'),
+  });
+}
+
+export function useUpdateStockInquiryAndReply() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: Partial<StockInquiryFormData>;
+    }) => updateStockInquiryAndReply(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+      toast.success('Reply sent to customer successfully');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to update and reply'),
   });
 }
 

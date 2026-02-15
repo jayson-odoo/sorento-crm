@@ -1,0 +1,817 @@
+'use client';
+
+import { useState } from 'react';
+import Link from 'next/link';
+import { ChevronDown, Download, ExternalLink, Eye, Link2, LoaderCircleIcon, Plus, RefreshCw, Trash2, Unlink } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
+import { Button } from '@/components/ui/button';
+import { Badge, BadgeDot } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import {
+  Command,
+  CommandCheck,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { formatDate } from '@/lib/helpers';
+import {
+  useDeleteAttachment,
+  useDownloadAttachment,
+  useResubmitAttachmentWebhook,
+  useRestoreAttachment,
+} from '../hooks/useAttachments';
+import { getAttachmentMetadata } from '../services/attachmentService';
+import type { Attachment } from '../types/attachment.types';
+import type { LinkedEntityRef } from '../types/attachment.types';
+import RecordNavigation from '@/components/common/RecordNavigation';
+import AttachmentDeleteDialog from './attachment-delete-dialog';
+import { useCreateProductAttachment, useDeleteProductAttachment } from '@/app/(protected)/master-data-management/product-attachments/hooks/useProductAttachments';
+import { useCreatePromotionAttachment, useDeletePromotionAttachment } from '@/app/(protected)/marketing-management/promotion-attachments/hooks/usePromotionAttachments';
+import { useForms } from '@/app/(protected)/forms-management/forms/hooks/useForms';
+import { useUpdateForm } from '@/app/(protected)/forms-management/forms/hooks/useForms';
+import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
+import { getPromotions } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
+
+const ENTITY_ROUTES = {
+  product: { label: 'Product', path: '/master-data-management/products' },
+  promotion: { label: 'Promotion', path: '/marketing-management/promotions' },
+  form: { label: 'Form', path: '/forms-management/forms' },
+} as const;
+
+function LinkagesTable({
+  type,
+  items,
+  emptyMessage,
+  onUnlink,
+  onLink,
+  attachmentId,
+  refetch,
+}: {
+  type: keyof typeof ENTITY_ROUTES;
+  items: LinkedEntityRef[];
+  emptyMessage: string;
+  onUnlink?: (item: LinkedEntityRef) => void;
+  onLink?: () => void;
+  attachmentId: string;
+  refetch: () => void;
+}) {
+  const hasLinkId = type === 'product' || type === 'promotion';
+  const canUnlink = hasLinkId ? (item: LinkedEntityRef) => !!item.link_id : (item: LinkedEntityRef) => true;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        {items.length > 0 ? null : <p className="text-sm text-muted-foreground">{emptyMessage}</p>}
+        {onLink && (
+          <Button variant="outline" size="sm" onClick={onLink}>
+            <Plus className="size-4" />
+            Link
+          </Button>
+        )}
+      </div>
+      {items.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Description</TableHead>
+              <TableHead className="w-[140px]">Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((item) => (
+              <TableRow key={item.id}>
+                <TableCell className="font-medium">{item.name}</TableCell>
+                <TableCell className="text-muted-foreground max-w-md line-clamp-2" title={item.description ?? undefined}>
+                  {item.description ?? '—'}
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`${ENTITY_ROUTES[type].path}/${item.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline inline-flex items-center gap-1 text-sm"
+                    >
+                      View
+                      <ExternalLink className="size-3.5 shrink-0" />
+                    </Link>
+                    {onUnlink && canUnlink(item) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => onUnlink(item)}
+                      >
+                        <Unlink className="size-3.5" />
+                        Unlink
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </div>
+  );
+}
+
+function LinkagesTabs({
+  attachment,
+  onRefetch,
+}: {
+  attachment: Attachment;
+  onRefetch: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [linkDialogTab, setLinkDialogTab] = useState<keyof typeof ENTITY_ROUTES | null>(null);
+  const [linkProductId, setLinkProductId] = useState('');
+  const [linkPromotionId, setLinkPromotionId] = useState('');
+  const [linkFormId, setLinkFormId] = useState('');
+
+  const products = attachment.linked_products ?? [];
+  const promotions = attachment.linked_promotions ?? [];
+  const form = attachment.linked_form ?? null;
+
+  const createProductLink = useCreateProductAttachment();
+  const deleteProductLink = useDeleteProductAttachment();
+  const createPromotionLink = useCreatePromotionAttachment();
+  const deletePromotionLink = useDeletePromotionAttachment();
+  const updateFormMutation = useUpdateForm();
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['attachment-metadata', attachment.id] });
+    queryClient.invalidateQueries({ queryKey: ['attachments'] });
+    queryClient.invalidateQueries({ queryKey: ['product-attachments'] });
+    queryClient.invalidateQueries({ queryKey: ['promotion-attachments'] });
+    queryClient.invalidateQueries({ queryKey: ['forms'] });
+    onRefetch();
+  };
+
+  const handleUnlinkProduct = (item: LinkedEntityRef) => {
+    if (!item.link_id) return;
+    deleteProductLink.mutate(item.link_id, {
+      onSuccess: () => invalidate(),
+    });
+  };
+
+  const handleUnlinkPromotion = (item: LinkedEntityRef) => {
+    if (!item.link_id) return;
+    deletePromotionLink.mutate(item.link_id, {
+      onSuccess: () => invalidate(),
+    });
+  };
+
+  const handleUnlinkForm = (item: LinkedEntityRef) => {
+    updateFormMutation.mutate(
+      { id: item.id, data: { attachment_id: null } },
+      { onSuccess: () => invalidate() }
+    );
+  };
+
+  const handleLinkProduct = () => {
+    if (!linkProductId || !attachment.id) return;
+    createProductLink.mutate(
+      { product_id: linkProductId, attachment_id: attachment.id, access_levels: ['dealer', 'end_user'] },
+      {
+        onSuccess: () => {
+          invalidate();
+          setLinkDialogTab(null);
+          setLinkProductId('');
+        },
+      }
+    );
+  };
+
+  const handleLinkPromotion = () => {
+    if (!linkPromotionId || !attachment.id) return;
+    createPromotionLink.mutate(
+      { promotion_id: linkPromotionId, attachment_id: attachment.id },
+      {
+        onSuccess: () => {
+          invalidate();
+          setLinkDialogTab(null);
+          setLinkPromotionId('');
+        },
+      }
+    );
+  };
+
+  const handleLinkForm = () => {
+    if (!linkFormId || !attachment.id) return;
+    updateFormMutation.mutate(
+      { id: linkFormId, data: { attachment_id: attachment.id } },
+      {
+        onSuccess: () => {
+          invalidate();
+          setLinkDialogTab(null);
+          setLinkFormId('');
+        },
+      }
+    );
+  };
+
+  return (
+    <>
+      <Tabs defaultValue="products" className="w-full">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="products">
+            Products {products.length > 0 && `(${products.length})`}
+          </TabsTrigger>
+          <TabsTrigger value="promotions">
+            Promotions {promotions.length > 0 && `(${promotions.length})`}
+          </TabsTrigger>
+          <TabsTrigger value="forms">
+            Forms {form ? '(1)' : ''}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="products" className="mt-4">
+          <LinkagesTable
+            type="product"
+            items={products}
+            emptyMessage="No products linked to this attachment."
+            onUnlink={handleUnlinkProduct}
+            onLink={() => setLinkDialogTab('product')}
+            attachmentId={attachment.id}
+            refetch={onRefetch}
+          />
+        </TabsContent>
+        <TabsContent value="promotions" className="mt-4">
+          <LinkagesTable
+            type="promotion"
+            items={promotions}
+            emptyMessage="No promotions linked to this attachment."
+            onUnlink={handleUnlinkPromotion}
+            onLink={() => setLinkDialogTab('promotion')}
+            attachmentId={attachment.id}
+            refetch={onRefetch}
+          />
+        </TabsContent>
+        <TabsContent value="forms" className="mt-4">
+          <LinkagesTable
+            type="form"
+            items={form ? [form] : []}
+            emptyMessage="No form linked to this attachment."
+            onUnlink={form ? handleUnlinkForm : undefined}
+            onLink={!form ? () => setLinkDialogTab('form') : undefined}
+            attachmentId={attachment.id}
+            refetch={onRefetch}
+          />
+        </TabsContent>
+      </Tabs>
+
+      {/* Link dialogs */}
+      <Dialog open={linkDialogTab === 'product'} onOpenChange={(o) => !o && setLinkDialogTab(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Link Product</DialogTitle>
+          </DialogHeader>
+          <LinkProductForm
+            attachmentId={attachment.id}
+            linkedProductIds={products.map((p) => p.id)}
+            selectedId={linkProductId}
+            onSelect={setLinkProductId}
+            onSubmit={handleLinkProduct}
+            onCancel={() => setLinkDialogTab(null)}
+            isPending={createProductLink.isPending}
+          />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={linkDialogTab === 'promotion'} onOpenChange={(o) => !o && setLinkDialogTab(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Link Promotion</DialogTitle>
+          </DialogHeader>
+          <LinkPromotionForm
+            attachmentId={attachment.id}
+            linkedPromotionIds={promotions.map((p) => p.id)}
+            selectedId={linkPromotionId}
+            onSelect={setLinkPromotionId}
+            onSubmit={handleLinkPromotion}
+            onCancel={() => setLinkDialogTab(null)}
+            isPending={createPromotionLink.isPending}
+          />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={linkDialogTab === 'form'} onOpenChange={(o) => !o && setLinkDialogTab(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Link Form</DialogTitle>
+          </DialogHeader>
+          <LinkFormForm
+            attachmentId={attachment.id}
+            selectedId={linkFormId}
+            onSelect={setLinkFormId}
+            onSubmit={handleLinkForm}
+            onCancel={() => setLinkDialogTab(null)}
+            isPending={updateFormMutation.isPending}
+          />
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function LinkProductForm({
+  attachmentId,
+  linkedProductIds,
+  selectedId,
+  onSelect,
+  onSubmit,
+  onCancel,
+  isPending,
+}: {
+  attachmentId: string;
+  linkedProductIds: string[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const { data } = useQuery({
+    queryKey: ['products-for-link', attachmentId],
+    queryFn: () => getProducts({ pageIndex: 0, pageSize: 500, sorting: [], searchQuery: '' }),
+  });
+  const products = (data?.data ?? []).filter((p) => !linkedProductIds.includes(p.id));
+  const selected = products.find((p) => p.id === selectedId);
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label>Product</Label>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              role="combobox"
+              mode="input"
+              placeholder={!selected}
+              aria-expanded={open}
+              className="w-full justify-between"
+            >
+              {selected ? (selected.product_name || selected.product_code || selected.id) : 'Select a product...'}
+              <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
+            <Command
+              filter={(value, search) => {
+                if (!search.trim()) return 1;
+                const item = products.find((p) => p.id === value);
+                if (!item) return 0;
+                const text = `${item.product_code || ''} ${item.product_name || ''}`.toLowerCase();
+                return text.includes(search.toLowerCase()) ? 1 : 0;
+              }}
+            >
+              <CommandInput placeholder="Search product..." />
+              <CommandList>
+                <CommandEmpty>No product found.</CommandEmpty>
+                <CommandGroup>
+                  {products.map((p) => (
+                    <CommandItem
+                      key={p.id}
+                      value={p.id}
+                      onSelect={() => {
+                        onSelect(p.id);
+                        setOpen(false);
+                      }}
+                    >
+                      {p.product_name || p.product_code || p.id}
+                      {selectedId === p.id && <CommandCheck />}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button onClick={onSubmit} disabled={!selectedId || isPending}>
+          {isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : <Link2 className="size-4" />}
+          Link
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function LinkPromotionForm({
+  attachmentId,
+  linkedPromotionIds,
+  selectedId,
+  onSelect,
+  onSubmit,
+  onCancel,
+  isPending,
+}: {
+  attachmentId: string;
+  linkedPromotionIds: string[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const { data } = useQuery({
+    queryKey: ['promotions-for-link', attachmentId],
+    queryFn: () => getPromotions({ pageIndex: 0, pageSize: 500, sorting: [], searchQuery: '' }),
+  });
+  const promotions = (data?.data ?? []).filter((p) => !linkedPromotionIds.includes(p.id));
+  const selected = promotions.find((p) => p.id === selectedId);
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label>Promotion</Label>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              role="combobox"
+              mode="input"
+              placeholder={!selected}
+              aria-expanded={open}
+              className="w-full justify-between"
+            >
+              {selected ? (selected.name || selected.id) : 'Select a promotion...'}
+              <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
+            <Command
+              filter={(value, search) => {
+                if (!search.trim()) return 1;
+                const item = promotions.find((p) => p.id === value);
+                if (!item) return 0;
+                const text = (item.name || item.id || '').toLowerCase();
+                return text.includes(search.toLowerCase()) ? 1 : 0;
+              }}
+            >
+              <CommandInput placeholder="Search promotion..." />
+              <CommandList>
+                <CommandEmpty>No promotion found.</CommandEmpty>
+                <CommandGroup>
+                  {promotions.map((p) => (
+                    <CommandItem
+                      key={p.id}
+                      value={p.id}
+                      onSelect={() => {
+                        onSelect(p.id);
+                        setOpen(false);
+                      }}
+                    >
+                      {p.name || p.id}
+                      {selectedId === p.id && <CommandCheck />}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button onClick={onSubmit} disabled={!selectedId || isPending}>
+          {isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : <Link2 className="size-4" />}
+          Link
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function LinkFormForm({
+  attachmentId,
+  selectedId,
+  onSelect,
+  onSubmit,
+  onCancel,
+  isPending,
+}: {
+  attachmentId: string;
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const { data } = useForms({ pageIndex: 0, pageSize: 500, sorting: [], searchQuery: '' });
+  const forms = (data?.data ?? []).filter((f) => f.attachment_id !== attachmentId);
+  const selected = forms.find((f) => f.id === selectedId);
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label>Form</Label>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              role="combobox"
+              mode="input"
+              placeholder={!selected}
+              aria-expanded={open}
+              className="w-full justify-between"
+            >
+              {selected ? (selected.name || selected.code || selected.id) : 'Select a form...'}
+              <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
+            <Command
+              filter={(value, search) => {
+                if (!search.trim()) return 1;
+                const item = forms.find((f) => f.id === value);
+                if (!item) return 0;
+                const text = `${item.name || ''} ${item.code || ''}`.toLowerCase();
+                return text.includes(search.toLowerCase()) ? 1 : 0;
+              }}
+            >
+              <CommandInput placeholder="Search form..." />
+              <CommandList>
+                <CommandEmpty>No form found.</CommandEmpty>
+                <CommandGroup>
+                  {forms.map((f) => (
+                    <CommandItem
+                      key={f.id}
+                      value={f.id}
+                      onSelect={() => {
+                        onSelect(f.id);
+                        setOpen(false);
+                      }}
+                    >
+                      {f.name || f.code || f.id}
+                      {selectedId === f.id && <CommandCheck />}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button onClick={onSubmit} disabled={!selectedId || isPending}>
+          {isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : <Link2 className="size-4" />}
+          Link
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+interface AttachmentDetailModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  attachmentId: string | null;
+  /** Current page attachments for prev/next navigation. When provided with onAttachmentChange, chevron nav is shown. */
+  neighbourItems?: Array<{ id: string }>;
+  /** Called when user clicks prev/next to switch attachment in modal. */
+  onAttachmentChange?: (id: string) => void;
+}
+
+function getPreviewUrl(attachment: Attachment): string {
+  const fp = attachment.file_path || '';
+  if (fp.startsWith('http://') || fp.startsWith('https://')) return fp;
+  if (typeof window === 'undefined') return '';
+  return `${window.location.origin}/api/v1/resource-management/attachments/${attachment.id}/download`;
+}
+
+export default function AttachmentDetailModal({
+  open,
+  onOpenChange,
+  attachmentId,
+  neighbourItems = [],
+  onAttachmentChange,
+}: AttachmentDetailModalProps) {
+  const queryClient = useQueryClient();
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  const { data: attachment, isLoading } = useQuery({
+    queryKey: ['attachment-metadata', attachmentId],
+    queryFn: () => getAttachmentMetadata(attachmentId!),
+    enabled: !!attachmentId && open,
+    retry: 1,
+  });
+
+  const downloadMutation = useDownloadAttachment();
+  const resubmitMutation = useResubmitAttachmentWebhook();
+  const restoreMutation = useRestoreAttachment();
+
+  const formatFileSize = (bytes: number | null | undefined) => {
+    if (!bytes) return '-';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  };
+
+  const handleDownload = async (file: Attachment) => {
+    try {
+      const blob = await downloadMutation.mutateAsync(file.id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.original_filename || 'download';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch {
+      // handled by toast
+    }
+  };
+
+  const handlePreview = (att: Attachment) => {
+    window.open(getPreviewUrl(att), '_blank', 'noopener,noreferrer');
+  };
+
+  const handleClose = () => {
+    onOpenChange(false);
+    queryClient.invalidateQueries({ queryKey: ['attachments'] });
+  };
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden p-0">
+          <DialogHeader className="px-6 pt-6 pb-0 pr-12 flex flex-row items-center justify-between gap-4">
+            <DialogTitle className="text-xl truncate min-w-0 flex-1">
+              {attachment?.original_filename ?? (isLoading ? 'Loading...' : 'Attachment')}
+            </DialogTitle>
+            {neighbourItems.length > 0 && onAttachmentChange && attachmentId && (
+              <RecordNavigation
+                basePath=""
+                currentId={attachmentId}
+                items={neighbourItems}
+                ariaLabel="attachment"
+                onSelect={onAttachmentChange}
+              />
+            )}
+          </DialogHeader>
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6">
+            {isLoading ? (
+              <div className="space-y-4 py-6">
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-32 w-full" />
+                <Skeleton className="h-32 w-full" />
+              </div>
+            ) : !attachment ? (
+              <p className="py-8 text-muted-foreground text-center">Attachment not found</p>
+            ) : (
+              <div className="space-y-6 py-6">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePreview(attachment)}
+                    title="Preview in new tab"
+                  >
+                    <Eye className="size-4" />
+                    Preview
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleDownload(attachment)}
+                    disabled={downloadMutation.isPending}
+                  >
+                    <Download className="size-4" />
+                    Download
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => resubmitMutation.mutate(attachment.id)}
+                    disabled={resubmitMutation.isPending || attachment.is_deleted}
+                  >
+                    <RefreshCw className={`size-4 ${resubmitMutation.isPending ? 'animate-spin' : ''}`} />
+                    Resubmit
+                  </Button>
+                  {attachment.is_deleted ? (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => restoreMutation.mutate(attachment.id)}
+                        disabled={restoreMutation.isPending}
+                      >
+                        Restore
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}>
+                        <Trash2 className="size-4" />
+                        Permanently Delete
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}>
+                      <Trash2 className="size-4" />
+                      Move to Trash
+                    </Button>
+                  )}
+                </div>
+
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-base">Attachment Details</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4 pt-0">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-sm text-muted-foreground">File Type</p>
+                        <p className="font-medium">{attachment.mime_type || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">File Size</p>
+                        <p className="font-medium">{formatFileSize(attachment.file_size_bytes)}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Uploaded By</p>
+                        <p className="font-medium">
+                          {attachment.uploaded_by_user?.name ??
+                            attachment.uploaded_by_user?.email ??
+                            attachment.uploaded_by ??
+                            '-'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Uploaded</p>
+                        <p className="font-medium">{formatDate(new Date(attachment.uploaded_at))}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Status</p>
+                        <Badge
+                          variant={attachment.is_deleted ? 'destructive' : 'success'}
+                          appearance="ghost"
+                        >
+                          <BadgeDot />
+                          {attachment.is_deleted ? 'Deleted' : 'Active'}
+                        </Badge>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="py-4">
+                    <CardTitle className="text-base">Linkages</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <LinkagesTabs attachment={attachment} onRefetch={() => queryClient.invalidateQueries({ queryKey: ['attachments'] })} />
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {attachment && (
+        <AttachmentDeleteDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          attachment={attachment}
+          permanent={attachment.is_deleted}
+          onSuccess={() => {
+            onOpenChange(false);
+            queryClient.invalidateQueries({ queryKey: ['attachments'] });
+          }}
+        />
+      )}
+    </>
+  );
+}

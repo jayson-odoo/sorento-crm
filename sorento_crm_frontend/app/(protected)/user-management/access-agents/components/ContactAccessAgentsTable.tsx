@@ -146,7 +146,21 @@ export default function ContactAccessAgentsTable({ accessAgentId }: ContactAcces
         {isLoading ? (
           <div className="text-center py-8 text-muted-foreground">Loading contact access agents...</div>
         ) : (
-          <DataGrid table={table} recordCount={contactAccesses?.length || 0} isLoading={isLoading}>
+          <DataGrid
+            table={table}
+            recordCount={contactAccesses?.length || 0}
+            isLoading={isLoading}
+            emptyMessage={
+              <div className="text-center py-8 text-muted-foreground">
+                <p>No contact access agents yet.</p>
+                <p className="text-sm mt-1">Add contact access to control which contacts can use this agent.</p>
+                <Button variant="outline" size="sm" className="mt-3" onClick={handleAdd}>
+                  <Plus className="size-4" />
+                  Add Contact Access
+                </Button>
+              </div>
+            }
+          >
             <ScrollArea>
               <DataGridTable />
               <ScrollBar orientation="horizontal" />

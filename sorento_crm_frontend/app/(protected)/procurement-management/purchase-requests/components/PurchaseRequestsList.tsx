@@ -40,6 +40,22 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
   sponsorship_form: 'Sponsorship Form',
 };
 
+/** Display status: draft → pending_approval → approved (or rejected). Resend sets back to pending_approval. */
+function getDisplayStatus(row: PurchaseRequest): string {
+  const a = row.approval_status;
+  if (!a || a === '') return 'Draft';
+  if (a === 'pending') return 'Pending approval';
+  if (a === 'approved') return 'Approved';
+  if (a === 'rejected') return 'Rejected';
+  return a;
+}
+
+function getStatusVariant(status: string): 'secondary' | 'primary' | 'destructive' {
+  if (status === 'Approved') return 'primary';
+  if (status === 'Rejected') return 'destructive';
+  return 'secondary';
+}
+
 const DEFAULT_BASE_PATH = '/procurement-management/purchase-requests';
 
 interface PurchaseRequestsListProps {
@@ -114,6 +130,23 @@ export default function PurchaseRequestsList({
             ? formatDate(new Date(row.original.request_date))
             : '-',
         size: 120,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        accessorKey: 'approval_status',
+        id: 'status',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Status" column={column} />
+        ),
+        size: 140,
+        cell: ({ row }) => {
+          const status = getDisplayStatus(row.original);
+          return (
+            <Badge variant={getStatusVariant(status)} className="capitalize">
+              {status}
+            </Badge>
+          );
+        },
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {

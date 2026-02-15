@@ -10,13 +10,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { useBulkDeleteAttachments } from '../hooks/useAttachments';
+import { useBulkDeleteAttachments, useBulkArchiveAttachments } from '../hooks/useAttachments';
 
 interface AttachmentBulkDeleteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   attachmentIds: string[];
   onSuccess?: () => void;
+  /** When true, permanently delete. When false, archive (move to trash). */
+  permanent?: boolean;
 }
 
 export default function AttachmentBulkDeleteDialog({
@@ -24,12 +26,15 @@ export default function AttachmentBulkDeleteDialog({
   onOpenChange,
   attachmentIds,
   onSuccess,
+  permanent = false,
 }: AttachmentBulkDeleteDialogProps) {
   const bulkDeleteMutation = useBulkDeleteAttachments();
+  const bulkArchiveMutation = useBulkArchiveAttachments();
+  const mutation = permanent ? bulkDeleteMutation : bulkArchiveMutation;
 
-  const handleDelete = () => {
+  const handleAction = () => {
     if (attachmentIds.length === 0) return;
-    bulkDeleteMutation.mutate(attachmentIds, {
+    mutation.mutate(attachmentIds, {
       onSuccess: () => {
         onOpenChange(false);
         onSuccess?.();
@@ -41,11 +46,22 @@ export default function AttachmentBulkDeleteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Confirm bulk delete</DialogTitle>
+          <DialogTitle>
+            {permanent ? 'Permanently delete' : 'Move to trash'}
+          </DialogTitle>
         </DialogHeader>
         <DialogDescription>
-          Are you sure you want to delete {attachmentIds.length} attachment
-          {attachmentIds.length !== 1 ? 's' : ''}? This action cannot be undone.
+          {permanent ? (
+            <>
+              Permanently delete {attachmentIds.length} attachment
+              {attachmentIds.length !== 1 ? 's' : ''}? This action cannot be undone.
+            </>
+          ) : (
+            <>
+              Move {attachmentIds.length} attachment{attachmentIds.length !== 1 ? 's' : ''} to trash?
+              You can restore them later.
+            </>
+          )}
         </DialogDescription>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -53,13 +69,14 @@ export default function AttachmentBulkDeleteDialog({
           </Button>
           <Button
             variant="destructive"
-            onClick={handleDelete}
-            disabled={bulkDeleteMutation.isPending}
+            onClick={handleAction}
+            disabled={mutation.isPending}
           >
-            {bulkDeleteMutation.isPending && (
+            {mutation.isPending && (
               <LoaderCircleIcon className="animate-spin mr-2" />
             )}
-            Delete {attachmentIds.length} attachment{attachmentIds.length !== 1 ? 's' : ''}
+            {permanent ? 'Permanently Delete' : 'Move to Trash'} {attachmentIds.length} attachment
+            {attachmentIds.length !== 1 ? 's' : ''}
           </Button>
         </DialogFooter>
       </DialogContent>

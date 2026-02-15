@@ -1,3 +1,10 @@
+export interface LinkedEntityRef {
+  id: string;
+  name: string;
+  description?: string | null;
+  link_id?: string | null; // ProductAttachment/PromotionAttachment id for unlink; form uses id
+}
+
 export interface Attachment {
   id: string;
   attachment_type_id?: string | null;
@@ -9,6 +16,12 @@ export interface Attachment {
   file_hash?: string | null;
   entity_type: string | null;
   entity_id: string | null;
+  directory_id?: string | null;
+  full_directory_path?: string | null;  // e.g. "SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve"
+  entity_display_name?: string | null;
+  linked_products?: LinkedEntityRef[];
+  linked_promotions?: LinkedEntityRef[];
+  linked_form?: LinkedEntityRef | null;
   uploaded_by?: string | null;
   uploaded_at: Date;
   is_deleted: boolean;
@@ -39,6 +52,19 @@ export interface AttachmentTypeSimple {
   description?: string | null;
 }
 
+// Nested attachment shape returned by product-attachments API (AttachmentSimple)
+export interface AttachmentSimple {
+  id: string;
+  original_filename: string;
+  stored_filename: string;
+  file_path: string;
+  file_size_bytes?: number | null;
+  mime_type?: string | null;
+  uploaded_at: Date | string;
+  attachment_type?: AttachmentTypeSimple | null;
+  full_directory_path?: string | null;
+}
+
 export interface AttachmentResponse {
   id: string;
   attachment_type_id?: string | null;
@@ -50,6 +76,12 @@ export interface AttachmentResponse {
   file_hash?: string | null;
   entity_type?: string | null;
   entity_id?: string | null;
+  directory_id?: string | null;
+  full_directory_path?: string | null;
+  entity_display_name?: string | null;
+  linked_products?: LinkedEntityRef[];
+  linked_promotions?: LinkedEntityRef[];
+  linked_form?: LinkedEntityRef | null;
   uploaded_by?: string | null;
   uploaded_at: Date | string;
   is_deleted: boolean;

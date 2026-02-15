@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, LoaderCircleIcon, Eye, Download, Upload } from 'lucide-react';
+import { Plus, Trash2, LoaderCircleIcon, Eye, Download, Folder, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
@@ -88,6 +89,115 @@ export default function ProductAttachmentsTab({
     );
   };
 
+  // Group attachments by full_directory_path; use "Uncategorized" when null/empty
+  const groupedByDirectory = useMemo(() => {
+    if (!productAttachments || productAttachments.length === 0) return [];
+    const groups = new Map<string, ProductAttachment[]>();
+    for (const pa of productAttachments) {
+      const path = pa.attachment?.full_directory_path?.trim() || null;
+      const key = path || 'Uncategorized';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(pa);
+    }
+    // Sort: Uncategorized first, then alphabetically by path
+    const entries = Array.from(groups.entries()).sort(([a], [b]) => {
+      if (a === 'Uncategorized') return -1;
+      if (b === 'Uncategorized') return 1;
+      return a.localeCompare(b);
+    });
+    return entries;
+  }, [productAttachments]);
+
+  const renderAttachmentItem = (pa: ProductAttachment) => (
+    <div
+      key={pa.id}
+      className="flex items-center justify-between rounded-lg border p-4"
+    >
+      <div className="flex items-center gap-3 flex-1">
+        {pa.is_primary && (
+          <Badge variant="primary">Primary</Badge>
+        )}
+        <div className="flex-1">
+          <p className="font-medium text-sm">
+            {pa.attachment?.original_filename || 'Unknown'}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {pa.attachment?.attachment_type?.type_name || 'No type'} •{' '}
+            {formatFileSize(pa.attachment?.file_size_bytes)} •{' '}
+            {pa.attachment?.uploaded_at && formatDate(new Date(pa.attachment.uploaded_at))}
+          </p>
+          {renderAccessLevels(pa.access_levels)}
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => pa.attachment?.id && window.open(pa.attachment.file_path, '_blank')}
+        >
+          <Eye className="size-4" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            if (pa.attachment?.id && pa.attachment?.original_filename) {
+              handleDownload(pa.attachment.id, pa.attachment.original_filename);
+            }
+          }}
+        >
+          <Download className="size-4" />
+        </Button>
+        {isEditMode && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => handleRemove(pa.id)}
+            disabled={deleteMutation.isPending}
+          >
+            {deleteMutation.isPending ? (
+              <LoaderCircleIcon className="size-4 animate-spin" />
+            ) : (
+              <Trash2 className="size-4 text-destructive" />
+            )}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderDirectoryGroups = () => (
+    <div className="space-y-3">
+      {groupedByDirectory.map(([dirPath, items]) => (
+        <Collapsible key={dirPath} defaultOpen>
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="group flex w-full items-center gap-2 rounded-lg border bg-muted/50 px-4 py-3 text-left hover:bg-muted transition-colors"
+            >
+              <ChevronDown className="size-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+              <Folder className="size-4 shrink-0 text-muted-foreground" />
+              <span className="font-medium text-sm truncate">
+                {dirPath}
+              </span>
+              <Badge variant="secondary" className="ml-auto shrink-0">
+                {items.length} {items.length === 1 ? 'file' : 'files'}
+              </Badge>
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="mt-2 space-y-2 pl-6 border-l-2 border-muted ml-2">
+              {items.map((pa) => renderAttachmentItem(pa))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      ))}
+    </div>
+  );
+
   if (!isEditMode) {
     return (
       <Card>
@@ -101,57 +211,7 @@ export default function ProductAttachmentsTab({
               <Skeleton className="h-10 w-full" />
             </div>
           ) : productAttachments && productAttachments.length > 0 ? (
-            <div className="space-y-3">
-              {productAttachments.map((pa) => (
-                <div
-                  key={pa.id}
-                  className="flex items-center justify-between rounded-lg border p-4"
-                >
-                  <div className="flex items-center gap-3 flex-1">
-                    {pa.is_primary && (
-                      <Badge variant="primary">Primary</Badge>
-                    )}
-                    <div className="flex-1">
-                      <p className="font-medium text-sm">
-                        {pa.attachment?.original_filename || 'Unknown'}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {pa.attachment?.attachment_type?.type_name || 'No type'} •{' '}
-                        {formatFileSize(pa.attachment?.file_size_bytes)} •{' '}
-                        {pa.attachment?.uploaded_at && formatDate(new Date(pa.attachment.uploaded_at))}
-                      </p>
-                    {renderAccessLevels(pa.access_levels)}
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        if (pa.attachment?.id) {
-                          window.open(pa.attachment.file_path, '_blank');
-                        }
-                      }}
-                    >
-                      <Eye className="size-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        if (pa.attachment?.id && pa.attachment?.original_filename) {
-                          handleDownload(pa.attachment.id, pa.attachment.original_filename);
-                        }
-                      }}
-                    >
-                      <Download className="size-4" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
+            renderDirectoryGroups()
           ) : (
             <p className="text-sm text-muted-foreground">
               No attachments linked to this product.
@@ -185,67 +245,7 @@ export default function ProductAttachmentsTab({
             <Skeleton className="h-10 w-full" />
           </div>
         ) : productAttachments && productAttachments.length > 0 ? (
-          <div className="space-y-3">
-            {productAttachments.map((pa) => (
-              <div
-                key={pa.id}
-                className="flex items-center justify-between rounded-lg border p-4"
-              >
-                <div className="flex items-center gap-3 flex-1">
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">
-                      {pa.attachment?.original_filename || 'Unknown'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {pa.attachment?.attachment_type?.type_name || 'No type'} •{' '}
-                      {formatFileSize(pa.attachment?.file_size_bytes)} •{' '}
-                      {pa.attachment?.uploaded_at && formatDate(new Date(pa.attachment.uploaded_at))}
-                    </p>
-                    {renderAccessLevels(pa.access_levels)}
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (pa.attachment?.id) {
-                        window.open(pa.attachment.file_path, '_blank');
-                      }
-                    }}
-                  >
-                    <Eye className="size-4" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (pa.attachment?.id && pa.attachment?.original_filename) {
-                        handleDownload(pa.attachment.id, pa.attachment.original_filename);
-                      }
-                    }}
-                  >
-                    <Download className="size-4" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleRemove(pa.id)}
-                    disabled={deleteMutation.isPending}
-                  >
-                    {deleteMutation.isPending ? (
-                      <LoaderCircleIcon className="size-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="size-4 text-destructive" />
-                    )}
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
+          renderDirectoryGroups()
         ) : (
           <p className="text-sm text-muted-foreground">
             No attachments linked to this product. Upload a new attachment or link an existing one.

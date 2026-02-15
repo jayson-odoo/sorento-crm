@@ -15,11 +15,21 @@ export const metadata: Metadata = {
   description: 'View attachment details and actions.',
 };
 
-export default function AttachmentDetailPage({
+export default async function AttachmentDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string; directoryId?: string }>;
 }) {
+  const resolvedSearchParams = await searchParams;
+  const fromDirectories = resolvedSearchParams?.from === 'directories';
+  const directoryId = resolvedSearchParams?.directoryId;
+
+  const backUrl = fromDirectories
+    ? `/resource-management/attachment-directories${directoryId ? `?directoryId=${directoryId}` : ''}`
+    : '/resource-management/attachments';
+
   return (
     <Container>
       <Breadcrumb>
@@ -29,8 +39,8 @@ export default function AttachmentDetailPage({
           </BreadcrumbItem>
           <BreadcrumbSeparator />
           <BreadcrumbItem>
-            <BreadcrumbLink href="/resource-management/attachments">
-              Attachments
+            <BreadcrumbLink href={backUrl}>
+              {fromDirectories ? 'Attachment Directories' : 'Attachments'}
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />
@@ -40,7 +50,7 @@ export default function AttachmentDetailPage({
         </BreadcrumbList>
       </Breadcrumb>
       <div className="mt-6">
-        <AttachmentDetailWrapper params={params} />
+        <AttachmentDetailWrapper params={params} fromDirectories={fromDirectories} directoryId={directoryId} />
       </div>
     </Container>
   );
@@ -48,9 +58,13 @@ export default function AttachmentDetailPage({
 
 async function AttachmentDetailWrapper({
   params,
+  fromDirectories,
+  directoryId,
 }: {
   params: Promise<{ id: string }>;
+  fromDirectories: boolean;
+  directoryId?: string;
 }) {
   const { id } = await params;
-  return <AttachmentDetail attachmentId={id} />;
+  return <AttachmentDetail attachmentId={id} fromDirectories={fromDirectories} directoryId={directoryId} />;
 }

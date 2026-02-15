@@ -27,9 +27,29 @@ export interface PurchaseRequest {
   contact_id?: string | null;
   space_id?: string | null;
   respond_inbox_url?: string | null;
+  approver_user_id?: string | null;
+  approver_email?: string | null;
+  approver_display_name?: string | null;
+  approval_status?: string | null;
+  approved_at?: string | null;
+  approved_by?: string | null;
+  approval_signature_ref?: string | null;
+  approval_comments?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   lines?: PurchaseRequestLine[];
+}
+
+export interface SendApprovalLinkRequest {
+  approver_email?: string | null;
+  approver_user_id?: string | null;
+  expires_hours?: number;
+}
+
+export interface SendApprovalLinkResponse {
+  approval_url: string;
+  expires_at: string;
+  token_id: string;
 }
 
 export interface PurchaseRequestLineFormData {

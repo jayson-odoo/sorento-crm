@@ -13,6 +13,9 @@ export interface StockInquiry {
   contact_id?: string | null;
   space_id?: string | null;
   respond_inbox_url?: string | null;
+  status?: string | null;
+  last_responded_by?: string | null;
+  last_responded_at?: string | null;
   created_at: Date;
   updated_at: Date;
 }

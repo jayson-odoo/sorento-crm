@@ -2,12 +2,15 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, RefreshCw, Trash2 } from 'lucide-react';
+import Link from 'next/link';
+import { Download, Eye, RefreshCw, Trash2, ExternalLink } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDate } from '@/lib/helpers';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import {
@@ -21,11 +24,138 @@ import { getAttachmentMetadata } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
 
-interface AttachmentDetailProps {
-  attachmentId: string;
+const ENTITY_ROUTES = {
+  product: { label: 'Product', path: '/master-data-management/products' },
+  promotion: { label: 'Promotion', path: '/marketing-management/promotions' },
+  form: { label: 'Form', path: '/forms-management/forms' },
+} as const;
+
+function LinkedEntityLink({
+  type,
+  id,
+  name,
+}: {
+  type: keyof typeof ENTITY_ROUTES;
+  id: string;
+  name: string;
+}) {
+  const config = ENTITY_ROUTES[type];
+  const href = `${config.path}/${id}`;
+  return (
+    <Link
+      href={href}
+      className="text-primary hover:underline inline-flex items-center gap-1"
+    >
+      {name}
+      <ExternalLink className="size-3.5 shrink-0" />
+    </Link>
+  );
 }
 
-export default function AttachmentDetail({ attachmentId }: AttachmentDetailProps) {
+function LinkagesTable({
+  type,
+  items,
+  emptyMessage,
+}: {
+  type: keyof typeof ENTITY_ROUTES;
+  items: Array<{ id: string; name: string; description?: string | null }>;
+  emptyMessage: string;
+}) {
+  if (items.length === 0) {
+    return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Name</TableHead>
+          <TableHead>Description</TableHead>
+          <TableHead className="w-[80px]">Action</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {items.map((item) => (
+          <TableRow key={item.id}>
+            <TableCell className="font-medium">{item.name}</TableCell>
+            <TableCell className="text-muted-foreground max-w-md line-clamp-2" title={item.description ?? undefined}>
+              {item.description ?? '—'}
+            </TableCell>
+            <TableCell>
+              <Link
+                href={`${ENTITY_ROUTES[type].path}/${item.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline inline-flex items-center gap-1 text-sm"
+              >
+                View
+                <ExternalLink className="size-3.5 shrink-0" />
+              </Link>
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function LinkagesTabs({ attachment }: { attachment: Attachment }) {
+  const products = attachment.linked_products ?? [];
+  const promotions = attachment.linked_promotions ?? [];
+  const form = attachment.linked_form ?? null;
+
+  return (
+    <Tabs defaultValue="products" className="w-full">
+      <TabsList className="grid w-full grid-cols-3">
+        <TabsTrigger value="products">
+          Products {products.length > 0 && `(${products.length})`}
+        </TabsTrigger>
+        <TabsTrigger value="promotions">
+          Promotions {promotions.length > 0 && `(${promotions.length})`}
+        </TabsTrigger>
+        <TabsTrigger value="forms">
+          Forms {form ? '(1)' : ''}
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent value="products" className="mt-4">
+        <LinkagesTable
+          type="product"
+          items={products}
+          emptyMessage="No products linked to this attachment."
+        />
+      </TabsContent>
+      <TabsContent value="promotions" className="mt-4">
+        <LinkagesTable
+          type="promotion"
+          items={promotions}
+          emptyMessage="No promotions linked to this attachment."
+        />
+      </TabsContent>
+      <TabsContent value="forms" className="mt-4">
+        {form ? (
+          <LinkagesTable
+            type="form"
+            items={[form]}
+            emptyMessage="No form linked to this attachment."
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">No form linked to this attachment.</p>
+        )}
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+interface AttachmentDetailProps {
+  attachmentId: string;
+  fromDirectories?: boolean;
+  directoryId?: string;
+}
+
+export default function AttachmentDetail({
+  attachmentId,
+  fromDirectories = false,
+  directoryId,
+}: AttachmentDetailProps) {
   const router = useRouter();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const deleteMutation = useDeleteAttachment();
@@ -84,16 +214,20 @@ export default function AttachmentDetail({ attachmentId }: AttachmentDetailProps
     );
   }
 
+  const listPath = fromDirectories
+    ? `/resource-management/attachment-directories${directoryId ? `?directoryId=${directoryId}` : ''}`
+    : '/resource-management/attachments';
+
   if (!attachment) {
     return (
       <div className="text-center py-12">
         <p className="text-muted-foreground">Attachment not found</p>
         <Button
           variant="outline"
-          onClick={() => router.push('/resource-management/attachments')}
+          onClick={() => router.push(listPath)}
           className="mt-4"
         >
-          Back to Attachments
+          Back to {fromDirectories ? 'Attachment Directories' : 'Attachments'}
         </Button>
       </div>
     );
@@ -112,8 +246,22 @@ export default function AttachmentDetail({ attachmentId }: AttachmentDetailProps
           <RecordNavigation
             currentId={attachmentId}
             items={navigationItems}
-            basePath="/resource-management/attachments"
+            basePath={listPath}
           />
+          <Button
+            variant="outline"
+            onClick={() => {
+              const fp = attachment.file_path || '';
+              const url =
+                fp.startsWith('http://') || fp.startsWith('https://')
+                  ? fp
+                  : `${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/resource-management/attachments/${attachment.id}/download`;
+              window.open(url, '_blank', 'noopener,noreferrer');
+            }}
+          >
+            <Eye className="size-4" />
+            Preview
+          </Button>
           <Button
             variant="outline"
             onClick={() => handleDownload(attachment)}
@@ -131,17 +279,23 @@ export default function AttachmentDetail({ attachmentId }: AttachmentDetailProps
             Resubmit
           </Button>
           {attachment.is_deleted ? (
-            <Button
-              variant="outline"
-              onClick={() => restoreMutation.mutate(attachment.id)}
-              disabled={restoreMutation.isPending}
-            >
-              Restore
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                onClick={() => restoreMutation.mutate(attachment.id)}
+                disabled={restoreMutation.isPending}
+              >
+                Restore
+              </Button>
+              <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
+                <Trash2 className="size-4" />
+                Permanently Delete
+              </Button>
+            </>
           ) : (
             <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
               <Trash2 className="size-4" />
-              Delete
+              Move to Trash
             </Button>
           )}
         </div>
@@ -162,17 +316,9 @@ export default function AttachmentDetail({ attachmentId }: AttachmentDetailProps
               <p className="font-medium">{formatFileSize(attachment.file_size_bytes)}</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">Entity Type</p>
-              <p className="font-medium">{attachment.entity_type || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Entity ID</p>
-              <p className="font-medium">{attachment.entity_id || '-'}</p>
-            </div>
-            <div>
               <p className="text-sm text-muted-foreground">Uploaded By</p>
               <p className="font-medium">
-                {attachment.uploaded_by_user?.name || attachment.uploaded_by || '-'}
+                {attachment.uploaded_by_user?.name ?? attachment.uploaded_by_user?.email ?? attachment.uploaded_by ?? '-'}
               </p>
             </div>
             <div>
@@ -185,13 +331,16 @@ export default function AttachmentDetail({ attachmentId }: AttachmentDetailProps
                 {attachment.is_deleted ? 'Deleted' : 'Active'}
               </Badge>
             </div>
-            {attachment.file_hash && (
-              <div className="md:col-span-2">
-                <p className="text-sm text-muted-foreground">File Hash</p>
-                <p className="font-medium font-mono break-all">{attachment.file_hash}</p>
-              </div>
-            )}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Linkages</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <LinkagesTabs attachment={attachment} />
         </CardContent>
       </Card>
 
@@ -199,6 +348,7 @@ export default function AttachmentDetail({ attachmentId }: AttachmentDetailProps
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         attachment={attachment}
+        permanent={attachment.is_deleted}
       />
     </div>
   );

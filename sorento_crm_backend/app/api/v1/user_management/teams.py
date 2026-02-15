@@ -1,0 +1,141 @@
+"""Teams API for round-robin assignee pools."""
+from fastapi import APIRouter, Depends, HTTPException
+
+from app.database import get_db
+from app.dependencies import get_current_user
+from app.services.user_service import TeamService
+from app.schemas.user import TeamCreate, TeamUpdate, TeamResponse, TeamMemberResponse
+from app.services.error_handler import handle_internal_error
+
+router = APIRouter()
+
+
+@router.get("/", response_model=list[TeamResponse])
+async def list_teams(
+      current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """List all teams."""
+    try:
+        service = TeamService(db)
+        return service.list_teams()
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{team_id}", response_model=TeamResponse)
+async def get_team(
+    team_id: str,
+      current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Get a team by ID."""
+    try:
+        service = TeamService(db)
+        return service.get_team(team_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/", response_model=TeamResponse, status_code=201)
+async def create_team(
+    data: TeamCreate,
+      current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Create a team."""
+    try:
+        service = TeamService(db)
+        return service.create_team(data)
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{team_id}", response_model=TeamResponse)
+async def update_team(
+    team_id: str,
+    data: TeamUpdate,
+      current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Update a team."""
+    try:
+        service = TeamService(db)
+        return service.update_team(team_id, data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/{team_id}", status_code=200)
+async def delete_team(
+    team_id: str,
+      current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Delete a team."""
+    try:
+        service = TeamService(db)
+        service.delete_team(team_id)
+        return {"message": "Team deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{team_id}/members", response_model=list[TeamMemberResponse])
+async def list_team_members(
+    team_id: str,
+      current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """List members of a team."""
+    try:
+        service = TeamService(db)
+        return service.list_team_members(team_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{team_id}/members", response_model=TeamMemberResponse, status_code=201)
+async def add_team_member(
+    team_id: str,
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Add a user to a team. Body: { "user_id": "<id>", "sort_order": optional int }."""
+    try:
+        user_id = body.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=400, detail="user_id is required")
+        service = TeamService(db)
+        return service.add_team_member(team_id, user_id, body.get("sort_order"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/{team_id}/members/{user_id}", status_code=200)
+async def remove_team_member(
+    team_id: str,
+    user_id: str,
+      current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Remove a user from a team."""
+    try:
+        service = TeamService(db)
+        service.remove_team_member(team_id, user_id)
+        return {"message": "Member removed"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))

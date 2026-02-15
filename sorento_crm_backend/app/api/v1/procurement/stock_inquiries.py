@@ -1,5 +1,5 @@
 """Stock inquiries API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
@@ -10,6 +10,17 @@ from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
+
+
+def _respond_user_id_from_current_user(current_user: dict) -> str:
+    """Get respond_user_id for SLA/response tracking; fallback to user id."""
+    rid = (current_user or {}).get("respond_user_id") or (current_user or {}).get("respondUserId")
+    if rid and str(rid).strip():
+        return str(rid).strip()
+    uid = (current_user or {}).get("id")
+    if uid and str(uid).strip():
+        return str(uid).strip()
+    raise HTTPException(status_code=400, detail="User respond_user_id or id is required for Update & Reply.")
 
 
 @router.get("/", response_model=ListResponse[StockInquiryResponse])
@@ -39,6 +50,22 @@ async def get_stock_inquiries(
         raise handle_internal_error(str(e))
 
 
+@router.get("/neighbours")
+async def get_stock_inquiry_neighbours(
+    inquiry_id: Optional[str] = Query(None, alias="id", description="Stock inquiry ID"),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db)
+):
+    """Return prev_id and next_id for navigation (order: id desc)."""
+    if not inquiry_id:
+        return {"prev_id": None, "next_id": None}
+    try:
+        service = StockInquiryService(db)
+        return service.get_neighbour_ids(inquiry_id)
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{inquiry_id}", response_model=StockInquiryResponse)
 async def get_stock_inquiry(
     inquiry_id: str,
@@ -59,6 +86,7 @@ async def get_stock_inquiry(
 @router.post("/", response_model=StockInquiryResponse, status_code=status.HTTP_201_CREATED)
 async def create_stock_inquiry(
     inquiry_data: StockInquiryCreate,
+    request: Request,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -66,6 +94,7 @@ async def create_stock_inquiry(
     try:
         service = StockInquiryService(db)
         inquiry = service.create_inquiry(inquiry_data)
+        db.commit()
         return inquiry
     except HTTPException:
         raise
@@ -77,6 +106,7 @@ async def create_stock_inquiry(
 async def update_stock_inquiry(
     inquiry_id: str,
     inquiry_data: StockInquiryUpdate,
+    request: Request,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -84,6 +114,33 @@ async def update_stock_inquiry(
     try:
         service = StockInquiryService(db)
         inquiry = service.update_inquiry(inquiry_id, inquiry_data)
+        db.commit()
+        return inquiry
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{inquiry_id}/update-and-reply", response_model=StockInquiryResponse)
+async def update_stock_inquiry_and_reply(
+    inquiry_id: str,
+    inquiry_data: StockInquiryUpdate,
+    request: Request,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db)
+):
+    """Update inquiry, send purchasing response to customer via Respond.io, and mark SLA as responded."""
+    try:
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = StockInquiryService(db)
+        inquiry = service.update_inquiry_and_reply(
+            inquiry_id,
+            inquiry_data,
+            respond_user_id=respond_user_id,
+            request_url=str(request.url) if request else "",
+        )
+        db.commit()
         return inquiry
     except HTTPException:
         raise

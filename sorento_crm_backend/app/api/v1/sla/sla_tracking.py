@@ -31,17 +31,22 @@ async def get_sla_tracking_dashboard(
     db: Session = Depends(get_db)
 ):
     """Get dashboard metrics for SLA tracking."""
+    import logging
+    import traceback
+    logger = logging.getLogger(__name__)
     try:
         service = ConversationSLATrackingService(db)
         metrics = service.get_dashboard_metrics()
         return metrics
     except Exception as e:
-        import logging
-        import traceback
-        logger = logging.getLogger(__name__)
+        tb = traceback.format_exc()
         logger.error(f"Error in get_sla_tracking_dashboard: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise handle_internal_error(str(e))
+        logger.error(tb)
+        # Include detail in response for debugging (remove in production if desired)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"message": str(e), "type": type(e).__name__, "traceback": tb},
+        )
 
 
 @router.get("/", response_model=ListResponse[ConversationSLATrackingResponse])

@@ -11,8 +11,14 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, FileDown } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, FileDown, Cog } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -142,6 +148,18 @@ export default function StockInquiriesList() {
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        accessorKey: 'status',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Status" column={column} />
+        ),
+        size: 110,
+        cell: ({ row }) => {
+          const s = row.original.status;
+          return s ? <span className="capitalize">{s}</span> : '-';
+        },
+        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
+      },
+      {
         accessorKey: 'actions',
         header: '',
         cell: () => (
@@ -198,14 +216,22 @@ export default function StockInquiriesList() {
             )}
           </div>
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={handleExportExcel}
-              disabled={exporting || !data?.data?.length}
-            >
-              <FileDown />
-              {exporting ? 'Exporting…' : 'Export to Excel'}
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" aria-label="Options">
+                  <Cog className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  onClick={handleExportExcel}
+                  disabled={exporting || !data?.data?.length}
+                >
+                  <FileDown className="size-4" />
+                  {exporting ? 'Exporting…' : 'Export to Excel'}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               onClick={() =>
                 router.push('/procurement-management/stock-inquiries/new')

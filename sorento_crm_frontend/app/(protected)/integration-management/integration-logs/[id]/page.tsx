@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { useIntegrationLog, useIntegrationLogs, useRetryIntegrationLog } from '../hooks/useIntegrationLogs';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
@@ -110,11 +110,11 @@ export default function IntegrationLogDetailPage() {
       retry_count: `${log.retry_count || 0}`,
       max_retry_allowed: `${log.max_retry_allowed || 0}`,
       correlation_id: log.correlation_id || '',
-      created_at: log.created_at ? formatDateTime(new Date(log.created_at)) : '',
+      created_at: log.created_at ? formatDateTimeInMalaysia(log.created_at) : '',
       created_by: log.created_by || '',
-      processed_at: log.processed_at ? formatDateTime(new Date(log.processed_at)) : '',
-      updated_at: log.updated_at ? formatDateTime(new Date(log.updated_at)) : '',
-      next_retry_at: log.next_retry_at ? formatDateTime(new Date(log.next_retry_at)) : '',
+      processed_at: log.processed_at ? formatDateTimeInMalaysia(log.processed_at) : '',
+      updated_at: log.updated_at ? formatDateTimeInMalaysia(log.updated_at) : '',
+      next_retry_at: log.next_retry_at ? formatDateTimeInMalaysia(log.next_retry_at) : '',
       request_headers: log.request_headers || '',
       request_payload: formatJsonPayload(log.request_payload),
       response_headers: log.response_headers || '',

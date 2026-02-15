@@ -103,10 +103,10 @@ async def get_job(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get a single import job by ID."""
+    """Get a single import job by ID (accepts RQ job_id or DB id)."""
     try:
         job_service = JobService(db)
-        job = job_service.get_job(job_id)
+        job = job_service.get_job(job_id) or job_service.get_job_by_db_id(job_id)
         
         if not job:
             raise HTTPException(
@@ -121,8 +121,8 @@ async def get_job(
                 detail="Access denied"
             )
         
-        # Sync status from RQ
-        job_service.sync_job_status(job_id)
+        # Sync status from RQ (use job.job_id, the RQ id)
+        job_service.sync_job_status(job.job_id)
         
         # Refresh job from DB
         db.refresh(job)
@@ -159,10 +159,10 @@ async def get_job_status(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get job status (lightweight endpoint for polling)."""
+    """Get job status (lightweight endpoint for polling). Accepts RQ job_id or DB id."""
     try:
         job_service = JobService(db)
-        job = job_service.get_job(job_id)
+        job = job_service.get_job(job_id) or job_service.get_job_by_db_id(job_id)
         
         if not job:
             raise HTTPException(
@@ -177,8 +177,8 @@ async def get_job_status(
                 detail="Access denied"
             )
         
-        # Sync status from RQ
-        job_service.sync_job_status(job_id)
+        # Sync status from RQ (use job.job_id, the RQ id)
+        job_service.sync_job_status(job.job_id)
         db.refresh(job)
         
         progress = None
@@ -211,10 +211,10 @@ async def cancel_job(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Cancel a job."""
+    """Cancel a job. Accepts RQ job_id or DB id."""
     try:
         job_service = JobService(db)
-        job = job_service.get_job(job_id)
+        job = job_service.get_job(job_id) or job_service.get_job_by_db_id(job_id)
         
         if not job:
             raise HTTPException(

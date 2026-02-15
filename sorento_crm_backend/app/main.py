@@ -89,8 +89,14 @@ scheduler = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Startup event: initialize scheduler."""
+    """Startup event: initialize scheduler and audit listeners."""
     global scheduler
+    try:
+        from app.services.audit_service import register_audit_listeners
+        register_audit_listeners()
+        logging.info("Audit listeners registered")
+    except Exception as e:
+        logging.error(f"Failed to register audit listeners: {str(e)}", exc_info=True)
     try:
         from app.scheduler.integration_scheduler import start_scheduler
         scheduler = start_scheduler()

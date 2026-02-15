@@ -3,11 +3,20 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2 } from 'lucide-react';
+import AccessAgentFormModal from './AccessAgentFormModal';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAccessAgent, useAccessAgents } from '../hooks/useAccessAgents';
+import { useAccessAgent, useAccessAgents, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
 import { formatDate } from '@/lib/helpers';
 import AccessAgentDeleteDialog from './access-agent-delete-dialog';
 import ContactAccessAgentsTable from './ContactAccessAgentsTable';
@@ -32,7 +41,17 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
   );
   const { data: navigationData } = useAccessAgents(navigationParams);
   const navigationItems = navigationData?.data ?? [];
+  const { data: agentTeamsData } = useAgentTeams(accessAgentId);
+  const { data: teamsList = [] } = useTeams();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+
+  const assignments = agentTeamsData?.assignments ?? [];
+  const teamNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    teamsList.forEach((t: { id: string; name: string }) => m.set(t.id, t.name));
+    return m;
+  }, [teamsList]);
 
   if (isLoading) {
     return (
@@ -76,7 +95,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
             items={navigationItems}
             basePath="/user-management/access-agents"
           />
-          <Button variant="outline" onClick={() => router.push(`/user-management/access-agents/${accessAgentId}/edit`)}>
+          <Button variant="outline" onClick={() => setEditModalOpen(true)}>
             <Edit className="size-4" />
             Edit
           </Button>
@@ -146,6 +165,44 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
         </CardContent>
       </Card>
 
+      {/* Team Assignments */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Team Assignments</CardTitle>
+          <p className="text-sm text-muted-foreground font-normal">
+            Assign teams by context code for round-robin next-assignee. Add members under User Management → Teams.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {assignments.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground border rounded-lg border-dashed">
+              <p>No team assignments yet.</p>
+              <p className="text-sm mt-1">Edit agent to add assignments.</p>
+              <Button variant="outline" size="sm" className="mt-3" onClick={() => setEditModalOpen(true)}>
+                Edit Access Agent
+              </Button>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Code</TableHead>
+                  <TableHead>Team</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {assignments.map((a: { code: string; team_id: string }) => (
+                  <TableRow key={a.code}>
+                    <TableCell className="font-mono">{a.code}</TableCell>
+                    <TableCell>{teamNameMap.get(a.team_id) ?? a.team_id}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Contact Access Agents Table */}
       <Card>
         <CardHeader>
@@ -153,6 +210,12 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
         </CardHeader>
         <ContactAccessAgentsTable accessAgentId={accessAgentId} />
       </Card>
+
+      <AccessAgentFormModal
+        open={editModalOpen}
+        onOpenChange={setEditModalOpen}
+        accessAgentId={accessAgentId}
+      />
 
       {/* Delete Dialog */}
       {accessAgent && (

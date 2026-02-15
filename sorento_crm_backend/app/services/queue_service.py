@@ -2,6 +2,7 @@
 import redis
 from rq import Queue
 from rq.job import Job, JobStatus
+from rq.command import send_stop_job_command
 from typing import Optional, Dict, Any
 from app.config import settings
 import logging
@@ -74,11 +75,16 @@ def get_job_status(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def cancel_job(job_id: str) -> bool:
-    """Cancel a job."""
+    """Cancel a job. Uses send_stop_job_command for running jobs, job.cancel() for queued."""
     try:
         job = Job.fetch(job_id, connection=redis_conn)
-        job.cancel()
-        logger.info(f"Job {job_id} cancelled")
+        status = job.get_status()
+        if status == JobStatus.STARTED:
+            send_stop_job_command(redis_conn, job_id)
+            logger.info(f"Job {job_id} stop command sent (was running)")
+        else:
+            job.cancel()
+            logger.info(f"Job {job_id} cancelled")
         return True
     except Exception as e:
         logger.error(f"Error cancelling job {job_id}: {str(e)}")

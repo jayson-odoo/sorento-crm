@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getRespondSyncedUsers } from '../services/accessAgentService';
+import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getRespondSyncedUsers, getAgentTeams, setAgentTeams, getTeams } from '../services/accessAgentService';
 import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/accessAgent.types';
 
 export function useAccessAgents(params: DataGridApiFetchParams & { status?: string }) {
@@ -128,6 +128,45 @@ export function useRespondSyncedUsers(query?: string) {
     queryKey: ['respond-synced-users', query],
     queryFn: () => getRespondSyncedUsers(query),
     staleTime: 1000 * 60 * 5,
+    retry: 1,
+  });
+}
+
+export function useAgentTeams(agentId: string | null) {
+  return useQuery({
+    queryKey: ['agent-teams', agentId],
+    queryFn: () => {
+      if (!agentId) throw new Error('Agent ID is required');
+      return getAgentTeams(agentId);
+    },
+    enabled: !!agentId,
+    retry: 1,
+  });
+}
+
+export function useSetAgentTeams() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      agentId,
+      assignments,
+    }: {
+      agentId: string;
+      assignments: { code: string; team_id: string }[];
+    }) => setAgentTeams(agentId, assignments),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['agent-teams', variables.agentId] });
+      toast.success('Teams updated');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to set teams'),
+  });
+}
+
+export function useTeams() {
+  return useQuery({
+    queryKey: ['teams-list'],
+    queryFn: () => getTeams(),
+    staleTime: 1000 * 60 * 2,
     retry: 1,
   });
 }

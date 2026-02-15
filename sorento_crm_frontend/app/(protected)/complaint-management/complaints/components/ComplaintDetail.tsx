@@ -12,6 +12,7 @@ import { formatDate } from '@/lib/helpers';
 import ComplaintDeleteDialog from './complaint-delete-dialog';
 import ComplaintNavigation from './ComplaintNavigation';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
+import AuditTrail from '@/components/audit/AuditTrail';
 
 interface ComplaintDetailProps {
   complaintId: string;
@@ -77,7 +78,19 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             {complaint.complaint_date
               ? formatDate(new Date(complaint.complaint_date))
               : '-'}
+            {complaint.status && (
+              <>
+                {' · '}
+                <span className="capitalize font-medium">{complaint.status}</span>
+              </>
+            )}
           </p>
+          {complaint.last_responded_at && (
+            <p className="text-sm text-muted-foreground">
+              Last responded: {formatDate(new Date(complaint.last_responded_at))}
+              {complaint.last_responded_by && ` by ${complaint.last_responded_by}`}
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <ComplaintNavigation complaintId={complaintId} />
@@ -209,13 +222,36 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               </a>
             </div>
           )}
+          {complaint.status && (
+            <div>
+              <p className="text-sm text-muted-foreground">Status</p>
+              <p className="font-medium capitalize">{complaint.status}</p>
+            </div>
+          )}
+          {complaint.technical_team_response && (
+            <div>
+              <p className="text-sm text-muted-foreground">Technical Team Response</p>
+              <p className="font-medium whitespace-pre-wrap">{complaint.technical_team_response}</p>
+            </div>
+          )}
+          {complaint.last_responded_at && (
+            <div>
+              <p className="text-sm text-muted-foreground">Last responded</p>
+              <p className="font-medium">
+                {formatDate(new Date(complaint.last_responded_at))}
+                {complaint.last_responded_by && ` by ${complaint.last_responded_by}`}
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       <ComplaintManualAttachmentsSection
-          complaintId={complaintId}
-          attachments={complaint.attachments ?? []}
-        />
+        complaintId={complaintId}
+        attachments={complaint.attachments ?? []}
+      />
+
+      <AuditTrail entityType="complaint" entityId={complaintId} title="Audit Trail" />
     </div>
   );
 }

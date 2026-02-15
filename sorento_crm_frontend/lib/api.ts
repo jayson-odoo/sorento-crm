@@ -103,6 +103,7 @@ export async function apiFetch(
           '/api/user-management/roles',
           '/api/user-management/permissions',
           '/api/user-management/access-agents',
+          '/api/user-management/teams',
           '/api/user-management/contacts',
         ];
 

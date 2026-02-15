@@ -4,8 +4,18 @@ import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Save } from 'lucide-react';
+import { LoaderCircleIcon, Save, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Form,
   FormControl,
@@ -25,7 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCreateComplaint, useUpdateComplaint, useComplaint } from '../hooks/useComplaints';
+import { useCreateComplaint, useUpdateComplaint, useUpdateComplaintAndReply, useComplaint } from '../hooks/useComplaints';
 import { ComplaintSchema, type ComplaintSchemaType } from '../forms/complaint-schema';
 import type { ComplaintFormData, ComplaintAttachment } from '../types/complaint.types';
 import ComplaintNavigation from './ComplaintNavigation';
@@ -66,12 +76,15 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       project_title: null,
       contact_id: null,
       space_id: null,
+      technical_team_response: null,
       attachments: [],
     },
     mode: 'onSubmit',
   });
 
   const [formInitialized, setFormInitialized] = useState(false);
+  const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
+  const updateAndReplyMutation = useUpdateComplaintAndReply();
 
   // Load complaint data when editing
   useEffect(() => {
@@ -97,6 +110,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         project_title: complaint.project_title || null,
         contact_id: complaint.contact_id ?? null,
         space_id: complaint.space_id ?? null,
+        technical_team_response: complaint.technical_team_response ?? null,
         attachments: complaint.attachments || [],
       });
       setFormInitialized(true);
@@ -143,6 +157,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         project_title: data.project_title || undefined,
         contact_id: data.contact_id || undefined,
         space_id: data.space_id || undefined,
+        technical_team_response: data.technical_team_response || undefined,
         attachments: validAttachments.length > 0 ? validAttachments : undefined,
       };
 
@@ -159,6 +174,56 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
     }
   };
 
+  const handleUpdateAndReplyClick = async () => {
+    const valid = await form.trigger();
+    if (!valid || !complaintId) return;
+    setUpdateAndReplyDialogOpen(true);
+  };
+
+  const handleUpdateAndReplyConfirm = async () => {
+    if (!complaintId) return;
+    const data = form.getValues();
+    const validAttachments = (data.attachments || [])
+      .filter((att): att is ComplaintAttachment => !!att.id && !!att.complaint_id && !!att.uploaded_at)
+      .map((att) => ({
+        id: att.id!,
+        complaint_id: att.complaint_id!,
+        file_name: att.file_name ?? null,
+        file_url: att.file_url ?? null,
+        file_size_bytes: att.file_size_bytes ?? null,
+        uploaded_at: att.uploaded_at!,
+      }));
+    const formData: ComplaintFormData = {
+      delivery_order_number: data.delivery_order_number || undefined,
+      complaint_date: data.complaint_date || undefined,
+      customer_type: data.customer_type || undefined,
+      customer_type_others: data.customer_type_others || undefined,
+      within_warranty: data.within_warranty || undefined,
+      product_type: data.product_type || undefined,
+      defects_discovered: data.defects_discovered || undefined,
+      complaint_type: data.complaint_type || undefined,
+      defect_description: data.defect_description || undefined,
+      product_code: data.product_code || undefined,
+      salesperson: data.salesperson || undefined,
+      customer_name: data.customer_name || undefined,
+      contact_person: data.contact_person || undefined,
+      contact_number: data.contact_number || undefined,
+      customer_address: data.customer_address || undefined,
+      project_title: data.project_title || undefined,
+      contact_id: data.contact_id || undefined,
+      space_id: data.space_id || undefined,
+      technical_team_response: data.technical_team_response || undefined,
+      attachments: validAttachments.length > 0 ? validAttachments : undefined,
+    };
+    try {
+      await updateAndReplyMutation.mutateAsync({ id: complaintId, data: formData });
+      setUpdateAndReplyDialogOpen(false);
+      onSuccess?.();
+    } catch {
+      // Error toast from mutation
+    }
+  };
+
   if (isEditMode && isLoadingComplaint) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -167,7 +232,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
     );
   }
 
-  const isLoading = createMutation.isPending || updateMutation.isPending;
+  const isLoading = createMutation.isPending || updateMutation.isPending || updateAndReplyMutation.isPending;
 
   return (
     <Form {...form}>
@@ -571,6 +636,24 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="technical_team_response"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Technical Team Response</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder="Enter technical team response to send to customer"
+                          {...field}
+                          value={field.value ?? ''}
+                          rows={4}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </CardContent>
             </Card>
           </div>
@@ -592,6 +675,26 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
           >
             Cancel
           </Button>
+          {isEditMode && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleUpdateAndReplyClick}
+              disabled={isLoading}
+            >
+              {updateAndReplyMutation.isPending ? (
+                <>
+                  <LoaderCircleIcon className="size-4 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Send className="size-4" />
+                  Update & Reply
+                </>
+              )}
+            </Button>
+          )}
           <Button type="submit" disabled={isLoading}>
             {isLoading ? (
               <>
@@ -607,6 +710,33 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
           </Button>
         </div>
       </form>
+
+      <AlertDialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Update & Reply</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will save your changes and send the technical team response to the
+              customer via Respond.io. The conversation will be marked as responded.
+              Continue?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={updateAndReplyMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleUpdateAndReplyConfirm();
+              }}
+              disabled={updateAndReplyMutation.isPending}
+            >
+              {updateAndReplyMutation.isPending ? 'Sending...' : 'Update & Reply'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Form>
   );
 }
