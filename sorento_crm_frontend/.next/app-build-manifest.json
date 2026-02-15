@@ -1,75 +1,65 @@
 {
   "pages": {
-    "/layout": [
+    "/api/auth/token/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/css/app/layout.css",
-      "static/chunks/app/layout.js"
-    ],
-    "/(auth)/layout": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(auth)/layout.js"
-    ],
-    "/(auth)/signin/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(auth)/signin/page.js"
+      "static/chunks/app/api/auth/token/route.js"
     ],
     "/api/auth/[...nextauth]/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/[...nextauth]/route.js"
     ],
+    "/layout": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/css/app/layout.css",
+      "static/chunks/app/layout.js"
+    ],
     "/(protected)/layout": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/layout.js"
     ],
-    "/(protected)/page": [
+    "/(protected)/master-data-management/products/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/page.js"
+      "static/chunks/app/(protected)/master-data-management/products/[id]/page.js"
     ],
-    "/api/auth/token/route": [
+    "/(protected)/resource-management/attachment-directories/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/api/auth/token/route.js"
+      "static/chunks/app/(protected)/resource-management/attachment-directories/page.js"
     ],
-    "/(protected)/user-management/teams/page": [
+    "/(protected)/system-management/import-jobs/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/teams/page.js"
+      "static/chunks/app/(protected)/system-management/import-jobs/page.js"
     ],
-    "/(protected)/user-management/teams/[id]/page": [
+    "/(protected)/system-management/import-jobs/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/teams/[id]/page.js"
+      "static/chunks/app/(protected)/system-management/import-jobs/[id]/page.js"
     ],
-    "/(protected)/user-management/users/page": [
+    "/(protected)/resource-management/attachment-types/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/users/page.js"
+      "static/chunks/app/(protected)/resource-management/attachment-types/page.js"
     ],
-    "/(protected)/user-management/access-agents/page": [
+    "/(protected)/integration-management/integration-logs/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/access-agents/page.js"
+      "static/chunks/app/(protected)/integration-management/integration-logs/page.js"
     ],
-    "/(protected)/user-management/access-agents/[id]/page": [
+    "/(protected)/integration-management/integration-logs/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/access-agents/[id]/page.js"
+      "static/chunks/app/(protected)/integration-management/integration-logs/[id]/page.js"
     ],
-    "/api/user-management/access-agents/[id]/contact-access/route": [
+    "/(protected)/resource-management/trash/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/api/user-management/access-agents/[id]/contact-access/route.js"
-    ],
-    "/(protected)/user-management/access-agents/[id]/edit/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/access-agents/[id]/edit/page.js"
+      "static/chunks/app/(protected)/resource-management/trash/page.js"
     ]
   }
 }

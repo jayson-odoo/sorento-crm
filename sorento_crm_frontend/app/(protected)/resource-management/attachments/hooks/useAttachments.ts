@@ -2,9 +2,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, restoreAttachment, downloadAttachment, getAttachmentMetadata, checkDuplicateByHash, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments } from '../services/attachmentService';
+import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, getAttachmentMetadata, checkDuplicateByHash, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
-import { getDirectoryTree, createDirectory, updateDirectory, deleteDirectory } from '../services/directoryService';
+import { getDirectoryTree, createDirectory, updateDirectory, deleteDirectory, restoreDirectory } from '../services/directoryService';
 import { apiFetch } from '@/lib/api';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 
@@ -105,9 +105,34 @@ export function useDeleteAttachment() {
     mutationFn: (id: string) => deleteAttachment(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
-      toast.success('Attachment deleted successfully');
+      toast.success('Attachment permanently deleted');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete attachment'),
+  });
+}
+
+export function useArchiveAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => archiveAttachment(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      toast.success('Attachment moved to trash');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to archive attachment'),
+  });
+}
+
+export function useBulkArchiveAttachments() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkArchiveAttachments(ids),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      const count = data?.archived_count ?? 0;
+      toast.success(count === 1 ? '1 attachment moved to trash' : `${count} attachments moved to trash`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to archive attachments'),
   });
 }
 
@@ -133,6 +158,19 @@ export function useRestoreAttachment() {
       toast.success('Attachment restored successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to restore attachment'),
+  });
+}
+
+export function useBulkRestoreAttachments() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkRestoreAttachments(ids),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      const count = data?.restored_count ?? 0;
+      toast.success(count === 1 ? '1 attachment restored' : `${count} attachments restored`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to restore attachments'),
   });
 }
 
@@ -175,12 +213,27 @@ export function useBulkImportAttachment() {
   });
 }
 
-export function useDirectoryTree() {
+export function useDirectoryTree(deleted = false) {
   return useQuery({
-    queryKey: ['attachment-directories-tree'],
-    queryFn: () => getDirectoryTree(),
+    queryKey: ['attachment-directories-tree', deleted],
+    queryFn: () => getDirectoryTree(deleted),
     staleTime: 1000 * 60 * 2,
     gcTime: 1000 * 60 * 10,
+  });
+}
+
+export function useRestoreDirectory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => restoreDirectory(id),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      const dirs = data?.directories_restored ?? 0;
+      const atts = data?.attachments_restored ?? 0;
+      toast.success(`Restored ${dirs} folder(s) and ${atts} attachment(s)`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to restore directory'),
   });
 }
 

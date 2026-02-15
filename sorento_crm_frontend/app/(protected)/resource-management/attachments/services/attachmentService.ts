@@ -175,8 +175,29 @@ export async function deleteAttachment(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/resource-management/attachments/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete attachment' }));
-    throw new Error(error.message);
+    throw new Error(error.detail ?? error.message ?? 'Failed to delete attachment');
   }
+}
+
+export async function archiveAttachment(id: string): Promise<void> {
+  const response = await apiFetch(`/api/v1/resource-management/attachments/${id}/archive`, { method: 'POST' });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to archive attachment' }));
+    throw new Error(error.detail ?? error.message ?? 'Failed to archive attachment');
+  }
+}
+
+export async function bulkArchiveAttachments(ids: string[]): Promise<{ message: string; archived_count: number }> {
+  const response = await apiFetch('/api/v1/resource-management/attachments/bulk-archive', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ attachment_ids: ids }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail ?? error.message ?? 'Failed to archive attachments');
+  }
+  return response.json();
 }
 
 export async function reorderAttachments(
@@ -215,6 +236,12 @@ export async function restoreAttachment(id: string): Promise<void> {
     const error = await response.json().catch(() => ({ message: 'Failed to restore attachment' }));
     throw new Error(error.message);
   }
+}
+
+export async function bulkRestoreAttachments(ids: string[]): Promise<{ restored_count: number }> {
+  const results = await Promise.allSettled(ids.map((id) => restoreAttachment(id)));
+  const restored = results.filter((r) => r.status === 'fulfilled').length;
+  return { restored_count: restored };
 }
 
 export async function downloadAttachment(id: string): Promise<Blob> {

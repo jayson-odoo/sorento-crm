@@ -1,10 +1,10 @@
 {
-  "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/api/user-management/access-agents/[id]/contact-access/route": "app/api/user-management/access-agents/[id]/contact-access/route.js",
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/(protected)/user-management/teams/[id]/page": "app/(protected)/user-management/teams/[id]/page.js",
-  "/(protected)/user-management/users/page": "app/(protected)/user-management/users/page.js",
-  "/(protected)/user-management/access-agents/page": "app/(protected)/user-management/access-agents/page.js",
-  "/(protected)/user-management/access-agents/[id]/page": "app/(protected)/user-management/access-agents/[id]/page.js",
-  "/(protected)/user-management/access-agents/[id]/edit/page": "app/(protected)/user-management/access-agents/[id]/edit/page.js"
+  "/api/auth/token/route": "app/api/auth/token/route.js",
+  "/(protected)/master-data-management/products/[id]/page": "app/(protected)/master-data-management/products/[id]/page.js",
+  "/(protected)/integration-management/integration-logs/page": "app/(protected)/integration-management/integration-logs/page.js",
+  "/(protected)/resource-management/attachment-directories/page": "app/(protected)/resource-management/attachment-directories/page.js",
+  "/(protected)/system-management/import-jobs/[id]/page": "app/(protected)/system-management/import-jobs/[id]/page.js",
+  "/(protected)/resource-management/trash/page": "app/(protected)/resource-management/trash/page.js",
+  "/(protected)/system-management/import-jobs/page": "app/(protected)/system-management/import-jobs/page.js"
 }

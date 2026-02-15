@@ -47,10 +47,11 @@ async def get_attachments(
     entity_type: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
     directory_id: Optional[str] = Query(None),
+    is_deleted: Optional[bool] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get attachments with pagination and filtering (optional directory_id, query by filename)."""
+    """Get attachments with pagination and filtering (optional directory_id, query by filename, is_deleted for trash)."""
     try:
         service = AttachmentService(db)
         result = service.list_attachments(
@@ -62,6 +63,7 @@ async def get_attachments(
             entity_type=entity_type,
             entity_id=entity_id,
             directory_id=directory_id,
+            is_deleted=is_deleted,
         )
         return result
     except Exception as e:
@@ -279,6 +281,9 @@ async def bulk_import_attachments(
     db: Session = Depends(get_db),
 ):
     """Queue a ZIP import job. Import runs in the background with batch processing. Poll GET /api/v1/system/jobs/{job_id}/status for progress."""
+    import tempfile
+    import os
+
     if not file or not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A ZIP file is required")
 
@@ -294,6 +299,13 @@ async def bulk_import_attachments(
             zf.testzip()
     except zipfile.BadZipFile:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or corrupted ZIP file")
+
+    # Save ZIP to temp file instead of passing bytes to Redis (avoids BrokenPipe on large files)
+    fd, zip_path = tempfile.mkstemp(suffix=".zip")
+    try:
+        os.write(fd, zip_content)
+    finally:
+        os.close(fd)
 
     from app.services.job_service import JobService
     from app.services.queue_service import enqueue_job
@@ -314,7 +326,7 @@ async def bulk_import_attachments(
     rq_job = enqueue_job(
         process_attachment_bulk_import,
         str(job.id),
-        zip_content,
+        zip_path,
         attachment_type_id,
         access_levels or "[]",
         parent_directory_id,
@@ -405,10 +417,61 @@ async def delete_attachment(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete an attachment (soft delete)."""
+    """Delete an attachment permanently (hard delete). Use archive for retention."""
     try:
         service = AttachmentService(db)
         result = service.delete_attachment(attachment_id, current_user["id"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{attachment_id}/archive", status_code=status.HTTP_200_OK)
+async def archive_attachment(
+    attachment_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Archive an attachment (soft delete). Data remains for retention. Use restore to unarchive."""
+    try:
+        service = AttachmentService(db)
+        result = service.archive_attachment(attachment_id, current_user["id"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{attachment_id}/restore", status_code=status.HTTP_200_OK)
+async def restore_attachment(
+    attachment_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Restore an archived attachment."""
+    try:
+        service = AttachmentService(db)
+        result = service.restore_attachment(attachment_id)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/bulk-archive", status_code=status.HTTP_200_OK)
+async def bulk_archive_attachments(
+    body: AttachmentBulkDeleteRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Archive multiple attachments (soft delete)."""
+    try:
+        service = AttachmentService(db)
+        result = service.archive_attachments(body.attachment_ids, current_user["id"])
         return result
     except HTTPException:
         raise
@@ -422,7 +485,7 @@ async def bulk_delete_attachments(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Mass delete attachments (soft delete)."""
+    """Mass delete attachments permanently (hard delete)."""
     try:
         service = AttachmentService(db)
         result = service.delete_attachments(body.attachment_ids, current_user["id"])

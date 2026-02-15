@@ -72,6 +72,7 @@ function AttachmentDirectoriesContent({
             <AttachmentsInFolderPanel
               directoryId={selectedId}
               directoryName={selectedFolderName}
+              onSelectFolder={setSelectedId}
             />
           </div>
         </ResizablePanel>

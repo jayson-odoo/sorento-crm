@@ -14,10 +14,8 @@ import {
 import {
   Ellipsis,
   Plus,
-  Search,
   ShieldAlert,
   UserRound,
-  X,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
@@ -38,7 +36,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
+import { ListPageToolbar } from '@/components/common/ListPageToolbar';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserRole } from '@/app/models/user';
@@ -286,53 +284,9 @@ const RoleList = () => {
     manualFiltering: true,
   });
 
-  const DataGridToolbar = () => {
-    const [inputValue, setInputValue] = useState(searchQuery);
-
-    const handleSearch = () => {
-      setSearchQuery(inputValue);
-      setPagination({ ...pagination, pageIndex: 0 });
-    };
-
-    return (
-      <CardHeader className="py-5">
-        <div className="flex items-center gap-2.5">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search users"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              disabled={isLoading}
-              className="ps-9 w-full md:w-64"
-            />
-            {searchQuery.length > 0 && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
-              </Button>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button
-            disabled={isLoading && true}
-            onClick={() => {
-              setEditRole(null);
-              setEditDialogOpen(true);
-            }}
-          >
-            <Plus />
-            Add Role
-          </Button>
-        </div>
-      </CardHeader>
-    );
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
 
   return (
@@ -351,7 +305,24 @@ const RoleList = () => {
         }}
       >
         <Card>
-          <DataGridToolbar />
+          <ListPageToolbar
+            searchPlaceholder="Search roles"
+            searchValue={searchQuery}
+            onSearchChange={handleSearchChange}
+            createButton={
+              <Button
+                disabled={isLoading}
+                onClick={() => {
+                  setEditRole(null);
+                  setEditDialogOpen(true);
+                }}
+              >
+                <Plus />
+                Add Role
+              </Button>
+            }
+            isLoading={isLoading}
+          />
           <CardTable>
             <ScrollArea>
               <DataGridTable />

@@ -99,10 +99,44 @@ async def delete_order(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete an order (soft delete)."""
+    """Delete an order permanently (hard delete). Use archive for retention."""
     try:
         service = OrderService(db)
         result = service.delete_order(order_id)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{order_id}/archive", status_code=status.HTTP_200_OK)
+async def archive_order(
+    order_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Archive an order (soft delete). Data remains for retention."""
+    try:
+        service = OrderService(db)
+        result = service.archive_order(order_id)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{order_id}/restore", status_code=status.HTTP_200_OK)
+async def restore_order(
+    order_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Restore an archived order."""
+    try:
+        service = OrderService(db)
+        result = service.restore_order(order_id)
         return result
     except HTTPException:
         raise

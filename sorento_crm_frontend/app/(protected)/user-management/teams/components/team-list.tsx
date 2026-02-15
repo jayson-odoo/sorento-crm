@@ -4,8 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 import { Ellipsis, Plus, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import { ListPageToolbar } from '@/components/common/ListPageToolbar';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { Card, CardFooter, CardTable } from '@/components/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,18 +42,21 @@ export default function TeamList() {
   return (
     <>
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between py-5">
-          <h3 className="text-lg font-medium">Teams</h3>
-          <Button
-            onClick={() => {
-              setSelectedTeam(null);
-              setEditOpen(true);
-            }}
-          >
-            <Plus className="me-2 size-4" />
-            Create team
-          </Button>
-        </CardHeader>
+        <ListPageToolbar
+          createButton={
+            <Button
+              onClick={() => {
+                setSelectedTeam(null);
+                setEditOpen(true);
+              }}
+            >
+              <Plus className="me-2 size-4" />
+              Create team
+            </Button>
+          }
+          isLoading={isLoading}
+          hideSearch
+        />
         <CardTable>
           <Table>
             <TableHeader>

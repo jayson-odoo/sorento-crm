@@ -1,26 +1,20 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError, buildDataGridParams } from '@/lib/api-client';
 import type { AccessAgent, AccessAgentFormData, AccessAgentDetail, ContactAgentAccess, ContactAgentAccessFormData, RespondSyncedUser } from '../types/accessAgent.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+import { getUsersSelect } from '@/services/userSelectService';
+import { getTeams } from '@/app/(protected)/user-management/teams/services/teamService';
 
 export async function getAccessAgents(params: DataGridApiFetchParams & { status?: string }): Promise<DataGridApiResponse<AccessAgent>> {
-  const { pageIndex, pageSize, sorting, searchQuery, status } = params;
-  const sortField = sorting?.[0]?.id || '';
-  const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
-  const queryParams = new URLSearchParams({
-    page: String(pageIndex + 1),
-    limit: String(pageSize),
-    ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
-    ...(searchQuery ? { query: searchQuery } : {}),
-    ...(status ? { status } : {}),
-  });
+  const queryParams = buildDataGridParams(params, { status: params.status });
   const response = await apiFetch(`/api/user-management/access-agents?${queryParams.toString()}`);
-  if (!response.ok) throw new Error('Failed to fetch access agents');
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to fetch access agents'));
   return response.json();
 }
 
 export async function getAccessAgent(id: string): Promise<AccessAgentDetail> {
   const response = await apiFetch(`/api/user-management/access-agents/${id}`);
-  if (!response.ok) throw new Error('Failed to fetch access agent');
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to fetch access agent'));
   return response.json();
 }
 
@@ -30,10 +24,7 @@ export async function createAccessAgent(data: AccessAgentFormData): Promise<Acce
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to create access agent' }));
-    throw new Error(error.message);
-  }
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to create access agent'));
   return response.json();
 }
 
@@ -43,35 +34,23 @@ export async function updateAccessAgent(id: string, data: Partial<AccessAgentFor
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update access agent' }));
-    throw new Error(error.message);
-  }
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to update access agent'));
   return response.json();
 }
 
 export async function getRespondSyncedUsers(query?: string): Promise<RespondSyncedUser[]> {
-  const queryParams = new URLSearchParams({
-    respond_synced: 'successful',
-    ...(query ? { query } : {}),
-  });
-  const response = await apiFetch(`/api/user-management/users/select?${queryParams.toString()}`);
-  if (!response.ok) throw new Error('Failed to fetch respond synced users');
-  return response.json();
+  return getUsersSelect({ respond_synced: 'successful', query });
 }
 
 export async function deleteAccessAgent(id: string): Promise<void> {
   const response = await apiFetch(`/api/user-management/access-agents/${id}`, { method: 'DELETE' });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to delete access agent' }));
-    throw new Error(error.message);
-  }
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete access agent'));
 }
 
 // Contact Agent Access methods
 export async function getContactAccessAgents(agentId: string): Promise<ContactAgentAccess[]> {
   const response = await apiFetch(`/api/user-management/access-agents/${agentId}/contact-access`);
-  if (!response.ok) throw new Error('Failed to fetch contact access agents');
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to fetch contact access agents'));
   return response.json();
 }
 
@@ -82,12 +61,11 @@ export async function createContactAgentAccess(agentId: string, data: ContactAge
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to create contact access agent' }));
-    // Handle duplicate/conflict errors specifically
-    if (response.status === 409 || error.message?.toLowerCase().includes('duplicate') || error.message?.toLowerCase().includes('already exists')) {
+    const msg = await extractApiError(response, 'Failed to create contact access agent');
+    if (response.status === 409 || msg.toLowerCase().includes('duplicate') || msg.toLowerCase().includes('already exists')) {
       throw new Error('An access agent entry already exists for this contact and agent combination.');
     }
-    throw new Error(error.detail?.message || error.message || 'Failed to create contact access agent');
+    throw new Error(msg);
   }
   return response.json();
 }
@@ -98,19 +76,13 @@ export async function updateContactAgentAccess(agentId: string, contactId: strin
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update contact access agent' }));
-    throw new Error(error.message);
-  }
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to update contact access agent'));
   return response.json();
 }
 
 export async function deleteContactAgentAccess(agentId: string, contactId: string): Promise<void> {
   const response = await apiFetch(`/api/user-management/access-agents/${agentId}/contact-access/${contactId}`, { method: 'DELETE' });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to delete contact access agent' }));
-    throw new Error(error.message);
-  }
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete contact access agent'));
 }
 
 // Agent team assignments (code -> team for round-robin next-assignee)
@@ -121,7 +93,7 @@ export interface AgentTeamAssignment {
 
 export async function getAgentTeams(agentId: string): Promise<{ assignments: AgentTeamAssignment[] }> {
   const response = await apiFetch(`/api/user-management/access-agents/${agentId}/teams`);
-  if (!response.ok) throw new Error('Failed to fetch agent teams');
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to fetch agent teams'));
   const data = await response.json();
   return { assignments: data.assignments ?? [] };
 }
@@ -135,22 +107,9 @@ export async function setAgentTeams(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ assignments }),
   });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || 'Failed to set agent teams');
-  }
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to set agent teams'));
   return response.json();
 }
 
-export interface Team {
-  id: string;
-  name: string;
-  description?: string | null;
-  created_at: string;
-}
-
-export async function getTeams(): Promise<Team[]> {
-  const response = await apiFetch('/api/user-management/teams');
-  if (!response.ok) throw new Error('Failed to fetch teams');
-  return response.json();
-}
+export type { Team } from '@/app/(protected)/user-management/teams/types/team.types';
+export { getTeams };

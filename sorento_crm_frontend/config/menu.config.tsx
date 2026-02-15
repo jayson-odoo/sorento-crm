@@ -525,6 +525,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/resource-management/attachment-directories',
       },
       {
+        title: 'Trash',
+        path: '/resource-management/trash',
+      },
+      {
         title: 'Attachment Types',
         path: '/resource-management/attachment-types',
       },
@@ -1165,6 +1169,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Attachment Directories',
         path: '/resource-management/attachment-directories',
+      },
+      {
+        title: 'Trash',
+        path: '/resource-management/trash',
       },
       {
         title: 'Attachment Types',

@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Download, RefreshCw, Trash2, ExternalLink } from 'lucide-react';
+import { Download, Eye, RefreshCw, Trash2, ExternalLink } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -83,6 +83,8 @@ function LinkagesTable({
             <TableCell>
               <Link
                 href={`${ENTITY_ROUTES[type].path}/${item.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-primary hover:underline inline-flex items-center gap-1 text-sm"
               >
                 View
@@ -248,6 +250,20 @@ export default function AttachmentDetail({
           />
           <Button
             variant="outline"
+            onClick={() => {
+              const fp = attachment.file_path || '';
+              const url =
+                fp.startsWith('http://') || fp.startsWith('https://')
+                  ? fp
+                  : `${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/resource-management/attachments/${attachment.id}/download`;
+              window.open(url, '_blank', 'noopener,noreferrer');
+            }}
+          >
+            <Eye className="size-4" />
+            Preview
+          </Button>
+          <Button
+            variant="outline"
             onClick={() => handleDownload(attachment)}
             disabled={downloadMutation.isPending}
           >
@@ -263,17 +279,23 @@ export default function AttachmentDetail({
             Resubmit
           </Button>
           {attachment.is_deleted ? (
-            <Button
-              variant="outline"
-              onClick={() => restoreMutation.mutate(attachment.id)}
-              disabled={restoreMutation.isPending}
-            >
-              Restore
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                onClick={() => restoreMutation.mutate(attachment.id)}
+                disabled={restoreMutation.isPending}
+              >
+                Restore
+              </Button>
+              <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
+                <Trash2 className="size-4" />
+                Permanently Delete
+              </Button>
+            </>
           ) : (
             <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
               <Trash2 className="size-4" />
-              Delete
+              Move to Trash
             </Button>
           )}
         </div>
@@ -309,12 +331,6 @@ export default function AttachmentDetail({
                 {attachment.is_deleted ? 'Deleted' : 'Active'}
               </Badge>
             </div>
-            {attachment.file_hash && (
-              <div className="md:col-span-2">
-                <p className="text-sm text-muted-foreground">File Hash</p>
-                <p className="font-medium font-mono break-all">{attachment.file_hash}</p>
-              </div>
-            )}
           </div>
         </CardContent>
       </Card>
@@ -322,9 +338,6 @@ export default function AttachmentDetail({
       <Card>
         <CardHeader>
           <CardTitle>Linkages</CardTitle>
-          <p className="text-sm text-muted-foreground font-normal">
-            Products, promotions, and forms linked to this attachment.
-          </p>
         </CardHeader>
         <CardContent>
           <LinkagesTabs attachment={attachment} />
@@ -335,6 +348,7 @@ export default function AttachmentDetail({
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         attachment={attachment}
+        permanent={attachment.is_deleted}
       />
     </div>
   );

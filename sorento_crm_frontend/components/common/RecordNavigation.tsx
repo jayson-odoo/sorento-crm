@@ -13,6 +13,8 @@ export interface RecordNavigationIdsProps {
   /** e.g. "record", "complaint", "purchase request" for aria-label */
   ariaLabel?: string;
   className?: string;
+  /** When provided, called with prevId/nextId instead of router.push (e.g. modal in-place navigation) */
+  onSelect?: (id: string) => void;
 }
 
 /** Props when using a full list (compute prev/next from currentId + items). */
@@ -22,6 +24,8 @@ export interface RecordNavigationListProps {
   items: Array<{ id: string }>;
   ariaLabel?: string;
   className?: string;
+  /** When provided, called with selected id instead of router.push (e.g. modal in-place navigation) */
+  onSelect?: (id: string) => void;
 }
 
 export type RecordNavigationProps = RecordNavigationIdsProps | RecordNavigationListProps;
@@ -39,7 +43,7 @@ function isIdsProps(
  */
 export default function RecordNavigation(props: RecordNavigationProps) {
   const router = useRouter();
-  const { basePath, ariaLabel = 'record', className } = props;
+  const { basePath, ariaLabel = 'record', className, onSelect } = props;
 
   const { previousId, nextId } = useMemo(() => {
     if (isIdsProps(props)) {
@@ -66,7 +70,11 @@ export default function RecordNavigation(props: RecordNavigationProps) {
         size="icon"
         aria-label={`Previous ${ariaLabel}`}
         disabled={!previousId}
-        onClick={() => previousId && router.push(`${basePath}/${previousId}`)}
+        onClick={() => {
+          if (!previousId) return;
+          if (onSelect) onSelect(previousId);
+          else router.push(`${basePath}/${previousId}`);
+        }}
       >
         <ChevronLeft className="size-4" />
       </Button>
@@ -75,7 +83,11 @@ export default function RecordNavigation(props: RecordNavigationProps) {
         size="icon"
         aria-label={`Next ${ariaLabel}`}
         disabled={!nextId}
-        onClick={() => nextId && router.push(`${basePath}/${nextId}`)}
+        onClick={() => {
+          if (!nextId) return;
+          if (onSelect) onSelect(nextId);
+          else router.push(`${basePath}/${nextId}`);
+        }}
       >
         <ChevronRight className="size-4" />
       </Button>

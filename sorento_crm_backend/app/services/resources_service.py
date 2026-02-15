@@ -1,6 +1,9 @@
 """Resources service for business logic."""
+import logging
 from sqlalchemy.orm import Session
 from typing import Optional, List
+
+logger = logging.getLogger(__name__)
 from app.models.resources import Attachment, AttachmentType, AttachmentDirectory
 from app.schemas.resources import (
     AttachmentCreate, AttachmentUpdate, AttachmentTypeCreate, AttachmentTypeUpdate,
@@ -15,16 +18,19 @@ class AttachmentDirectoryService:
     def __init__(self, db: Session):
         self.db = db
 
-    def list_flat(self, parent_id: Optional[str] = None):
-        """List directories directly under parent_id (None = root)."""
+    def list_flat(self, parent_id: Optional[str] = None, include_deleted: bool = False):
+        """List directories directly under parent_id (None = root). Excludes deleted unless include_deleted=True."""
         q = self.db.query(AttachmentDirectory).filter(
             AttachmentDirectory.parent_id == parent_id
-        ).order_by(AttachmentDirectory.sort_order.asc().nullsfirst(), AttachmentDirectory.name.asc())
+        )
+        if not include_deleted:
+            q = q.filter(AttachmentDirectory.is_deleted == False)
+        q = q.order_by(AttachmentDirectory.sort_order.asc().nullsfirst(), AttachmentDirectory.name.asc())
         return q.all()
 
-    def get_tree(self, parent_id: Optional[str] = None):
+    def get_tree(self, parent_id: Optional[str] = None, include_deleted: bool = False):
         """Return directory tree rooted at parent_id (None = root)."""
-        dirs = self.list_flat(parent_id)
+        dirs = self.list_flat(parent_id, include_deleted=include_deleted)
         result = []
         for d in dirs:
             node = {
@@ -33,14 +39,17 @@ class AttachmentDirectoryService:
                 "parent_id": str(d.parent_id) if d.parent_id else None,
                 "sort_order": d.sort_order,
                 "created_at": d.created_at.isoformat() if d.created_at else None,
-                "children": self.get_tree(str(d.id)),
+                "children": self.get_tree(str(d.id), include_deleted=include_deleted),
             }
             result.append(node)
         return result
 
-    def get_directory(self, directory_id: str):
+    def get_directory(self, directory_id: str, include_deleted: bool = False):
         """Get a directory by ID."""
-        d = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == directory_id).first()
+        q = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == directory_id)
+        if not include_deleted:
+            q = q.filter(AttachmentDirectory.is_deleted == False)
+        d = q.first()
         if not d:
             raise handle_not_found("Attachment directory", directory_id)
         return d
@@ -48,7 +57,7 @@ class AttachmentDirectoryService:
     def create_directory(self, data: AttachmentDirectoryCreate):
         """Create a new directory."""
         if data.parent_id:
-            self.get_directory(data.parent_id)
+            self.get_directory(data.parent_id, include_deleted=False)
         d = AttachmentDirectory(**data.model_dump())
         self.db.add(d)
         self.db.commit()
@@ -67,19 +76,29 @@ class AttachmentDirectoryService:
         self.db.refresh(d)
         return d
 
-    def delete_directory(self, directory_id: str):
-        """Delete a directory (cascade to children; attachments get directory_id SET NULL)."""
+    def delete_directory(self, directory_id: str, deleted_by: str):
+        """Soft-delete a directory and all descendants; archive attachments in them."""
+        from datetime import datetime
+
         d = self.get_directory(directory_id)
-        self.db.delete(d)
+        dir_ids = self.get_descendant_directory_ids(directory_id)
+        for did in dir_ids:
+            child = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == did).first()
+            if child:
+                child.is_deleted = True
+                child.deleted_at = datetime.utcnow()
+                child.deleted_by = deleted_by
         self.db.commit()
 
-    def get_directory_by_parent_and_name(self, parent_id: Optional[str], name: str):
+    def get_directory_by_parent_and_name(self, parent_id: Optional[str], name: str, include_deleted: bool = False):
         """Get a directory by parent_id and name, or None if not found."""
         q = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.name == name)
         if parent_id is None:
             q = q.filter(AttachmentDirectory.parent_id.is_(None))
         else:
             q = q.filter(AttachmentDirectory.parent_id == parent_id)
+        if not include_deleted:
+            q = q.filter(AttachmentDirectory.is_deleted == False)
         return q.first()
 
     def get_or_create_directory(self, parent_id: Optional[str], name: str):
@@ -101,6 +120,95 @@ class AttachmentDirectoryService:
             d = self.get_or_create_directory(current_id, part.strip())
             current_id = str(d.id)
         return current_id
+
+    def get_full_directory_path(self, directory_id: Optional[str]) -> Optional[str]:
+        """Compute full path from root to directory, e.g. 'SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve'."""
+        if not directory_id:
+            return None
+        parts: List[str] = []
+        d = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == directory_id).first()
+        while d:
+            parts.append(d.name)
+            d = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == d.parent_id).first() if d.parent_id else None
+        parts.reverse()
+        return " --> ".join(parts) if parts else None
+
+    def get_descendant_directory_ids(self, directory_id: str, include_deleted: bool = True) -> List[str]:
+        """Return all directory IDs in the subtree rooted at directory_id (including the directory itself)."""
+        ids: List[str] = [directory_id]
+        q = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.parent_id == directory_id)
+        if not include_deleted:
+            q = q.filter(AttachmentDirectory.is_deleted == False)
+        children = q.all()
+        for c in children:
+            ids.extend(self.get_descendant_directory_ids(str(c.id), include_deleted=include_deleted))
+        return ids
+
+    def get_deleted_tree(self) -> list:
+        """Return tree of deleted directories only (for trash view). Roots are deleted dirs whose parent is not deleted (or has no parent)."""
+        all_deleted = self.db.query(AttachmentDirectory).filter(
+            AttachmentDirectory.is_deleted == True
+        ).all()
+        deleted_ids = {str(d.id) for d in all_deleted}
+        deleted_by_parent: dict = {}
+        for d in all_deleted:
+            pid = str(d.parent_id) if d.parent_id else None
+            deleted_by_parent.setdefault(pid, []).append(d)
+        for pid, dirs in deleted_by_parent.items():
+            dirs.sort(key=lambda x: (x.sort_order or 0, x.name or ""))
+
+        def build_node(parent_key: Optional[str]) -> list:
+            dirs = deleted_by_parent.get(parent_key, [])
+            return [
+                {
+                    "id": str(d.id),
+                    "name": d.name,
+                    "parent_id": str(d.parent_id) if d.parent_id else None,
+                    "sort_order": d.sort_order,
+                    "created_at": d.created_at.isoformat() if d.created_at else None,
+                    "children": build_node(str(d.id)),
+                }
+                for d in dirs
+            ]
+
+        # Roots: deleted folders whose parent is None OR not in deleted set (parent not deleted)
+        roots = [
+            d for d in all_deleted
+            if d.parent_id is None or str(d.parent_id) not in deleted_ids
+        ]
+        roots.sort(key=lambda x: (x.sort_order or 0, x.name or ""))
+        return [
+            {
+                "id": str(d.id),
+                "name": d.name,
+                "parent_id": str(d.parent_id) if d.parent_id else None,
+                "sort_order": d.sort_order,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+                "children": build_node(str(d.id)),
+            }
+            for d in roots
+        ]
+
+    def restore_directory(self, directory_id: str) -> dict:
+        """Restore a directory, its descendants, and all attachments in them. Returns counts."""
+        from datetime import datetime
+
+        d = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == directory_id).first()
+        if not d:
+            raise handle_not_found("Attachment directory", directory_id)
+        if not d.is_deleted:
+            raise handle_conflict("Directory is not deleted.")
+        dir_ids = self.get_descendant_directory_ids(directory_id, include_deleted=True)
+        for did in dir_ids:
+            child = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == did).first()
+            if child and child.is_deleted:
+                child.is_deleted = False
+                child.deleted_at = None
+                child.deleted_by = None
+        attachment_service = AttachmentService(self.db)
+        restored = attachment_service.restore_attachments_in_directories(dir_ids)
+        self.db.commit()
+        return {"directories_restored": len(dir_ids), "attachments_restored": restored}
 
 
 class AttachmentTypeService:
@@ -217,12 +325,17 @@ class AttachmentService:
         entity_type: Optional[str] = None,
         entity_id: Optional[str] = None,
         directory_id: Optional[str] = None,
+        is_deleted: Optional[bool] = None,
     ):
-        """List attachments. Filter by directory_id when provided. Search by filename when query is provided."""
+        """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash."""
         from sqlalchemy.orm import joinedload
         q = self.db.query(Attachment).options(
             joinedload(Attachment.attachment_type)
-        ).filter(Attachment.is_deleted == False)
+        )
+        if is_deleted is not None:
+            q = q.filter(Attachment.is_deleted == is_deleted)
+        else:
+            q = q.filter(Attachment.is_deleted == False)
         
         if entity_type:
             q = q.filter(Attachment.entity_type == entity_type)
@@ -262,8 +375,8 @@ class AttachmentService:
             "empty": total == 0
         }
     
-    def get_attachment(self, attachment_id: str):
-        """Get an attachment by ID."""
+    def _get_attachment_any(self, attachment_id: str):
+        """Get attachment by ID (active or archived)."""
         from sqlalchemy.orm import joinedload
         attachment = self.db.query(Attachment).options(
             joinedload(Attachment.attachment_type)
@@ -271,6 +384,10 @@ class AttachmentService:
         if not attachment:
             raise handle_not_found("Attachment", attachment_id)
         return attachment
+
+    def get_attachment(self, attachment_id: str):
+        """Get an attachment by ID (active or archived)."""
+        return self._get_attachment_any(attachment_id)
 
     def get_linked_entities(self, attachment_id: str) -> dict:
         """
@@ -284,7 +401,12 @@ class AttachmentService:
 
         linked_products = []
         q = (
-            self.db.query(Product.id, Product.product_name, Product.description)
+            self.db.query(
+                Product.id,
+                Product.product_name,
+                Product.description,
+                ProductAttachment.id.label("link_id"),
+            )
             .join(ProductAttachment, ProductAttachment.product_id == Product.id)
             .filter(ProductAttachment.attachment_id == attachment_id)
         )
@@ -293,11 +415,17 @@ class AttachmentService:
                 "id": str(row.id),
                 "name": row.product_name or str(row.id),
                 "description": (row.description or "").strip() or None,
+                "link_id": str(row.link_id),
             })
 
         linked_promotions = []
         q = (
-            self.db.query(Promotion.id, Promotion.name, Promotion.description)
+            self.db.query(
+                Promotion.id,
+                Promotion.name,
+                Promotion.description,
+                PromotionAttachment.id.label("link_id"),
+            )
             .join(PromotionAttachment, PromotionAttachment.promotion_id == Promotion.id)
             .filter(PromotionAttachment.attachment_id == attachment_id)
         )
@@ -306,6 +434,7 @@ class AttachmentService:
                 "id": str(row.id),
                 "name": row.name or str(row.id),
                 "description": (row.description or "").strip() or None,
+                "link_id": str(row.link_id),
             })
 
         linked_form = None
@@ -361,6 +490,14 @@ class AttachmentService:
         else:
             attachment_dict["uploaded_by"] = str(uploaded_by) if uploaded_by else None
         
+        # Compute and set full_directory_path when directory_id is provided
+        directory_id = attachment_dict.get("directory_id")
+        if directory_id:
+            dir_service = AttachmentDirectoryService(self.db)
+            attachment_dict["full_directory_path"] = dir_service.get_full_directory_path(directory_id)
+        else:
+            attachment_dict["full_directory_path"] = None
+        
         attachment = Attachment(**attachment_dict)
         self.db.add(attachment)
         self.db.commit()
@@ -374,10 +511,17 @@ class AttachmentService:
         return attachment
     
     def update_attachment(self, attachment_id: str, attachment_data: AttachmentUpdate):
-        """Update an attachment."""
+        """Update an attachment. Recalculates full_directory_path when directory_id changes."""
         attachment = self.get_attachment(attachment_id)
         
         update_data = attachment_data.model_dump(exclude_unset=True)
+        
+        # Recalculate full_directory_path when directory_id is updated
+        if "directory_id" in update_data:
+            new_directory_id = update_data["directory_id"]
+            dir_service = AttachmentDirectoryService(self.db)
+            update_data["full_directory_path"] = dir_service.get_full_directory_path(new_directory_id)
+        
         for key, value in update_data.items():
             setattr(attachment, key, value)
         
@@ -400,18 +544,18 @@ class AttachmentService:
         self.db.commit()
         return {"message": "Order updated", "attachment_ids": attachment_ids}
 
-    def delete_attachment(self, attachment_id: str, deleted_by: str):
-        """Soft delete an attachment."""
+    def archive_attachment(self, attachment_id: str, archived_by: str):
+        """Archive an attachment (soft delete). Data remains for retention."""
         attachment = self.get_attachment(attachment_id)
         from datetime import datetime
         attachment.is_deleted = True
         attachment.deleted_at = datetime.utcnow()
-        attachment.deleted_by = deleted_by
+        attachment.deleted_by = archived_by
         self.db.commit()
-        return {"message": "Attachment deleted successfully"}
+        return {"message": "Attachment archived successfully"}
 
-    def delete_attachments(self, attachment_ids: list[str], deleted_by: str):
-        """Soft delete multiple attachments by ID. Skips not-found and already-deleted."""
+    def archive_attachments(self, attachment_ids: list[str], archived_by: str):
+        """Archive multiple attachments by ID. Skips not-found and already-archived."""
         from datetime import datetime
         count = 0
         for aid in attachment_ids:
@@ -422,13 +566,85 @@ class AttachmentService:
             if attachment:
                 attachment.is_deleted = True
                 attachment.deleted_at = datetime.utcnow()
-                attachment.deleted_by = deleted_by
+                attachment.deleted_by = archived_by
                 count += 1
         self.db.commit()
+        return {"message": f"{count} attachment(s) archived successfully", "archived_count": count}
+
+    def restore_attachment(self, attachment_id: str):
+        """Restore an archived attachment."""
+        attachment = self.get_attachment(attachment_id)
+        attachment.is_deleted = False
+        attachment.deleted_at = None
+        attachment.deleted_by = None
+        self.db.commit()
+        return {"message": "Attachment restored successfully"}
+
+    def restore_attachments_in_directories(self, directory_ids: list[str]) -> int:
+        """Restore all archived attachments whose directory_id is in the given list. Returns count."""
+        if not directory_ids:
+            return 0
+        q = self.db.query(Attachment).filter(
+            Attachment.directory_id.in_(directory_ids),
+            Attachment.is_deleted == True,
+        )
+        count = q.update(
+            {
+                Attachment.is_deleted: False,
+                Attachment.deleted_at: None,
+                Attachment.deleted_by: None,
+            },
+            synchronize_session=False,
+        )
+        return count
+
+    def _s3_key_from_file_path(self, file_path: str) -> str:
+        """Extract S3 key from file_path (URL or raw key)."""
+        from urllib.parse import urlparse
+        if file_path.startswith("https://"):
+            parsed = urlparse(file_path)
+            return parsed.path.lstrip("/")
+        return file_path
+
+    def delete_attachment(self, attachment_id: str, deleted_by: str):
+        """Hard delete an attachment (permanent). Removes DB record; S3 delete runs in background."""
+        attachment = self.get_attachment(attachment_id)
+        file_path = attachment.file_path
+        s3_keys = [self._s3_key_from_file_path(file_path)] if file_path else []
+        self.db.delete(attachment)
+        self.db.commit()
+        if s3_keys:
+            try:
+                from app.tasks.s3_tasks import delete_s3_files
+                from app.services.queue_service import enqueue_job
+                enqueue_job(delete_s3_files, s3_keys, queue_name="imports", job_timeout=300)
+            except Exception as e:
+                logger.warning("Failed to enqueue S3 delete for %s: %s", attachment_id, e)
+        return {"message": "Attachment deleted successfully"}
+
+    def delete_attachments(self, attachment_ids: list[str], deleted_by: str):
+        """Hard delete multiple attachments by ID. Skips not-found. S3 deletes run in background."""
+        s3_keys = []
+        count = 0
+        for aid in attachment_ids:
+            attachment = self.db.query(Attachment).filter(Attachment.id == aid).first()
+            if attachment:
+                if attachment.file_path:
+                    s3_keys.append(self._s3_key_from_file_path(attachment.file_path))
+                self.db.delete(attachment)
+                count += 1
+        self.db.commit()
+        if s3_keys:
+            try:
+                from app.tasks.s3_tasks import delete_s3_files
+                from app.services.queue_service import enqueue_job
+                enqueue_job(delete_s3_files, s3_keys, queue_name="imports", job_timeout=600)
+            except Exception as e:
+                logger.warning("Failed to enqueue S3 deletes for %s keys: %s", len(s3_keys), e)
         return {"message": f"{count} attachment(s) deleted successfully", "deleted_count": count}
 
-    def delete_attachments_in_directories(self, directory_ids: list[str], deleted_by: str) -> int:
-        """Soft delete all non-deleted attachments whose directory_id is in the given list. Returns count."""
+    def archive_attachments_in_directories(self, directory_ids: list[str], archived_by: str) -> int:
+        """Archive all non-archived attachments whose directory_id is in the given list. Returns count."""
         from datetime import datetime
         if not directory_ids:
             return 0
@@ -440,7 +656,7 @@ class AttachmentService:
             {
                 Attachment.is_deleted: True,
                 Attachment.deleted_at: datetime.utcnow(),
-                Attachment.deleted_by: deleted_by,
+                Attachment.deleted_by: archived_by,
             },
             synchronize_session=False,
         )

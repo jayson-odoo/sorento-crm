@@ -220,6 +220,7 @@ class AttachmentSimple(BaseModel):
     mime_type: Optional[str] = None
     uploaded_at: datetime
     attachment_type: Optional[AttachmentTypeSimple] = None
+    full_directory_path: Optional[str] = None  # e.g. "SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve"
     
     @field_validator('id', mode='before')
     @classmethod

@@ -10,27 +10,36 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { useDeleteAttachment } from '../hooks/useAttachments';
+import { useDeleteAttachment, useArchiveAttachment } from '../hooks/useAttachments';
 import type { Attachment } from '../types/attachment.types';
 
 interface AttachmentDeleteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   attachment: Attachment | null;
+  /** When true, permanently delete. When false, archive (move to trash). */
+  permanent?: boolean;
+  /** Called after successful delete/archive (e.g. to close parent modal) */
+  onSuccess?: () => void;
 }
 
 export default function AttachmentDeleteDialog({
   open,
   onOpenChange,
   attachment,
+  permanent = false,
+  onSuccess,
 }: AttachmentDeleteDialogProps) {
   const deleteMutation = useDeleteAttachment();
+  const archiveMutation = useArchiveAttachment();
+  const mutation = permanent ? deleteMutation : archiveMutation;
 
-  const handleDelete = () => {
+  const handleAction = () => {
     if (attachment) {
-      deleteMutation.mutate(attachment.id, {
+      mutation.mutate(attachment.id, {
         onSuccess: () => {
           onOpenChange(false);
+          onSuccess?.();
         },
       });
     }
@@ -40,11 +49,19 @@ export default function AttachmentDeleteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Confirm Delete</DialogTitle>
+          <DialogTitle>{permanent ? 'Permanently Delete' : 'Move to Trash'}</DialogTitle>
         </DialogHeader>
         <DialogDescription>
-          Are you sure you want to delete the attachment{' '}
-          <strong>{attachment?.original_filename}</strong>? This action cannot be undone.
+          {permanent ? (
+            <>
+              Are you sure you want to permanently delete <strong>{attachment?.original_filename}</strong>? This
+              action cannot be undone.
+            </>
+          ) : (
+            <>
+              Move <strong>{attachment?.original_filename}</strong> to trash? You can restore it later.
+            </>
+          )}
         </DialogDescription>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -52,13 +69,13 @@ export default function AttachmentDeleteDialog({
           </Button>
           <Button
             variant="destructive"
-            onClick={handleDelete}
-            disabled={deleteMutation.isPending}
+            onClick={handleAction}
+            disabled={mutation.isPending}
           >
-            {deleteMutation.isPending && (
+            {mutation.isPending && (
               <LoaderCircleIcon className="animate-spin mr-2" />
             )}
-            Delete
+            {permanent ? 'Permanently Delete' : 'Move to Trash'}
           </Button>
         </DialogFooter>
       </DialogContent>

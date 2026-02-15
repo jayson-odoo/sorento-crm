@@ -141,11 +141,34 @@ class OrderService:
         
         return order
     
-    def delete_order(self, order_id: str):
-        """Soft delete an order."""
+    def _get_order_any(self, order_id: str):
+        """Get order by ID including archived."""
+        order = self.db.query(Order).filter(Order.id == order_id).first()
+        if not order:
+            raise handle_not_found("Order", order_id)
+        return order
+
+    def archive_order(self, order_id: str):
+        """Archive an order (soft delete). Data remains for retention."""
         from datetime import datetime, timezone
         order = self.get_order(order_id)
         order.deleted_at = datetime.now(timezone.utc)
+        self.db.commit()
+        return {"message": "Order archived successfully"}
+
+    def restore_order(self, order_id: str):
+        """Restore an archived order."""
+        order = self._get_order_any(order_id)
+        if order.deleted_at is None:
+            raise handle_conflict("Order is not archived")
+        order.deleted_at = None
+        self.db.commit()
+        return {"message": "Order restored successfully"}
+
+    def delete_order(self, order_id: str):
+        """Hard delete an order (permanent). Use archive for retention."""
+        order = self._get_order_any(order_id)
+        self.db.delete(order)
         self.db.commit()
         return {"message": "Order deleted successfully"}
     

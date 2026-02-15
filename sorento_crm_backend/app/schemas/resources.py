@@ -88,6 +88,7 @@ class AttachmentBase(BaseModel):
     entity_type: Optional[str] = None
     entity_id: Optional[str] = None
     directory_id: Optional[str] = None
+    full_directory_path: Optional[str] = None  # e.g. "SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve"
     sort_order: Optional[int] = None
 
 
@@ -168,6 +169,7 @@ class LinkedEntityRef(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
+    link_id: Optional[str] = None  # ProductAttachment/PromotionAttachment id for unlink; forms use id as form_id
 
 
 class AttachmentResponse(AttachmentBase):

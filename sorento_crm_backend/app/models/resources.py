@@ -16,12 +16,15 @@ class AttachmentDirectory(Base):
     name = Column(String(255), nullable=False)
     sort_order = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    is_deleted = Column(Boolean, default=False, nullable=False)
+    deleted_at = Column(DateTime(timezone=False), nullable=True)
+    deleted_by = Column(String, nullable=True)
 
     parent = relationship("AttachmentDirectory", remote_side="AttachmentDirectory.id", back_populates="children")
     children = relationship("AttachmentDirectory", back_populates="parent", cascade="all, delete-orphan")
     attachments = relationship("Attachment", back_populates="directory")
 
-    __table_args__ = (Index("ix_attachment_directories_parent_id", "parent_id"),)
+    __table_args__ = (Index("ix_attachment_directories_parent_id", "parent_id"), Index("ix_attachment_directories_is_deleted", "is_deleted"),)
 
 
 class AttachmentType(Base):
@@ -57,6 +60,7 @@ class Attachment(Base):
     deleted_at = Column(DateTime(timezone=False), nullable=True)
     deleted_by = Column(String, nullable=True)
     directory_id = Column(UUID(as_uuid=False), ForeignKey("attachment_directories.id", ondelete="SET NULL"), nullable=True)
+    full_directory_path = Column(Text, nullable=True)  # e.g. "SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve"
     sort_order = Column(Integer, nullable=True)
 
     attachment_type = relationship("AttachmentType", back_populates="attachments")

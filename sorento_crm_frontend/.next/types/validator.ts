@@ -1478,6 +1478,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/resource-management/trash/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/resource-management/trash">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/resource-management/trash/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/(protected)/sla-management/conversation-sla-tracking/[id]/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/sla-management/conversation-sla-tracking/[id]">> = Specific

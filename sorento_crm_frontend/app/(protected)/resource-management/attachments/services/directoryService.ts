@@ -12,9 +12,27 @@ export interface AttachmentDirectoryTreeNode extends AttachmentDirectory {
   children: AttachmentDirectoryTreeNode[];
 }
 
-export async function getDirectoryTree(): Promise<AttachmentDirectoryTreeNode[]> {
-  const response = await apiFetch('/api/v1/resource-management/directories/tree');
-  if (!response.ok) throw new Error('Failed to fetch directory tree');
+export async function getDirectoryTree(deleted = false): Promise<AttachmentDirectoryTreeNode[]> {
+  const url = deleted
+    ? '/api/v1/resource-management/directories/tree?deleted=true'
+    : '/api/v1/resource-management/directories/tree';
+  const response = await apiFetch(url);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    const msg = err?.detail?.message ?? err?.detail ?? 'Failed to fetch directory tree';
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  }
+  return response.json();
+}
+
+export async function restoreDirectory(id: string): Promise<{ message: string; directories_restored: number; attachments_restored: number }> {
+  const response = await apiFetch(`/api/v1/resource-management/directories/${id}/restore`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to restore directory');
+  }
   return response.json();
 }
 

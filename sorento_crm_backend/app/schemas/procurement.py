@@ -137,7 +137,7 @@ class InboundShipmentBase(BaseModel):
     total_items_shipped: Optional[int] = None
     total_cartons: Optional[int] = None
     notes: Optional[str] = None
-    attachment_id: str
+    attachment_id: Optional[str] = None
 
 
 class InboundShipmentCreate(InboundShipmentBase):

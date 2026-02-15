@@ -1,6 +1,6 @@
 """Background tasks for imports."""
-import io
 import json
+import os
 import time
 import zipfile
 import hashlib
@@ -261,13 +261,13 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
 
 def process_attachment_bulk_import(
     db_job_id: str,
-    zip_content: bytes,
+    zip_path: str,
     attachment_type_id: str,
     access_levels_json: str,
     parent_directory_id: Optional[str],
     user_id: str,
 ):
-    """Process attachment bulk import (ZIP) in background with batch processing."""
+    """Process attachment bulk import (ZIP) in background with batch processing. Reads ZIP from temp file path."""
     from rq import get_current_job
 
     db = SessionLocal()
@@ -283,6 +283,11 @@ def process_attachment_bulk_import(
     if not job:
         logger.error("Attachment bulk import job not found: db_job_id=%s, rq_job_id=%s", db_job_id, rq_job_id)
         db.close()
+        if os.path.isfile(zip_path):
+            try:
+                os.remove(zip_path)
+            except OSError:
+                pass
         return
 
     job_id_str = job.job_id
@@ -316,7 +321,7 @@ def process_attachment_bulk_import(
         )
         max_bytes = (attachment_type.max_file_size_mb or 10) * 1024 * 1024
 
-        with zipfile.ZipFile(io.BytesIO(zip_content), "r") as zf:
+        with zipfile.ZipFile(zip_path, "r") as zf:
             all_names = [_normalize_zip_path(n) for n in zf.namelist()]
 
         dir_paths = set()
@@ -351,14 +356,14 @@ def process_attachment_bulk_import(
             batch = file_paths[i : i + ATTACHMENT_BULK_IMPORT_BATCH_SIZE]
             for file_path in batch:
                 try:
-                    with zipfile.ZipFile(io.BytesIO(zip_content), "r") as zf:
+                    with zipfile.ZipFile(zip_path, "r") as zf:
                         raw_name = next((n for n in zf.namelist() if _normalize_zip_path(n) == file_path), None)
                     if not raw_name:
                         errors.append(f"Not found in zip: {file_path}")
                         failed += 1
                         processed += 1
                         continue
-                    with zipfile.ZipFile(io.BytesIO(zip_content), "r") as zf:
+                    with zipfile.ZipFile(zip_path, "r") as zf:
                         with zf.open(raw_name, "r") as entry:
                             file_content = entry.read()
 
@@ -460,3 +465,8 @@ def process_attachment_bulk_import(
         job_service.fail_job(job_id_str, str(e))
     finally:
         db.close()
+        if zip_path and os.path.isfile(zip_path):
+            try:
+                os.remove(zip_path)
+            except OSError as e:
+                logger.warning("Could not remove temp zip %s: %s", zip_path, e)

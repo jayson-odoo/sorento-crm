@@ -1,5 +1,5 @@
 """Attachment directories (folders) API."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -49,12 +49,15 @@ async def list_directories(
 
 @router.get("/tree", response_model=list[AttachmentDirectoryTreeNode])
 async def get_directory_tree(
+    deleted: bool = Query(False, description="If true, return tree of deleted directories only (for Trash)"),
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
-    """Get full directory tree (root level with nested children)."""
+    """Get full directory tree. Use deleted=true for Trash (deleted folders only)."""
     try:
         service = AttachmentDirectoryService(db)
+        if deleted:
+            return service.get_deleted_tree()
         roots = service.list_flat(None)
         return [
             _build_tree_node(service, str(r.id))
@@ -119,16 +122,37 @@ async def delete_directory(
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
-    """Delete a directory and soft-delete all attachments in it and its subfolders. Subfolders are cascade-deleted."""
+    """Soft-delete a directory, its subfolders, and archive all attachments in them. Can be restored from Trash."""
     try:
         dir_service = AttachmentDirectoryService(db)
         dir_ids = dir_service.get_descendant_directory_ids(directory_id)
         attachment_service = AttachmentService(db)
-        deleted_count = attachment_service.delete_attachments_in_directories(dir_ids, current_user["id"])
-        dir_service.delete_directory(directory_id)
+        deleted_count = attachment_service.archive_attachments_in_directories(dir_ids, current_user["id"])
+        dir_service.delete_directory(directory_id, deleted_by=current_user["id"])
         return {
-            "message": "Directory deleted",
+            "message": "Directory moved to trash",
             "attachments_deleted": deleted_count,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{directory_id}/restore", status_code=200)
+async def restore_directory(
+    directory_id: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Restore a deleted directory, its subfolders, and all attachments in them."""
+    try:
+        service = AttachmentDirectoryService(db)
+        result = service.restore_directory(directory_id)
+        return {
+            "message": "Directory restored",
+            "directories_restored": result["directories_restored"],
+            "attachments_restored": result["attachments_restored"],
         }
     except HTTPException:
         raise

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import AccessAgentFormModal from './AccessAgentFormModal';
 import {
   ColumnDef,
   PaginationState,
@@ -11,15 +12,15 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Plus, ChevronRight } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { ListPageToolbar } from '@/components/common/ListPageToolbar';
+import { Card, CardFooter, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAccessAgents } from '../hooks/useAccessAgents';
@@ -30,6 +31,7 @@ export default function AccessAgentsList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [formModalOpen, setFormModalOpen] = useState(false);
 
   const { data, isLoading } = useAccessAgents({
     pageIndex: pagination.pageIndex,
@@ -116,31 +118,21 @@ export default function AccessAgentsList() {
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search access agents..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
-            />
-            {searchQuery && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
-              </Button>
-            )}
-          </div>
-          <Button onClick={() => router.push('/user-management/access-agents/new')}>
-            <Plus />
-            Create Access Agent
-          </Button>
-        </CardHeader>
+        <ListPageToolbar
+          searchPlaceholder="Search access agents..."
+          searchValue={searchQuery}
+          onSearchChange={(v) => {
+            setSearchQuery(v);
+            setPagination((p) => ({ ...p, pageIndex: 0 }));
+          }}
+          createButton={
+            <Button onClick={() => setFormModalOpen(true)}>
+              <Plus />
+              Create Access Agent
+            </Button>
+          }
+          isLoading={isLoading}
+        />
         <CardTable>
           <ScrollArea>
             <DataGridTable />
@@ -151,6 +143,12 @@ export default function AccessAgentsList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+
+      <AccessAgentFormModal
+        open={formModalOpen}
+        onOpenChange={setFormModalOpen}
+        onSuccess={() => {}}
+      />
     </DataGrid>
   );
 }

@@ -45,6 +45,7 @@ def create_and_send_webhook(
         "s3_url": attachment.file_path,
         "attachment_id": attachment.id,
         "attachment_filename": attachment.original_filename,
+        "attachment_mime_type": attachment.mime_type,
         "attachment_type": attachment_type.type_name if attachment_type else None,
         "access_levels": access_levels_payload,
     }

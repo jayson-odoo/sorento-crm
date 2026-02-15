@@ -1,9 +1,11 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import {
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Folder,
   FolderOpen,
   Plus,
@@ -44,6 +46,17 @@ interface DirectoryTreeSidebarProps {
 
 const FOLDER_DROP_PREFIX = 'folder-';
 const FOLDER_ALL_ID = 'folder-all';
+
+function collectAllFolderIds(nodes: AttachmentDirectoryTreeNode[]): Set<string> {
+  const ids = new Set<string>();
+  for (const node of nodes) {
+    ids.add(node.id);
+    if (node.children?.length) {
+      collectAllFolderIds(node.children).forEach((id) => ids.add(id));
+    }
+  }
+  return ids;
+}
 
 function AllAttachmentsDropTarget({
   isSelected,
@@ -93,29 +106,24 @@ function DirectoryRow({
   node,
   depth,
   selectedId,
+  expandedIds,
   onSelect,
   onCreateSubfolder,
   onRename,
   onDelete,
-  expandedFolderIds,
+  onToggleExpand,
 }: {
   node: AttachmentDirectoryTreeNode;
   depth: number;
   selectedId: string | null;
+  expandedIds: Set<string>;
   onSelect: (id: string | null) => void;
   onCreateSubfolder: (parentId: string) => void;
   onRename: (id: string, currentName: string) => void;
   onDelete: (id: string, name: string) => void;
-  expandedFolderIds: Set<string>;
+  onToggleExpand: (id: string) => void;
 }) {
-  const shouldBeExpanded = expandedFolderIds.has(node.id);
-  const [expanded, setExpanded] = useState(shouldBeExpanded);
-
-  useEffect(() => {
-    if (shouldBeExpanded && !expanded) {
-      setExpanded(true);
-    }
-  }, [shouldBeExpanded, expanded]);
+  const isExpanded = expandedIds.has(node.id);
   const hasChildren = node.children && node.children.length > 0;
   const isSelected = selectedId === node.id;
 
@@ -141,15 +149,15 @@ function DirectoryRow({
           className="p-0.5 hover:bg-muted rounded shrink-0"
           onClick={(e) => {
             e.stopPropagation();
-            setExpanded((x) => !x);
+            onToggleExpand(node.id);
           }}
-          aria-label={expanded ? 'Collapse' : 'Expand'}
+          aria-label={isExpanded ? 'Collapse' : 'Expand'}
         >
           <ChevronRight
-            className={cn('size-4 text-muted-foreground transition-transform', expanded && 'rotate-90')}
+            className={cn('size-4 text-muted-foreground transition-transform', isExpanded && 'rotate-90')}
           />
         </button>
-        {hasChildren && expanded ? (
+        {hasChildren && isExpanded ? (
           <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
         ) : (
           <Folder className="size-4 shrink-0 text-muted-foreground" />
@@ -185,7 +193,7 @@ function DirectoryRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      {hasChildren && expanded && (
+      {hasChildren && isExpanded && (
         <div>
           {node.children!.map((child) => (
             <DirectoryRow
@@ -193,11 +201,12 @@ function DirectoryRow({
               node={child}
               depth={depth + 1}
               selectedId={selectedId}
+              expandedIds={expandedIds}
               onSelect={onSelect}
               onCreateSubfolder={onCreateSubfolder}
               onRename={onRename}
               onDelete={onDelete}
-              expandedFolderIds={expandedFolderIds}
+              onToggleExpand={onToggleExpand}
             />
           ))}
         </div>
@@ -223,16 +232,40 @@ export default function DirectoryTreeSidebar({ selectedId, onSelect }: Directory
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
-  const expandedFolderIds = useMemo(() => {
+  const pathToSelected = useMemo(() => {
     if (!selectedId) return new Set<string>();
     const path = findPathToFolder(tree, selectedId);
     if (!path) return new Set<string>();
     const ids = new Set<string>();
-    for (let i = 0; i < path.length - 1; i++) {
-      ids.add(path[i]);
-    }
+    for (let i = 0; i < path.length - 1; i++) ids.add(path[i]);
     return ids;
   }, [tree, selectedId]);
+
+  const allFolderIds = useMemo(() => collectAllFolderIds(tree), [tree]);
+
+  const [expandedIdsState, setExpandedIdsState] = useState<Set<string>>(new Set());
+  const expandedIds = useMemo(() => {
+    const merged = new Set(expandedIdsState);
+    pathToSelected.forEach((id) => merged.add(id));
+    return merged;
+  }, [expandedIdsState, pathToSelected]);
+
+  const handleExpandAll = useCallback(() => {
+    setExpandedIdsState(new Set(allFolderIds));
+  }, [allFolderIds]);
+
+  const handleCollapseAll = useCallback(() => {
+    setExpandedIdsState(new Set());
+  }, []);
+
+  const handleToggleExpand = useCallback((id: string) => {
+    setExpandedIdsState((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const openAddDialog = (parentId: string | null) => {
     setAddParentId(parentId);
@@ -281,17 +314,37 @@ export default function DirectoryTreeSidebar({ selectedId, onSelect }: Directory
   return (
     <>
       <div className="flex h-full w-full min-w-0 flex-col border-r bg-muted/30">
-        <div className="flex items-center justify-between p-2 border-b">
-          <span className="text-sm font-medium">Folders</span>
-          <Button variant="outline" size="sm" onClick={() => openAddDialog(null)}>
-            <Plus className="size-4 mr-1" />
-            Add
-          </Button>
+        <div className="flex items-center justify-between gap-1 p-2 border-b">
+          <span className="text-sm font-medium truncate">Folders</span>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="size-8 p-0"
+              title="Expand all"
+              onClick={handleExpandAll}
+            >
+              <ChevronDown className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="size-8 p-0"
+              title="Collapse all"
+              onClick={handleCollapseAll}
+            >
+              <ChevronUp className="size-4" />
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => openAddDialog(null)}>
+              <Plus className="size-4 mr-1" />
+              Add
+            </Button>
+          </div>
         </div>
         <ScrollAreaZag className="flex-1">
           <div className="min-w-max p-1 py-2">
             <AllAttachmentsDropTarget
-              isSelected={!selectedId}
+              isSelected={selectedId === null}
               onSelect={() => onSelect(null)}
             />
             {isLoading ? (
@@ -303,6 +356,7 @@ export default function DirectoryTreeSidebar({ selectedId, onSelect }: Directory
                   node={node}
                   depth={0}
                   selectedId={selectedId}
+                  expandedIds={expandedIds}
                   onSelect={onSelect}
                   onCreateSubfolder={(parentId) => {
                     setAddParentId(parentId);
@@ -311,7 +365,7 @@ export default function DirectoryTreeSidebar({ selectedId, onSelect }: Directory
                   }}
                   onRename={openRenameDialog}
                   onDelete={openDeleteDialog}
-                  expandedFolderIds={expandedFolderIds}
+                  onToggleExpand={handleToggleExpand}
                 />
               ))
             )}
@@ -377,15 +431,15 @@ export default function DirectoryTreeSidebar({ selectedId, onSelect }: Directory
             <DialogTitle>Delete folder</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Delete &quot;{deleteTarget?.name}&quot;? This folder and all subfolders will be removed. All attachments
-            in this folder and its subfolders will be deleted. This cannot be undone.
+            Move &quot;{deleteTarget?.name}&quot; to Trash? This folder and all subfolders will be moved to Trash.
+            All attachments in this folder and its subfolders will be archived. You can restore them from the Trash page.
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               Cancel
             </Button>
             <Button variant="destructive" onClick={handleDelete} disabled={deleteMutation.isPending}>
-              Delete
+              Move to Trash
             </Button>
           </DialogFooter>
         </DialogContent>

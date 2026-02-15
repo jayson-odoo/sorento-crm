@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { useDraggable } from '@dnd-kit/core';
 import {
   ColumnDef,
@@ -14,7 +13,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, Download, Eye, Trash2, Plus, RefreshCw, GripVertical, FileArchive } from 'lucide-react';
+import { Search, X, Download, Eye, Trash2, Plus, RefreshCw, GripVertical, FileArchive, RotateCcw } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -30,6 +29,9 @@ import {
   useDeleteAttachment,
   useDownloadAttachment,
   useResubmitAttachmentWebhook,
+  useRestoreAttachment,
+  useBulkRestoreAttachments,
+  useRestoreDirectory,
 } from '../../attachments/hooks/useAttachments';
 import type { Attachment } from '../../attachments/types/attachment.types';
 import { formatDate } from '@/lib/helpers';
@@ -37,6 +39,8 @@ import AttachmentUploadDialog from '../../attachments/components/AttachmentUploa
 import AttachmentBulkImportDialog from '../../attachments/components/AttachmentBulkImportDialog';
 import AttachmentDeleteDialog from '../../attachments/components/attachment-delete-dialog';
 import AttachmentBulkDeleteDialog from '../../attachments/components/AttachmentBulkDeleteDialog';
+import AttachmentDetailModal from '../../attachments/components/AttachmentDetailModal';
+import { TRASH_VIEW_ID, TRASH_FOLDER_PREFIX } from '../constants';
 
 const DRAG_ID_PREFIX = 'attachment-';
 
@@ -75,13 +79,17 @@ function AttachmentDragHandle({
 interface AttachmentsInFolderPanelProps {
   directoryId: string | null;
   directoryName?: string | null;
+  /** Called when user restores a folder from trash; parent can switch view (e.g. to TRASH_VIEW_ID) */
+  onRestoreFolder?: () => void;
+  /** @deprecated Folders are only shown in the left pane; kept for parent compatibility */
+  onSelectFolder?: (id: string) => void;
 }
 
 export default function AttachmentsInFolderPanel({
   directoryId,
   directoryName,
+  onRestoreFolder,
 }: AttachmentsInFolderPanelProps) {
-  const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'uploaded_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -89,18 +97,29 @@ export default function AttachmentsInFolderPanel({
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [viewAttachmentId, setViewAttachmentId] = useState<string | null>(null);
   const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+
+  const isTrashView =
+    directoryId === TRASH_VIEW_ID || (directoryId ?? '').startsWith(TRASH_FOLDER_PREFIX);
+  const trashFolderId =
+    directoryId?.startsWith(TRASH_FOLDER_PREFIX) ? directoryId.slice(TRASH_FOLDER_PREFIX.length) : null;
 
   const { data, isLoading } = useAttachments({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    directory_id: directoryId ?? undefined,
+    directory_id: trashFolderId ?? (isTrashView ? undefined : directoryId ?? undefined),
+    is_deleted: isTrashView ? true : undefined,
   });
 
   const deleteMutation = useDeleteAttachment();
+  const restoreMutation = useRestoreAttachment();
+  const bulkRestoreMutation = useBulkRestoreAttachments();
+  const restoreDirectoryMutation = useRestoreDirectory();
   const downloadMutation = useDownloadAttachment();
   const resubmitMutation = useResubmitAttachmentWebhook();
 
@@ -123,11 +142,12 @@ export default function AttachmentsInFolderPanel({
   const selectedRowIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
   const selectedDeletableIds = useMemo(() => {
     const rows = data?.data ?? [];
+    if (isTrashView) return selectedRowIds;
     return selectedRowIds.filter((id) => {
       const row = rows.find((r) => r.id === id);
       return row && !row.is_deleted;
     });
-  }, [selectedRowIds, data?.data]);
+  }, [selectedRowIds, data?.data, isTrashView]);
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return bytes + ' B';
@@ -137,19 +157,23 @@ export default function AttachmentsInFolderPanel({
 
   const columns = useMemo<ColumnDef<Attachment>[]>(
     () => [
-      {
-        id: 'drag',
-        header: () => null,
-        cell: ({ row }) => (
-          <AttachmentDragHandle
-            attachment={row.original}
-            currentDirectoryId={directoryId}
-          />
-        ),
-        size: 40,
-        enableSorting: false,
-        enableResizing: false,
-      },
+      ...(isTrashView
+        ? []
+        : [
+            {
+              id: 'drag',
+              header: () => null,
+              cell: ({ row }: { row: Row<Attachment> }) => (
+                <AttachmentDragHandle
+                  attachment={row.original}
+                  currentDirectoryId={directoryId}
+                />
+              ),
+              size: 40,
+              enableSorting: false,
+              enableResizing: false,
+            },
+          ]),
       {
         id: 'select',
         header: () => <DataGridTableRowSelectAll />,
@@ -160,14 +184,17 @@ export default function AttachmentsInFolderPanel({
         enableResizing: false,
       },
       {
-        accessorKey: 'original_filename',
-        header: ({ column }) => <DataGridColumnHeader title="Filename" column={column} />,
+        id: 'name',
+        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
+        accessorFn: (row) => row.original_filename,
+        cell: ({ row }) => <span>{row.original.original_filename}</span>,
         size: 250,
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
-        accessorKey: 'mime_type',
+        id: 'type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        accessorFn: (row) => row.mime_type,
         cell: ({ row }) => {
           const mimeType = row.original.mime_type || '-';
           const displayType = mimeType.length > 30 ? mimeType.substring(0, 30) + '...' : mimeType;
@@ -181,33 +208,39 @@ export default function AttachmentsInFolderPanel({
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
-        accessorKey: 'attachment_type',
+        id: 'attachment_type',
         header: ({ column }) => <DataGridColumnHeader title="Attachment Type" column={column} />,
+        accessorFn: (row) => row.attachment_type?.type_name,
         cell: ({ row }) => row.original.attachment_type?.type_name ?? '-',
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
-        accessorKey: 'file_size_bytes',
+        id: 'size',
         header: ({ column }) => <DataGridColumnHeader title="Size" column={column} />,
+        accessorFn: (row) => row.file_size_bytes,
         cell: ({ row }) =>
           row.original.file_size_bytes ? formatFileSize(row.original.file_size_bytes) : '-',
         size: 100,
       },
       {
-        accessorKey: 'uploaded_by_user.name',
+        id: 'uploaded_by',
         header: ({ column }) => <DataGridColumnHeader title="Uploaded By" column={column} />,
-        cell: ({ row }) => row.original.uploaded_by_user?.name ?? row.original.uploaded_by_user?.email ?? '-',
+        accessorFn: (row) =>
+          row.uploaded_by_user?.name ?? row.uploaded_by_user?.email,
+        cell: ({ row }) =>
+          row.original.uploaded_by_user?.name ?? row.original.uploaded_by_user?.email ?? '-',
         size: 150,
       },
       {
-        accessorKey: 'uploaded_at',
+        id: 'uploaded_at',
         header: ({ column }) => <DataGridColumnHeader title="Upload Date" column={column} />,
+        accessorFn: (row) => row.uploaded_at,
         cell: ({ row }) => formatDate(new Date(row.original.uploaded_at)),
         size: 150,
       },
       {
-        accessorKey: 'virus_status',
+        id: 'virus_status',
         header: ({ column }) => <DataGridColumnHeader title="Virus Status" column={column} />,
         cell: ({ row }) => {
           const status = row.original.virus_status || 'unknown';
@@ -226,7 +259,7 @@ export default function AttachmentsInFolderPanel({
         size: 120,
       },
       {
-        accessorKey: 'is_deleted',
+        id: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
           <Badge
@@ -240,7 +273,7 @@ export default function AttachmentsInFolderPanel({
         size: 100,
       },
       {
-        accessorKey: 'actions',
+        id: 'actions',
         header: 'Actions',
         cell: ({ row }) => (
           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -267,40 +300,79 @@ export default function AttachmentsInFolderPanel({
             >
               <Download className="size-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              title="Resubmit to n8n"
-              onClick={(e) => {
-                e.stopPropagation();
-                resubmitMutation.mutate(row.original.id);
-              }}
-              disabled={resubmitMutation.isPending || row.original.is_deleted}
-            >
-              <RefreshCw
-                className={`size-4 ${resubmitMutation.isPending ? 'animate-spin' : ''}`}
-              />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              title="Delete"
-              onClick={(e) => {
-                e.stopPropagation();
-                setSelectedAttachment(row.original);
-                setDeleteDialogOpen(true);
-              }}
-              disabled={deleteMutation.isPending || row.original.is_deleted}
-            >
-              <Trash2 className="size-4" />
-            </Button>
+            {isTrashView ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title="Restore"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    restoreMutation.mutate(row.original.id);
+                  }}
+                  disabled={restoreMutation.isPending}
+                >
+                  <RotateCcw className="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title="Permanently delete"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedAttachment(row.original);
+                    setDeleteDialogOpen(true);
+                  }}
+                  disabled={deleteMutation.isPending}
+                >
+                  <Trash2 className="size-4 text-destructive" />
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title="Resubmit to n8n"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    resubmitMutation.mutate(row.original.id);
+                  }}
+                  disabled={resubmitMutation.isPending || row.original.is_deleted}
+                >
+                  <RefreshCw
+                    className={`size-4 ${resubmitMutation.isPending ? 'animate-spin' : ''}`}
+                  />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title="Move to trash"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedAttachment(row.original);
+                    setDeleteDialogOpen(true);
+                  }}
+                  disabled={deleteMutation.isPending || row.original.is_deleted}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              </>
+            )}
           </div>
         ),
         size: 220,
         enableHiding: false,
       },
     ],
-    [directoryId, deleteMutation.isPending, downloadMutation.isPending, resubmitMutation]
+    [
+      directoryId,
+      isTrashView,
+      deleteMutation.isPending,
+      downloadMutation.isPending,
+      resubmitMutation,
+      restoreMutation.isPending,
+    ]
   );
 
   const table = useReactTable({
@@ -318,16 +390,9 @@ export default function AttachmentsInFolderPanel({
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
-    enableRowSelection: (row: Row<Attachment>) => !row.original.is_deleted,
+    enableRowSelection: (row) => isTrashView || !row.original.is_deleted,
     columnResizeMode: 'onChange',
   });
-
-  const heading =
-    directoryId == null
-      ? 'All attachments'
-      : directoryName
-        ? `Attachments in "${directoryName}"`
-        : 'Attachments in this folder';
 
   return (
     <>
@@ -336,9 +401,8 @@ export default function AttachmentsInFolderPanel({
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
         onRowClick={(row) => {
-          const params = new URLSearchParams({ from: 'directories' });
-          if (directoryId) params.set('directoryId', directoryId);
-          router.push(`/resource-management/attachments/${row.id}?${params.toString()}`);
+          setViewAttachmentId(row.id);
+          setViewModalOpen(true);
         }}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
       >
@@ -364,10 +428,47 @@ export default function AttachmentsInFolderPanel({
                   </Button>
                 )}
               </div>
-              <span className="text-sm text-muted-foreground">{heading}</span>
             </div>
             <div className="flex items-center gap-2">
-              {selectedDeletableIds.length > 0 && (
+              {trashFolderId && (
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    restoreDirectoryMutation.mutate(trashFolderId, {
+                      onSuccess: onRestoreFolder,
+                    })
+                  }
+                  disabled={restoreDirectoryMutation.isPending}
+                >
+                  <RotateCcw className="size-4 mr-2" />
+                  Restore folder and contents
+                </Button>
+              )}
+              {selectedDeletableIds.length > 0 && isTrashView && (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      bulkRestoreMutation.mutate(selectedDeletableIds, {
+                        onSuccess: () => setRowSelection({}),
+                      })
+                    }
+                    disabled={bulkRestoreMutation.isPending}
+                  >
+                    <RotateCcw className="size-4 mr-2" />
+                    Restore selected ({selectedDeletableIds.length})
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setBulkDeleteDialogOpen(true)}
+                    className="text-destructive border-destructive/50 hover:bg-destructive/10"
+                  >
+                    <Trash2 className="size-4 mr-2" />
+                    Permanently delete ({selectedDeletableIds.length})
+                  </Button>
+                </>
+              )}
+              {selectedDeletableIds.length > 0 && !isTrashView && (
                 <Button
                   variant="outline"
                   onClick={() => setBulkDeleteDialogOpen(true)}
@@ -377,14 +478,18 @@ export default function AttachmentsInFolderPanel({
                   Delete selected ({selectedDeletableIds.length})
                 </Button>
               )}
-              <Button onClick={() => setUploadDialogOpen(true)}>
-                <Plus className="size-4 mr-2" />
-                Upload
-              </Button>
-              <Button variant="outline" onClick={() => setBulkImportDialogOpen(true)}>
-                <FileArchive className="size-4 mr-2" />
-                Bulk import (ZIP)
-              </Button>
+              {!isTrashView && (
+                <>
+                  <Button onClick={() => setUploadDialogOpen(true)}>
+                    <Plus className="size-4 mr-2" />
+                    Upload
+                  </Button>
+                  <Button variant="outline" onClick={() => setBulkImportDialogOpen(true)}>
+                    <FileArchive className="size-4 mr-2" />
+                    Bulk import (ZIP)
+                  </Button>
+                </>
+              )}
             </div>
           </CardHeader>
           <CardTable>
@@ -415,13 +520,26 @@ export default function AttachmentsInFolderPanel({
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         attachment={selectedAttachment}
+        permanent={isTrashView}
       />
 
       <AttachmentBulkDeleteDialog
         open={bulkDeleteDialogOpen}
         onOpenChange={setBulkDeleteDialogOpen}
         attachmentIds={selectedDeletableIds}
+        permanent={isTrashView}
         onSuccess={() => setRowSelection({})}
+      />
+
+      <AttachmentDetailModal
+        open={viewModalOpen}
+        onOpenChange={(open) => {
+          setViewModalOpen(open);
+          if (!open) setViewAttachmentId(null);
+        }}
+        attachmentId={viewAttachmentId}
+        neighbourItems={(data?.data ?? []).map((a) => ({ id: a.id }))}
+        onAttachmentChange={setViewAttachmentId}
       />
     </>
   );

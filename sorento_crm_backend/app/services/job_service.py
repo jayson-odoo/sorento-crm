@@ -1,12 +1,15 @@
 """Service for managing import jobs."""
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
+import logging
+import threading
+import uuid
+from datetime import datetime
 from typing import Optional, List
+
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
+
 from app.models.job import ImportJob, JobStatus
 from app.services.queue_service import enqueue_job, get_job_status, cancel_job as cancel_rq_job
-from datetime import datetime
-import uuid
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -149,34 +152,53 @@ class JobService:
         
         return query.order_by(desc(ImportJob.created_at)).limit(limit).offset(offset).all()
     
-    def cancel_job(self, job_id: str) -> bool:
-        """Cancel a job."""
-        job = self.get_job(job_id)
+    def cancel_job(self, job_id_or_db_id: str) -> bool:
+        """Cancel a job. Accepts either RQ job_id or DB id (UUID). Updates DB immediately so API returns fast; RQ stop is best-effort."""
+        job = self.get_job(job_id_or_db_id) or self.get_job_by_db_id(job_id_or_db_id)
         if not job:
             return False
-        
-        # Cancel RQ job
-        if cancel_rq_job(job_id):
-            job.status = JobStatus.CANCELLED.value
-            job.completed_at = datetime.utcnow()
-            self.db.commit()
-            return True
-        
-        return False
+
+        if job.status not in (JobStatus.PENDING.value, JobStatus.QUEUED.value, JobStatus.STARTED.value):
+            return False
+
+        # Update DB first so the API can return immediately (avoids UI stuck on "Cancelling...")
+        job.status = JobStatus.CANCELLED.value
+        job.completed_at = datetime.utcnow()
+        self.db.commit()
+
+        # Tell RQ to stop the worker in background so we never block the API response
+        rq_job_id = job.job_id
+        def _send_rq_cancel():
+            try:
+                cancel_rq_job(rq_job_id)
+            except Exception:
+                pass
+
+        t = threading.Thread(target=_send_rq_cancel, daemon=True)
+        t.start()
+
+        return True
     
     def sync_job_status(self, job_id: str) -> Optional[ImportJob]:
-        """Sync job status from RQ."""
+        """Sync job status from RQ. Never overwrite a job already marked CANCELLED in DB."""
         job = self.get_job(job_id)
         if not job:
             return None
-        
+
+        # Once we've marked as cancelled, do not overwrite with RQ (RQ may still report 'started' briefly)
+        if job.status == JobStatus.CANCELLED.value:
+            return job
+
         rq_status = get_job_status(job_id)
         if not rq_status:
             return job
-        
-        # Update status based on RQ status
-        rq_status_str = rq_status['status']
-        if rq_status_str == 'started' and job.status != JobStatus.STARTED.value:
+
+        rq_status_str = rq_status.get('status') or ''
+        if rq_status_str == 'canceled':
+            job.status = JobStatus.CANCELLED.value
+            if not job.completed_at:
+                job.completed_at = datetime.utcnow()
+        elif rq_status_str == 'started' and job.status != JobStatus.STARTED.value:
             job.status = JobStatus.STARTED.value
             if not job.started_at:
                 job.started_at = datetime.utcnow()
@@ -190,6 +212,6 @@ class JobService:
             job.completed_at = datetime.utcnow()
             if rq_status.get('exc_info'):
                 job.error = str(rq_status['exc_info'])
-        
+
         self.db.commit()
         return job

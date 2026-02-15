@@ -381,7 +381,11 @@ function DataGridTableLoader() {
 
 function DataGridTableRowSelect<TData>({ row, size }: { row: Row<TData>; size?: 'sm' | 'md' | 'lg' }) {
   return (
-    <>
+    <div
+      className="inline-flex"
+      onClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       <div
         className={cn('hidden absolute top-0 bottom-0 start-0 w-[2px] bg-primary', row.getIsSelected() && 'block')}
       ></div>
@@ -392,7 +396,7 @@ function DataGridTableRowSelect<TData>({ row, size }: { row: Row<TData>; size?: 
         size={size ?? 'sm'}
         className="align-[inherit]"
       />
-    </>
+    </div>
   );
 }
 

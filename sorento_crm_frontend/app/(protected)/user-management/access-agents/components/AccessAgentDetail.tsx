@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2 } from 'lucide-react';
+import AccessAgentFormModal from './AccessAgentFormModal';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -43,6 +44,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
   const { data: agentTeamsData } = useAgentTeams(accessAgentId);
   const { data: teamsList = [] } = useTeams();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
 
   const assignments = agentTeamsData?.assignments ?? [];
   const teamNameMap = useMemo(() => {
@@ -93,7 +95,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
             items={navigationItems}
             basePath="/user-management/access-agents"
           />
-          <Button variant="outline" onClick={() => router.push(`/user-management/access-agents/${accessAgentId}/edit`)}>
+          <Button variant="outline" onClick={() => setEditModalOpen(true)}>
             <Edit className="size-4" />
             Edit
           </Button>
@@ -165,11 +167,22 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
 
       {/* Team Assignments */}
       <Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Team Assignments</CardTitle>
-          </CardHeader>
-          <CardContent>
+        <CardHeader>
+          <CardTitle>Team Assignments</CardTitle>
+          <p className="text-sm text-muted-foreground font-normal">
+            Assign teams by context code for round-robin next-assignee. Add members under User Management → Teams.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {assignments.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground border rounded-lg border-dashed">
+              <p>No team assignments yet.</p>
+              <p className="text-sm mt-1">Edit agent to add assignments.</p>
+              <Button variant="outline" size="sm" className="mt-3" onClick={() => setEditModalOpen(true)}>
+                Edit Access Agent
+              </Button>
+            </div>
+          ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -186,8 +199,8 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                 ))}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
+          )}
+        </CardContent>
       </Card>
 
       {/* Contact Access Agents Table */}
@@ -197,6 +210,12 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
         </CardHeader>
         <ContactAccessAgentsTable accessAgentId={accessAgentId} />
       </Card>
+
+      <AccessAgentFormModal
+        open={editModalOpen}
+        onOpenChange={setEditModalOpen}
+        accessAgentId={accessAgentId}
+      />
 
       {/* Delete Dialog */}
       {accessAgent && (

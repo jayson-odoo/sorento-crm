@@ -83,7 +83,7 @@ class InboundShipment(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(String, nullable=True)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
-    attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="RESTRICT"), nullable=False)
+    attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     

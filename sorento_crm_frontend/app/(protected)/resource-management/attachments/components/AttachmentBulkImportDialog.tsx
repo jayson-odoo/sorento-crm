@@ -199,10 +199,6 @@ export default function AttachmentBulkImportDialog({
         </DialogHeader>
         {phase === 'form' && (
           <>
-        <p className="text-sm text-muted-foreground">
-          Upload a ZIP file to create folders from its structure and import all files as attachments. Import runs in the
-          background so you can close this dialog and continue working.
-        </p>
         <div className="space-y-4 py-2">
           <div className="space-y-2">
             <Label>
