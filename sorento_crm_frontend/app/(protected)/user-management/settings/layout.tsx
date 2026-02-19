@@ -57,6 +57,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         title: 'Notifications',
         path: '/user-management/settings/notifications',
       },
+      smtp: {
+        title: 'SMTP',
+        path: '/user-management/settings/smtp',
+      },
       social: {
         title: 'Social',
         path: '/user-management/settings/social',

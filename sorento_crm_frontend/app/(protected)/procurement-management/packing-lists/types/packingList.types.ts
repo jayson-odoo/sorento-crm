@@ -11,6 +11,8 @@ export interface InboundShipmentLine {
   cartons_count: number;
   weight_per_carton?: number | null;
   unit_cost?: number | null;
+  /** Total SPO allocated quantity for this product on this shipment (all warehouses). */
+  spo_allocated_quantity?: number | null;
   product?: {
     id: string;
     product_code: string;
@@ -67,18 +69,18 @@ export interface PackingListDetail extends PackingList {
 
 export interface PackingListFormData {
   shipment_number: string;
-  supplier_id: string;
-  shipment_date: Date;
-  expected_arrival_date?: Date;
-  actual_arrival_date?: Date;
+  supplier_id?: string;
+  shipment_date: string;
+  expected_arrival_date?: string;
+  actual_arrival_date?: string;
   bill_of_lading_number?: string;
   shipping_container_number?: string;
   invoice_number?: string;
-  shipment_status: string;
+  shipment_status?: string;
   total_items_shipped?: number;
   total_cartons?: number;
   notes?: string;
-  attachment_id: string;
+  attachment_id?: string;
   shipment_lines?: Array<{
     product_id: string;
     quantity_shipped: number;

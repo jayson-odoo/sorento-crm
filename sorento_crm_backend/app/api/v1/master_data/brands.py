@@ -116,8 +116,7 @@ async def delete_brand(
     """Delete a brand."""
     try:
         service = BrandService(db)
-        # Implement delete logic
-        return {"message": "Brand deleted successfully"}
+        return service.delete_brand(brand_id)
     except HTTPException:
         raise
     except Exception as e:

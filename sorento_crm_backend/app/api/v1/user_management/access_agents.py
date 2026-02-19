@@ -144,10 +144,10 @@ async def get_agent_teams(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List assignments (code + team_id) for this agent."""
+    """List assignments with team name, members, last assigned and next in line (round-robin state)."""
     try:
         service = AccessAgentService(db)
-        assignments = service.list_agent_teams(agent_id)
+        assignments = service.list_agent_teams_with_round_robin_state(agent_id)
         return {"assignments": assignments}
     except Exception as e:
         raise handle_internal_error(str(e))

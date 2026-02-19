@@ -37,6 +37,29 @@ def _create_and_send_webhook(
     create_and_send_webhook(db, attachment, attachment_type, access_levels_payload, current_user_id)
 
 
+def _enrich_uploaded_by_user(db, attachment) -> Optional[dict]:
+    """Resolve uploaded_by UUID to user name/email for display. Returns UploadedByUser dict or None."""
+    from app.schemas.resources import UploadedByUser
+    from app.models.user import User
+
+    uploaded_by = getattr(attachment, "uploaded_by", None)
+    if not uploaded_by:
+        return None
+    try:
+        user_id = str(uploaded_by)
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            display_name = (user.name or "").strip() or (user.email or None)
+            return UploadedByUser(
+                id=str(user.id),
+                name=display_name,
+                email=user.email or None,
+            ).model_dump()
+    except Exception as e:
+        logger.warning("Could not resolve uploaded_by user for attachment %s: %s", getattr(attachment, "id"), e)
+    return None
+
+
 @router.get("/", response_model=ListResponse[AttachmentResponse])
 async def get_attachments(
     page: int = Query(1, ge=1),
@@ -65,6 +88,15 @@ async def get_attachments(
             directory_id=directory_id,
             is_deleted=is_deleted,
         )
+        # Enrich each attachment with uploaded_by_user for display
+        enriched = []
+        for att in result["data"]:
+            data = AttachmentResponse.model_validate(att).model_dump()
+            user_info = _enrich_uploaded_by_user(db, att)
+            if user_info:
+                data["uploaded_by_user"] = user_info
+            enriched.append(data)
+        result["data"] = enriched
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -72,8 +104,7 @@ async def get_attachments(
 
 def _attachment_response_with_linked_entities(service: AttachmentService, attachment) -> dict:
     """Build attachment response dict including linked entities from product_attachments, promotion_attachments, forms."""
-    from app.schemas.resources import AttachmentResponse, LinkedEntityRef, UploadedByUser
-    from app.models.user import User
+    from app.schemas.resources import AttachmentResponse, LinkedEntityRef
 
     attachment_id = str(attachment.id) if attachment.id else attachment.id
     data = AttachmentResponse.model_validate(attachment).model_dump()
@@ -91,21 +122,9 @@ def _attachment_response_with_linked_entities(service: AttachmentService, attach
         data["entity_display_name"] = service.get_entity_display_name(
             attachment.entity_type, attachment.entity_id
         )
-    uploaded_by = getattr(attachment, "uploaded_by", None)
-    if uploaded_by:
-        try:
-            user_id = str(uploaded_by)
-            user = service.db.query(User).filter(User.id == user_id).first()
-            if user:
-                # Prefer name from users table; fall back to email so UI never shows raw UUID
-                display_name = (user.name or "").strip() or (user.email or None)
-                data["uploaded_by_user"] = UploadedByUser(
-                    id=str(user.id),
-                    name=display_name,
-                    email=user.email or None,
-                ).model_dump()
-        except Exception as e:
-            logger.warning("Could not resolve uploaded_by user for attachment %s: %s", attachment_id, e)
+    user_info = _enrich_uploaded_by_user(service.db, attachment)
+    if user_info:
+        data["uploaded_by_user"] = user_info
     return data
 
 

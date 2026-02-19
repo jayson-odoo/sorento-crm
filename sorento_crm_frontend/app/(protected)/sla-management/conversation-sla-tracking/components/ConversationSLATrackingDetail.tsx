@@ -18,10 +18,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useConversationSLATrackingDetail, useConversationSLATracking, useDeleteConversationSLATracking } from '../hooks/useConversationSLATracking';
+import { useConversationSLATrackingDetail, useConversationSLATracking, useDeleteConversationSLATracking, useSyncAssigneeFromRespond } from '../hooks/useConversationSLATracking';
 import { formatDate, formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2 } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface ConversationSLATrackingDetailProps {
@@ -48,7 +49,11 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
   const navigationItems = navigationData?.data ?? [];
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [trackingOpen, setTrackingOpen] = useState(false);
+  const [responseOpen, setResponseOpen] = useState(false);
+  const [resolutionOpen, setResolutionOpen] = useState(false);
   const deleteMutation = useDeleteConversationSLATracking();
+  const syncAssigneeMutation = useSyncAssigneeFromRespond();
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -84,20 +89,12 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
     );
   }
 
-  /** Time elapsed: when responded+resolved = resolution time; when only responded = response time; else = time since initiated. Always shows seconds. */
+  /** Time elapsed: stops only when resolved (resolved_at - initiated_at). Until then, keeps running (now - initiated_at). */
   const getTimeElapsed = (): string | null => {
     if (tracking.is_resolved && tracking.resolved_at && tracking.initiated_at) {
       const initiated = parseDateTimeAsUTC(tracking.initiated_at);
       const resolved = parseDateTimeAsUTC(tracking.resolved_at);
       return formatDurationWithSeconds(resolved.getTime() - initiated.getTime());
-    }
-    if (tracking.is_responded && tracking.responded_at && tracking.initiated_at) {
-      const initiated = parseDateTimeAsUTC(tracking.initiated_at);
-      const responded = parseDateTimeAsUTC(tracking.responded_at);
-      return formatDurationWithSeconds(responded.getTime() - initiated.getTime());
-    }
-    if (tracking.time_in_tier_resolution_seconds != null) {
-      return formatDurationWithSeconds(tracking.time_in_tier_resolution_seconds * 1000);
     }
     const now = new Date();
     const started = parseDateTimeAsUTC(tracking.initiated_at);
@@ -213,6 +210,15 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
             Refresh
           </Button>
           <Button
+            variant="outline"
+            onClick={() => syncAssigneeMutation.mutate(trackingId)}
+            disabled={syncAssigneeMutation.isPending}
+            title="Sync assignee from Respond.io"
+          >
+            <UserRound className={`size-4 mr-2 ${syncAssigneeMutation.isPending ? 'animate-pulse' : ''}`} />
+            Sync assignee
+          </Button>
+          <Button
             variant="destructive"
             onClick={() => setDeleteDialogOpen(true)}
             disabled={deleteMutation.isPending}
@@ -251,344 +257,226 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
 
         {/* Tab 1: Overview */}
         <TabsContent value="overview">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Key Metrics Cards */}
+          <div className="space-y-6">
+          {/* Collapsible: Tracking Information */}
+          <Collapsible open={trackingOpen} onOpenChange={setTrackingOpen}>
             <Card>
-              <CardHeader>
-                <CardTitle>Key Metrics</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Time elapsed</p>
-                  <p className="font-medium text-lg">
-                    {getTimeElapsed() ?? '—'}
-                  </p>
-                </div>
-                <div>
-                  {tracking.is_responded ? (
-                    <>
-                      <p className="text-sm text-muted-foreground">Response time</p>
-                      <p className={`font-medium text-lg ${(tracking.response_time ?? 0) <= (tracking.tier_response_hours ?? 0) ? 'text-green-600' : 'text-destructive'}`}>
-                        {getResponseDuration() ?? (tracking.response_time != null ? formatDuration(tracking.response_time * 3600 * 1000) : '—')}
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-sm text-muted-foreground">Time remaining</p>
-                      <p className={`font-medium text-lg ${getTimeRemainingResponse()?.includes('overdue') ? 'text-destructive' : ''}`}>
-                        {getTimeRemainingResponse() ?? '—'}
-                      </p>
-                    </>
-                  )}
-                </div>
-                <div>
-                  {tracking.is_resolved ? (
-                    <>
-                      <p className="text-sm text-muted-foreground">Resolution duration</p>
-                      <p className={`font-medium text-lg ${(tracking.resolution_duration ?? 0) <= (tracking.tier_resolution_hours ?? 0) ? 'text-green-600' : 'text-destructive'}`}>
-                        {getResolutionDuration() ?? (tracking.resolution_duration != null ? formatDuration(tracking.resolution_duration * 3600 * 1000) : '—')}
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-sm text-muted-foreground">Time remaining</p>
-                      <p className={`font-medium text-lg ${getTimeRemainingResolution()?.includes('overdue') ? 'text-destructive' : ''}`}>
-                        {getTimeRemainingResolution() ?? '—'}
-                      </p>
-                    </>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Timeline Visualization */}
-            <Card className="lg:col-span-2">
-              <CardHeader>
-                <CardTitle>Tier Progression Timeline</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {(() => {
-                    // Build timeline items from escalation logs and current tier
-                    const timelineItems: Array<{
-                      tier: number;
-                      startedAt: Date;
-                      isEscalation: boolean;
-                      reason?: string;
-                      isCurrent: boolean;
-                    }> = [];
-                    
-                    const escalationLogs = (tracking.event_logs || []).filter((log) => log.event_type === 'escalation');
-
-                    // Determine initial tier
-                    const initialTier = escalationLogs.length > 0
-                      ? escalationLogs[0].from_tier
-                      : tracking.current_tier;
-                    
-                    // Check if current tier matches the last escalation log
-                    const lastLog = escalationLogs.length > 0
-                      ? escalationLogs[escalationLogs.length - 1]
-                      : null;
-                    const isCurrentTierInLogs = lastLog && lastLog.to_tier === tracking.current_tier;
-                    
-                    // Add initial tier (only if there are escalation logs, otherwise it's handled below)
-                    if (escalationLogs.length > 0 && initialTier != null) {
-                      timelineItems.push({
-                        tier: initialTier,
-                        startedAt: parseDateTimeAsUTC(tracking.initiated_at),
-                        isEscalation: false,
-                        isCurrent: false,
-                      });
-                    }
-                    
-                    // Add escalation logs
-                    if (escalationLogs.length > 0) {
-                      escalationLogs.forEach((log, index) => {
-                        if (log.to_tier == null) return; // Skip if to_tier is null/undefined
-                        const isLast = index === escalationLogs.length - 1;
-                        timelineItems.push({
-                          tier: log.to_tier,
-                          startedAt: parseDateTimeAsUTC(log.event_at),
-                          isEscalation: log.from_tier !== log.to_tier,
-                          reason: log.reason || undefined,
-                          isCurrent: isLast && log.to_tier === tracking.current_tier,
-                        });
-                      });
-                    } else {
-                      // If no escalation logs, show current tier as initial tier
-                      if (tracking.current_tier != null) {
-                        timelineItems.push({
-                          tier: tracking.current_tier,
-                          startedAt: parseDateTimeAsUTC(tracking.current_tier_started_at),
-                          isEscalation: false,
-                          isCurrent: true,
-                        });
-                      }
-                    }
-                    
-                    return timelineItems.map((item, index) => (
-                      <div key={index} className="flex items-center gap-4">
-                        <div className="flex flex-col items-center">
-                          <div className={`size-8 rounded-full flex items-center justify-center text-white font-bold ${
-                            item.isCurrent 
-                              ? 'bg-primary' 
-                              : item.isEscalation 
-                                ? 'bg-orange-500' 
-                                : 'bg-blue-500'
-                          }`}>
-                            {item.tier}
-                          </div>
-                          {index < timelineItems.length - 1 && (
-                            <div className="h-12 w-0.5 bg-border mt-2"></div>
-                          )}
-                        </div>
-                        <div className="flex-1">
-                          <p className="font-medium">
-                            {item.isEscalation 
-                              ? `Escalated to Tier ${item.tier}${item.isCurrent ? ' (Current)' : ''}` 
-                              : `Tier ${item.tier}${item.isCurrent ? ' (Current)' : ''}`
-                            }
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {item.isEscalation ? 'Escalated' : 'Started'}: {formatDateTime(item.startedAt)}
-                          </p>
-                          {item.reason && (
-                            <p className="text-sm text-muted-foreground">Reason: {item.reason}</p>
-                          )}
-                        </div>
-                      </div>
-                    ));
-                  })()}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Detailed Information */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Tracking Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Contact Phone</p>
-                  <p className="font-medium">
-                    {tracking.contact_phone || tracking.contact?.phone_number || '-'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Contact Name</p>
-                  <p className="font-medium">
-                    {tracking.contact_name || tracking.contact?.name || '-'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Policy</p>
-                  <p className="font-medium">{tracking.policy?.name || tracking.policy_name || tracking.policy?.code || tracking.policy_code || '-'}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Current Tier</p>
-                  <p className="font-medium">Tier {tracking.current_tier}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Assigned To</p>
-                  <p className="font-medium">
-                    {tracking.assigned_user_name || 
-                     tracking.assigned_user?.name || 
-                     tracking.assigned_user?.email || 
-                     tracking.assigned_to || 
-                     '-'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Initiated At</p>
-                  <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.initiated_at))}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Current Tier Started At</p>
-                  <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.current_tier_started_at))}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Due at (response)</p>
-                  <p className="font-medium">
-                    {formatDateTime(parseDateTimeAsUTC(tracking.due_at))}
-                    {(() => {
-                      const due = new Date(tracking.due_at).getTime();
-                      const now = Date.now();
-                      const overdue = tracking.is_responded && tracking.responded_at
-                        ? new Date(tracking.responded_at).getTime() > due
-                        : now > due;
-                      return overdue ? (
-                        <span className="ml-2 text-destructive text-sm font-medium">Overdue</span>
-                      ) : null;
-                    })()}
-                  </p>
-                </div>
-                {(tracking.due_at_resolution ?? tracking.resolution_due_at) && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Due at (resolution)</p>
-                    <p className="font-medium">
-                      {formatDateTime(parseDateTimeAsUTC(tracking.due_at_resolution ?? tracking.resolution_due_at!))}
-                      {(() => {
-                        const dueRes = tracking.due_at_resolution ?? tracking.resolution_due_at;
-                        if (!dueRes) return null;
-                        const due = new Date(dueRes).getTime();
-                        const now = Date.now();
-                        const overdue = tracking.is_resolved && tracking.resolved_at
-                          ? new Date(tracking.resolved_at).getTime() > due
-                          : now > due;
-                        return overdue ? (
-                          <span className="ml-2 text-destructive text-sm font-medium">Overdue</span>
-                        ) : null;
-                      })()}
-                    </p>
+              <CollapsibleTrigger asChild>
+                <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors rounded-t-lg flex flex-row items-center justify-between space-y-0">
+                  <CardTitle className="text-base">Tracking Information</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-muted-foreground">
+                      Time elapsed: {getTimeElapsed() ?? '—'}
+                    </span>
+                    {trackingOpen ? (
+                      <ChevronDown className="size-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="size-4 text-muted-foreground" />
+                    )}
                   </div>
-                )}
-                {tracking.escalated_at && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Escalated At</p>
-                    <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.escalated_at))}</p>
-                  </div>
-                )}
-                {tracking.escalation_reason && (
-                  <div className="md:col-span-2">
-                    <p className="text-sm text-muted-foreground">Escalation Reason</p>
-                    <p className="font-medium">{tracking.escalation_reason}</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Response Section */}
-              <div className="border-t pt-4 mt-4">
-                <h3 className="text-lg font-semibold mb-4">Response</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Is Responded</p>
-                    <p className="font-medium">
-                      {tracking.is_responded ? (
-                        <Badge variant="success" appearance="ghost">Yes</Badge>
-                      ) : (
-                        <Badge variant="secondary" appearance="ghost">No</Badge>
-                      )}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Responded At</p>
-                    <p className="font-medium">
-                      {tracking.responded_at 
-                        ? formatDateTime(parseDateTimeAsUTC(tracking.responded_at))
-                        : '-'
-                      }
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Response Duration</p>
-                    <p className="font-medium">
-                      {getResponseDuration() || '-'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Responded By</p>
-                    <p className="font-medium">
-                      {tracking.responded_by_user_name || '-'}
-                    </p>
-                  </div>
-                  {tracking.average_response_time !== null && tracking.average_response_time !== undefined && (
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="pt-0 pb-6 px-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
                     <div>
-                      <p className="text-sm text-muted-foreground">Average Response Time</p>
+                      <p className="text-sm text-muted-foreground">Assigned To</p>
                       <p className="font-medium">
-                        {formatDuration(tracking.average_response_time * 3600 * 1000)}
+                        {tracking.assigned_user_name ||
+                          tracking.assigned_user?.name ||
+                          tracking.assigned_user?.email ||
+                          tracking.assigned_to ||
+                          '-'}
                       </p>
                     </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Resolution Section */}
-              <div className="border-t pt-4 mt-4">
-                <h3 className="text-lg font-semibold mb-4">Resolution</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Is Resolved</p>
-                    <p className="font-medium">
-                      {tracking.is_resolved ? (
-                        <Badge variant="success" appearance="ghost">Yes</Badge>
-                      ) : (
-                        <Badge variant="secondary" appearance="ghost">No</Badge>
-                      )}
-                    </p>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Initiated At</p>
+                      <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.initiated_at))}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Current Tier Started At</p>
+                      <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.current_tier_started_at))}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Due at (response)</p>
+                      <p className="font-medium">
+                        {formatDateTime(parseDateTimeAsUTC(tracking.due_at))}
+                        {(() => {
+                          const due = parseDateTimeAsUTC(tracking.due_at).getTime();
+                          const now = Date.now();
+                          const overdue = tracking.is_responded && tracking.responded_at
+                            ? parseDateTimeAsUTC(tracking.responded_at).getTime() > due
+                            : now > due;
+                          return overdue ? (
+                            <span className="ml-2 text-destructive text-sm font-medium">Overdue</span>
+                          ) : null;
+                        })()}
+                      </p>
+                    </div>
+                    {(tracking.due_at_resolution ?? tracking.resolution_due_at) && (
+                      <div>
+                        <p className="text-sm text-muted-foreground">Due at (resolution)</p>
+                        <p className="font-medium">
+                          {formatDateTime(parseDateTimeAsUTC(tracking.due_at_resolution ?? tracking.resolution_due_at!))}
+                          {(() => {
+                            const dueRes = tracking.due_at_resolution ?? tracking.resolution_due_at;
+                            if (!dueRes) return null;
+                            const due = parseDateTimeAsUTC(dueRes).getTime();
+                            const now = Date.now();
+                            const overdue = tracking.is_resolved && tracking.resolved_at
+                              ? parseDateTimeAsUTC(tracking.resolved_at).getTime() > due
+                              : now > due;
+                            return overdue ? (
+                              <span className="ml-2 text-destructive text-sm font-medium">Overdue</span>
+                            ) : null;
+                          })()}
+                        </p>
+                      </div>
+                    )}
+                    {tracking.escalated_at && (
+                      <div>
+                        <p className="text-sm text-muted-foreground">Escalated At</p>
+                        <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.escalated_at))}</p>
+                      </div>
+                    )}
+                    {tracking.escalation_reason && (
+                      <div className="md:col-span-2">
+                        <p className="text-sm text-muted-foreground">Escalation Reason</p>
+                        <p className="font-medium">{tracking.escalation_reason}</p>
+                      </div>
+                    )}
                   </div>
-                  {tracking.resolved_at && (
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+
+          {/* Collapsible: Response time */}
+          <Collapsible open={responseOpen} onOpenChange={setResponseOpen}>
+            <Card>
+              <CollapsibleTrigger asChild>
+                <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors rounded-t-lg flex flex-row items-center justify-between space-y-0">
+                  <CardTitle className="text-base">Response time</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm font-medium ${getTimeRemainingResponse()?.includes('overdue') ? 'text-destructive' : ''}`}>
+                      {tracking.is_responded
+                        ? (getResponseDuration() ?? (tracking.response_time != null ? formatDuration(tracking.response_time * 3600 * 1000) : '—'))
+                        : (getTimeRemainingResponse() ?? '—')}
+                    </span>
+                    {responseOpen ? (
+                      <ChevronDown className="size-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="size-4 text-muted-foreground" />
+                    )}
+                  </div>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="pt-0 pb-6 px-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Is Responded</p>
+                      <p className="font-medium">
+                        {tracking.is_responded ? (
+                          <Badge variant="success" appearance="ghost">Yes</Badge>
+                        ) : (
+                          <Badge variant="secondary" appearance="ghost">No</Badge>
+                        )}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Responded At</p>
+                      <p className="font-medium">
+                        {tracking.responded_at
+                          ? formatDateTime(parseDateTimeAsUTC(tracking.responded_at))
+                          : '-'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Response Duration</p>
+                      <p className="font-medium">{getResponseDuration() || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Responded By</p>
+                      <p className="font-medium">{tracking.responded_by_user_name || '-'}</p>
+                    </div>
+                    {tracking.average_response_time !== null && tracking.average_response_time !== undefined && (
+                      <div>
+                        <p className="text-sm text-muted-foreground">Average Response Time</p>
+                        <p className="font-medium">
+                          {formatDuration(tracking.average_response_time * 3600 * 1000)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+
+          {/* Collapsible: Resolution time */}
+          <Collapsible open={resolutionOpen} onOpenChange={setResolutionOpen}>
+            <Card>
+              <CollapsibleTrigger asChild>
+                <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors rounded-t-lg flex flex-row items-center justify-between space-y-0">
+                  <CardTitle className="text-base">Resolution time</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm font-medium ${getTimeRemainingResolution()?.includes('overdue') ? 'text-destructive' : ''}`}>
+                      {tracking.is_resolved
+                        ? (getResolutionDuration() ?? (tracking.resolution_duration != null ? formatDuration(tracking.resolution_duration * 3600 * 1000) : '—'))
+                        : (getTimeRemainingResolution() ?? '—')}
+                    </span>
+                    {resolutionOpen ? (
+                      <ChevronDown className="size-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="size-4 text-muted-foreground" />
+                    )}
+                  </div>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="pt-0 pb-6 px-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Is Resolved</p>
+                      <p className="font-medium">
+                        {tracking.is_resolved ? (
+                          <Badge variant="success" appearance="ghost">Yes</Badge>
+                        ) : (
+                          <Badge variant="secondary" appearance="ghost">No</Badge>
+                        )}
+                      </p>
+                    </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Resolved At</p>
-                      <p className="font-medium">{formatDateTime(parseDateTimeAsUTC(tracking.resolved_at))}</p>
+                      <p className="font-medium">
+                        {tracking.resolved_at
+                          ? formatDateTime(parseDateTimeAsUTC(tracking.resolved_at))
+                          : '-'}
+                      </p>
                     </div>
-                  )}
-                  <div>
-                    <p className="text-sm text-muted-foreground">Resolution Duration</p>
-                    <p className="font-medium">
-                      {getResolutionDuration() || '-'}
-                    </p>
-                  </div>
-                  {tracking.resolved_by_user_name || tracking.resolved_by ? (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Resolution Duration</p>
+                      <p className="font-medium">{getResolutionDuration() || '-'}</p>
+                    </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Resolved By</p>
                       <p className="font-medium">{tracking.resolved_by_user_name || tracking.resolved_by || '-'}</p>
                     </div>
-                  ) : null}
-                  {tracking.average_resolution_time !== null && tracking.average_resolution_time !== undefined && (
-                    <div>
-                      <p className="text-sm text-muted-foreground">Average Resolution Time</p>
-                      <p className="font-medium">
-                        {formatDuration(tracking.average_resolution_time * 3600 * 1000)}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                    {tracking.average_resolution_time !== null && tracking.average_resolution_time !== undefined && (
+                      <div>
+                        <p className="text-sm text-muted-foreground">Average Resolution Time</p>
+                        <p className="font-medium">
+                          {formatDuration(tracking.average_resolution_time * 3600 * 1000)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+          </div>
         </TabsContent>
 
         {/* Tab 2: Event Log */}

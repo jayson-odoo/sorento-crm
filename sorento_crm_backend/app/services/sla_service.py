@@ -329,21 +329,59 @@ class ConversationSLATrackingService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_tracking(self, page: int = 1, limit: int = 50, policy_id: Optional[str] = None):
-        """List SLA tracking records."""
+    def list_tracking(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        policy_id: Optional[str] = None,
+        query: Optional[str] = None,
+        sort_field: str = "created_at",
+        sort_dir: str = "desc",
+        assigned_to: Optional[str] = None,
+    ):
+        """List SLA tracking records. query filters by contact phone or contact name."""
         from sqlalchemy.orm import joinedload
+        from sqlalchemy import asc, desc
         from app.models.sla import ConversationSLAEventLog
-        # Eagerly load policy, contact, assigned_user, and event_logs with their assigned_user
+        from app.models.user import User
+
         q = self.db.query(ConversationSLATracking).options(
             joinedload(ConversationSLATracking.policy),
             joinedload(ConversationSLATracking.contact),
             joinedload(ConversationSLATracking.assigned_user),
             joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user)
         )
-        
+
         if policy_id:
             q = q.filter(ConversationSLATracking.policy_id == policy_id)
-        
+
+        if query and query.strip():
+            term = f"%{query.strip()}%"
+            q = q.join(RespondContact, ConversationSLATracking.respond_contact_id == RespondContact.id).filter(
+                or_(
+                    RespondContact.phone_number.ilike(term),
+                    RespondContact.name.ilike(term),
+                )
+            )
+
+        if assigned_to and assigned_to.strip():
+            assignee_val = assigned_to.strip()
+            # Only show trackings that have an assignee and that assignee matches (exclude unassigned)
+            q = q.filter(ConversationSLATracking.assigned_to_id.isnot(None)).join(
+                User, ConversationSLATracking.assigned_to_id == User.id
+            ).filter(
+                or_(
+                    User.respond_user_id == assignee_val,
+                    User.id == assignee_val,
+                )
+            )
+
+        order_col = getattr(ConversationSLATracking, sort_field, None)
+        if order_col is not None and hasattr(order_col, "desc"):
+            q = q.order_by(desc(order_col) if sort_dir == "desc" else asc(order_col))
+        else:
+            q = q.order_by(ConversationSLATracking.created_at.desc())
+
         total = q.count()
         offset = (page - 1) * limit
         tracking = q.offset(offset).limit(limit).all()
@@ -513,7 +551,149 @@ class ConversationSLATrackingService:
             )
             .first()
         )
-    
+
+    def get_existing_assignee_for_contact_phone(self, contact_phone: str) -> Optional[dict]:
+        """
+        If there is a conversation SLA tracking for this contact phone that already has an assignee,
+        return that user's info (id, email, name, respond_user_id). Otherwise return None.
+        Used by next-assignee API to avoid reassigning conversations that are already assigned.
+        """
+        from sqlalchemy.orm import joinedload
+        from app.models.access import RespondContact
+        from app.models.user import User
+
+        phone = (contact_phone or "").strip()
+        if not phone:
+            return None
+        contact = self.db.query(RespondContact).filter(RespondContact.phone_number == phone).first()
+        if not contact:
+            return None
+        tracking = (
+            self.db.query(ConversationSLATracking)
+            .options(joinedload(ConversationSLATracking.assigned_user))
+            .filter(
+                ConversationSLATracking.respond_contact_id == contact.id,
+                ConversationSLATracking.assigned_to_id.isnot(None),
+            )
+            .first()
+        )
+        if not tracking or not tracking.assigned_to_id:
+            return None
+        user = tracking.assigned_user
+        if not user:
+            user = self.db.query(User).filter(User.id == tracking.assigned_to_id).first()
+        if not user:
+            return None
+        return {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name or user.email,
+            "respond_user_id": user.respond_user_id,
+        }
+
+    def sync_assignee_from_respond(self, tracking_id: str) -> dict:
+        """
+        Fetch contact from Respond.io by phone, get assignee.id, match to user by respond_user_id,
+        and update tracking assigned_to if different. Uses existing Respond.io config (base URL, API key).
+        """
+        import json
+        import logging
+        from app.models.user import User
+        from app.services.integration_service import RespondClient, IntegrationLogService
+        from app.schemas.integration import IntegrationLogCreate
+
+        logger = logging.getLogger(__name__)
+        tracking = self.get_tracking(tracking_id)
+        phone = None
+        if tracking.contact:
+            phone = (getattr(tracking.contact, "phone_number", None) or "").strip()
+        if not phone:
+            raise handle_validation_error("No contact phone for this conversation SLA tracking; cannot sync assignee from Respond.io.")
+
+        log_service = IntegrationLogService(self.db)
+        endpoint_path = f"/v2/contact/phone:{phone}"
+
+        try:
+            client = RespondClient()
+            payload = client.get_contact_by_phone(phone)
+        except ValueError as e:
+            logger.warning("Respond.io not configured or error: %s", e)
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="conversation_sla_tracking",
+                    business_id=tracking_id,
+                    direction="outbound",
+                    endpoint=endpoint_path,
+                    http_method="GET",
+                    status="failed",
+                    error_message=str(e),
+                ),
+                request_payload_dict={"action": "sync_assignee", "phone": phone},
+            )
+            raise handle_validation_error(f"Respond.io API is not configured or error: {e!s}")
+        except Exception as e:
+            logger.exception("Respond.io get_contact_by_phone failed for tracking %s", tracking_id)
+            resp_payload = None
+            if hasattr(e, "response") and getattr(e.response, "text", None):
+                resp_payload = e.response.text[:2000] if len(e.response.text) > 2000 else e.response.text
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="conversation_sla_tracking",
+                    business_id=tracking_id,
+                    direction="outbound",
+                    endpoint=endpoint_path,
+                    http_method="GET",
+                    status="failed",
+                    error_message=str(e),
+                    response_payload=resp_payload,
+                ),
+                request_payload_dict={"action": "sync_assignee", "phone": phone},
+            )
+            raise
+
+        log_service.create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="respond_io",
+                business_table="conversation_sla_tracking",
+                business_id=tracking_id,
+                direction="outbound",
+                endpoint=endpoint_path,
+                http_method="GET",
+                status="success",
+                response_payload=json.dumps(payload, indent=2),
+            ),
+            request_payload_dict={"action": "sync_assignee", "phone": phone},
+        )
+
+        assignee = payload.get("assignee")
+        if not assignee or assignee.get("id") is None:
+            # Keep in sync with Respond.io: set assigned_to to null when there is no assignee there
+            self.update_tracking(tracking_id, ConversationSLATrackingUpdate(assigned_to=None))
+            return {"updated": True, "message": "Sync successful. No assignee in Respond.io; Assigned To cleared."}
+
+        assignee_id = assignee.get("id")
+        assignee_respond_id = str(assignee_id)
+        user = self.db.query(User).filter(User.respond_user_id == assignee_respond_id).first()
+        if not user:
+            return {
+                "updated": False,
+                "message": f"Sync successful. No user in CRM with respond_user_id '{assignee_respond_id}'; Assigned To unchanged. Link Respond.io user ID in User Management to sync.",
+            }
+
+        if tracking.assigned_to_id == user.id:
+            return {"updated": False, "message": "Sync successful. Assignee already in sync."}
+
+        self.update_tracking(tracking_id, ConversationSLATrackingUpdate(assigned_to=assignee_respond_id))
+        tracking = self.get_tracking(tracking_id)
+        return {
+            "updated": True,
+            "message": "Assignee synced from Respond.io.",
+            "assigned_to_id": str(user.id),
+            "assigned_to": user.name or user.email or assignee_respond_id,
+        }
+
     def create_tracking(self, tracking_data: ConversationSLATrackingCreate):
         """Create a new tracking record."""
         from datetime import timedelta, datetime, timezone
@@ -659,7 +839,11 @@ class ConversationSLATrackingService:
         
         update_data = tracking_data.model_dump(exclude_unset=True)
         
-        # Resolve assigned_to to assigned_to_id
+        # Explicitly clear assignee when assigned_to is None (keep in sync with Respond.io)
+        if "assigned_to" in update_data and update_data["assigned_to"] is None:
+            update_data["assigned_to_id"] = None
+
+        # Resolve assigned_to to assigned_to_id when it's a non-empty string
         if "assigned_to_id" not in update_data and update_data.get("assigned_to"):
             assigned_to_value = str(update_data["assigned_to"]).strip()
             user = self.db.query(User).filter(
@@ -728,6 +912,9 @@ class ConversationSLATrackingService:
             if tracking.is_resolved:
                 raise handle_validation_error("Conversation is already resolved.")
             update_data["is_resolved"] = True
+            # Unset assignee when resolving (same as n8n / external API behaviour)
+            update_data["assigned_to"] = None
+            update_data["assigned_to_id"] = None
             # Always set resolved_at when marking resolved (UTC)
             if "resolved_at" not in update_data or update_data.get("resolved_at") is None:
                 update_data["resolved_at"] = _now_utc()

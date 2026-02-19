@@ -21,3 +21,6 @@ Reference: [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-STANDARDS.md)
 
 6. **Soft delete labeled as "delete"**  
    Backend DELETE must perform hard delete. Use Archive (soft delete) only for retention.
+
+7. **Listing tables: no overlap, resizable columns**  
+   All DataGrid-based listing tables MUST use `tableLayout: { width: 'fixed', columnsResizable: true }` and `columnResizeMode: 'onChange'` in `useReactTable`. Columns MUST have `size` (and optionally `minSize`) to prevent overlap. Long text (e.g. filenames) MUST use `truncate` plus `title` for overflow.

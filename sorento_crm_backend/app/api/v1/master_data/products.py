@@ -1,11 +1,11 @@
 """Products API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.product_service import ProductService
-from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, BulkImportProductsRequest
+from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, BulkImportProductsRequest, BulkDeleteProductsRequest
 from app.schemas.common import ListResponse, ErrorResponse
 from app.services.error_handler import handle_internal_error
 
@@ -139,6 +139,23 @@ async def bulk_import_products(
         }
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_products(
+    body: BulkDeleteProductsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk delete products by ID. Body: { ids: string[] }."""
+    try:
+        service = ProductService(db)
+        result = service.bulk_delete_products(body.ids)
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 

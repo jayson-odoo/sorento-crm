@@ -1,7 +1,8 @@
 """Product service for business logic."""
-from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
-from typing import Optional, List
+from datetime import datetime
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_, and_, func
+from typing import Optional, List, Callable
 from decimal import Decimal
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
 from app.models.resources import Attachment, AttachmentType
@@ -78,6 +79,7 @@ class ProductService:
         # Apply sorting
         sort_map = {
             "created_at": Product.created_at,
+            "updated_at": Product.updated_at,
             "product_code": Product.product_code,
             "product_name": Product.product_name,
             "list_price": Product.list_price,
@@ -104,20 +106,29 @@ class ProductService:
         }
     
     def get_product(self, product_id: str):
-        """Get a single product by ID."""
-        product = self.db.query(Product).filter(Product.id == product_id).first()
+        """Get a single product by ID with category and brand eager-loaded."""
+        product = (
+            self.db.query(Product)
+            .options(joinedload(Product.category), joinedload(Product.brand), joinedload(Product.base_uom))
+            .filter(Product.id == product_id)
+            .first()
+        )
         if not product:
             raise handle_not_found("Product", product_id)
         return product
     
     def create_product(self, product_data: ProductCreate, created_by: str):
         """Create a new product."""
+        # Trim product_code defensively (schema validator also does this; belt-and-suspenders)
+        product_code = (product_data.product_code or "").strip()
         # Check if product_code already exists
-        existing = self.db.query(Product).filter(Product.product_code == product_data.product_code).first()
+        existing = self.db.query(Product).filter(Product.product_code == product_code).first()
         if existing:
             raise handle_conflict("Product code already exists. Please use a different code.")
         
-        product = Product(**product_data.model_dump(), created_by=created_by)
+        data = product_data.model_dump()
+        data["product_code"] = product_code
+        product = Product(**data, created_by=created_by)
         self.db.add(product)
         self.db.commit()
         self.db.refresh(product)
@@ -130,6 +141,7 @@ class ProductService:
         update_data = product_data.model_dump(exclude_unset=True)
         if update_data:
             update_data["updated_by"] = updated_by
+            update_data["updated_at"] = datetime.utcnow()
             for key, value in update_data.items():
                 setattr(product, key, value)
             
@@ -144,6 +156,16 @@ class ProductService:
         self.db.delete(product)
         self.db.commit()
         return {"message": "Product deleted successfully"}
+
+    def bulk_delete_products(self, product_ids: List[str]):
+        """Delete multiple products by ID."""
+        if not product_ids:
+            return {"message": "No products to delete", "deleted_count": 0}
+        deleted = self.db.query(Product).filter(Product.id.in_(product_ids)).delete(
+            synchronize_session=False
+        )
+        self.db.commit()
+        return {"message": f"Deleted {deleted} product(s)", "deleted_count": deleted}
 
     def _get_default_uom_id(self) -> str:
         """Return a default UOM id for bulk import (e.g. EA or first available)."""
@@ -232,13 +254,19 @@ class ProductService:
                 result[p.product_code] = p
         return result
 
-    def bulk_import_products(self, products_data: List[dict], user_id: str) -> dict:
+    def bulk_import_products(
+        self,
+        products_data: List[dict],
+        user_id: str,
+        on_progress: Optional[Callable[[int, int, int, int], None]] = None,
+    ) -> dict:
         """
         Bulk import products from Excel-style rows.
         Expects each row: product_code, product_name?, description?, item_group?, item_brand?, list_price?, is_active?
         item_group is matched to category (code or name); item_brand to brand (code or name).
         Creates or updates by product_code. Uses default UOM for new products.
         Optimized: pre-loads categories, brands, and existing products to avoid per-row queries.
+        on_progress: optional callback(processed, successful, failed, skipped) called at chunk boundaries for real-time UI.
         """
         created = 0
         updated = 0
@@ -271,9 +299,20 @@ class ProductService:
                 item_brand = (row.get("item_brand") or row.get("Item Brand") or "").strip() or None
                 raw_price = row.get("list_price") or row.get("Price") or row.get("price")
                 try:
-                    list_price = Decimal(str(raw_price)) if raw_price is not None and str(raw_price).strip() != "" else Decimal("0")
+                    if raw_price is None or str(raw_price).strip() == "":
+                        list_price = Decimal("0")
+                    else:
+                        list_price = Decimal(str(raw_price))
+                    if list_price < 0:
+                        errors.append(
+                            f"Row {idx} ({product_code}): List price cannot be negative, got '{raw_price}'"
+                        )
+                        continue
                 except Exception:
-                    list_price = Decimal("0")
+                    errors.append(
+                        f"Row {idx} ({product_code}): Price must be a valid number, got '{raw_price}'"
+                    )
+                    continue
                 raw_active = row.get("is_active") or row.get("Is Active") or row.get("Is active")
                 is_active = True
                 if raw_active is not None and str(raw_active).strip().upper() in ("F", "FALSE", "0", "N", "NO"):
@@ -305,6 +344,7 @@ class ProductService:
                     existing.list_price = list_price
                     existing.is_active = is_active
                     existing.updated_by = user_id
+                    existing.updated_at = datetime.utcnow()
                     updated += 1
                 else:
                     product = Product(
@@ -324,13 +364,19 @@ class ProductService:
 
                 if idx % chunk_size == 0:
                     self.db.commit()
+                    if on_progress:
+                        on_progress(idx, created + updated, len(errors), 0)
             except Exception as e:
                 self.db.rollback()
                 errors.append(f"Row {idx} ({row.get('product_code', '')}): {str(e)}")
                 if idx % chunk_size == 0:
                     self.db.commit()
+                    if on_progress:
+                        on_progress(idx, created + updated, len(errors), 0)
 
         self.db.commit()
+        if on_progress:
+            on_progress(len(products_data), created + updated, len(errors), 0)
         return {"created": created, "updated": updated, "errors": errors}
 
 
@@ -341,7 +387,7 @@ class ProductCategoryService:
         self.db = db
     
     def list_categories(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
-        """List product categories."""
+        """List product categories. Ordered by display_order asc, then category_name asc."""
         q = self.db.query(ProductCategory)
         
         if query:
@@ -352,6 +398,7 @@ class ProductCategoryService:
                 )
             )
         
+        q = q.order_by(ProductCategory.display_order.asc(), ProductCategory.category_name.asc())
         total = q.count()
         offset = (page - 1) * limit
         categories = q.offset(offset).limit(limit).all()
@@ -370,14 +417,14 @@ class ProductCategoryService:
         return category
     
     def get_categories_tree(self):
-        """Get product categories as a tree structure."""
+        """Get product categories as a tree structure (includes both active and inactive)."""
         from sqlalchemy.orm import joinedload
         from sqlalchemy import func
         
-        # Get all active categories
-        categories = self.db.query(ProductCategory).filter(
-            ProductCategory.is_active == True
-        ).order_by(ProductCategory.display_order.asc()).all()
+        # Get all categories, active and inactive (display_order asc, then category_name asc)
+        categories = self.db.query(ProductCategory).order_by(
+            ProductCategory.display_order.asc(), ProductCategory.category_name.asc()
+        ).all()
         
         # Count products per category
         category_product_counts = {}
@@ -420,13 +467,17 @@ class ProductCategoryService:
                 # Root category
                 root_categories.append(cat_data)
         
-        # Sort children by display_order
+        # Sort by display_order asc, then category_name asc
+        def sort_key(cat):
+            return (cat.get("display_order") or 0, (cat.get("category_name") or "").lower())
+
         def sort_children(cat):
             if cat["children"]:
-                cat["children"].sort(key=lambda x: x.get("display_order", 0))
+                cat["children"].sort(key=sort_key)
                 for child in cat["children"]:
                     sort_children(child)
-        
+
+        root_categories.sort(key=sort_key)
         for root in root_categories:
             sort_children(root)
         
@@ -458,6 +509,21 @@ class ProductCategoryService:
         self.db.refresh(category)
         return category
 
+    def delete_category(self, category_id: str):
+        """Delete a category. Raises if any products use this category."""
+        category = self.get_category(category_id)
+        from sqlalchemy import func
+        product_count = self.db.query(func.count(Product.id)).filter(
+            Product.category_id == category_id
+        ).scalar() or 0
+        if product_count > 0:
+            raise handle_conflict(
+                f"Cannot delete category: {product_count} product(s) use this category. "
+                "Change those products to another category before deleting."
+            )
+        self.db.delete(category)
+        self.db.commit()
+
 
 class BrandService:
     """Service for brand operations."""
@@ -466,7 +532,7 @@ class BrandService:
         self.db = db
     
     def list_brands(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
-        """List brands."""
+        """List brands. Ordered by brand_name asc."""
         q = self.db.query(Brand)
         
         if query:
@@ -477,14 +543,45 @@ class BrandService:
                 )
             )
         
+        q = q.order_by(Brand.brand_name.asc())
         total = q.count()
         offset = (page - 1) * limit
         brands = q.offset(offset).limit(limit).all()
-        
+        if not brands:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+        brand_ids = [b.id for b in brands]
+        counts = (
+            self.db.query(Product.brand_id, func.count(Product.id))
+            .filter(Product.brand_id.in_(brand_ids))
+            .group_by(Product.brand_id)
+            .all()
+        )
+        count_by_brand = {str(bid): c for bid, c in counts}
+        data = []
+        for b in brands:
+            row = {
+                "id": b.id,
+                "brand_code": b.brand_code,
+                "brand_name": b.brand_name,
+                "manufacturer": b.manufacturer,
+                "website": b.website,
+                "description": b.description,
+                "logo_url": b.logo_url,
+                "is_active": b.is_active,
+                "created_at": b.created_at,
+                "updated_at": b.updated_at,
+                "created_by": str(b.created_by) if b.created_by else None,
+                "product_count": count_by_brand.get(b.id, 0),
+            }
+            data.append(row)
         return {
-            "data": brands,
+            "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
-            "empty": total == 0
+            "empty": total == 0,
         }
     
     def get_brand(self, brand_id: str):
@@ -518,6 +615,21 @@ class BrandService:
         self.db.refresh(brand)
         return brand
 
+    def delete_brand(self, brand_id: str):
+        """Delete a brand. Products using this brand have their brand_id set to null (brand is optional)."""
+        brand = self.get_brand(brand_id)
+        updated = (
+            self.db.query(Product)
+            .filter(Product.brand_id == brand_id)
+            .update({Product.brand_id: None}, synchronize_session=False)
+        )
+        self.db.delete(brand)
+        self.db.commit()
+        return {
+            "message": "Brand deleted successfully",
+            "products_unlinked": updated,
+        }
+
 
 class UnitOfMeasureService:
     """Service for unit of measure operations."""
@@ -526,7 +638,7 @@ class UnitOfMeasureService:
         self.db = db
     
     def list_uoms(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
-        """List units of measure."""
+        """List units of measure with product_count per UOM."""
         q = self.db.query(UnitOfMeasure)
         
         if query:
@@ -540,11 +652,45 @@ class UnitOfMeasureService:
         total = q.count()
         offset = (page - 1) * limit
         uoms = q.offset(offset).limit(limit).all()
-        
+        if not uoms:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+        uom_ids = [u.id for u in uoms]
+        counts = (
+            self.db.query(Product.base_uom_id, func.count(Product.id))
+            .filter(Product.base_uom_id.in_(uom_ids))
+            .group_by(Product.base_uom_id)
+            .all()
+        )
+        count_by_uom = {str(uid): c for uid, c in counts}
+        data = []
+        for u in uoms:
+            row = {
+                "id": u.id,
+                "uom_code": u.uom_code,
+                "uom_name": u.uom_name,
+                "base_uom_id": str(u.base_uom_id) if u.base_uom_id else None,
+                "conversion_factor": u.conversion_factor,
+                "description": u.description,
+                "is_active": getattr(u, "is_active", True),
+                "created_at": u.created_at,
+                "updated_at": u.updated_at,
+                "product_count": count_by_uom.get(u.id, 0),
+            }
+            if u.base_uom:
+                row["base_uom"] = {
+                    "id": u.base_uom.id,
+                    "uom_code": u.base_uom.uom_code,
+                    "uom_name": u.base_uom.uom_name,
+                }
+            data.append(row)
         return {
-            "data": uoms,
+            "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
-            "empty": total == 0
+            "empty": total == 0,
         }
     
     def get_uom(self, uom_id: str):
@@ -577,6 +723,26 @@ class UnitOfMeasureService:
         self.db.commit()
         self.db.refresh(uom)
         return uom
+
+    def delete_uom(self, uom_id: str):
+        """Delete a UOM. Fails if any products use this UOM. Other UOMs that use this as base_uom have base_uom_id set to null."""
+        uom = self.get_uom(uom_id)
+        product_count = (
+            self.db.query(func.count(Product.id)).filter(Product.base_uom_id == uom_id).scalar()
+            or 0
+        )
+        if product_count > 0:
+            raise handle_conflict(
+                f"Cannot delete UOM: {product_count} product(s) use this UOM. "
+                "Change those products to another UOM before deleting."
+            )
+        # Unlink any other UOMs that use this as their base
+        self.db.query(UnitOfMeasure).filter(UnitOfMeasure.base_uom_id == uom_id).update(
+            {UnitOfMeasure.base_uom_id: None}, synchronize_session=False
+        )
+        self.db.delete(uom)
+        self.db.commit()
+        return {"message": "UOM deleted successfully"}
 
 
 class ProductAttachmentService:
@@ -699,12 +865,15 @@ class ProductAttachmentService:
         return {"message": "Product attachment deleted successfully"}
     
     def get_product_attachments_by_product(self, product_id: str, user_type: Optional[str] = None):
-        """Get all attachments for a specific product."""
+        """Get all non-deleted attachments for a specific product."""
         from sqlalchemy.orm import joinedload
         q = self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
-        ).filter(ProductAttachment.product_id == product_id).order_by(
+        ).filter(
+            ProductAttachment.product_id == product_id,
+            ProductAttachment.attachment.has(Attachment.is_deleted == False),
+        ).order_by(
             ProductAttachment.sort_order.asc().nulls_last(),
             ProductAttachment.created_at.asc()
         )

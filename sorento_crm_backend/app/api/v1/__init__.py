@@ -18,6 +18,7 @@ from app.api.v1 import (
     system,
     external,
     public,
+    notifications,
 )
 
 api_router = APIRouter()
@@ -43,3 +44,4 @@ api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(test_auth.router, tags=["test"])
 api_router.include_router(external.router, prefix="/external", tags=["external"])
 api_router.include_router(public.router, prefix="/public", tags=["public"])
+api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])

@@ -1,23 +1,26 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, LoaderCircleIcon, Eye, Download, Folder, ChevronDown } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import Link from 'next/link';
+import { useQueryClient } from '@tanstack/react-query';
+import { Plus, Trash2, LoaderCircleIcon, Eye, Download, Folder, ChevronDown, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { useProductAttachmentsByProduct, useCreateProductAttachment, useDeleteProductAttachment } from '../../product-attachments/hooks/useProductAttachments';
-import { useDownloadAttachment, useAttachments } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
-import { toast } from 'sonner';
+import { useProductAttachmentsByProduct, useDeleteProductAttachment } from '../../product-attachments/hooks/useProductAttachments';
+import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import type { ProductAttachment } from '../../product-attachments/types/productAttachment.types';
 import { formatDate } from '@/lib/helpers';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
+import LinkAttachmentBrowserDialog from './LinkAttachmentBrowserDialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+
+function attachmentDirectoriesHref(directoryId: string | null | undefined): string {
+  const base = '/resource-management/attachment-directories';
+  if (directoryId) return `${base}?directoryId=${encodeURIComponent(directoryId)}`;
+  return base;
+}
 
 interface ProductAttachmentsTabProps {
   productId: string | undefined;
@@ -34,7 +37,6 @@ export default function ProductAttachmentsTab({
   // Fetch existing product attachments
   const { data: productAttachments, isLoading: isLoadingAttachments } = useProductAttachmentsByProduct(productId || null);
   const downloadMutation = useDownloadAttachment();
-  const createMutation = useCreateProductAttachment();
   const deleteMutation = useDeleteProductAttachment();
 
   const handleDownload = async (attachmentId: string, filename: string) => {
@@ -130,6 +132,19 @@ export default function ProductAttachmentsTab({
         </div>
       </div>
       <div className="flex gap-2">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="sm" asChild>
+              <Link
+                href={attachmentDirectoriesHref(pa.attachment?.directory_id)}
+                title="Show in attachment directories"
+              >
+                <FolderOpen className="size-4" />
+              </Link>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Show in attachment directories</TooltipContent>
+        </Tooltip>
         <Button
           type="button"
           variant="ghost"
@@ -171,30 +186,35 @@ export default function ProductAttachmentsTab({
 
   const renderDirectoryGroups = () => (
     <div className="space-y-3">
-      {groupedByDirectory.map(([dirPath, items]) => (
+      {groupedByDirectory.map(([dirPath, items]) => {
+        const directoryId = items[0]?.attachment?.directory_id ?? null;
+        return (
         <Collapsible key={dirPath} defaultOpen>
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="group flex w-full items-center gap-2 rounded-lg border bg-muted/50 px-4 py-3 text-left hover:bg-muted transition-colors"
-            >
-              <ChevronDown className="size-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
-              <Folder className="size-4 shrink-0 text-muted-foreground" />
-              <span className="font-medium text-sm truncate">
-                {dirPath}
-              </span>
-              <Badge variant="secondary" className="ml-auto shrink-0">
-                {items.length} {items.length === 1 ? 'file' : 'files'}
-              </Badge>
-            </button>
-          </CollapsibleTrigger>
+          <div className="flex items-center gap-2 rounded-lg border bg-muted/50 overflow-hidden">
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="group flex flex-1 min-w-0 items-center gap-2 px-4 py-3 text-left hover:bg-muted transition-colors"
+              >
+                <ChevronDown className="size-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+                <Folder className="size-4 shrink-0 text-muted-foreground" />
+                <span className="font-medium text-sm truncate">
+                  {dirPath}
+                </span>
+                <Badge variant="secondary" className="ml-auto shrink-0">
+                  {items.length} {items.length === 1 ? 'file' : 'files'}
+                </Badge>
+              </button>
+            </CollapsibleTrigger>
+          </div>
           <CollapsibleContent>
             <div className="mt-2 space-y-2 pl-6 border-l-2 border-muted ml-2">
               {items.map((pa) => renderAttachmentItem(pa))}
             </div>
           </CollapsibleContent>
         </Collapsible>
-      ))}
+        );
+      })}
     </div>
   );
 
@@ -225,7 +245,7 @@ export default function ProductAttachmentsTab({
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-6">
           <CardTitle>Attachments</CardTitle>
           <Button
             type="button"
@@ -234,7 +254,7 @@ export default function ProductAttachmentsTab({
             onClick={() => setLinkDialogOpen(true)}
           >
             <Plus className="size-4" />
-            Link Existing
+            Link Attachment
           </Button>
         </div>
       </CardHeader>
@@ -253,158 +273,11 @@ export default function ProductAttachmentsTab({
         )}
       </CardContent>
 
-      {linkDialogOpen && (
-        <LinkAttachmentDialog
-          open={linkDialogOpen}
-          onOpenChange={setLinkDialogOpen}
-          productId={productId}
-        />
-      )}
+      <LinkAttachmentBrowserDialog
+        open={linkDialogOpen}
+        onOpenChange={setLinkDialogOpen}
+        productId={productId}
+      />
     </Card>
-  );
-}
-
-// LinkAttachmentDialog component - uses imports from top of file
-
-interface LinkAttachmentDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  productId: string | undefined;
-}
-
-function LinkAttachmentDialog({ open, onOpenChange, productId }: LinkAttachmentDialogProps) {
-  const [selectedAttachmentId, setSelectedAttachmentId] = useState<string>('');
-  const [sortOrder, setSortOrder] = useState<string>('');
-  const [accessLevels, setAccessLevels] = useState<string[]>(['dealer', 'end_user']);
-  const createMutation = useCreateProductAttachment();
-  const queryClient = useQueryClient();
-
-  const { data: attachmentsData, isLoading: isLoadingAttachments } = useAttachments({
-    pageIndex: 0,
-    pageSize: 100,
-    sorting: [],
-    searchQuery: '',
-  });
-  const attachments = attachmentsData?.data || [];
-
-  // Filter out attachments already linked to this product
-  const { data: existingAttachments, isLoading: isLoadingExisting } = useProductAttachmentsByProduct(productId || null);
-  const linkedAttachmentIds = new Set(existingAttachments?.map(pa => pa.attachment_id) || []);
-  const availableAttachments = attachments.filter(a => !linkedAttachmentIds.has(a.id));
-
-  // Reset form when dialog closes
-  useEffect(() => {
-    if (!open) {
-      setSelectedAttachmentId('');
-      setSortOrder('');
-      setAccessLevels(['dealer', 'end_user']);
-    }
-  }, [open]);
-
-  const handleLink = () => {
-    if (!selectedAttachmentId || !productId) {
-      toast.error('Please select an attachment');
-      return;
-    }
-
-    createMutation.mutate({
-      product_id: productId,
-      attachment_id: selectedAttachmentId,
-      sort_order: sortOrder ? parseInt(sortOrder, 10) : undefined,
-      access_levels: accessLevels,
-    }, {
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ['product-attachments-by-product', productId] });
-        setSelectedAttachmentId('');
-        setSortOrder('');
-        onOpenChange(false);
-      },
-    });
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Link Existing Attachment</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Attachment</Label>
-            {isLoadingAttachments || isLoadingExisting ? (
-              <div className="text-sm text-muted-foreground">Loading attachments...</div>
-            ) : (
-              <Select value={selectedAttachmentId} onValueChange={setSelectedAttachmentId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select an attachment..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableAttachments.map((attachment) => (
-                    <SelectItem key={attachment.id} value={attachment.id}>
-                      {attachment.original_filename}
-                    </SelectItem>
-                  ))}
-                  {availableAttachments.length === 0 && (
-                    <SelectItem value="__no_attachments__" disabled>
-                      No available attachments
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-          <div className="space-y-2">
-            <Label>Sort Order (optional)</Label>
-            <Input
-              type="number"
-              placeholder="e.g., 1"
-              value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value)}
-              min="0"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Access Levels</Label>
-            <div className="flex flex-wrap gap-4">
-              {['dealer', 'end_user'].map((level) => {
-                const checked = accessLevels.includes(level);
-                return (
-                  <label key={level} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={(value) => {
-                        const next = new Set(accessLevels);
-                        if (value) {
-                          next.add(level);
-                        } else {
-                          next.delete(level);
-                        }
-                        setAccessLevels(Array.from(next));
-                      }}
-                    />
-                    {level === 'dealer' ? 'Dealer' : 'End User'}
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleLink}
-              disabled={!selectedAttachmentId || createMutation.isPending}
-            >
-              {createMutation.isPending ? (
-                <LoaderCircleIcon className="size-4 animate-spin" />
-              ) : (
-                'Link Attachment'
-              )}
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }

@@ -12,10 +12,11 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { toast } from 'sonner';
-import { FileText } from 'lucide-react';
+import { FileText, Folder } from 'lucide-react';
 import {
   useDirectoryTree,
   useUpdateAttachment,
+  useUpdateDirectory,
 } from '../../attachments/hooks/useAttachments';
 import type { AttachmentDirectoryTreeNode } from '../../attachments/services/directoryService';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
@@ -35,6 +36,33 @@ function findFolderNameById(nodes: AttachmentDirectoryTreeNode[], id: string): s
   return null;
 }
 
+function collectDescendantFolderIds(
+  nodes: AttachmentDirectoryTreeNode[],
+  folderId: string
+): Set<string> {
+  const ids = new Set<string>();
+  function addSubtree(node: AttachmentDirectoryTreeNode) {
+    if (node.children?.length) {
+      node.children.forEach((c) => {
+        ids.add(c.id);
+        addSubtree(c);
+      });
+    }
+  }
+  function findAndCollect(nodes: AttachmentDirectoryTreeNode[]): boolean {
+    for (const node of nodes) {
+      if (node.id === folderId) {
+        addSubtree(node);
+        return true;
+      }
+      if (node.children?.length && findAndCollect(node.children)) return true;
+    }
+    return false;
+  }
+  findAndCollect(nodes);
+  return ids;
+}
+
 function AttachmentDirectoriesContent({
   selectedId,
   setSelectedId,
@@ -44,14 +72,21 @@ function AttachmentDirectoriesContent({
   setSelectedId: (id: string | null) => void;
   selectedFolderName: string | null;
 }) {
-  const [activeDrag, setActiveDrag] = useState<{ id: string; name: string } | null>(null);
+  const [activeDrag, setActiveDrag] = useState<{
+    id: string;
+    name: string;
+    type: 'attachment' | 'folder';
+  } | null>(null);
 
   useDndMonitor({
     onDragStart: ({ active }) => {
       const id = String(active.id);
-      if (!id.startsWith(DND_ID_ATTACHMENT_PREFIX)) return;
-      const data = active.data?.current as { attachmentName?: string } | undefined;
-      setActiveDrag({ id, name: data?.attachmentName ?? 'Attachment' });
+      const data = active.data?.current as { attachmentName?: string; folderName?: string } | undefined;
+      if (id.startsWith(DND_ID_ATTACHMENT_PREFIX)) {
+        setActiveDrag({ id, name: data?.attachmentName ?? 'Attachment', type: 'attachment' });
+      } else if (id.startsWith(DND_ID_FOLDER_PREFIX) && id !== DND_ID_FOLDER_ALL) {
+        setActiveDrag({ id, name: data?.folderName ?? 'Folder', type: 'folder' });
+      }
     },
     onDragEnd: () => setActiveDrag(null),
     onDragCancel: () => setActiveDrag(null),
@@ -80,7 +115,11 @@ function AttachmentDirectoriesContent({
       <DragOverlay dropAnimation={null}>
         {activeDrag ? (
           <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-md">
-            <FileText className="size-4 text-muted-foreground shrink-0" />
+            {activeDrag.type === 'folder' ? (
+              <Folder className="size-4 text-muted-foreground shrink-0" />
+            ) : (
+              <FileText className="size-4 text-muted-foreground shrink-0" />
+            )}
             <span className="text-sm truncate max-w-[200px]">{activeDrag.name}</span>
           </div>
         ) : null}
@@ -98,6 +137,7 @@ export default function AttachmentDirectoriesView({
   const [selectedId, setSelectedId] = useState<string | null>(initialDirectoryId);
   const { data: tree = [] } = useDirectoryTree();
   const updateAttachmentMutation = useUpdateAttachment();
+  const updateDirectoryMutation = useUpdateDirectory();
   const selectedFolderName = useMemo(
     () => (selectedId ? findFolderNameById(tree, selectedId) : null),
     [selectedId, tree]
@@ -113,10 +153,41 @@ export default function AttachmentDirectoriesView({
     if (!over) return;
     const activeId = String(active.id);
     const overId = String(over.id);
-    if (!activeId.startsWith(DND_ID_ATTACHMENT_PREFIX)) return;
 
     const isOverFolder =
       overId === DND_ID_FOLDER_ALL || overId.startsWith(DND_ID_FOLDER_PREFIX);
+
+    // Folder drag: move folder to another folder (reparent)
+    if (
+      activeId.startsWith(DND_ID_FOLDER_PREFIX) &&
+      activeId !== DND_ID_FOLDER_ALL &&
+      isOverFolder
+    ) {
+      const folderId = activeId.slice(DND_ID_FOLDER_PREFIX.length);
+      const targetParentId: string | null =
+        overId === DND_ID_FOLDER_ALL ? null : overId.slice(DND_ID_FOLDER_PREFIX.length);
+
+      if (folderId === targetParentId) return; // can't drop on self
+      const descendants = collectDescendantFolderIds(tree, folderId);
+      if (targetParentId && descendants.has(targetParentId)) return; // can't drop onto own descendant
+
+      updateDirectoryMutation.mutate(
+        { id: folderId, data: { parent_id: targetParentId } },
+        {
+          onSuccess: () => {
+            const targetLabel =
+              targetParentId == null
+                ? 'All attachments'
+                : findFolderNameById(tree, targetParentId) ?? 'folder';
+            toast.success(`Folder moved to ${targetLabel}`);
+          },
+        }
+      );
+      return;
+    }
+
+    // Attachment drag: move file to folder
+    if (!activeId.startsWith(DND_ID_ATTACHMENT_PREFIX)) return;
     if (!isOverFolder) return;
 
     const targetDirectoryId: string | null =

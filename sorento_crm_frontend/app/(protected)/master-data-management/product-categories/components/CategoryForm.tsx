@@ -20,24 +20,15 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { useCreateCategory, useUpdateCategory, useCategory } from '../hooks/useProductCategories';
-import { useCategoriesTree } from '../hooks/useProductCategories';
-import type { CategoryFormData } from '../types/category.types';
+import type { CategoryFormData, CategoryTreeItem } from '../types/category.types';
 
 const CategorySchema = z.object({
   category_code: z.string().min(1, 'Category code is required').max(50),
   category_name: z.string().min(1, 'Category name is required').max(150),
   description: z.string().max(500).optional().nullable(),
-  parent_category_id: z.string().uuid().optional().nullable(),
   is_active: z.boolean(),
   display_order: z.number().int().min(0),
 });
@@ -46,11 +37,12 @@ interface CategoryFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   categoryId?: string;
+  /** When set, form opens in create mode with fields pre-filled from this category (for Duplicate). */
+  copyFromCategory?: CategoryTreeItem | null;
 }
 
-export default function CategoryForm({ open, onOpenChange, categoryId }: CategoryFormProps) {
-  const { data: categories } = useCategoriesTree();
-  const { data: category, isLoading: isLoadingCategory } = useCategory(categoryId || null);
+export default function CategoryForm({ open, onOpenChange, categoryId, copyFromCategory }: CategoryFormProps) {
+  const { data: category } = useCategory(categoryId || null);
   const createMutation = useCreateCategory();
   const updateMutation = useUpdateCategory();
 
@@ -60,7 +52,6 @@ export default function CategoryForm({ open, onOpenChange, categoryId }: Categor
       category_code: '',
       category_name: '',
       description: '',
-      parent_category_id: null,
       is_active: true,
       display_order: 0,
     },
@@ -73,31 +64,35 @@ export default function CategoryForm({ open, onOpenChange, categoryId }: Categor
           category_code: category.category_code,
           category_name: category.category_name,
           description: category.description || '',
-          parent_category_id: category.parent_category_id || null,
           is_active: category.is_active,
           display_order: category.display_order || 0,
+        });
+      } else if (copyFromCategory) {
+        form.reset({
+          category_code: `${copyFromCategory.category_code}-COPY`,
+          category_name: `${copyFromCategory.category_name} (copy)`,
+          description: copyFromCategory.description || '',
+          is_active: copyFromCategory.is_active,
+          display_order: copyFromCategory.display_order ?? 0,
         });
       } else {
         form.reset({
           category_code: '',
           category_name: '',
           description: '',
-          parent_category_id: null,
           is_active: true,
           display_order: 0,
         });
       }
     }
-  }, [open, form, categoryId, category]);
+  }, [open, form, categoryId, category, copyFromCategory]);
 
   const onSubmit = async (data: z.infer<typeof CategorySchema>) => {
     try {
-      // Convert null to undefined for form data
       const formData: CategoryFormData = {
         category_code: data.category_code,
         category_name: data.category_name,
         description: data.description ?? undefined,
-        parent_category_id: data.parent_category_id ?? undefined,
         is_active: data.is_active,
         display_order: data.display_order,
       };
@@ -164,31 +159,6 @@ export default function CategoryForm({ open, onOpenChange, categoryId }: Categor
                       rows={3}
                     />
                   </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="parent_category_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Parent Category</FormLabel>
-                  <Select
-                    onValueChange={(value) => field.onChange(value === '__none__' ? null : value)}
-                    value={field.value || '__none__'}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select parent category" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="__none__">None (Root Category)</SelectItem>
-                      {/* TODO: Flatten tree for select */}
-                    </SelectContent>
-                  </Select>
                   <FormMessage />
                 </FormItem>
               )}

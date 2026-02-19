@@ -1,7 +1,7 @@
 'use client';
 
 import { use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft } from 'lucide-react';
 import {
@@ -29,6 +29,11 @@ export default function ProductDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const listQueryString = searchParams.toString();
+  const backHref = listQueryString
+    ? `/master-data-management/products?${listQueryString}`
+    : '/master-data-management/products';
 
   return (
     <>
@@ -56,7 +61,7 @@ export default function ProductDetailPage({
           </ToolbarHeading>
           <ToolbarActions>
             <Button asChild variant="outline">
-              <Link href="/master-data-management/products">
+              <Link href={backHref}>
                 <MoveLeft /> Back to products
               </Link>
             </Button>

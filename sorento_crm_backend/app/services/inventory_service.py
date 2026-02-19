@@ -20,10 +20,13 @@ class WarehouseService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_warehouses(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
-        """List warehouses."""
+    def list_warehouses(self, page: int = 1, limit: int = 50, query: Optional[str] = None, is_active: Optional[bool] = None):
+        """List warehouses. When is_active=True, only return active warehouses."""
         q = self.db.query(Warehouse)
-        
+
+        if is_active is not None:
+            q = q.filter(Warehouse.is_active == is_active)
+
         if query:
             q = q.filter(
                 or_(

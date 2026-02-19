@@ -303,9 +303,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
           <Card>
             <CardHeader>
               <CardTitle>Team Assignments</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Assign teams by context code (e.g. code=marketing → Marketing Team). n8n can call next-assignee with agent_id + code. Add members under User Management → Teams.
-              </p>
             </CardHeader>
             <CardContent>
               {teamsList.length === 0 ? (

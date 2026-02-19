@@ -158,3 +158,24 @@ async def restore_directory(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.post("/{directory_id}/permanent-delete", status_code=200)
+async def permanent_delete_directory(
+    directory_id: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Permanently delete a directory in Trash and all its contents. Cannot be undone."""
+    try:
+        service = AttachmentDirectoryService(db)
+        result = service.permanent_delete_directory(directory_id, deleted_by=current_user["id"])
+        return {
+            "message": "Directory permanently deleted",
+            "directories_deleted": result["directories_deleted"],
+            "attachments_deleted": result["attachments_deleted"],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))

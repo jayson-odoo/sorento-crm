@@ -5,6 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 from sqlalchemy.orm import Session
 from typing import Optional
+import httpx
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
 from app.services.sla_service import ConversationSLATrackingService, to_naive_datetime, compute_tracking_timings
@@ -54,13 +55,25 @@ async def get_sla_tracking(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     policy_id: Optional[str] = Query(None),
+    query: Optional[str] = Query(None),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query(None),
+    assigned_to: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get SLA tracking records with pagination."""
+    """Get SLA tracking records with pagination. query searches contact phone and contact name."""
     try:
         service = ConversationSLATrackingService(db)
-        result = service.list_tracking(page=page, limit=limit, policy_id=policy_id)
+        result = service.list_tracking(
+            page=page,
+            limit=limit,
+            policy_id=policy_id,
+            query=query,
+            sort_field=sort or "created_at",
+            sort_dir=dir or "desc",
+            assigned_to=assigned_to,
+        )
         return result
     except Exception as e:
         import logging
@@ -220,6 +233,34 @@ async def update_sla_tracking(
             )
         except Exception:
             pass
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{tracking_id}/sync-assignee")
+async def sync_assignee_from_respond(
+    tracking_id: UUID,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Sync assignee from Respond.io: fetch contact by phone, match assignee.id to user respond_user_id, update assigned_to if different."""
+    try:
+        service = ConversationSLATrackingService(db)
+        result = service.sync_assignee_from_respond(str(tracking_id))
+        return result
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        code = e.response.status_code
+        if code == 404:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"message": "Contact not found in Respond.io", "code": "CONTACT_NOT_FOUND"})
+        if code == 401:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"message": "Respond.io API unauthorized", "code": "UNAUTHORIZED"})
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"message": f"Respond.io API error: HTTP {code}", "code": f"HTTP_{code}"})
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail={"message": "Respond.io API timed out", "code": "TIMEOUT"})
+    except httpx.ConnectError:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"message": "Failed to connect to Respond.io", "code": "CONNECTION_ERROR"})
+    except Exception as e:
         raise handle_internal_error(str(e))
 
 

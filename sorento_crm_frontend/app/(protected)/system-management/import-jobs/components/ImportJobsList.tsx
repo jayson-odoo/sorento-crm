@@ -21,18 +21,35 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
 import { formatDateTime } from '@/lib/helpers';
+import { useQueryClient } from '@tanstack/react-query';
+import { getImportJob } from '../services/importJobService';
 import { useImportJobs, useCancelImportJob } from '../hooks/useImportJobs';
 import type { ImportJob } from '../types/importJob.types';
 import { toast } from 'sonner';
 
+const JOB_TYPE_LABELS: Record<string, string> = {
+  order_import: 'Order Import',
+  order_tracking_import: 'Order Tracking Import',
+  product_import: 'Product Import',
+  stock_import: 'Stock Import',
+  spo_import: 'SPO Import',
+  attachment_bulk_import: 'Attachment Bulk Import',
+};
+
+function getJobTypeLabel(jobType: string): string {
+  return JOB_TYPE_LABELS[jobType] ?? jobType;
+}
+
 export default function ImportJobsList() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [jobType, setJobType] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [cancelingJobId, setCancelingJobId] = useState<string | null>(null);
+  const [refreshingJobId, setRefreshingJobId] = useState<string | null>(null);
 
-  const { data, isLoading, refetch } = useImportJobs({
+  const { data, isLoading } = useImportJobs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     job_type: jobType || undefined,
@@ -64,10 +81,11 @@ export default function ImportJobsList() {
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         cell: ({ row }) => (
           <Badge variant="secondary" appearance="ghost">
-            {row.original.job_type}
+            {getJobTypeLabel(row.original.job_type)}
           </Badge>
         ),
         size: 140,
+        minSize: 80,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
@@ -75,18 +93,28 @@ export default function ImportJobsList() {
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => getStatusBadge(row.original.status),
         size: 120,
+        minSize: 80,
       },
       {
         accessorKey: 'filename',
         header: ({ column }) => <DataGridColumnHeader title="Filename" column={column} />,
-        cell: ({ row }) => row.original.filename || '-',
-        size: 220,
+        cell: ({ row }) => {
+          const f = row.original.filename || '-';
+          return (
+            <span className="block truncate" title={f}>
+              {f}
+            </span>
+          );
+        },
+        size: 300,
+        minSize: 180,
       },
       {
         accessorKey: 'total_rows',
         header: ({ column }) => <DataGridColumnHeader title="Total Rows" column={column} />,
         cell: ({ row }) => row.original.total_rows,
         size: 100,
+        minSize: 70,
       },
       {
         accessorKey: 'processed_rows',
@@ -103,7 +131,8 @@ export default function ImportJobsList() {
             </div>
           );
         },
-        size: 140,
+        size: 160,
+        minSize: 120,
       },
       {
         accessorKey: 'successful_rows',
@@ -120,6 +149,15 @@ export default function ImportJobsList() {
           <span className="text-red-600 font-medium">{row.original.failed_rows}</span>
         ),
         size: 100,
+      },
+      {
+        accessorKey: 'skipped_rows',
+        header: ({ column }) => <DataGridColumnHeader title="Skipped" column={column} />,
+        cell: ({ row }) => (
+          <span className="text-amber-600 font-medium">{row.original.skipped_rows}</span>
+        ),
+        size: 100,
+        minSize: 70,
       },
       {
         accessorKey: 'created_at',
@@ -140,41 +178,93 @@ export default function ImportJobsList() {
         size: 200,
       },
       {
+        accessorKey: 'updated_at',
+        header: ({ column }) => <DataGridColumnHeader title="Updated At" column={column} />,
+        cell: ({ row }) => row.original.updated_at ? formatDateTime(new Date(row.original.updated_at)) : '-',
+        size: 200,
+      },
+      {
         accessorKey: 'actions',
         header: '',
         cell: ({ row }) => {
-          const status = row.original.status;
+          const job = row.original;
+          const status = job.status;
           const canCancel = ['pending', 'queued', 'started'].includes(status);
-          if (!canCancel) return null;
-          const isLoading = cancelingJobId === row.original.job_id && cancelJobMutation.isPending;
+          const isRefreshing = refreshingJobId === job.job_id;
+          const isCancelling = cancelingJobId === job.job_id && cancelJobMutation.isPending;
+          const handleRefresh = async (e: React.MouseEvent) => {
+            e.stopPropagation();
+            setRefreshingJobId(job.job_id);
+            try {
+              const updatedJob = await getImportJob(job.job_id);
+              queryClient.setQueryData(
+                ['import-jobs', pagination.pageIndex, pagination.pageSize, jobType || undefined, statusFilter || undefined],
+                (old: { data: ImportJob[]; pagination: { total: number }; empty: boolean } | undefined) => {
+                  if (!old) return old;
+                  return {
+                    ...old,
+                    data: old.data.map((j) => (j.job_id === job.job_id ? updatedJob : j)),
+                  };
+                },
+              );
+              toast.success('Job refreshed');
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : 'Failed to refresh job');
+            } finally {
+              setRefreshingJobId(null);
+            }
+          };
           return (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={isLoading}
-              onClick={(event) => {
-                event.stopPropagation();
-                setCancelingJobId(row.original.job_id);
-                cancelJobMutation.mutate(row.original.job_id, {
-                  onSuccess: (data) => {
-                    toast.success(data.message || 'Job cancelled');
-                    setCancelingJobId(null);
-                  },
-                  onError: (error) => {
-                    toast.error(error instanceof Error ? error.message : 'Failed to cancel job');
-                    setCancelingJobId(null);
-                  },
-                });
-              }}
-            >
-              {isLoading ? 'Cancelling...' : 'Cancel'}
-            </Button>
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={isRefreshing}
+                onClick={handleRefresh}
+                title="Refresh this job"
+                className="h-8 w-8 p-0"
+              >
+                <RefreshCw className={`size-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              </Button>
+              {canCancel && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isCancelling}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCancelingJobId(job.job_id);
+                    cancelJobMutation.mutate(job.job_id, {
+                      onSuccess: (data) => {
+                        toast.success(data.message || 'Job cancelled');
+                        setCancelingJobId(null);
+                      },
+                      onError: (error) => {
+                        toast.error(error instanceof Error ? error.message : 'Failed to cancel job');
+                        setCancelingJobId(null);
+                      },
+                    });
+                  }}
+                >
+                  {isCancelling ? 'Cancelling...' : 'Cancel'}
+                </Button>
+              )}
+            </div>
           );
         },
-        size: 120,
+        size: 140,
       },
     ],
-    [cancelJobMutation.isPending, cancelingJobId],
+    [
+      cancelJobMutation.isPending,
+      cancelingJobId,
+      refreshingJobId,
+      pagination.pageIndex,
+      pagination.pageSize,
+      jobType,
+      statusFilter,
+      queryClient,
+    ],
   );
 
   const table = useReactTable({
@@ -187,18 +277,24 @@ export default function ImportJobsList() {
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     manualPagination: true,
+    columnResizeMode: 'onChange',
   });
 
   const handleRowClick = (jobId: string) => {
-    router.push(`/system-management/import-jobs/${jobId}`);
+    const params = new URLSearchParams({
+      page: String(pagination.pageIndex + 1),
+      pageSize: String(pagination.pageSize),
+    });
+    router.push(`/system-management/import-jobs/${jobId}?${params.toString()}`);
   };
 
   return (
-    <DataGrid 
-      table={table} 
-      recordCount={data?.pagination.total || 0} 
+    <DataGrid
+      table={table}
+      recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={(row) => handleRowClick(row.job_id)}
+      tableLayout={{ width: 'fixed', columnsResizable: true }}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-3">
@@ -215,18 +311,6 @@ export default function ImportJobsList() {
               onChange={(e) => setStatusFilter(e.target.value)}
               className="w-48"
             />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                refetch();
-                toast.success('List refreshed');
-              }}
-              disabled={isLoading}
-            >
-              <RefreshCw className={`size-4 ${isLoading ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
           </div>
         </CardHeader>
         <CardTable>

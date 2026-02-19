@@ -1,5 +1,5 @@
 """Procurement models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Date, Computed
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Date, Computed, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -69,7 +69,7 @@ class InboundShipment(Base):
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     shipment_number = Column(String(50), unique=True, nullable=False)
-    supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="RESTRICT"), nullable=False)
+    supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
     shipment_date = Column(Date, nullable=False)
     expected_arrival_date = Column(Date, nullable=True)
     actual_arrival_date = Column(Date, nullable=True)
@@ -158,6 +158,7 @@ class InboundShipmentLine(Base):
     __table_args__ = (
         Index("ix_inbound_shipment_lines_shipment_id", "shipment_id"),
         Index("ix_inbound_shipment_lines_product_id", "product_id"),
+        UniqueConstraint("shipment_id", "product_id", name="uk_inbound_shipment_lines_shipment_product"),
     )
 
 
@@ -196,7 +197,7 @@ class SPOAllocation(Base):
         Index("ix_spo_allocations_inbound_shipment_id", "inbound_shipment_id"),
         Index("ix_spo_allocations_warehouse_id", "warehouse_id"),
         Index("ix_spo_allocations_product_id", "product_id"),
-        Index("uk_spo_allocations_spo_number_line_number", "spo_number", "spo_line_number", unique=True),
+        UniqueConstraint("spo_number", "product_id", "warehouse_id", name="uk_spo_allocations_spo_number_product_warehouse"),
     )
 
 

@@ -245,9 +245,6 @@ export default function AccessAgentFormModal({
               {isEditMode && (
                 <div className="space-y-4">
                   <h4 className="font-medium">Team Assignments</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Assign teams by context code. Add members under User Management → Teams.
-                  </p>
                   {teamsList.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No teams yet. Create teams first.</p>
                   ) : (

@@ -86,9 +86,19 @@ export async function deleteContactAgentAccess(agentId: string, contactId: strin
 }
 
 // Agent team assignments (code -> team for round-robin next-assignee)
+export interface AgentTeamMemberInfo {
+  id: string;
+  name: string | null;
+  email: string | null;
+}
+
 export interface AgentTeamAssignment {
   code: string;
   team_id: string;
+  team_name?: string;
+  members?: AgentTeamMemberInfo[];
+  last_assigned?: AgentTeamMemberInfo | null;
+  next_in_line?: AgentTeamMemberInfo | null;
 }
 
 export async function getAgentTeams(agentId: string): Promise<{ assignments: AgentTeamAssignment[] }> {

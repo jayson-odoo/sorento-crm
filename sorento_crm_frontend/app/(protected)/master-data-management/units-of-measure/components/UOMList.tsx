@@ -11,11 +11,11 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Plus, Search, X, ChevronRight, Trash2 } from 'lucide-react';
+import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse, type DataGridApiFetchParams } from '@/components/ui/data-grid';
+import { DataGrid, type DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -24,13 +24,15 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useUOMs } from '../hooks/useUOM';
 import type { UnitOfMeasure } from '../types/uom.types';
-import { getUOMs } from '../services/uomService';
+import UOMDeleteDialog from './UOMDeleteDialog';
 
 export default function UOMList() {
   const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [uomToDelete, setUomToDelete] = useState<UnitOfMeasure | null>(null);
 
   const { data, isLoading } = useUOMs({
     pageIndex: pagination.pageIndex,
@@ -66,18 +68,47 @@ export default function UOMList() {
         cell: ({ row }) => row.original.conversion_factor || '-',
       },
       {
+        accessorKey: 'is_active',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        size: 100,
+        cell: ({ row }) => (
+          <Badge
+            variant={row.original.is_active ? 'success' : 'secondary'}
+            appearance="ghost"
+          >
+            <BadgeDot />
+            {row.original.is_active ? 'Active' : 'Inactive'}
+          </Badge>
+        ),
+        meta: { skeleton: <Skeleton className="h-4 w-14" /> },
+      },
+      {
         accessorKey: 'actions',
         header: '',
         cell: ({ row }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`/master-data-management/units-of-measure/${row.original.id}`)}
-          >
-            <ChevronRight className="text-muted-foreground/70 size-3.5" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => router.push(`/master-data-management/units-of-measure/${row.original.id}`)}
+            >
+              <ChevronRight className="text-muted-foreground/70 size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                setUomToDelete(row.original);
+                setDeleteDialogOpen(true);
+              }}
+              title="Delete"
+            >
+              <Trash2 className="size-4 text-muted-foreground" />
+            </Button>
+          </div>
         ),
-        size: 40,
+        size: 80,
       },
     ],
     [],
@@ -137,6 +168,17 @@ export default function UOMList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+
+      {uomToDelete && (
+        <UOMDeleteDialog
+          open={deleteDialogOpen}
+          closeDialog={() => {
+            setDeleteDialogOpen(false);
+            setUomToDelete(null);
+          }}
+          uom={uomToDelete}
+        />
+      )}
     </DataGrid>
   );
 }

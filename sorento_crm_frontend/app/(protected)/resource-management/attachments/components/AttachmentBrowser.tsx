@@ -1,7 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   ColumnDef,
   PaginationState,
@@ -13,8 +15,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw, FolderOpen, RotateCcw } from 'lucide-react';
-import { Badge, BadgeDot } from '@/components/ui/badge';
+import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw, FolderOpen, RotateCcw, FileArchive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
@@ -31,7 +32,8 @@ import {
 } from '@/components/ui/select';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAttachments, useDeleteAttachment, useDownloadAttachment, useResubmitAttachmentWebhook, useRestoreAttachment, useBulkRestoreAttachments, useDirectoryTree } from '../hooks/useAttachments';
+import { useAttachments, useDeleteAttachment, useDownloadAttachment, useRestoreAttachment, useBulkRestoreAttachments, useDirectoryTree } from '../hooks/useAttachments';
+import { resubmitAttachmentWebhook } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
 import type { AttachmentDirectoryTreeNode } from '../services/directoryService';
 
@@ -41,7 +43,7 @@ function flattenDirectoryTree(nodes: AttachmentDirectoryTreeNode[], prefix = '')
     ...flattenDirectoryTree(n.children, prefix ? `${prefix} / ${n.name}` : n.name),
   ]);
 }
-import { formatDate } from '@/lib/helpers';
+import { formatDateTime } from '@/lib/helpers';
 import AttachmentUploadDialog from './AttachmentUploadDialog';
 import AttachmentBulkImportDialog from './AttachmentBulkImportDialog';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
@@ -59,7 +61,9 @@ export default function AttachmentBrowser() {
   const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [directoryId, setDirectoryId] = useState<string | null>(null);
+  const [pendingResubmitIds, setPendingResubmitIds] = useState<Set<string>>(new Set());
 
+  const queryClient = useQueryClient();
   const { data: directoryTree = [] } = useDirectoryTree();
   const isTrashView = directoryId === '__trash__';
 
@@ -76,7 +80,29 @@ export default function AttachmentBrowser() {
   const restoreMutation = useRestoreAttachment();
   const bulkRestoreMutation = useBulkRestoreAttachments();
   const downloadMutation = useDownloadAttachment();
-  const resubmitMutation = useResubmitAttachmentWebhook();
+
+  const [isResubmittingBulk, setIsResubmittingBulk] = useState(false);
+
+  const handleResubmit = useCallback(
+    async (attachment: Attachment) => {
+      const { id } = attachment;
+      setPendingResubmitIds((prev) => new Set(prev).add(id));
+      try {
+        await resubmitAttachmentWebhook(id);
+        toast.success('Webhook resubmitted successfully');
+        queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to resubmit webhook');
+      } finally {
+        setPendingResubmitIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    },
+    [queryClient]
+  );
 
   const handleDownload = async (attachment: Attachment) => {
     try {
@@ -101,18 +127,6 @@ export default function AttachmentBrowser() {
     setDeleteDialogOpen(true);
   };
 
-  const handleResubmit = async (attachment: Attachment) => {
-    // Prevent multiple simultaneous resubmits for the same attachment
-    if (resubmitMutation.isPending) {
-      return;
-    }
-    try {
-      await resubmitMutation.mutateAsync(attachment.id);
-    } catch (error) {
-      // Error is handled by the mutation hook (toast)
-    }
-  };
-
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
@@ -128,6 +142,39 @@ export default function AttachmentBrowser() {
       return row && !row.is_deleted;
     });
   }, [selectedRowIds, data?.data, isTrashView]);
+
+  const handleBulkResubmit = useCallback(async () => {
+    const ids = selectedDeletableIds;
+    if (ids.length === 0) return;
+    setIsResubmittingBulk(true);
+    setPendingResubmitIds((prev) => new Set(Array.from(prev).concat(ids)));
+    let successCount = 0;
+    let failCount = 0;
+    for (const id of ids) {
+      try {
+        await resubmitAttachmentWebhook(id);
+        successCount += 1;
+      } catch {
+        failCount += 1;
+      } finally {
+        setPendingResubmitIds((prev) => {
+          const next = new Set(Array.from(prev));
+          next.delete(id);
+          return next;
+        });
+      }
+    }
+    setIsResubmittingBulk(false);
+    queryClient.invalidateQueries({ queryKey: ['attachments'] });
+    if (failCount === 0) {
+      toast.success(`Webhook resubmitted for ${successCount} attachment(s)`);
+      setRowSelection({});
+    } else if (successCount === 0) {
+      toast.error(`Failed to resubmit webhook for ${failCount} attachment(s)`);
+    } else {
+      toast.warning(`Resubmitted ${successCount}, failed ${failCount}`);
+    }
+  }, [selectedDeletableIds, queryClient]);
 
   const columns = useMemo<ColumnDef<Attachment>[]>(
     () => [
@@ -183,9 +230,9 @@ export default function AttachmentBrowser() {
       },
       {
         accessorKey: 'uploaded_at',
-        header: ({ column }) => <DataGridColumnHeader title="Upload Date" column={column} />,
-        cell: ({ row }) => formatDate(new Date(row.original.uploaded_at)),
-        size: 150,
+        header: ({ column }) => <DataGridColumnHeader title="Upload at" column={column} />,
+        cell: ({ row }) => formatDateTime(new Date(row.original.uploaded_at)),
+        size: 180,
       },
       {
         accessorKey: 'entity_type',
@@ -196,42 +243,6 @@ export default function AttachmentBrowser() {
         accessorKey: 'entity_name',
         header: ({ column }) => <DataGridColumnHeader title="Entity Name" column={column} />,
         size: 150,
-      },
-      {
-        accessorKey: 'virus_status',
-        header: ({ column }) => <DataGridColumnHeader title="Virus Status" column={column} />,
-        cell: ({ row }) => {
-          const status = row.original.virus_status || 'unknown';
-          const variants: Record<string, 'success' | 'warning' | 'destructive' | 'secondary'> = {
-            clean: 'success',
-            scanning: 'warning',
-            infected: 'destructive',
-            unknown: 'secondary',
-          };
-          return (
-            <Badge variant={variants[status] || 'secondary'} appearance="ghost">
-              {status.charAt(0).toUpperCase() + status.slice(1)}
-            </Badge>
-          );
-        },
-        size: 120,
-      },
-      {
-        accessorKey: 'is_deleted',
-        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        cell: ({ row }) => {
-          const isDeleted = row.original.is_deleted;
-          return (
-            <Badge
-              variant={isDeleted ? 'destructive' : 'success'}
-              appearance="ghost"
-            >
-              <BadgeDot />
-              {isDeleted ? 'Deleted' : 'Active'}
-            </Badge>
-          );
-        },
-        size: 100,
       },
       {
         accessorKey: 'actions',
@@ -300,9 +311,9 @@ export default function AttachmentBrowser() {
                     e.stopPropagation();
                     handleResubmit(row.original);
                   }}
-                  disabled={resubmitMutation.isPending || row.original.is_deleted}
+                  disabled={pendingResubmitIds.has(row.original.id) || row.original.is_deleted}
                 >
-                  <RefreshCw className={`size-4 ${resubmitMutation.isPending ? 'animate-spin' : ''}`} />
+                  <RefreshCw className={`size-4 ${pendingResubmitIds.has(row.original.id) ? 'animate-spin' : ''}`} />
                 </Button>
                 <Button
                   variant="ghost"
@@ -329,7 +340,8 @@ export default function AttachmentBrowser() {
       isTrashView,
       deleteMutation.isPending,
       downloadMutation.isPending,
-      resubmitMutation.isPending,
+      handleResubmit,
+      pendingResubmitIds,
       restoreMutation.isPending,
     ],
   );
@@ -442,14 +454,26 @@ export default function AttachmentBrowser() {
                 </>
               )}
               {selectedDeletableIds.length > 0 && !isTrashView && (
-                <Button
-                  variant="outline"
-                  onClick={handleBulkDelete}
-                  className="text-destructive border-destructive/50 hover:bg-destructive/10"
-                >
-                  <Trash2 className="size-4 mr-2" />
-                  Delete selected ({selectedDeletableIds.length})
-                </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={handleBulkResubmit}
+                    disabled={isResubmittingBulk}
+                  >
+                    <RefreshCw
+                      className={`size-4 mr-2 ${isResubmittingBulk ? 'animate-spin' : ''}`}
+                    />
+                    Resubmit selected ({selectedDeletableIds.length})
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleBulkDelete}
+                    className="text-destructive border-destructive/50 hover:bg-destructive/10"
+                  >
+                    <Trash2 className="size-4 mr-2" />
+                    Delete selected ({selectedDeletableIds.length})
+                  </Button>
+                </>
               )}
               {!isTrashView && (
                 <>

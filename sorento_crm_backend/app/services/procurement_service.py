@@ -191,10 +191,19 @@ class InboundShipmentService:
         self.db.add(shipment)
         self.db.flush()  # Get the ID
         
-        # Create lines if provided
+        # Create lines if provided (one row per product per shipment; merge duplicates)
         if shipment_data.shipment_lines:
+            merged: dict[str, dict] = {}  # product_id -> merged line dict
             for line_data in shipment_data.shipment_lines:
-                line = InboundShipmentLine(**line_data.model_dump(), shipment_id=shipment.id)
+                d = line_data.model_dump()
+                pid = d["product_id"]
+                if pid in merged:
+                    merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
+                    merged[pid]["cartons_count"] += d.get("cartons_count", 1)
+                else:
+                    merged[pid] = dict(d)
+            for d in merged.values():
+                line = InboundShipmentLine(**d, shipment_id=shipment.id)
                 self.db.add(line)
         
         self.db.commit()
@@ -202,12 +211,32 @@ class InboundShipmentService:
         return shipment
     
     def update_shipment(self, shipment_id: str, shipment_data: InboundShipmentUpdate, updated_by: str):
-        """Update an inbound shipment."""
+        """Update an inbound shipment. If shipment_lines provided, replace existing lines."""
         shipment = self.get_shipment(shipment_id)
         
-        update_data = shipment_data.model_dump(exclude_unset=True)
+        update_data = shipment_data.model_dump(exclude_unset=True, exclude={"shipment_lines"})
         for key, value in update_data.items():
             setattr(shipment, key, value)
+        
+        if "shipment_lines" in shipment_data.model_dump(exclude_unset=True):
+            # Replace lines: delete existing, add new (grouped by product)
+            for line in shipment.shipment_lines[:]:
+                self.db.delete(line)
+            self.db.flush()
+            lines_data = shipment_data.shipment_lines or []
+            if lines_data:
+                merged: dict[str, dict] = {}
+                for line_data in lines_data:
+                    d = line_data.model_dump()
+                    pid = d["product_id"]
+                    if pid in merged:
+                        merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
+                        merged[pid]["cartons_count"] += d.get("cartons_count", 1)
+                    else:
+                        merged[pid] = dict(d)
+                for d in merged.values():
+                    line = InboundShipmentLine(**d, shipment_id=shipment.id)
+                    self.db.add(line)
         
         self.db.commit()
         self.db.refresh(shipment)
@@ -325,12 +354,14 @@ class SPOAllocationService:
                 SPOAllocation.product.has(Product.product_code.ilike(f"%{product_code.strip()}%"))
             )
         if query:
+            q = query.strip()
             shipment_filters.append(
                 or_(
-                    SPOAllocation.spo_number.ilike(f"%{query}%"),
-                    InboundShipment.shipment_number.ilike(f"%{query}%"),
-                    SPOAllocation.product.has(Product.product_code.ilike(f"%{query}%")),
-                    SPOAllocation.product.has(Product.product_name.ilike(f"%{query}%")),
+                    SPOAllocation.spo_number.ilike(f"%{q}%"),
+                    InboundShipment.shipment_number.ilike(f"%{q}%"),
+                    InboundShipment.shipping_container_number.ilike(f"%{q}%"),
+                    SPOAllocation.product.has(Product.product_code.ilike(f"%{q}%")),
+                    SPOAllocation.product.has(Product.product_name.ilike(f"%{q}%")),
                 )
             )
         if shipment_filters:
@@ -421,11 +452,126 @@ class SPOAllocationService:
             "empty": total == 0,
         }
 
+    def list_allocations_grouped_by_spo_number(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        product_code: Optional[str] = None,
+        warehouse_id: Optional[str] = None,
+        receipt_status: Optional[str] = None,
+        sort_field: str = "spo_number",
+        sort_dir: str = "asc",
+    ):
+        """List SPO allocations grouped by spo_number (for list view by SPO)."""
+        from sqlalchemy.orm import joinedload
+        from sqlalchemy import func
+        from app.schemas.procurement import (
+            SPOAllocationResponse,
+            SPOAllocationWithShippedResponse,
+            SPOWithAllocationsGroup,
+        )
+
+        q = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None))
+        q = q.options(
+            joinedload(SPOAllocation.product),
+            joinedload(SPOAllocation.warehouse),
+            joinedload(SPOAllocation.inbound_shipment),
+        )
+
+        filters = []
+        if warehouse_id and warehouse_id != "all":
+            filters.append(SPOAllocation.warehouse_id == warehouse_id)
+        if receipt_status and receipt_status != "all":
+            filters.append(SPOAllocation.receipt_status == receipt_status)
+        if product_code and product_code.strip():
+            filters.append(
+                SPOAllocation.product.has(Product.product_code.ilike(f"%{product_code.strip()}%"))
+            )
+        if query:
+            q_str = query.strip()
+            q = q.outerjoin(InboundShipment, SPOAllocation.inbound_shipment_id == InboundShipment.id)
+            filters.append(
+                or_(
+                    SPOAllocation.spo_number.ilike(f"%{q_str}%"),
+                    InboundShipment.shipment_number.ilike(f"%{q_str}%"),
+                    InboundShipment.shipping_container_number.ilike(f"%{q_str}%"),
+                    SPOAllocation.product.has(Product.product_code.ilike(f"%{q_str}%")),
+                    SPOAllocation.product.has(Product.product_name.ilike(f"%{q_str}%")),
+                )
+            )
+        if filters:
+            q = q.filter(and_(*filters))
+
+        sort_map = {
+            "spo_number": SPOAllocation.spo_number,
+            "created_at": SPOAllocation.created_at,
+        }
+        sort_col = sort_map.get(sort_field, SPOAllocation.spo_number)
+        q = q.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
+
+        all_allocations = q.all()
+        spo_numbers_ordered = []
+        seen = set()
+        for a in all_allocations:
+            if a.spo_number and a.spo_number not in seen:
+                seen.add(a.spo_number)
+                spo_numbers_ordered.append(a.spo_number)
+
+        total = len(spo_numbers_ordered)
+        offset = (page - 1) * limit
+        spo_page = spo_numbers_ordered[offset : offset + limit]
+
+        if not spo_page:
+            return {
+                "data": [],
+                "pagination": {"total": total, "page": page, "limit": limit},
+                "empty": True,
+            }
+
+        by_spo: dict[str, list] = {}
+        for a in all_allocations:
+            if a.spo_number and a.spo_number in spo_page:
+                by_spo.setdefault(a.spo_number, []).append(a)
+
+        shipment_ids = {
+            a.inbound_shipment_id for allocs in by_spo.values() for a in allocs
+            if a.inbound_shipment_id is not None
+        }
+        shipped_by_ship_product: dict[tuple[str, str], int] = {}
+        if shipment_ids:
+            lines_query = (
+                self.db.query(InboundShipmentLine)
+                .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
+            )
+            for line in lines_query.all():
+                key = (line.shipment_id, line.product_id)
+                shipped_by_ship_product[key] = shipped_by_ship_product.get(key, 0) + (line.quantity_shipped or 0)
+
+        groups = []
+        for spo_num in spo_page:
+            allocs = by_spo.get(spo_num, [])
+            alloc_responses = []
+            for a in allocs:
+                data = SPOAllocationResponse.model_validate(a).model_dump()
+                qty_shipped = shipped_by_ship_product.get((a.inbound_shipment_id, a.product_id))
+                data["quantity_shipped"] = qty_shipped
+                alloc_responses.append(SPOAllocationWithShippedResponse(**data))
+            groups.append(SPOWithAllocationsGroup(spo_number=spo_num, spo_allocations=alloc_responses))
+
+        return {
+            "data": groups,
+            "pagination": {"total": total, "page": page, "limit": limit},
+            "empty": total == 0,
+        }
+
     def get_allocation(self, allocation_id: str):
         """Get an SPO allocation by ID."""
         from sqlalchemy.orm import joinedload
         allocation = self.db.query(SPOAllocation).options(
-            joinedload(SPOAllocation.product)
+            joinedload(SPOAllocation.product),
+            joinedload(SPOAllocation.warehouse),
+            joinedload(SPOAllocation.inbound_shipment),
         ).filter(SPOAllocation.id == allocation_id).first()
         if not allocation:
             raise handle_not_found("SPO Allocation", allocation_id)
@@ -433,14 +579,15 @@ class SPOAllocationService:
     
     def create_allocation(self, allocation_data: SPOAllocationCreate, created_by: str):
         """Create a new SPO allocation."""
-        # Check unique constraint if both spo_number and spo_line_number are provided
-        if allocation_data.spo_number and allocation_data.spo_line_number is not None:
+        # Check unique constraint: (spo_number, product_id, warehouse_id)
+        if allocation_data.spo_number and allocation_data.product_id and allocation_data.warehouse_id:
             existing = self.db.query(SPOAllocation).filter(
                 SPOAllocation.spo_number == allocation_data.spo_number,
-                SPOAllocation.spo_line_number == allocation_data.spo_line_number
+                SPOAllocation.product_id == allocation_data.product_id,
+                SPOAllocation.warehouse_id == allocation_data.warehouse_id,
             ).first()
             if existing:
-                raise handle_conflict("SPO number and line number combination already exists.")
+                raise handle_conflict("SPO number, product and warehouse combination already exists.")
         
         allocation_dict = allocation_data.model_dump()
         allocation_dict["created_by"] = created_by
@@ -461,6 +608,20 @@ class SPOAllocationService:
         self.db.commit()
         self.db.refresh(allocation)
         return allocation
+
+    def delete_allocation(self, allocation_id: str):
+        """Delete an SPO allocation by ID."""
+        allocation = self.get_allocation(allocation_id)
+        self.db.delete(allocation)
+        self.db.commit()
+
+    def bulk_delete_allocations(self, allocation_ids: list[str]):
+        """Delete multiple SPO allocations by ID. Returns count of deleted."""
+        if not allocation_ids:
+            return {"message": "No allocations to delete", "deleted_count": 0}
+        deleted = self.db.query(SPOAllocation).filter(SPOAllocation.id.in_(allocation_ids)).delete(synchronize_session=False)
+        self.db.commit()
+        return {"message": f"Deleted {deleted} SPO allocation(s)", "deleted_count": deleted}
 
 
 class PickingHeaderService:

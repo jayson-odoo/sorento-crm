@@ -50,7 +50,10 @@ class Settings(BaseSettings):
     
     # Redis Queue
     redis_url: str = "redis://localhost:6379/0"
-    
+
+    # Feature flags (progressive rollout)
+    notifications_v1_enabled: bool = True  # NOTIFICATIONS_V1_ENABLED
+
     model_config = ConfigDict(
         env_file=".env",
         case_sensitive=False,

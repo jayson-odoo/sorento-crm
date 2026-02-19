@@ -58,7 +58,7 @@ export async function createPackingList(
     const error = await response
       .json()
       .catch(() => ({ message: 'Failed to create packing list' }));
-    throw new Error(error.message);
+    throw new Error(error.detail ?? error.message ?? 'Failed to create packing list');
   }
   return response.json();
 }
@@ -76,7 +76,7 @@ export async function updatePackingList(
     const error = await response
       .json()
       .catch(() => ({ message: 'Failed to update packing list' }));
-    throw new Error(error.message);
+    throw new Error(error.detail ?? error.message ?? 'Failed to update packing list');
   }
   return response.json();
 }

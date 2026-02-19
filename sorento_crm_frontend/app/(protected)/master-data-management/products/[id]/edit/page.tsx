@@ -1,9 +1,9 @@
 'use client';
 
 import { use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { MoveLeft } from 'lucide-react';
+import { LoaderCircleIcon, MoveLeft } from 'lucide-react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -21,6 +21,7 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import ProductForm from '../../components/ProductForm';
+import { useProduct } from '../../hooks/useProducts';
 
 export default function EditProductPage({
   params,
@@ -29,6 +30,31 @@ export default function EditProductPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { data: product } = useProduct(id);
+  const qs = searchParams.toString();
+  const querySuffix = qs ? `?${qs}` : '';
+
+  // Wait for product only. Category, Brand, UOM are fetched inside ProductForm and use
+  // product.category / product.brand / product.base_uom as display fallback (same pattern as UOM).
+  if (product == null) {
+    return (
+      <>
+        <Container>
+          <Toolbar>
+            <ToolbarHeading>
+              <ToolbarTitle>Edit Product</ToolbarTitle>
+            </ToolbarHeading>
+          </Toolbar>
+        </Container>
+        <Container>
+          <div className="flex items-center justify-center p-12">
+            <LoaderCircleIcon className="size-8 animate-spin text-muted-foreground" />
+          </div>
+        </Container>
+      </>
+    );
+  }
 
   return (
     <>
@@ -53,7 +79,7 @@ export default function EditProductPage({
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href={`/master-data-management/products/${id}`}>
+                  <BreadcrumbLink href={`/master-data-management/products/${id}${querySuffix}`}>
                     Product
                   </BreadcrumbLink>
                 </BreadcrumbItem>
@@ -62,7 +88,7 @@ export default function EditProductPage({
           </ToolbarHeading>
           <ToolbarActions>
             <Button asChild variant="outline">
-              <Link href={`/master-data-management/products/${id}`}>
+              <Link href={`/master-data-management/products/${id}${querySuffix}`}>
                 <MoveLeft /> Back to product
               </Link>
             </Button>
@@ -72,9 +98,11 @@ export default function EditProductPage({
 
       <Container>
         <ProductForm
+          key={id}
           productId={id}
+          initialProduct={product}
           onSuccess={() => {
-            router.push(`/master-data-management/products/${id}`);
+            router.push(`/master-data-management/products/${id}${querySuffix}`);
           }}
         />
       </Container>

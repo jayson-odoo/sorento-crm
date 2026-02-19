@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useMemo, useCallback } from 'react';
-import { useDroppable } from '@dnd-kit/core';
+import { useDroppable, useDraggable } from '@dnd-kit/core';
 import {
   ChevronRight,
   ChevronDown,
   ChevronUp,
   Folder,
   FolderOpen,
+  GripVertical,
   Plus,
   Pencil,
   Trash2,
@@ -54,6 +55,27 @@ function collectAllFolderIds(nodes: AttachmentDirectoryTreeNode[]): Set<string> 
     if (node.children?.length) {
       collectAllFolderIds(node.children).forEach((id) => ids.add(id));
     }
+  }
+  return ids;
+}
+
+function findNodeById(nodes: AttachmentDirectoryTreeNode[], targetId: string): AttachmentDirectoryTreeNode | null {
+  for (const node of nodes) {
+    if (node.id === targetId) return node;
+    if (node.children?.length) {
+      const found = findNodeById(node.children, targetId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function collectSubtreeFolderIds(node: AttachmentDirectoryTreeNode): Set<string> {
+  const ids = new Set<string>([node.id]);
+  if (node.children?.length) {
+    node.children.forEach((child) =>
+      collectSubtreeFolderIds(child).forEach((id) => ids.add(id))
+    );
   }
   return ids;
 }
@@ -127,23 +149,44 @@ function DirectoryRow({
   const hasChildren = node.children && node.children.length > 0;
   const isSelected = selectedId === node.id;
 
-  const { setNodeRef, isOver } = useDroppable({
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
     id: `${FOLDER_DROP_PREFIX}${node.id}`,
     data: { type: 'folder', directoryId: node.id },
+  });
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
+    id: `${FOLDER_DROP_PREFIX}${node.id}`,
+    data: { type: 'folder', directoryId: node.id, folderName: node.name },
   });
 
   return (
     <div className="flex flex-col">
       <div
-        ref={setNodeRef}
+        ref={setDropRef}
         className={cn(
           'group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm cursor-pointer min-w-0',
           isSelected && 'bg-accent text-accent-foreground',
-          isOver && 'ring-2 ring-primary ring-inset'
+          isOver && 'ring-2 ring-primary ring-inset',
+          isDragging && 'opacity-50'
         )}
         style={{ paddingLeft: 8 + depth * 16 }}
         onClick={() => onSelect(node.id)}
       >
+        <span
+          ref={setDragRef}
+          className="touch-none p-0.5 hover:bg-muted rounded shrink-0 cursor-grab active:cursor-grabbing"
+          title="Drag to move folder"
+          {...listeners}
+          {...attributes}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <GripVertical className="size-4 text-muted-foreground" />
+        </span>
         <button
           type="button"
           className="p-0.5 hover:bg-muted rounded shrink-0"
@@ -243,6 +286,12 @@ export default function DirectoryTreeSidebar({ selectedId, onSelect }: Directory
 
   const allFolderIds = useMemo(() => collectAllFolderIds(tree), [tree]);
 
+  const subtreeFolderIds = useMemo(() => {
+    if (!selectedId) return null;
+    const node = findNodeById(tree, selectedId);
+    return node ? collectSubtreeFolderIds(node) : null;
+  }, [tree, selectedId]);
+
   const [expandedIdsState, setExpandedIdsState] = useState<Set<string>>(new Set());
   const expandedIds = useMemo(() => {
     const merged = new Set(expandedIdsState);
@@ -251,12 +300,22 @@ export default function DirectoryTreeSidebar({ selectedId, onSelect }: Directory
   }, [expandedIdsState, pathToSelected]);
 
   const handleExpandAll = useCallback(() => {
-    setExpandedIdsState(new Set(allFolderIds));
-  }, [allFolderIds]);
+    const idsToExpand = subtreeFolderIds ?? allFolderIds;
+    setExpandedIdsState((prev) => {
+      const next = new Set(prev);
+      idsToExpand.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [subtreeFolderIds, allFolderIds]);
 
   const handleCollapseAll = useCallback(() => {
-    setExpandedIdsState(new Set());
-  }, []);
+    const idsToCollapse = subtreeFolderIds ?? allFolderIds;
+    setExpandedIdsState((prev) => {
+      const next = new Set(prev);
+      idsToCollapse.forEach((id) => next.delete(id));
+      return next;
+    });
+  }, [subtreeFolderIds, allFolderIds]);
 
   const handleToggleExpand = useCallback((id: string) => {
     setExpandedIdsState((prev) => {
@@ -321,7 +380,7 @@ export default function DirectoryTreeSidebar({ selectedId, onSelect }: Directory
               variant="ghost"
               size="sm"
               className="size-8 p-0"
-              title="Expand all"
+              title={selectedId ? 'Expand all in selected folder' : 'Expand all'}
               onClick={handleExpandAll}
             >
               <ChevronDown className="size-4" />
@@ -330,7 +389,7 @@ export default function DirectoryTreeSidebar({ selectedId, onSelect }: Directory
               variant="ghost"
               size="sm"
               className="size-8 p-0"
-              title="Collapse all"
+              title={selectedId ? 'Collapse all in selected folder' : 'Collapse all'}
               onClick={handleCollapseAll}
             >
               <ChevronUp className="size-4" />

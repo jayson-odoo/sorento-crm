@@ -17,13 +17,14 @@ async def get_warehouses(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
+    is_active: Optional[bool] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get warehouses with pagination and search."""
+    """Get warehouses with pagination and search. Use is_active=true for active-only."""
     try:
         service = WarehouseService(db)
-        result = service.list_warehouses(page=page, limit=limit, query=query)
+        result = service.list_warehouses(page=page, limit=limit, query=query, is_active=is_active)
         return result
     except Exception as e:
         raise handle_internal_error(str(e))

@@ -1,9 +1,9 @@
 {
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/(protected)/master-data-management/products/[id]/page": "app/(protected)/master-data-management/products/[id]/page.js",
-  "/(protected)/system-management/import-jobs/[id]/page": "app/(protected)/system-management/import-jobs/[id]/page.js",
-  "/(protected)/system-management/import-jobs/page": "app/(protected)/system-management/import-jobs/page.js",
+  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/(protected)/resource-management/attachment-directories/page": "app/(protected)/resource-management/attachment-directories/page.js",
-  "/(protected)/master-data-management/products/page": "app/(protected)/master-data-management/products/page.js"
+  "/(protected)/master-data-management/product-attachments/page": "app/(protected)/master-data-management/product-attachments/page.js",
+  "/(protected)/master-data-management/products/page": "app/(protected)/master-data-management/products/page.js",
+  "/(protected)/master-data-management/products/[id]/edit/page": "app/(protected)/master-data-management/products/[id]/edit/page.js",
+  "/(protected)/master-data-management/products/[id]/page": "app/(protected)/master-data-management/products/[id]/page.js"
 }

@@ -20,18 +20,22 @@ export interface ProductDeleteDialogProps {
   open: boolean;
   closeDialog: () => void;
   product: ProductListItem;
+  /** Called after successful delete, e.g. to redirect */
+  onSuccess?: () => void;
 }
 
 const ProductDeleteDialog = ({
   open,
   closeDialog,
   product,
+  onSuccess,
 }: ProductDeleteDialogProps) => {
   const deleteMutation = useDeleteProduct();
 
   const handleDelete = () => {
     deleteMutation.mutate(product.id, {
       onSuccess: () => {
+        onSuccess?.();
         toast.custom(
           () => (
             <Alert variant="mono" icon="success">

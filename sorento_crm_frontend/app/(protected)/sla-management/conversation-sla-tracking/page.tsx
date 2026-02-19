@@ -15,7 +15,6 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import ConversationSLATrackingList from './components/ConversationSLATrackingList';
-import SLATrackingDashboard from './components/SLATrackingDashboardWrapper';
 
 export const metadata: Metadata = {
   title: 'Conversation SLA Tracking',
@@ -46,10 +45,7 @@ export default async function ConversationSLATrackingPage() {
       </Container>
 
       <Container>
-        <div className="space-y-6">
-          <SLATrackingDashboard />
-          <ConversationSLATrackingList />
-        </div>
+        <ConversationSLATrackingList />
       </Container>
     </>
   );

@@ -55,4 +55,13 @@ export interface SystemSetting {
   notifySystemErrorFailureEmail: boolean;
   notifySystemErrorWeb: boolean;
   notifySystemErrorRoleIds: string[];
+
+  smtp?: {
+    smtp_host?: string | null;
+    smtp_port?: string | null;
+    smtp_secure?: boolean;
+    smtp_username?: string | null;
+    smtp_from?: string | null;
+    smtp_password?: null; // never returned
+  } | null;
 }

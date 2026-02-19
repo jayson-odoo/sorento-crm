@@ -45,6 +45,17 @@ class SystemSettingUpdate(BaseModel):
     notify_system_error_failure_email: Optional[bool] = None
     notify_system_error_web: Optional[bool] = None
     notify_system_error_role_ids: Optional[list[str]] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[str] = None
+    smtp_secure: Optional[bool] = None
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None  # update-only; never returned in GET
+    smtp_from: Optional[str] = None
+
+
+class SmtpTestResult(BaseModel):
+    success: bool
+    message: str
 
 
 @router.get("/")
@@ -57,6 +68,16 @@ async def get_settings(
         settings = db.query(SystemSetting).first()
         roles = db.query(UserRole).order_by(UserRole.name.asc()).all()
         
+        smtp_response = None
+        if settings:
+            smtp_response = {
+                "smtp_host": settings.smtp_host,
+                "smtp_port": settings.smtp_port,
+                "smtp_secure": settings.smtp_secure,
+                "smtp_username": settings.smtp_username,
+                "smtp_from": settings.smtp_from,
+                "smtp_password": None,  # never return raw password
+            }
         return {
             "settings": {
                 "id": settings.id if settings else None,
@@ -71,6 +92,7 @@ async def get_settings(
                 "timezone": settings.timezone if settings else None,
                 "currency": settings.currency if settings else None,
                 "currency_format": settings.currency_format if settings else None,
+                "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
         }
@@ -162,5 +184,44 @@ async def update_notification_settings(
         return {"message": "Notification settings updated successfully", "data": settings}
     except HTTPException:
         raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/smtp", status_code=status.HTTP_200_OK)
+async def update_smtp_settings(
+    settings_data: SystemSettingUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update SMTP settings. Password is update-only (omit to keep existing)."""
+    try:
+        settings = db.query(SystemSetting).first()
+        if not settings:
+            raise HTTPException(status_code=404, detail="Settings not found")
+        smtp_fields = ["smtp_host", "smtp_port", "smtp_secure", "smtp_username", "smtp_password", "smtp_from"]
+        update_data = {k: v for k, v in settings_data.model_dump(exclude_unset=True).items() if k in smtp_fields}
+        for key, value in update_data.items():
+            setattr(settings, key, value)
+        db.commit()
+        db.refresh(settings)
+        return {"message": "SMTP settings updated successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/smtp/test", status_code=status.HTTP_200_OK, response_model=SmtpTestResult)
+async def test_smtp_connection(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Test SMTP connection using current system settings (or env fallback)."""
+    try:
+        from app.services.notification_email import test_smtp_connection as do_test
+        settings = db.query(SystemSetting).first()
+        success, message = do_test(settings)
+        return SmtpTestResult(success=success, message=message)
     except Exception as e:
         raise handle_internal_error(str(e))

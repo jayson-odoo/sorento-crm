@@ -16,7 +16,7 @@ from app.schemas.forms import FormResponse
 
 class PackingListHeader(BaseModel):
     shipment_number: str
-    supplier_id: str
+    supplier_id: Optional[str] = None
     shipment_date: str | date
     shipping_container_number: Optional[str] = None
     attachment_id: str
@@ -89,11 +89,13 @@ class GRNHeader(BaseModel):
 
 
 class GRNLine(BaseModel):
-    spo_allocation: Optional[str] = None
-    spo_allocation_line: Optional[int] = None
+    """Match SPO by (spo_number, product_code, warehouse) or legacy (spo_allocation, spo_allocation_line)."""
+    spo_allocation: Optional[str] = None  # SPO number (used with warehouse for match, or with spo_allocation_line for legacy)
+    spo_allocation_line: Optional[int] = None  # Legacy: line number; prefer matching by spo + product + warehouse
+    warehouse_id: Optional[str] = None  # Warehouse UUID for SPO match
+    location: Optional[str] = None  # Warehouse code/name for SPO match (resolved to warehouse_id)
     product_code: str
     quantity: int
-    location: Optional[str] = None
     uom_id: Optional[str] = None
 
     @field_validator("spo_allocation_line", "quantity", mode="before")

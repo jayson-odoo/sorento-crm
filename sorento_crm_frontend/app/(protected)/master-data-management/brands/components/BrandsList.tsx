@@ -1,128 +1,64 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import {
-  ColumnDef,
-  PaginationState,
-  SortingState,
-  useReactTable,
-  getCoreRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-} from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { useState } from 'react';
+import { Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse, type DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Skeleton } from '@/components/ui/skeleton';
 import { useBrands } from '../hooks/useBrands';
+import BrandTable from './BrandTable';
+import BrandFormDialog from './BrandFormDialog';
+import BrandDeleteDialog from './BrandDeleteDialog';
 import type { Brand } from '../types/brand.types';
-import { getBrands } from '../services/brandService';
 
 export default function BrandsList() {
-  const router = useRouter();
-  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
-
-  const fetchBrands = async (params: DataGridApiFetchParams): Promise<DataGridApiResponse<Brand>> => {
-    return getBrands(params);
-  };
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingBrandId, setEditingBrandId] = useState<string | undefined>(
+    undefined,
+  );
+  const [copyFromBrand, setCopyFromBrand] = useState<Brand | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [brandToDelete, setBrandToDelete] = useState<Brand | null>(null);
 
   const { data, isLoading } = useBrands({
-    pageIndex: pagination.pageIndex,
-    pageSize: pagination.pageSize,
-    sorting,
-    searchQuery,
+    pageIndex: 0,
+    pageSize: 100,
+    sorting: [{ id: 'brand_name', desc: false }],
+    searchQuery: '',
   });
+  const brands = data?.data ?? [];
 
-  const columns = useMemo<ColumnDef<Brand>[]>(
-    () => [
-      {
-        accessorKey: 'brand_code',
-        header: ({ column }) => <DataGridColumnHeader title="Brand Code" column={column} />,
-        size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        accessorKey: 'brand_name',
-        header: ({ column }) => <DataGridColumnHeader title="Brand Name" column={column} />,
-        size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
-      },
-      {
-        accessorKey: 'manufacturer',
-        header: ({ column }) => <DataGridColumnHeader title="Manufacturer" column={column} />,
-        size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
-      },
-      {
-        accessorKey: 'logo_url',
-        header: 'Logo',
-        cell: ({ row }) => (
-          row.original.logo_url ? (
-            <img src={row.original.logo_url} alt={row.original.brand_name} className="size-10 rounded" />
-          ) : (
-            <div className="size-10 bg-muted rounded" />
-          )
-        ),
-        size: 80,
-      },
-      {
-        accessorKey: 'is_active',
-        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        cell: ({ row }) => (
-          <Badge variant={row.original.is_active ? 'success' : 'secondary'} appearance="ghost">
-            {row.original.is_active ? 'Active' : 'Inactive'}
-          </Badge>
-        ),
-        size: 100,
-      },
-      {
-        accessorKey: 'actions',
-        header: '',
-        cell: ({ row }) => (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => router.push(`/master-data-management/brands/${row.original.id}`)}
-          >
-            <ChevronRight className="text-muted-foreground/70 size-3.5" />
-          </Button>
-        ),
-        size: 40,
-      },
-    ],
-    [],
-  );
+  const handleEdit = (brand: Brand) => {
+    setCopyFromBrand(null);
+    setEditingBrandId(brand.id);
+    setFormOpen(true);
+  };
 
-  const table = useReactTable({
-    columns,
-    data: data?.data || [],
-    pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
-    getRowId: (row) => row.id,
-    state: { pagination, sorting },
-    onPaginationChange: setPagination,
-    onSortingChange: setSorting,
-    getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    manualPagination: true,
-    manualSorting: true,
-    manualFiltering: true,
-  });
+  const handleDuplicate = (brand: Brand) => {
+    setEditingBrandId(undefined);
+    setCopyFromBrand(brand);
+    setFormOpen(true);
+  };
+
+  const handleDelete = (brand: Brand) => {
+    setBrandToDelete(brand);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleFormClose = (open: boolean) => {
+    setFormOpen(open);
+    if (!open) {
+      setEditingBrandId(undefined);
+      setCopyFromBrand(null);
+    }
+  };
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <>
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader className="flex-row items-center justify-between flex-wrap gap-2.5">
           <div className="relative">
             <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
             <Input
@@ -131,32 +67,55 @@ export default function BrandsList() {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="ps-9 w-64"
             />
-            {searchQuery && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
-              </Button>
-            )}
           </div>
-          <Button onClick={() => router.push('/master-data-management/brands/new')}>
-            <Plus />
+          <Button
+            onClick={() => {
+              setCopyFromBrand(null);
+              setEditingBrandId(undefined);
+              setFormOpen(true);
+            }}
+          >
+            <Plus className="size-4" />
             Create Brand
           </Button>
         </CardHeader>
         <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              Loading brands...
+            </div>
+          ) : (
+            <ScrollArea>
+              <BrandTable
+                brands={brands}
+                searchQuery={searchQuery}
+                onEdit={handleEdit}
+                onDuplicate={handleDuplicate}
+                onDelete={handleDelete}
+              />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          )}
         </CardTable>
-        <CardFooter>
-          <DataGridPagination />
-        </CardFooter>
       </Card>
-    </DataGrid>
+
+      <BrandFormDialog
+        open={formOpen}
+        onOpenChange={handleFormClose}
+        brandId={editingBrandId}
+        copyFromBrand={copyFromBrand}
+      />
+
+      {brandToDelete && (
+        <BrandDeleteDialog
+          open={deleteDialogOpen}
+          closeDialog={() => {
+            setDeleteDialogOpen(false);
+            setBrandToDelete(null);
+          }}
+          brand={brandToDelete}
+        />
+      )}
+    </>
   );
 }

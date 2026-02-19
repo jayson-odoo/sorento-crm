@@ -1,15 +1,18 @@
 """Background tasks for imports."""
 import json
 import os
+import re
 import time
 import zipfile
 import hashlib
 import uuid
 import mimetypes
 import logging
+from collections import defaultdict
 from datetime import date, datetime, time as dt_time
 from decimal import Decimal
-from typing import Optional, List
+from io import BytesIO
+from typing import Optional, List, Any
 
 from app.database import SessionLocal
 from app.services.inventory_service import StockService
@@ -17,6 +20,7 @@ from app.services.order_service import OrderService
 from app.services.product_service import ProductService
 from app.services.import_log_service import ImportLogService
 from app.services.job_service import JobService
+from app.services.procurement_service import SPOAllocationService
 from app.services.resources_service import (
     AttachmentDirectoryService,
     AttachmentService,
@@ -24,8 +28,14 @@ from app.services.resources_service import (
 )
 from app.services.s3_service import S3Service
 from app.services.attachment_webhook_helper import create_and_send_webhook
+from app.api.v1.external.utils import (
+    get_inbound_shipment_by_container_number,
+    get_products_by_code_exact,
+    get_warehouses_by_code_or_name,
+)
 from app.models.job import JobStatus
 from app.schemas.resources import AttachmentCreate
+from app.schemas.procurement import SPOAllocationCreate
 
 logger = logging.getLogger(__name__)
 
@@ -128,9 +138,19 @@ def process_product_import(db_job_id: str, products_data: list, user_id: str):
     try:
         job_id_str = job.job_id
         job_service.start_job(job_id_str)
+        job_service.update_job_progress(job_id_str, total_rows=len(products_data))
+
+        def on_progress(processed: int, successful: int, failed: int, skipped: int) -> None:
+            job_service.update_job_progress(
+                job_id_str,
+                processed_rows=processed,
+                successful_rows=successful,
+                failed_rows=failed,
+                skipped_rows=skipped,
+            )
 
         product_service = ProductService(db)
-        result = product_service.bulk_import_products(products_data, user_id)
+        result = product_service.bulk_import_products(products_data, user_id, on_progress=on_progress)
 
         job_service.complete_job(
             job_id=job_id_str,
@@ -470,3 +490,277 @@ def process_attachment_bulk_import(
                 os.remove(zip_path)
             except OSError as e:
                 logger.warning("Could not remove temp zip %s: %s", zip_path, e)
+
+
+def _spo_import_normalize_header(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _spo_import_find_column(row_data: dict, *candidates: str) -> Any:
+    """Return first matching column value (case-insensitive key match)."""
+    keys_lower = {k.lower(): k for k in row_data if k}
+    for c in candidates:
+        cl = c.lower().strip()
+        if cl in keys_lower:
+            return row_data.get(keys_lower[cl])
+    return None
+
+
+def _spo_import_extract_container(loading_date_value: Any) -> Optional[str]:
+    """Extract shipping container number: text after first space in Loading Date cell."""
+    if loading_date_value is None:
+        return None
+    s = str(loading_date_value).strip()
+    if not s:
+        return None
+    parts = s.split(None, 1)  # max 2 parts
+    if len(parts) < 2:
+        return None
+    return parts[1].strip() or None
+
+
+def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
+    """Process SPO allocation import from Excel in background.
+
+    Parsing rules:
+    - Filename (without extension) = SPO number.
+    - Item Code = product code.
+    - Loading Date = cell text; text after first space = shipping container number (link to inbound shipment).
+    - Location = warehouse code.
+    - Qty = allocated quantity.
+
+    Rows are grouped by (spo_number, product_id, warehouse_id); quantities are summed.
+    One allocation is created per group, linked to the first valid inbound shipment for that group.
+    """
+    from rq import get_current_job
+    import openpyxl
+
+    db = SessionLocal()
+    job_service = JobService(db)
+    rq_job = get_current_job()
+    rq_job_id = rq_job.id if rq_job else None
+
+    job = job_service.get_job_by_db_id(db_job_id) if db_job_id else None
+    if not job and rq_job_id:
+        job = job_service.get_job(rq_job_id)
+
+    if not job:
+        logger.error("SPO import job not found: db_job_id=%s, rq_job_id=%s", db_job_id, rq_job_id)
+        db.close()
+        return
+
+    job_id_str = job.job_id
+
+    try:
+        job_service.start_job(job_id_str)
+
+        spo_number = re.sub(r"\.xlsx?$", "", filename or "", flags=re.IGNORECASE).strip()
+        if not spo_number:
+            job_service.fail_job(job_id_str, "Filename must provide SPO number (e.g. SPO-2025.10-0050.xlsx)")
+            db.close()
+            return
+
+        try:
+            workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
+        except Exception as exc:
+            job_service.fail_job(job_id_str, f"Failed to read Excel file: {exc}")
+            db.close()
+            return
+
+        sheet = workbook.active
+        if not sheet:
+            job_service.fail_job(job_id_str, "Workbook has no active sheet")
+            db.close()
+            return
+
+        from app.api.v1.external.utils import normalize_code
+
+        headers = [_spo_import_normalize_header(cell.value) for cell in sheet[1]]
+        # Collect all data rows (non-empty) and extract codes/locations for lookup
+        data_rows: List[tuple[int, dict]] = []  # (row_idx, row_data dict)
+        all_product_codes = set()
+        all_locations = set()
+
+        for row_idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+            if not any(cell is not None and str(cell).strip() for cell in row):
+                continue
+            row_data = {}
+            for idx, value in enumerate(row):
+                if idx < len(headers) and headers[idx]:
+                    row_data[headers[idx]] = value
+            item_code_raw = _spo_import_find_column(
+                row_data, "Item Code", "Item code", "Product Code", "Product code"
+            )
+            location_raw = _spo_import_find_column(
+                row_data, "Location", "Warehouse", "Warehouse Code"
+            )
+            qty_raw = _spo_import_find_column(
+                row_data, "Qty", "Quantity", "Allocated", "Allocated Quantity"
+            )
+            loading_date_raw = _spo_import_find_column(
+                row_data, "Loading Date", "Loading date"
+            )
+            item_code = (item_code_raw and str(item_code_raw).strip()) or None
+            location = (location_raw and str(location_raw).strip()) or None
+            try:
+                qty = int(float(qty_raw)) if qty_raw is not None else 0
+            except (TypeError, ValueError):
+                qty = 0
+            container = _spo_import_extract_container(loading_date_raw)
+            if item_code:
+                all_product_codes.add(item_code)
+            if location:
+                all_locations.add(location)
+            data_rows.append((row_idx, row_data))
+
+        total_data_rows = len(data_rows)
+        if not total_data_rows:
+            job_service.complete_job(
+                job_id=job_id_str,
+                result={"message": "No valid data rows found"},
+                successful_rows=0,
+                failed_rows=0,
+                skipped_rows=0,
+                processed_rows=0,
+                total_rows=0,
+            )
+            db.close()
+            return
+
+        products_by_code = get_products_by_code_exact(db, all_product_codes)
+        warehouses_map = get_warehouses_by_code_or_name(db, all_locations)
+
+        resolved_rows: List[tuple[str, str, str, int, int]] = []  # product_id, warehouse_id, shipment_id, qty, row_idx
+        skipped_rows_detail: List[dict] = []  # [{"row": int, "reason": str}, ...]
+
+        for row_idx, row_data in data_rows:
+            item_code_raw = _spo_import_find_column(
+                row_data, "Item Code", "Item code", "Product Code", "Product code"
+            )
+            loading_date_raw = _spo_import_find_column(
+                row_data, "Loading Date", "Loading date"
+            )
+            location_raw = _spo_import_find_column(
+                row_data, "Location", "Warehouse", "Warehouse Code"
+            )
+            qty_raw = _spo_import_find_column(
+                row_data, "Qty", "Quantity", "Allocated", "Allocated Quantity"
+            )
+
+            item_code = (item_code_raw and str(item_code_raw).strip()) or None
+            location = (location_raw and str(location_raw).strip()) or None
+            try:
+                qty = int(float(qty_raw)) if qty_raw is not None else 0
+            except (TypeError, ValueError):
+                qty = 0
+
+            if not item_code:
+                skipped_rows_detail.append({"row": row_idx, "reason": "Missing Item Code / Product Code"})
+                continue
+            if not location:
+                skipped_rows_detail.append({"row": row_idx, "reason": "Missing Location / Warehouse"})
+                continue
+            if qty <= 0:
+                skipped_rows_detail.append({"row": row_idx, "reason": "Invalid or zero Qty"})
+                continue
+            container = _spo_import_extract_container(loading_date_raw)
+            if not container:
+                skipped_rows_detail.append({"row": row_idx, "reason": "Missing or invalid Loading Date (no container number)"})
+                continue
+
+            product = products_by_code.get(item_code)
+            warehouse = warehouses_map.get(normalize_code(location)) if location else None
+            shipment = get_inbound_shipment_by_container_number(db, container)
+
+            if not product:
+                skipped_rows_detail.append({"row": row_idx, "reason": f"Product not found: {item_code}"})
+                continue
+            if not warehouse:
+                skipped_rows_detail.append({"row": row_idx, "reason": f"Warehouse not found: {location}"})
+                continue
+            if not shipment:
+                skipped_rows_detail.append({"row": row_idx, "reason": f"Inbound shipment not found for container: {container}"})
+                continue
+            resolved_rows.append((product.id, warehouse.id, shipment.id, qty, row_idx))
+
+        # Group by (product_id, warehouse_id): sum qty, keep first shipment_id
+        groups: dict[tuple[str, str], tuple[int, str]] = defaultdict(lambda: (0, ""))
+        for product_id, warehouse_id, shipment_id, qty, row_idx in resolved_rows:
+            key = (product_id, warehouse_id)
+            total, first_shipment = groups[key]
+            if not first_shipment:
+                first_shipment = shipment_id
+            groups[key] = (total + qty, first_shipment)
+
+        num_groups = len(groups)
+        row_level_skipped = len(skipped_rows_detail)
+        job_service.update_job_progress(job_id_str, total_rows=total_data_rows)
+
+        successful = 0
+        failed = 0
+        skipped_groups = 0
+        processed = 0
+        errors: List[str] = []
+        proc_service = SPOAllocationService(db)
+
+        for (product_id, warehouse_id), (total_qty, shipment_id) in groups.items():
+            processed += 1
+            try:
+                allocation_data = SPOAllocationCreate(
+                    spo_number=spo_number,
+                    inbound_shipment_id=shipment_id,
+                    warehouse_id=warehouse_id,
+                    product_id=product_id,
+                    allocated_quantity=total_qty,
+                    receipt_status="pending",
+                    quantity_received=0,
+                    quantity_rejected=0,
+                )
+                proc_service.create_allocation(allocation_data, user_id)
+                successful += 1
+            except Exception as e:
+                if "already exists" in str(e).lower() or "conflict" in str(e).lower():
+                    skipped_groups += 1
+                    errors.append(f"Skipped duplicate: {spo_number} / product {product_id} / warehouse {warehouse_id}")
+                else:
+                    failed += 1
+                    errors.append(f"Create allocation: {e}")
+
+            total_skipped = row_level_skipped + skipped_groups
+            job_service.update_job_progress(
+                job_id_str,
+                processed_rows=processed,
+                successful_rows=successful,
+                failed_rows=failed,
+                skipped_rows=total_skipped,
+                result={"errors": errors[-50:], "skipped_rows_detail": skipped_rows_detail[-200:]},
+            )
+
+        total_skipped = row_level_skipped + skipped_groups
+        job_service.complete_job(
+            job_id=job_id_str,
+            result={
+                "message": "SPO import completed",
+                "data_rows": total_data_rows,
+                "allocations_created": successful,
+                "skipped_rows_detail": _json_safe(skipped_rows_detail[-200:]),
+                "skipped_rows_count": total_skipped,
+                "errors": _json_safe(errors[-100:]),
+            },
+            successful_rows=successful,
+            failed_rows=failed,
+            skipped_rows=total_skipped,
+            processed_rows=total_data_rows,
+            total_rows=total_data_rows,
+        )
+        logger.info(
+            "SPO import job %s completed: %s data rows, %s ok, %s failed, %s skipped",
+            job_id_str, total_data_rows, successful, failed, total_skipped,
+        )
+    except Exception as e:
+        logger.exception("SPO import job %s failed", job_id_str)
+        job_service.fail_job(job_id_str, str(e))
+    finally:
+        db.close()

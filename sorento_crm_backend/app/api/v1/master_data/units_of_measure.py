@@ -116,8 +116,7 @@ async def delete_uom(
     """Delete a UOM."""
     try:
         service = UnitOfMeasureService(db)
-        # Implement delete logic
-        return {"message": "UOM deleted successfully"}
+        return service.delete_uom(uom_id)
     except HTTPException:
         raise
     except Exception as e:

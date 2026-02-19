@@ -155,3 +155,11 @@ class SystemSetting(Base):
     notify_system_error_failure_email = Column(Boolean, default=True, nullable=False)
     notify_system_error_web = Column(Boolean, default=True, nullable=False)
     notify_system_error_role_ids = Column(ARRAY(String), nullable=True)
+
+    # SMTP for notification emails (password not returned in read APIs)
+    smtp_host = Column(String(255), nullable=True)
+    smtp_port = Column(String(10), nullable=True)
+    smtp_secure = Column(Boolean, default=True, nullable=False)
+    smtp_username = Column(String(255), nullable=True)
+    smtp_password = Column(String(255), nullable=True)
+    smtp_from = Column(String(255), nullable=True)  # sender address or "Name <email>"

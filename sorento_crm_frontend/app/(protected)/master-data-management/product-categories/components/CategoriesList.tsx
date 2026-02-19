@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { Plus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardHeader, CardTable } from '@/components/ui/card';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { useCategoriesTree } from '../hooks/useProductCategories';
 import CategoryTree from './CategoryTree';
 import CategoryForm from './CategoryForm';
@@ -15,12 +16,20 @@ export default function CategoriesList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editingCategoryId, setEditingCategoryId] = useState<string | undefined>(undefined);
+  const [copyFromCategory, setCopyFromCategory] = useState<CategoryTreeItem | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [categoryToDelete, setCategoryToDelete] = useState<CategoryTreeItem | null>(null);
   const { data: categories, isLoading } = useCategoriesTree();
 
   const handleEdit = (category: CategoryTreeItem) => {
+    setCopyFromCategory(null);
     setEditingCategoryId(category.id);
+    setFormOpen(true);
+  };
+
+  const handleDuplicate = (category: CategoryTreeItem) => {
+    setEditingCategoryId(undefined);
+    setCopyFromCategory(category);
     setFormOpen(true);
   };
 
@@ -33,13 +42,14 @@ export default function CategoriesList() {
     setFormOpen(open);
     if (!open) {
       setEditingCategoryId(undefined);
+      setCopyFromCategory(null);
     }
   };
 
   return (
-    <div className="space-y-6">
+    <>
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader className="flex-row items-center justify-between flex-wrap gap-2.5">
           <div className="relative">
             <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
             <Input
@@ -49,32 +59,42 @@ export default function CategoriesList() {
               className="ps-9 w-64"
             />
           </div>
-          <Button onClick={() => {
-            setEditingCategoryId(undefined);
-            setFormOpen(true);
-          }}>
+          <Button
+            onClick={() => {
+              setCopyFromCategory(null);
+              setEditingCategoryId(undefined);
+              setFormOpen(true);
+            }}
+          >
             <Plus className="size-4" />
             Create Category
           </Button>
         </CardHeader>
-        <CardContent>
+        <CardTable>
           {isLoading ? (
-            <div className="text-center py-8 text-muted-foreground">Loading categories...</div>
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              Loading categories...
+            </div>
           ) : (
-            <CategoryTree
-              categories={categories || []}
-              searchQuery={searchQuery}
-              onEdit={handleEdit}
-              onDelete={handleDelete}
-            />
+            <ScrollArea>
+              <CategoryTree
+                categories={categories || []}
+                searchQuery={searchQuery}
+                onEdit={handleEdit}
+                onDuplicate={handleDuplicate}
+                onDelete={handleDelete}
+              />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
           )}
-        </CardContent>
+        </CardTable>
       </Card>
 
       <CategoryForm
         open={formOpen}
         onOpenChange={handleFormClose}
         categoryId={editingCategoryId}
+        copyFromCategory={copyFromCategory}
       />
 
       {categoryToDelete && (
@@ -87,6 +107,6 @@ export default function CategoriesList() {
           category={categoryToDelete}
         />
       )}
-    </div>
+    </>
   );
 }

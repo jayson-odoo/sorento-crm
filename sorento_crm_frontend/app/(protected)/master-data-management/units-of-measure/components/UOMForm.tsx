@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -51,6 +52,7 @@ export default function UOMForm({ uomId, onSuccess }: UOMFormProps) {
       base_uom_id: null,
       conversion_factor: null,
       description: null,
+      is_active: true,
     },
     mode: 'onSubmit',
   });
@@ -64,6 +66,7 @@ export default function UOMForm({ uomId, onSuccess }: UOMFormProps) {
         base_uom_id: uom.base_uom_id || null,
         conversion_factor: uom.conversion_factor || null,
         description: uom.description || null,
+        is_active: uom.is_active ?? true,
       });
     }
   }, [uom, isEditMode, form]);
@@ -77,6 +80,7 @@ export default function UOMForm({ uomId, onSuccess }: UOMFormProps) {
         description: data.description ?? undefined,
         base_uom_id: data.base_uom_id ?? undefined,
         conversion_factor: data.conversion_factor ?? undefined,
+        is_active: data.is_active,
       };
       
       if (isEditMode && uomId) {
@@ -221,6 +225,27 @@ export default function UOMForm({ uomId, onSuccess }: UOMFormProps) {
                     />
                   </FormControl>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="is_active"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">Active</FormLabel>
+                    <FormDescription>
+                      Inactive UOMs will not appear in dropdowns when selecting a unit for products.
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
                 </FormItem>
               )}
             />

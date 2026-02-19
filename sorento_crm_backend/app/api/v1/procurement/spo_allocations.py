@@ -1,7 +1,11 @@
 """SPO Allocations API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+import logging
+from typing import Optional, List
+
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Body, File, UploadFile
 from sqlalchemy.orm import Session
-from typing import Optional
+
+logger = logging.getLogger(__name__)
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.procurement_service import SPOAllocationService
@@ -10,6 +14,8 @@ from app.schemas.procurement import (
     SPOAllocationUpdate,
     SPOAllocationResponse,
     ShipmentWithAllocationsGroup,
+    SPOWithAllocationsGroup,
+    BulkDeleteSPOAllocationsRequest,
 )
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -46,6 +52,90 @@ async def get_spo_allocations_grouped_by_shipment(
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.get("/grouped-by-spo-number", response_model=ListResponse[SPOWithAllocationsGroup])
+async def get_spo_allocations_grouped_by_spo_number(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    query: Optional[str] = Query(None),
+    product_code: Optional[str] = Query(None),
+    warehouse_id: Optional[str] = Query(None),
+    receipt_status: Optional[str] = Query(None),
+    sort: Optional[str] = Query("spo_number"),
+    dir: Optional[str] = Query("asc"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get SPO allocations grouped by SPO number (for list view by SPO)."""
+    try:
+        service = SPOAllocationService(db)
+        result = service.list_allocations_grouped_by_spo_number(
+            page=page,
+            limit=limit,
+            query=query,
+            product_code=product_code,
+            warehouse_id=warehouse_id,
+            receipt_status=receipt_status,
+            sort_field=sort or "spo_number",
+            sort_dir=dir or "asc",
+        )
+        return result
+    except Exception as e:
+        logger.exception("grouped-by-spo-number failed: %s", e)
+        raise handle_internal_error(str(e))
+
+
+@router.post("/import", status_code=status.HTTP_202_ACCEPTED)
+async def import_spo_allocations(
+    files: List[UploadFile] = File(..., description="One or more Excel files (.xlsx). Filename = SPO number."),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue SPO allocation import jobs. One job per file. Processed in background; progress in Import Jobs; notification when done."""
+    from app.services.job_service import JobService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.import_tasks import process_spo_import
+
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one file is required.",
+        )
+
+    for upload in files:
+        if not upload.filename or not upload.filename.lower().endswith((".xlsx", ".xls")):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid file type: {upload.filename}. Please upload Excel (.xlsx or .xls).",
+            )
+
+    job_ids = []
+    job_service = JobService(db)
+    for upload in files:
+        file_data = await upload.read()
+        job = job_service.create_job(
+            job_type="spo_import",
+            user_id=current_user["id"],
+            filename=upload.filename,
+        )
+        db.commit()
+        rq_job = enqueue_job(
+            process_spo_import,
+            str(job.id),
+            file_data,
+            upload.filename or "unknown.xlsx",
+            current_user["id"],
+            queue_name="imports",
+            job_timeout=3600,
+        )
+        job_service.update_job_with_rq_id(job, rq_job.id)
+        job_ids.append(rq_job.id)
+
+    return {
+        "message": f"{len(job_ids)} import job(s) queued.",
+        "job_ids": job_ids,
+    }
 
 
 @router.get("/", response_model=ListResponse[SPOAllocationResponse])
@@ -113,6 +203,22 @@ async def create_spo_allocation(
         raise handle_internal_error(str(e))
 
 
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_spo_allocations(
+    body: BulkDeleteSPOAllocationsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk delete SPO allocations by ID."""
+    try:
+        service = SPOAllocationService(db)
+        return service.bulk_delete_allocations(body.ids)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.put("/{allocation_id}", response_model=SPOAllocationResponse)
 async def update_spo_allocation(
     allocation_id: str,
@@ -140,7 +246,7 @@ async def delete_spo_allocation(
     """Delete an SPO allocation."""
     try:
         service = SPOAllocationService(db)
-        # Implement delete logic
+        service.delete_allocation(allocation_id)
         return {"message": "SPO allocation deleted successfully"}
     except HTTPException:
         raise

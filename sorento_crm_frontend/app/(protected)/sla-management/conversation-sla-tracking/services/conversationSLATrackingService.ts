@@ -48,3 +48,22 @@ export async function deleteConversationSLAEventLog(logId: string): Promise<void
     throw new Error(error.detail || 'Failed to delete event log');
   }
 }
+
+export interface SyncAssigneeResult {
+  updated: boolean;
+  message: string;
+  assigned_to_id?: string;
+  assigned_to?: string;
+}
+
+export async function syncAssigneeFromRespond(trackingId: string): Promise<SyncAssigneeResult> {
+  const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking/${trackingId}/sync-assignee`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Sync assignee failed' }));
+    const msg = typeof err.detail === 'object' && err.detail?.message ? err.detail.message : err.detail || 'Sync assignee failed';
+    throw new Error(msg);
+  }
+  return response.json();
+}

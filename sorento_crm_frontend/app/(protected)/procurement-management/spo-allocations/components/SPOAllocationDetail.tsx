@@ -136,12 +136,12 @@ export default function SPOAllocationDetail({
                   {spoAllocation.spo_number || '-'}
                 </p>
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground">SPO Line Number</p>
-                <p className="font-medium">
-                  {spoAllocation.spo_line_number || '-'}
-                </p>
-              </div>
+              {spoAllocation.spo_line_number != null && (
+                <div>
+                  <p className="text-sm text-muted-foreground">SPO Line Number (legacy)</p>
+                  <p className="font-medium">{spoAllocation.spo_line_number}</p>
+                </div>
+              )}
               <div>
                 <p className="text-sm text-muted-foreground">Product</p>
                 <p className="font-medium">

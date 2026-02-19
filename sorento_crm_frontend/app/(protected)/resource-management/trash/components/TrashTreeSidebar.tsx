@@ -1,12 +1,25 @@
 'use client';
 
 import { useState, useCallback, useMemo } from 'react';
-import { ChevronRight, ChevronDown, ChevronUp, Folder, FolderOpen, RotateCcw } from 'lucide-react';
+import { ChevronRight, ChevronDown, ChevronUp, Folder, FolderOpen, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { ScrollAreaZag } from '@/components/ui/scroll-area-zag';
 import { cn } from '@/lib/utils';
 import type { AttachmentDirectoryTreeNode } from '../../attachments/services/directoryService';
-import { useDirectoryTree, useRestoreDirectory } from '../../attachments/hooks/useAttachments';
+import { useDirectoryTree, useRestoreDirectory, usePermanentDeleteDirectory } from '../../attachments/hooks/useAttachments';
 
 export const TRASH_VIEW_ID = '__trash__';
 export const TRASH_FOLDER_PREFIX = 'trash:';
@@ -22,6 +35,27 @@ function collectAllFolderIds(nodes: AttachmentDirectoryTreeNode[]): Set<string> 
   return ids;
 }
 
+function findNodeById(nodes: AttachmentDirectoryTreeNode[], targetId: string): AttachmentDirectoryTreeNode | null {
+  for (const node of nodes) {
+    if (node.id === targetId) return node;
+    if (node.children?.length) {
+      const found = findNodeById(node.children, targetId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function collectSubtreeFolderIds(node: AttachmentDirectoryTreeNode): Set<string> {
+  const ids = new Set<string>([node.id]);
+  if (node.children?.length) {
+    node.children.forEach((child) =>
+      collectSubtreeFolderIds(child).forEach((id) => ids.add(id))
+    );
+  }
+  return ids;
+}
+
 function DeletedFolderRow({
   node,
   depth,
@@ -29,6 +63,7 @@ function DeletedFolderRow({
   expandedIds,
   onSelect,
   onRestore,
+  onPermanentDelete,
   onToggleExpand,
 }: {
   node: AttachmentDirectoryTreeNode;
@@ -37,6 +72,7 @@ function DeletedFolderRow({
   expandedIds: Set<string>;
   onSelect: (id: string) => void;
   onRestore: (id: string) => void;
+  onPermanentDelete: (id: string, name: string) => void;
   onToggleExpand: (id: string) => void;
 }) {
   const hasChildren = node.children && node.children.length > 0;
@@ -76,18 +112,31 @@ function DeletedFolderRow({
         <span className="whitespace-nowrap truncate flex-1" title={node.name}>
           {node.name}
         </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="size-7 shrink-0 opacity-0 group-hover:opacity-100"
-          title="Restore folder and contents"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRestore(node.id);
-          }}
-        >
-          <RotateCcw className="size-4" />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="size-7 shrink-0 opacity-0 group-hover:opacity-100"
+              aria-label="Folder actions"
+            >
+              <MoreHorizontal className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => onRestore(node.id)}>
+              <RotateCcw className="size-4 mr-2" />
+              Restore folder and contents
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => onPermanentDelete(node.id, node.name)}
+            >
+              <Trash2 className="size-4 mr-2" />
+              Permanently delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       {hasChildren && isExpanded && (
         <div>
@@ -100,6 +149,7 @@ function DeletedFolderRow({
               expandedIds={expandedIds}
               onSelect={onSelect}
               onRestore={onRestore}
+              onPermanentDelete={onPermanentDelete}
               onToggleExpand={onToggleExpand}
             />
           ))}
@@ -117,17 +167,40 @@ interface TrashTreeSidebarProps {
 export default function TrashTreeSidebar({ selectedId, onSelect }: TrashTreeSidebarProps) {
   const { data: deletedTree = [], isLoading } = useDirectoryTree(true);
   const restoreMutation = useRestoreDirectory();
+  const permanentDeleteMutation = usePermanentDeleteDirectory();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [permanentDeleteDialogOpen, setPermanentDeleteDialogOpen] = useState(false);
+  const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
   const allFolderIds = useMemo(() => collectAllFolderIds(deletedTree), [deletedTree]);
 
+  const selectedFolderId = selectedId?.startsWith(TRASH_FOLDER_PREFIX)
+    ? selectedId.slice(TRASH_FOLDER_PREFIX.length)
+    : null;
+
+  const subtreeFolderIds = useMemo(() => {
+    if (!selectedFolderId) return null;
+    const node = findNodeById(deletedTree, selectedFolderId);
+    return node ? collectSubtreeFolderIds(node) : null;
+  }, [deletedTree, selectedFolderId]);
+
   const handleExpandAll = useCallback(() => {
-    setExpandedIds(new Set(allFolderIds));
-  }, [allFolderIds]);
+    const idsToExpand = subtreeFolderIds ?? allFolderIds;
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      idsToExpand.forEach((id) => next.add(id));
+      return next;
+    });
+  }, [subtreeFolderIds, allFolderIds]);
 
   const handleCollapseAll = useCallback(() => {
-    setExpandedIds(new Set());
-  }, []);
+    const idsToCollapse = subtreeFolderIds ?? allFolderIds;
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      idsToCollapse.forEach((id) => next.delete(id));
+      return next;
+    });
+  }, [subtreeFolderIds, allFolderIds]);
 
   const handleToggleExpand = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -138,6 +211,17 @@ export default function TrashTreeSidebar({ selectedId, onSelect }: TrashTreeSide
     });
   }, []);
 
+  const handlePermanentDelete = () => {
+    if (!permanentDeleteTarget) return;
+    permanentDeleteMutation.mutate(permanentDeleteTarget.id, {
+      onSuccess: () => {
+        setPermanentDeleteDialogOpen(false);
+        setPermanentDeleteTarget(null);
+        onSelect(TRASH_VIEW_ID);
+      },
+    });
+  };
+
   return (
     <div className="flex h-full w-full min-w-0 flex-col border-r bg-muted/30">
       <div className="flex items-center justify-between gap-1 p-2 border-b">
@@ -147,7 +231,7 @@ export default function TrashTreeSidebar({ selectedId, onSelect }: TrashTreeSide
             variant="ghost"
             size="sm"
             className="size-8 p-0"
-            title="Expand all"
+            title={selectedFolderId ? 'Expand all in selected folder' : 'Expand all'}
             onClick={handleExpandAll}
           >
             <ChevronDown className="size-4" />
@@ -156,7 +240,7 @@ export default function TrashTreeSidebar({ selectedId, onSelect }: TrashTreeSide
             variant="ghost"
             size="sm"
             className="size-8 p-0"
-            title="Collapse all"
+            title={selectedFolderId ? 'Collapse all in selected folder' : 'Collapse all'}
             onClick={handleCollapseAll}
           >
             <ChevronUp className="size-4" />
@@ -192,12 +276,40 @@ export default function TrashTreeSidebar({ selectedId, onSelect }: TrashTreeSide
                 onRestore={(id) =>
                   restoreMutation.mutate(id, { onSuccess: () => onSelect(TRASH_VIEW_ID) })
                 }
+                onPermanentDelete={(id, name) => {
+                  setPermanentDeleteTarget({ id, name });
+                  setPermanentDeleteDialogOpen(true);
+                }}
                 onToggleExpand={handleToggleExpand}
               />
             ))
           )}
         </div>
       </ScrollAreaZag>
+
+      <Dialog open={permanentDeleteDialogOpen} onOpenChange={(open) => { if (!open) { setPermanentDeleteDialogOpen(false); setPermanentDeleteTarget(null); } }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Permanently delete folder</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Permanently delete &quot;{permanentDeleteTarget?.name}&quot;? This folder and all subfolders will be removed forever.
+            All attachments in this folder and its subfolders will be permanently deleted. This cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPermanentDeleteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handlePermanentDelete}
+              disabled={permanentDeleteMutation.isPending}
+            >
+              Permanently delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

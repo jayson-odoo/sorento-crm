@@ -1,15 +1,5 @@
 {
   "pages": {
-    "/api/auth/token/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/auth/token/route.js"
-    ],
-    "/api/auth/[...nextauth]/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/auth/[...nextauth]/route.js"
-    ],
     "/layout": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -21,25 +11,35 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/layout.js"
     ],
-    "/(protected)/master-data-management/products/[id]/page": [
+    "/(protected)/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/[id]/page.js"
+      "static/chunks/app/(protected)/page.js"
     ],
-    "/(protected)/system-management/import-jobs/page": [
+    "/api/auth/[...nextauth]/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/system-management/import-jobs/page.js"
+      "static/chunks/app/api/auth/[...nextauth]/route.js"
     ],
-    "/(protected)/system-management/import-jobs/[id]/page": [
+    "/api/auth/token/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/system-management/import-jobs/[id]/page.js"
+      "static/chunks/app/api/auth/token/route.js"
     ],
-    "/(protected)/resource-management/attachment-types/page": [
+    "/(protected)/sla-management/conversation-sla-tracking/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/resource-management/attachment-types/page.js"
+      "static/chunks/app/(protected)/sla-management/conversation-sla-tracking/page.js"
+    ],
+    "/(protected)/sla-management/conversation-sla-tracking/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js"
+    ],
+    "/api/user-management/account/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/user-management/account/route.js"
     ],
     "/(protected)/integration-management/integration-logs/page": [
       "static/chunks/webpack.js",
@@ -50,6 +50,56 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/integration-management/integration-logs/[id]/page.js"
+    ],
+    "/api/v1/external/[...path]/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/v1/external/[...path]/route.js"
+    ],
+    "/(protected)/user-management/users/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/users/page.js"
+    ],
+    "/(protected)/user-management/users/[id]/layout": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/users/[id]/layout.js"
+    ],
+    "/(protected)/user-management/users/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/users/[id]/page.js"
+    ],
+    "/(protected)/dark-sidebar/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/dark-sidebar/page.js"
+    ],
+    "/(protected)/procurement-management/spo-allocations/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/spo-allocations/page.js"
+    ],
+    "/(protected)/master-data-management/product-attachments/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/master-data-management/product-attachments/page.js"
+    ],
+    "/(protected)/master-data-management/products/layout": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/master-data-management/products/layout.js"
+    ],
+    "/(protected)/master-data-management/products/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/master-data-management/products/[id]/page.js"
+    ],
+    "/(protected)/master-data-management/products/[id]/edit/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/master-data-management/products/[id]/edit/page.js"
     ],
     "/(protected)/resource-management/attachment-directories/page": [
       "static/chunks/webpack.js",

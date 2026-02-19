@@ -1,9 +1,9 @@
 'use client';
 
 import { use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { MoveLeft } from 'lucide-react';
+import { MoveLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Breadcrumb,
@@ -21,10 +21,23 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { formatDateTime } from '@/lib/helpers';
-import { getImportJob, getImportJobStatus } from '../services/importJobService';
+import { getImportJob, getImportJobStatus, getImportJobs } from '../services/importJobService';
 import { useCancelImportJob, useImportJobStatus } from '../hooks/useImportJobs';
 import type { ImportJob } from '../types/importJob.types';
 import { toast } from 'sonner';
+
+const JOB_TYPE_LABELS: Record<string, string> = {
+  order_import: 'Order Import',
+  order_tracking_import: 'Order Tracking Import',
+  product_import: 'Product Import',
+  stock_import: 'Stock Import',
+  spo_import: 'SPO Import',
+  attachment_bulk_import: 'Attachment Bulk Import',
+};
+
+function getJobTypeLabel(jobType: string): string {
+  return JOB_TYPE_LABELS[jobType] ?? jobType;
+}
 
 type ImportJobDetailPageProps = {
   params: Promise<{ id: string }>;
@@ -33,6 +46,11 @@ type ImportJobDetailPageProps = {
 export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const pageParam = searchParams.get('page');
+  const pageSizeParam = searchParams.get('pageSize');
+  const pageIndex = pageParam ? Math.max(0, parseInt(pageParam, 10) - 1) : null;
+  const pageSize = pageSizeParam ? Math.max(1, parseInt(pageSizeParam, 10)) : 50;
 
   const { data: job, isLoading } = useQuery({
     queryKey: ['import-job', id],
@@ -41,6 +59,21 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
     refetchOnWindowFocus: true,
     retry: 1,
   });
+
+  const { data: jobsListData } = useQuery({
+    queryKey: ['import-jobs', pageIndex ?? 0, pageSize],
+    queryFn: () => getImportJobs({ pageIndex: pageIndex ?? 0, pageSize, sorting: [] }),
+    enabled: pageIndex !== null && !!job,
+  });
+
+  const jobIds = jobsListData?.data?.map((j) => j.job_id) ?? [];
+  const currentIndex = jobIds.indexOf(id);
+  const hasPrev = currentIndex > 0;
+  const hasNext = currentIndex >= 0 && currentIndex < jobIds.length - 1;
+  const prevId = hasPrev ? jobIds[currentIndex - 1] : null;
+  const nextId = hasNext ? jobIds[currentIndex + 1] : null;
+  const totalOnPage = jobIds.length;
+  const showPagination = pageIndex !== null && totalOnPage > 0 && currentIndex >= 0;
 
   // Poll for status updates if job is still processing
   const { data: statusData } = useImportJobStatus(id, !isLoading && !!job);
@@ -150,6 +183,12 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   const currentStatus = statusData?.status || job.status;
   const canCancel = ['pending', 'queued', 'started'].includes(currentStatus);
 
+  // Use statusData.progress when available (polled every 2s) so Processed/Success/Failed/Skipped stay in sync
+  const displayProcessed = progress ? progress.processed : job.processed_rows;
+  const displaySuccessful = progress ? progress.successful : job.successful_rows;
+  const displayFailed = progress ? progress.failed : job.failed_rows;
+  const displaySkipped = progress ? progress.skipped : job.skipped_rows;
+
   return (
     <>
       <Container>
@@ -173,8 +212,45 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
+            {showPagination && (
+              <div className="flex items-center gap-1 mr-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  disabled={!hasPrev}
+                  asChild={!!prevId}
+                >
+                  {prevId ? (
+                    <Link href={`/system-management/import-jobs/${prevId}?page=${(pageIndex ?? 0) + 1}&pageSize=${pageSize}`}>
+                      <ChevronLeft className="size-4" />
+                    </Link>
+                  ) : (
+                    <span><ChevronLeft className="size-4" /></span>
+                  )}
+                </Button>
+                <span className="text-sm text-muted-foreground tabular-nums px-1 min-w-[4rem] text-center">
+                  {currentIndex + 1} / {totalOnPage}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  disabled={!hasNext}
+                  asChild={!!nextId}
+                >
+                  {nextId ? (
+                    <Link href={`/system-management/import-jobs/${nextId}?page=${(pageIndex ?? 0) + 1}&pageSize=${pageSize}`}>
+                      <ChevronRight className="size-4" />
+                    </Link>
+                  ) : (
+                    <span><ChevronRight className="size-4" /></span>
+                  )}
+                </Button>
+              </div>
+            )}
             <Button asChild variant="outline">
-              <Link href="/system-management/import-jobs">
+              <Link href={pageIndex !== null ? `/system-management/import-jobs?page=${pageIndex + 1}&pageSize=${pageSize}` : '/system-management/import-jobs'}>
                 <MoveLeft /> Back to Import Jobs
               </Link>
             </Button>
@@ -214,7 +290,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-sm">
                 <div>
                   <p className="text-muted-foreground">Job Type</p>
-                  <p className="font-medium">{job.job_type}</p>
+                  <p className="font-medium">{getJobTypeLabel(job.job_type)}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Status</p>
@@ -226,7 +302,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                 </div>
                 <div>
                   <p className="text-muted-foreground">Processed</p>
-                  <p className="font-medium text-lg">{job.processed_rows} / {job.total_rows}</p>
+                  <p className="font-medium text-lg">{displayProcessed} / {job.total_rows}</p>
                 </div>
                 {job.filename && (
                   <div>
@@ -278,23 +354,6 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
             </Card>
           )}
 
-          {job.result?.errors && Array.isArray(job.result.errors) && job.result.errors.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Import Errors</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-2 text-sm">
-                  {job.result.errors.slice(0, 50).map((err: any, index: number) => (
-                    <li key={index} className="text-muted-foreground">
-                      {err?.row ? `Row ${err.row}: ` : ''}{err?.error || 'Unknown error'}
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-          )}
-
           {/* Results Card */}
           <Card>
             <CardHeader>
@@ -304,19 +363,19 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 text-sm">
                 <div>
                   <p className="text-muted-foreground">Successful</p>
-                  <p className="font-medium text-lg text-emerald-600">{job.successful_rows}</p>
+                  <p className="font-medium text-lg text-emerald-600">{displaySuccessful}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Failed</p>
-                  <p className="font-medium text-lg text-red-600">{job.failed_rows}</p>
+                  <p className="font-medium text-lg text-red-600">{displayFailed}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Skipped</p>
-                  <p className="font-medium text-lg text-yellow-600">{job.skipped_rows}</p>
+                  <p className="font-medium text-lg text-yellow-600">{displaySkipped}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Processed</p>
-                  <p className="font-medium text-lg">{job.processed_rows}</p>
+                  <p className="font-medium text-lg">{displayProcessed}</p>
                 </div>
               </div>
             </CardContent>
@@ -334,16 +393,34 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
             </Card>
           )}
 
-          {/* Result JSON (if available) */}
+          {/* Result Details (if available) */}
           {job.result && typeof job.result === 'object' && Object.keys(job.result).length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle>Result Details</CardTitle>
               </CardHeader>
-              <CardContent>
-                <pre className="text-xs bg-muted p-4 rounded overflow-auto">
-                  {JSON.stringify(job.result, null, 2)}
-                </pre>
+              <CardContent className="space-y-4">
+                {Array.isArray(job.result.skipped_rows_detail) && job.result.skipped_rows_detail.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground mb-2">
+                      Skipped rows ({job.result.skipped_rows_detail.length})
+                    </p>
+                    <ul className="text-sm space-y-1 max-h-60 overflow-y-auto bg-muted/50 p-3 rounded">
+                      {job.result.skipped_rows_detail.map((entry: { row?: number; reason?: string }, i: number) => (
+                        <li key={i} className="flex gap-2">
+                          <span className="font-mono text-muted-foreground shrink-0">Row {entry.row ?? i + 1}:</span>
+                          <span>{entry.reason ?? 'Unknown'}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Full result (JSON)</summary>
+                  <pre className="text-xs bg-muted p-4 rounded overflow-auto mt-2">
+                    {JSON.stringify(job.result, null, 2)}
+                  </pre>
+                </details>
               </CardContent>
             </Card>
           )}

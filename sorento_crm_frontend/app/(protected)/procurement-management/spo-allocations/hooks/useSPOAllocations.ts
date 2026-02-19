@@ -4,16 +4,42 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   getSPOAllocations,
   getSPOAllocationsGroupedByShipment,
+  getSPOAllocationsGroupedBySPONumber,
   getSPOAllocation,
   createSPOAllocation,
   updateSPOAllocation,
   deleteSPOAllocation,
+  bulkDeleteSPOAllocations,
 } from '../services/spoAllocationService';
 import type {
   SPOAllocationFormData,
   ShipmentWithAllocationsGroup,
 } from '../types/spoAllocation.types';
-import type { GroupedByShipmentParams } from '../services/spoAllocationService';
+import type {
+  GroupedByShipmentParams,
+  GroupedBySPONumberParams,
+} from '../services/spoAllocationService';
+
+export function useSPOAllocationsGroupedBySPONumber(params: GroupedBySPONumberParams = {}) {
+  return useQuery({
+    queryKey: [
+      'spo-allocations-grouped-by-spo-number',
+      params.page,
+      params.limit,
+      params.query,
+      params.product_code,
+      params.warehouse_id,
+      params.receipt_status,
+      params.sort,
+      params.dir,
+    ],
+    queryFn: () => getSPOAllocationsGroupedBySPONumber(params),
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
 
 export function useSPOAllocationsGroupedByShipment(params: GroupedByShipmentParams = {}) {
   return useQuery({
@@ -113,9 +139,26 @@ export function useDeleteSPOAllocation() {
     mutationFn: (id: string) => deleteSPOAllocation(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['spo-allocations'] });
+      queryClient.invalidateQueries({ queryKey: ['spo-allocations-grouped-by-shipment'] });
+      queryClient.invalidateQueries({ queryKey: ['spo-allocations-grouped-by-spo-number'] });
       toast.success('SPO allocation deleted successfully');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to delete SPO allocation'),
+  });
+}
+
+export function useBulkDeleteSPOAllocations() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteSPOAllocations(ids),
+    onSuccess: (_, ids) => {
+      queryClient.invalidateQueries({ queryKey: ['spo-allocations'] });
+      queryClient.invalidateQueries({ queryKey: ['spo-allocations-grouped-by-shipment'] });
+      queryClient.invalidateQueries({ queryKey: ['spo-allocations-grouped-by-spo-number'] });
+      toast.success(`${ids.length} SPO allocation(s) deleted successfully`);
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to bulk delete SPO allocations'),
   });
 }

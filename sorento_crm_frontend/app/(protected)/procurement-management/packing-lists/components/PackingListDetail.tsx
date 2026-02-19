@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Link as LinkIcon, Search, X } from 'lucide-react';
+import { Edit, Trash2, Link as LinkIcon, Search, X, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,7 +35,77 @@ export default function PackingListDetail({
   const { data: packingList, isLoading } = usePackingList(packingListId);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [shipmentLinesSearch, setShipmentLinesSearch] = useState('');
+  const [sortField, setSortField] = useState<'product' | 'quantity_shipped' | 'spo_allocated'>('product');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const downloadMutation = useDownloadAttachment();
+
+  // Sort and filter shipment lines - must be called before early returns (Rules of Hooks)
+  const sortedAndFilteredLines = useMemo(() => {
+    if (!packingList?.shipment_lines) return [];
+    
+    let filtered = packingList.shipment_lines.filter((line) => {
+      if (!shipmentLinesSearch.trim()) return true;
+      const q = shipmentLinesSearch.trim().toLowerCase();
+      const code = line.product?.product_code?.toLowerCase() ?? '';
+      const name = line.product?.product_name?.toLowerCase() ?? '';
+      return code.includes(q) || name.includes(q);
+    });
+
+    // Sort
+    filtered = [...filtered].sort((a, b) => {
+      let aVal: string | number;
+      let bVal: string | number;
+
+      switch (sortField) {
+        case 'product':
+          aVal = a.product?.product_code?.toLowerCase() ?? '';
+          bVal = b.product?.product_code?.toLowerCase() ?? '';
+          break;
+        case 'quantity_shipped':
+          aVal = a.quantity_shipped ?? 0;
+          bVal = b.quantity_shipped ?? 0;
+          break;
+        case 'spo_allocated':
+          aVal = a.spo_allocated_quantity ?? 0;
+          bVal = b.spo_allocated_quantity ?? 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        return sortDirection === 'asc'
+          ? aVal.localeCompare(bVal)
+          : bVal.localeCompare(aVal);
+      } else {
+        return sortDirection === 'asc'
+          ? (aVal as number) - (bVal as number)
+          : (bVal as number) - (aVal as number);
+      }
+    });
+
+    return filtered;
+  }, [packingList?.shipment_lines, shipmentLinesSearch, sortField, sortDirection]);
+
+  const handleSort = (field: 'product' | 'quantity_shipped' | 'spo_allocated') => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const SortIcon = ({ field }: { field: 'product' | 'quantity_shipped' | 'spo_allocated' }) => {
+    if (sortField !== field) {
+      return <ArrowUpDown className="size-4 ml-1 text-muted-foreground" />;
+    }
+    return sortDirection === 'asc' ? (
+      <ArrowUp className="size-4 ml-1" />
+    ) : (
+      <ArrowDown className="size-4 ml-1" />
+    );
+  };
 
   const handleDownload = async (attachmentId: string, filename: string) => {
     try {
@@ -255,10 +325,6 @@ export default function PackingListDetail({
                 <p className="text-sm text-muted-foreground">Total Items</p>
                 <p className="font-medium">{displayTotalItems}</p>
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Total Cartons</p>
-                <p className="font-medium">{displayTotalCartons}</p>
-              </div>
             </div>
             {packingList.notes && (
               <div>
@@ -361,40 +427,47 @@ export default function PackingListDetail({
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
-                <Table>
+                    <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Product</TableHead>
-                      <TableHead>Quantity Shipped</TableHead>
-                      <TableHead>Cartons</TableHead>
-                      <TableHead>Batch Number</TableHead>
-                      <TableHead>Unit Cost</TableHead>
+                      <TableHead>
+                        <button
+                          onClick={() => handleSort('product')}
+                          className="flex items-center hover:text-foreground transition-colors"
+                        >
+                          Product
+                          <SortIcon field="product" />
+                        </button>
+                      </TableHead>
+                      <TableHead>
+                        <button
+                          onClick={() => handleSort('quantity_shipped')}
+                          className="flex items-center hover:text-foreground transition-colors"
+                        >
+                          Quantity Shipped
+                          <SortIcon field="quantity_shipped" />
+                        </button>
+                      </TableHead>
+                      <TableHead>
+                        <button
+                          onClick={() => handleSort('spo_allocated')}
+                          className="flex items-center hover:text-foreground transition-colors"
+                        >
+                          SPO Allocated
+                          <SortIcon field="spo_allocated" />
+                        </button>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {packingList.shipment_lines
-                      .filter((line) => {
-                        if (!shipmentLinesSearch.trim()) return true;
-                        const q = shipmentLinesSearch.trim().toLowerCase();
-                        const code = line.product?.product_code?.toLowerCase() ?? '';
-                        const name = line.product?.product_name?.toLowerCase() ?? '';
-                        return code.includes(q) || name.includes(q);
-                      })
-                      .map((line) => (
+                    {sortedAndFilteredLines.map((line) => (
                       <TableRow key={line.id}>
                         <TableCell>
                           {line.product?.product_code || '-'}
                         </TableCell>
                         <TableCell>{line.quantity_shipped}</TableCell>
-                        <TableCell>{line.cartons_count}</TableCell>
-                        <TableCell>{line.batch_number || '-'}</TableCell>
                         <TableCell>
-                          {line.unit_cost
-                            ? new Intl.NumberFormat('en-US', {
-                                style: 'currency',
-                                currency: 'MYR',
-                              }).format(line.unit_cost)
-                            : '-'}
+                          {line.spo_allocated_quantity != null ? line.spo_allocated_quantity : '-'}
                         </TableCell>
                       </TableRow>
                     ))}

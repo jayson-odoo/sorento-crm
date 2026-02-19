@@ -78,6 +78,7 @@ async def list_jobs(
                 'created_at': job.created_at,
                 'started_at': job.started_at,
                 'completed_at': job.completed_at,
+                'updated_at': getattr(job, 'updated_at', None),
                 'job_metadata': job.job_metadata,
             }
             jobs_data.append(job_dict)
@@ -145,6 +146,7 @@ async def get_job(
             'created_at': job.created_at,
             'started_at': job.started_at,
             'completed_at': job.completed_at,
+            'updated_at': getattr(job, 'updated_at', None),
             'job_metadata': job.job_metadata,
         }
     except HTTPException:

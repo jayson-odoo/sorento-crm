@@ -1,9 +1,11 @@
 """Packing lists (Inbound Shipments) API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.procurement import SPOAllocation
 from app.services.procurement_service import InboundShipmentService
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentUpdate, InboundShipmentResponse
 from app.schemas.common import ListResponse
@@ -47,10 +49,19 @@ async def get_packing_list(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get a single packing list by ID."""
+    """Get a single packing list by ID. Shipment lines include spo_allocated_quantity (total SPO allocated for that product on this shipment)."""
     try:
         service = InboundShipmentService(db)
         shipment = service.get_shipment(shipment_id)
+        totals = (
+            db.query(SPOAllocation.product_id, func.sum(SPOAllocation.allocated_quantity).label("total"))
+            .filter(SPOAllocation.inbound_shipment_id == shipment_id)
+            .group_by(SPOAllocation.product_id)
+            .all()
+        )
+        spo_by_product = {str(p): int(t) for p, t in totals}
+        for line in shipment.shipment_lines:
+            setattr(line, "spo_allocated_quantity", spo_by_product.get(str(line.product_id), 0))
         return shipment
     except HTTPException:
         raise

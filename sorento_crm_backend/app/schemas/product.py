@@ -63,7 +63,8 @@ class BrandResponse(BrandBase):
     id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+    product_count: Optional[int] = None
+
     class Config:
         from_attributes = True
 
@@ -74,6 +75,7 @@ class UnitOfMeasureBase(BaseModel):
     base_uom_id: Optional[str] = None
     conversion_factor: Optional[Decimal] = None
     description: Optional[str] = None
+    is_active: bool = True
 
 
 class UnitOfMeasureCreate(UnitOfMeasureBase):
@@ -85,13 +87,16 @@ class UnitOfMeasureUpdate(BaseModel):
     base_uom_id: Optional[str] = None
     conversion_factor: Optional[Decimal] = None
     description: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 class UnitOfMeasureResponse(UnitOfMeasureBase):
     id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
-    
+    product_count: Optional[int] = None
+    base_uom: Optional["UnitOfMeasureSimple"] = None
+
     class Config:
         from_attributes = True
 
@@ -99,6 +104,23 @@ class UnitOfMeasureResponse(UnitOfMeasureBase):
 class ProductBase(BaseModel):
     product_code: str
     product_name: str
+
+    @field_validator("product_code", "product_name", mode="before")
+    @classmethod
+    def strip_string_fields(cls, v):
+        """Trim leading/trailing whitespace to avoid dirty data."""
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator("list_price", "cost_price", "invoice_price", mode="after")
+    @classmethod
+    def prices_non_negative(cls, v):
+        """Reject negative prices."""
+        if v is not None and v < 0:
+            raise ValueError("Price cannot be negative")
+        return v
+
     description: Optional[str] = None
     category_id: str
     brand_id: Optional[str] = None
@@ -143,6 +165,22 @@ class ProductUpdate(BaseModel):
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
     is_active: Optional[bool] = None
+
+    @field_validator("product_name", "description", mode="before")
+    @classmethod
+    def strip_optional_strings(cls, v):
+        """Trim leading/trailing whitespace when provided."""
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator("list_price", "cost_price", "invoice_price", mode="after")
+    @classmethod
+    def prices_non_negative(cls, v):
+        """Reject negative prices."""
+        if v is not None and v < 0:
+            raise ValueError("Price cannot be negative")
+        return v
 
 
 class ProductCategorySimple(BaseModel):
@@ -256,6 +294,11 @@ class ProductAttachmentUpdate(BaseModel):
 
 # Max rows per product import (queued job); kept reasonable to avoid huge request payloads
 BULK_IMPORT_MAX_ROWS_PER_REQUEST = 50_000
+
+
+class BulkDeleteProductsRequest(BaseModel):
+    """Request schema for bulk delete. Body: { ids: string[] }."""
+    ids: List[str]
 
 
 class BulkImportProductsRequest(BaseModel):

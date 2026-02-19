@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Edit, Trash2, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,11 +9,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useProduct, useProducts } from '../../hooks/useProducts';
-import { formatDate } from '@/lib/helpers';
-import { DataGrid } from '@/components/ui/data-grid';
+import { formatDateTime } from '@/lib/helpers';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
 import ProductStockTab from './ProductStockTab';
+import ProductSuppliersTab from './ProductSuppliersTab';
+import ProductDeleteDialog from '../../components/product-delete-dialog';
 import RecordNavigation from '../../../../../../components/common/RecordNavigation';
+import AuditTrail from '@/components/audit/AuditTrail';
 
 interface ProductDetailProps {
   productId: string;
@@ -21,21 +23,42 @@ interface ProductDetailProps {
 
 export default function ProductDetail({ productId }: ProductDetailProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const { data: product, isLoading } = useProduct(productId);
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 100,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-      category_id: undefined,
-      brand_id: undefined,
-      status: 'all' as const,
-    }),
-    [],
-  );
+
+  const navigationParams = useMemo(() => {
+    const search = searchParams.get('search') ?? '';
+    const category = searchParams.get('category') ?? undefined;
+    const brand = searchParams.get('brand') ?? undefined;
+    const statusParam = searchParams.get('status') ?? 'all';
+    const sortField = searchParams.get('sort') ?? 'created_at';
+    const sortDir = searchParams.get('sortDir') ?? 'desc';
+    const page = parseInt(searchParams.get('page') ?? '0', 10);
+    const pageSize = parseInt(searchParams.get('pageSize') ?? '50', 10);
+    return {
+      pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page),
+      pageSize: Number.isNaN(pageSize) || pageSize < 1 ? 50 : Math.min(pageSize, 500),
+      sorting: [{ id: sortField, desc: sortDir === 'desc' }],
+      searchQuery: search,
+      category_id: category || undefined,
+      brand_id: brand || undefined,
+      status: (statusParam === 'active' || statusParam === 'inactive'
+        ? statusParam
+        : 'all') as 'active' | 'inactive' | 'all',
+    };
+  }, [searchParams]);
+
   const { data: navigationData } = useProducts(navigationParams);
   const navigationItems = navigationData?.data ?? [];
+
+  const navigationBasePath = '/master-data-management/products';
+  const navigationQueryString = searchParams.toString();
+  const handleNavigate = (id: string) => {
+    router.push(
+      `${navigationBasePath}/${id}${navigationQueryString ? `?${navigationQueryString}` : ''}`,
+    );
+  };
 
   if (isLoading) {
     return (
@@ -84,19 +107,24 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
           <RecordNavigation
             currentId={productId}
             items={navigationItems}
-            basePath="/master-data-management/products"
+            basePath={navigationBasePath}
+            onSelect={handleNavigate}
           />
           <Button
             variant="outline"
-            onClick={() => router.push(`/master-data-management/products/${productId}/edit`)}
+            onClick={() =>
+              router.push(
+                `${navigationBasePath}/${productId}/edit${navigationQueryString ? `?${navigationQueryString}` : ''}`,
+              )
+            }
           >
             <Edit className="size-4" />
             Edit
           </Button>
-          <Button variant="destructive" onClick={() => {
-            // TODO: Implement delete with confirmation
-            console.log('Delete product:', productId);
-          }}>
+          <Button
+            variant="destructive"
+            onClick={() => setDeleteDialogOpen(true)}
+          >
             <Trash2 className="size-4" />
             Delete
           </Button>
@@ -144,13 +172,15 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               <div>
                 <p className="text-sm text-muted-foreground">Created</p>
                 <p className="font-medium text-sm">
-                  {formatDate(new Date(product.created_at))}
+                  {formatDateTime(new Date(product.created_at))}
                 </p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Last Updated</p>
                 <p className="font-medium text-sm">
-                  {formatDate(new Date(product.updated_at))}
+                  {product.updated_at
+                    ? formatDateTime(new Date(product.updated_at))
+                    : '-'}
                 </p>
               </div>
             </CardContent>
@@ -164,11 +194,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="stock">Stock</TabsTrigger>
               <TabsTrigger value="attachments">Attachments</TabsTrigger>
-              <TabsTrigger value="related">Related Data</TabsTrigger>
+              <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
               <TabsTrigger value="audit">Audit Trail</TabsTrigger>
             </TabsList>
 
-            {/* Tab: Overview */}
+            {/* Tab: Overview - always show all fields from edit view regardless of value */}
             <TabsContent value="overview">
               <Card>
                 <CardHeader>
@@ -180,17 +210,23 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                     <div className="grid grid-cols-2 gap-4 text-sm">
                       <div>
                         <p className="text-muted-foreground">Product Code</p>
-                        <p className="font-medium">{product.product_code}</p>
+                        <p className="font-medium">{product.product_code || '-'}</p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">Product Name</p>
-                        <p className="font-medium">{product.product_name}</p>
+                        <p className="font-medium">{product.product_name || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Category</p>
+                        <p className="font-medium">{product.category?.category_code ?? product.category?.category_name ?? '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Brand</p>
+                        <p className="font-medium">{product.brand?.brand_code ?? product.brand?.brand_name ?? '-'}</p>
                       </div>
                       <div className="col-span-2">
                         <p className="text-muted-foreground">Description</p>
-                        <p className="font-medium">
-                          {product.description || '-'}
-                        </p>
+                        <p className="font-medium">{product.description || '-'}</p>
                       </div>
                     </div>
                   </div>
@@ -201,52 +237,63 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                       <div>
                         <p className="text-muted-foreground">List Price</p>
                         <p className="font-medium text-lg">
-                          {new Intl.NumberFormat('en-US', {
-                            style: 'currency',
-                            currency: 'MYR',
-                          }).format(product.list_price)}
+                          {product.list_price != null
+                            ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MYR' }).format(product.list_price)
+                            : '-'}
                         </p>
                       </div>
-                      {product.cost_price && (
-                        <div>
-                          <p className="text-muted-foreground">Cost Price</p>
-                          <p className="font-medium text-lg">
-                            {new Intl.NumberFormat('en-US', {
-                              style: 'currency',
-                              currency: 'MYR',
-                            }).format(product.cost_price)}
-                          </p>
-                        </div>
-                      )}
+                      <div>
+                        <p className="text-muted-foreground">Cost Price</p>
+                        <p className="font-medium text-lg">
+                          {product.cost_price != null
+                            ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MYR' }).format(product.cost_price)
+                            : '-'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Invoice Price</p>
+                        <p className="font-medium text-lg">
+                          {product.invoice_price != null
+                            ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MYR' }).format(product.invoice_price)
+                            : '-'}
+                        </p>
+                      </div>
                     </div>
                   </div>
 
                   <div>
                     <h3 className="font-semibold mb-2">Specifications</h3>
                     <div className="grid grid-cols-2 gap-4 text-sm">
-                      {product.weight && (
-                        <div>
-                          <p className="text-muted-foreground">Weight</p>
-                          <p className="font-medium">{product.weight}</p>
-                        </div>
-                      )}
-                      {product.dimensions_length && (
-                        <div>
-                          <p className="text-muted-foreground">Dimensions</p>
-                          <p className="font-medium">
-                            {product.dimensions_length} × {product.dimensions_width} ×{' '}
-                            {product.dimensions_height}
-                          </p>
-                        </div>
-                      )}
-                      {product.warranty_months && (
-                        <div>
-                          <p className="text-muted-foreground">Warranty</p>
-                          <p className="font-medium">
-                            {product.warranty_months} months
-                          </p>
-                        </div>
-                      )}
+                      <div>
+                        <p className="text-muted-foreground">Base UOM</p>
+                        <p className="font-medium">{product.base_uom?.uom_code ?? '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Weight</p>
+                        <p className="font-medium">{product.weight != null ? product.weight : '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Dimensions (L × W × H)</p>
+                        <p className="font-medium">
+                          {product.dimensions_length != null &&
+                          product.dimensions_width != null &&
+                          product.dimensions_height != null
+                            ? `${product.dimensions_length} × ${product.dimensions_width} × ${product.dimensions_height}`
+                            : '-'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Warranty (Months)</p>
+                        <p className="font-medium">{product.warranty_months != null ? product.warranty_months : '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Reorder Level</p>
+                        <p className="font-medium">{product.reorder_level != null ? product.reorder_level : '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Reorder Quantity</p>
+                        <p className="font-medium">{product.reorder_quantity != null ? product.reorder_quantity : '-'}</p>
+                      </div>
                     </div>
                   </div>
 
@@ -279,49 +326,36 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               <ProductAttachmentsTab productId={productId} isEditMode={false} />
             </TabsContent>
 
-            {/* Tab: Related Data */}
-            <TabsContent value="related">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Related Data</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {/* TODO: Product suppliers, promotions, recent orders, attachments */}
-                  <div className="text-sm text-muted-foreground">
-                    Related data will be displayed here
-                  </div>
-                </CardContent>
-              </Card>
+            {/* Tab: Suppliers */}
+            <TabsContent value="suppliers">
+              <ProductSuppliersTab productId={productId} />
             </TabsContent>
 
             {/* Tab: Audit Trail */}
             <TabsContent value="audit">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Audit Trail</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4 text-sm">
-                    <div>
-                      <p className="text-muted-foreground">Created</p>
-                      <p className="font-medium">
-                        {formatDate(new Date(product.created_at))}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-muted-foreground">Last Modified</p>
-                      <p className="font-medium">
-                        {formatDate(new Date(product.updated_at))}
-                      </p>
-                    </div>
-                    {/* TODO: Version history and change log */}
-                  </div>
-                </CardContent>
-              </Card>
+              <AuditTrail
+                entityType="product"
+                entityId={productId}
+                title="Audit Trail"
+              />
             </TabsContent>
           </Tabs>
         </div>
       </div>
+
+      <ProductDeleteDialog
+        open={deleteDialogOpen}
+        closeDialog={() => setDeleteDialogOpen(false)}
+        product={{
+          id: product.id,
+          product_code: product.product_code,
+          product_name: product.product_name,
+          list_price: product.list_price,
+          is_active: product.is_active,
+          created_at: product.created_at,
+        }}
+        onSuccess={() => router.push('/master-data-management/products')}
+      />
     </div>
   );
 }

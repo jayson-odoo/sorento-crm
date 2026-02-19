@@ -67,7 +67,7 @@ async def get_categories_select(
                     ProductCategory.category_name.ilike(f"%{query}%")
                 )
             )
-        
+        q = q.order_by(ProductCategory.display_order.asc(), ProductCategory.category_name.asc())
         categories = q.limit(100).all()
         return categories
     except Exception as e:
@@ -132,10 +132,10 @@ async def delete_category(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete a category."""
+    """Delete a category. Fails with 409 if any products use this category."""
     try:
         service = ProductCategoryService(db)
-        # Implement delete logic
+        service.delete_category(category_id)
         return {"message": "Category deleted successfully"}
     except HTTPException:
         raise

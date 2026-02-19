@@ -18,6 +18,7 @@ from app.models.import_log import ImportLog
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob
 from app.models.audit import AuditLog
+from app.models.notification import Notification, NotificationDelivery, PushSubscription
 
 __all__ = [
     "User",
@@ -76,4 +77,7 @@ __all__ = [
     "PublicHoliday",
     "WorkCalendarConfig",
     "AuditLog",
+    "Notification",
+    "NotificationDelivery",
+    "PushSubscription",
 ]

@@ -9,140 +9,157 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronDown, ChevronRight, Link as LinkIcon } from 'lucide-react';
+import { Plus, Search, X, ChevronDown, ChevronRight, Link as LinkIcon, Trash2, ChevronsDownUp, ChevronsUpDown, Settings, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useSPOAllocationsGroupedByShipment } from '../hooks/useSPOAllocations';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { GroupBySelect } from '@/components/ui/group-by-select';
+import { useSPOAllocations, useSPOAllocationsGroupedBySPONumber } from '../hooks/useSPOAllocations';
+import SPOBulkDeleteDialog from './SPOBulkDeleteDialog';
+import { SPOImportDialog } from './SPOImportDialog';
+import { importSPOAllocations } from '../services/spoAllocationService';
+import { useQueryClient } from '@tanstack/react-query';
 import type {
   SPOAllocation,
-  ShipmentWithAllocationsGroup,
+  SPOAllocationWithShipped,
+  SPOWithAllocationsGroup,
 } from '../types/spoAllocation.types';
 import Link from 'next/link';
 import React from 'react';
 
-/**
- * Build rows for the expanded section:
- * - One block per product that appears on the packing list (shipment_lines), with qty shipped and its allocations.
- * - A final "Other (not on packing list)" block for allocations whose product is not on the packing list.
- */
-function groupByProduct(
-  group: ShipmentWithAllocationsGroup,
-): Array<{
-  productId: string;
-  productName: string;
-  productCode?: string;
-  quantityShipped: number;
-  allocations: SPOAllocation[];
-  isNotOnPackingList?: boolean;
-}> {
-  const lines = group.shipment_lines ?? [];
-  const productIdsOnPackingList = new Set(lines.map((l) => l.product_id));
-  const byProduct = new Map<
-    string,
-    { productName: string; productCode?: string; quantityShipped: number; allocations: SPOAllocation[] }
-  >();
-  for (const line of lines) {
-    const name = line.product?.product_name ?? line.product?.product_code ?? '-';
-    const code = line.product?.product_code;
-    const existing = byProduct.get(line.product_id);
-    if (existing) {
-      existing.quantityShipped += line.quantity_shipped;
-    } else {
-      byProduct.set(line.product_id, {
-        productName: name,
-        productCode: code,
-        quantityShipped: line.quantity_shipped,
-        allocations: [],
-      });
-    }
-  }
-  const otherAllocations: SPOAllocation[] = [];
-  for (const alloc of group.spo_allocations) {
-    const name = alloc.product?.product_name ?? alloc.product?.product_code ?? '-';
-    const code = alloc.product?.product_code;
-    if (productIdsOnPackingList.has(alloc.product_id)) {
-      const existing = byProduct.get(alloc.product_id);
-      if (existing) {
-        existing.allocations.push(alloc);
-      } else {
-        byProduct.set(alloc.product_id, {
-          productName: name,
-          productCode: code,
-          quantityShipped: 0,
-          allocations: [alloc],
-        });
-      }
-    } else {
-      otherAllocations.push(alloc);
-    }
-  }
-  const result = Array.from(byProduct.entries()).map(([productId, data]) => ({
-    productId,
-    productName: data.productName,
-    productCode: data.productCode,
-    quantityShipped: data.quantityShipped,
-    allocations: data.allocations,
-    isNotOnPackingList: false,
-  }));
-  if (otherAllocations.length > 0) {
-    result.push({
-      productId: '__other__',
-      productName: 'Other (not on packing list)',
-      productCode: undefined,
-      quantityShipped: 0,
-      allocations: otherAllocations,
-      isNotOnPackingList: true,
-    });
-  }
-  return result;
-}
+type ViewMode = 'none' | 'spo_number';
+
+const GROUP_BY_OPTIONS = [{ value: 'spo_number' as const, label: 'Group by SPO number' }];
 
 export default function SPOAllocationsList() {
   const router = useRouter();
+  const [viewMode, setViewMode] = useState<ViewMode>('spo_number');
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 20,
   });
   const [sorting, setSorting] = useState<SortingState>([
-    { id: 'shipment_number', desc: false },
+    { id: 'spo_number', desc: false },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [productCodeFilter, setProductCodeFilter] = useState('');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [selectedAllocationIds, setSelectedAllocationIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const queryClient = useQueryClient();
 
-  const { data, isLoading } = useSPOAllocationsGroupedByShipment({
+  const groupedQuery = useSPOAllocationsGroupedBySPONumber({
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
-    query: searchQuery || undefined,
-    product_code: productCodeFilter.trim() || undefined,
-    sort: sorting[0]?.id ?? 'shipment_number',
+    query: searchQuery.trim() || undefined,
+    sort: sorting[0]?.id ?? 'spo_number',
     dir: sorting[0]?.desc ? 'desc' : 'asc',
   });
 
-  const groupedData = data?.data ?? [];
-  const totalShipments = data?.pagination?.total ?? 0;
-  const pageCount = Math.ceil(totalShipments / pagination.pageSize);
+  const flatQuery = useSPOAllocations({
+    pageIndex: pagination.pageIndex,
+    pageSize: pagination.pageSize,
+    sorting,
+    searchQuery: searchQuery.trim() || undefined,
+  });
 
-  const toggleGroup = (shipmentId: string) => {
+  const isGrouped = viewMode === 'spo_number';
+  const { data: groupedDataRaw, isLoading: isLoadingGrouped } = groupedQuery;
+  const { data: flatDataRaw, isLoading: isLoadingFlat } = flatQuery;
+
+  const groupedData = groupedDataRaw?.data ?? [];
+  const flatData = flatDataRaw?.data ?? [];
+  const totalSPOs = isGrouped
+    ? (groupedDataRaw?.pagination?.total ?? 0)
+    : (flatDataRaw?.pagination?.total ?? 0);
+  const pageCount = Math.ceil(totalSPOs / pagination.pageSize);
+  const isLoading = isGrouped ? isLoadingGrouped : isLoadingFlat;
+
+  const toggleGroup = (spoNumber: string) => {
     setExpandedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(shipmentId)) {
-        next.delete(shipmentId);
+      if (next.has(spoNumber)) {
+        next.delete(spoNumber);
       } else {
-        next.add(shipmentId);
+        next.add(spoNumber);
       }
       return next;
     });
   };
 
-  const handleAllocationClick = (allocation: SPOAllocation) => {
+  const expandAll = () => {
+    setExpandedGroups(new Set(groupedData.map((g) => g.spo_number)));
+  };
+
+  const collapseAll = () => {
+    setExpandedGroups(new Set());
+  };
+
+  const toggleAllocationSelection = (allocationId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setSelectedAllocationIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(allocationId)) {
+        next.delete(allocationId);
+      } else {
+        next.add(allocationId);
+      }
+      return next;
+    });
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedAllocationIds.size > 0) {
+      setBulkDeleteDialogOpen(true);
+    }
+  };
+
+  const handleBulkDeleteSuccess = () => {
+    setSelectedAllocationIds(new Set());
+  };
+
+  const toggleSelectAllInGroup = (group: SPOWithAllocationsGroup) => {
+    const ids = group.spo_allocations.map((a) => a.id);
+    const allSelected = ids.every((id) => selectedAllocationIds.has(id));
+    setSelectedAllocationIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        ids.forEach((id) => next.delete(id));
+      } else {
+        ids.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllFlat = () => {
+    const ids = flatData.map((a) => a.id);
+    const allSelected = ids.length > 0 && ids.every((id) => selectedAllocationIds.has(id));
+    setSelectedAllocationIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        ids.forEach((id) => next.delete(id));
+      } else {
+        ids.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const handleAllocationClick = (allocation: SPOAllocationWithShipped | SPOAllocation) => {
     router.push(`/procurement-management/spo-allocations/${allocation.id}`);
   };
 
@@ -161,7 +178,7 @@ export default function SPOAllocationsList() {
     }
   };
 
-  const columns = useMemo<ColumnDef<ShipmentWithAllocationsGroup>[]>(
+  const groupColumns = useMemo<ColumnDef<SPOWithAllocationsGroup>[]>(
     () => [
       {
         id: 'expand',
@@ -173,10 +190,10 @@ export default function SPOAllocationsList() {
             className="h-6 w-6 p-0"
             onClick={(e) => {
               e.stopPropagation();
-              toggleGroup(row.original.inbound_shipment.id);
+              toggleGroup(row.original.spo_number);
             }}
           >
-            {expandedGroups.has(row.original.inbound_shipment.id) ? (
+            {expandedGroups.has(row.original.spo_number) ? (
               <ChevronDown className="size-4" />
             ) : (
               <ChevronRight className="size-4" />
@@ -186,41 +203,157 @@ export default function SPOAllocationsList() {
         size: 50,
       },
       {
-        accessorKey: 'inbound_shipment.shipment_number',
+        accessorKey: 'spo_number',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Packing List (Inbound Shipment)" column={column} />
+          <DataGridColumnHeader title="SPO Number" column={column} />
         ),
         cell: ({ row }) => {
-          const ship = row.original.inbound_shipment;
+          const spoNumber = row.original.spo_number;
           const count = row.original.spo_allocations.length;
           return (
             <div className="flex items-center gap-2">
-              <Link
-                href={`/procurement-management/packing-lists/${ship.id}`}
-                className="text-primary hover:underline font-medium flex items-center gap-1"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <LinkIcon className="size-3" />
-                {ship.shipment_number}
-              </Link>
-              <Badge variant="secondary" size="sm">
+              <span className="font-medium text-sm">{spoNumber}</span>
+              <Badge variant="secondary" size="sm" className="text-xs">
                 {count} allocation{count !== 1 ? 's' : ''}
               </Badge>
             </div>
           );
         },
-        size: 280,
+        size: 220,
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
     ],
     [expandedGroups],
   );
 
+  const flatColumns = useMemo<ColumnDef<SPOAllocation>[]>(
+    () => [
+      {
+        id: 'select',
+        header: () => (
+          <Checkbox
+            checked={
+              flatData.length > 0 &&
+              flatData.every((a) => selectedAllocationIds.has(a.id))
+            }
+            onCheckedChange={toggleSelectAllFlat}
+            aria-label="Select all on page"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={selectedAllocationIds.has(row.original.id)}
+            onCheckedChange={() => toggleAllocationSelection(row.original.id)}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`Select ${row.original.spo_number ?? row.original.id}`}
+          />
+        ),
+        size: 44,
+      },
+      {
+        accessorKey: 'spo_number',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="SPO Number" column={column} />
+        ),
+        cell: ({ row }) => (
+          <span className="font-medium text-sm">{row.original.spo_number ?? '—'}</span>
+        ),
+        size: 140,
+      },
+      {
+        id: 'product',
+        header: 'Product',
+        cell: ({ row }) => {
+          const p = row.original.product;
+          if (!p) return '—';
+          return (
+            <span className="text-sm">
+              {p.product_code}
+              {p.product_name && p.product_name !== p.product_code ? ` — ${p.product_name}` : ''}
+            </span>
+          );
+        },
+        size: 180,
+      },
+      {
+        id: 'location',
+        header: 'Location',
+        cell: ({ row }) =>
+          row.original.warehouse?.warehouse_code ?? row.original.warehouse?.warehouse_name ?? '—',
+        size: 100,
+      },
+      {
+        id: 'shipped',
+        header: 'Shipped',
+        cell: () => '—',
+        size: 70,
+      },
+      {
+        accessorKey: 'allocated_quantity',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Allocated" column={column} />
+        ),
+        cell: ({ row }) => row.original.allocated_quantity,
+        size: 70,
+      },
+      {
+        accessorKey: 'quantity_received',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Received" column={column} />
+        ),
+        cell: ({ row }) => row.original.quantity_received,
+        size: 70,
+      },
+      {
+        id: 'packing_list',
+        header: 'Packing List',
+        cell: ({ row }) => {
+          const ship = row.original.inbound_shipment;
+          if (!ship) return '—';
+          return (
+            <Link
+              href={`/procurement-management/packing-lists/${ship.id}`}
+              className="text-primary hover:underline flex items-center gap-1"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <LinkIcon className="size-3" />
+              {ship.shipment_number}
+              {ship.shipping_container_number && (
+                <span className="text-muted-foreground">({ship.shipping_container_number})</span>
+              )}
+            </Link>
+          );
+        },
+        size: 160,
+      },
+      {
+        accessorKey: 'receipt_status',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Status" column={column} />
+        ),
+        cell: ({ row }) => (
+          <Badge variant={getStatusBadgeVariant(row.original.receipt_status)} size="sm">
+            {row.original.receipt_status
+              ?.split('_')
+              .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+              .join(' ') ?? '—'}
+          </Badge>
+        ),
+        size: 110,
+      },
+    ],
+    [flatData, selectedAllocationIds],
+  );
+
+  type TableRow = SPOWithAllocationsGroup | SPOAllocation;
+  const columns: ColumnDef<TableRow>[] = isGrouped ? (groupColumns as ColumnDef<TableRow>[]) : (flatColumns as ColumnDef<TableRow>[]);
+  const tableData: TableRow[] = isGrouped ? groupedData : flatData;
+
   const table = useReactTable({
     columns,
-    data: groupedData,
+    data: tableData,
     pageCount,
-    getRowId: (row) => row.inbound_shipment.id,
+    getRowId: (row) => ('spo_allocations' in row ? (row as SPOWithAllocationsGroup).spo_number : (row as SPOAllocation).id),
     state: { pagination, sorting },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
@@ -234,66 +367,120 @@ export default function SPOAllocationsList() {
   return (
     <DataGrid
       table={table}
-      recordCount={totalShipments}
+      recordCount={totalSPOs}
       isLoading={isLoading}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between flex-wrap gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+        <CardHeader className="flex-row items-center justify-between gap-2 flex-nowrap">
+          <div className="flex items-center gap-2 min-w-0 shrink">
+            <div className="relative shrink-0 w-40 sm:w-44">
+              <Search className="size-4 text-muted-foreground absolute start-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               <Input
-                placeholder="Search by shipment, SPO number, product..."
+                placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-9 w-56"
+                className="ps-8 h-8 text-sm"
               />
               {searchQuery && (
                 <Button
                   mode="icon"
                   variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                  className="absolute end-1 top-1/2 -translate-y-1/2 h-6 w-6"
                   onClick={() => setSearchQuery('')}
                 >
-                  <X />
+                  <X className="size-3.5" />
                 </Button>
               )}
             </div>
-            <Input
-              placeholder="Product code"
-              value={productCodeFilter}
-              onChange={(e) => setProductCodeFilter(e.target.value)}
-              className="w-40"
+            <GroupBySelect<ViewMode>
+              value={viewMode}
+              options={GROUP_BY_OPTIONS}
+              onValueChange={(v) => setViewMode(v)}
+              allLabel="All allocations"
+              placeholder="View"
+              className="w-[140px] shrink-0"
             />
-            {productCodeFilter && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setProductCodeFilter('')}
-                className="text-muted-foreground"
-              >
-                <X className="size-4" />
-              </Button>
+            {isGrouped && (
+              <div className="flex items-center shrink-0">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={expandAll}
+                  disabled={groupedData.length === 0}
+                  title="Expand all"
+                >
+                  <ChevronsUpDown className="size-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={collapseAll}
+                  disabled={expandedGroups.size === 0}
+                  title="Collapse all"
+                >
+                  <ChevronsDownUp className="size-4" />
+                </Button>
+              </div>
             )}
           </div>
-          <Button
-            onClick={() =>
-              router.push('/procurement-management/spo-allocations/new')
-            }
-          >
-            <Plus />
-            Create SPO Allocation
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            {selectedAllocationIds.size > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleBulkDelete}
+                className="h-8"
+              >
+                <Trash2 className="size-4" />
+                Delete {selectedAllocationIds.size} selected
+              </Button>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" className="h-8 w-8" title="Import options">
+                  <Settings className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setImportDialogOpen(true)}>
+                  <Upload className="size-4" />
+                  Import SPO
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              size="sm"
+              className="h-8"
+              onClick={() =>
+                router.push('/procurement-management/spo-allocations/new')
+              }
+            >
+              <Plus className="size-4" />
+              Create SPO Allocation
+            </Button>
+          </div>
         </CardHeader>
+        <SPOImportDialog
+          open={importDialogOpen}
+          onOpenChange={setImportDialogOpen}
+          onUpload={async (files) => {
+            const result = await importSPOAllocations(files);
+            queryClient.invalidateQueries({ queryKey: ['spo-allocations'] });
+            queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
+            return result;
+          }}
+        />
         <CardTable>
           <ScrollArea>
-            <table className="w-full border-collapse table-fixed">
+            <table className="w-full border-collapse table-fixed text-sm">
               <thead>
                 <tr className="border-b bg-muted/40">
                   {table.getHeaderGroups()[0]?.headers.map((header) => (
                     <th
                       key={header.id}
-                      className="relative text-left p-4 font-medium text-sm text-muted-foreground truncate"
+                      className="relative text-left p-3 font-medium text-xs text-muted-foreground truncate"
                       style={{
                         width: header.getSize(),
                         minWidth: header.getSize(),
@@ -321,33 +508,64 @@ export default function SPOAllocationsList() {
               <tbody>
                 {isLoading ? (
                   <tr>
-                    <td colSpan={columns.length} className="p-4">
-                      <div className="text-center text-muted-foreground">
+                    <td colSpan={columns.length} className="p-3">
+                      <div className="text-center text-muted-foreground text-sm">
                         Loading...
                       </div>
                     </td>
                   </tr>
-                ) : groupedData.length === 0 ? (
+                ) : !isGrouped && flatData.length === 0 ? (
                   <tr>
-                    <td colSpan={columns.length} className="p-4">
-                      <div className="text-center text-muted-foreground">
-                        No inbound shipments with SPO allocations found.
+                    <td colSpan={columns.length} className="p-3">
+                      <div className="text-center text-muted-foreground text-sm">
+                        No SPO allocations found.
                       </div>
                     </td>
                   </tr>
+                ) : isGrouped && groupedData.length === 0 ? (
+                  <tr>
+                    <td colSpan={columns.length} className="p-3">
+                      <div className="text-center text-muted-foreground text-sm">
+                        No SPO allocations found.
+                      </div>
+                    </td>
+                  </tr>
+                ) : !isGrouped ? (
+                  table.getRowModel().rows.map((row) => (
+                    <tr
+                      key={row.id}
+                      className="border-b hover:bg-accent/50 cursor-pointer"
+                      onClick={() => handleAllocationClick(row.original as SPOAllocation)}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <td
+                          key={cell.id}
+                          className="p-3 truncate text-sm"
+                          style={{
+                            width: cell.column.getSize(),
+                            minWidth: cell.column.getSize(),
+                          }}
+                        >
+                          {typeof cell.column.columnDef.cell === 'function'
+                            ? cell.column.columnDef.cell(cell.getContext())
+                            : null}
+                        </td>
+                      ))}
+                    </tr>
+                  ))
                 ) : (
                   groupedData.map((group) => (
-                    <React.Fragment key={group.inbound_shipment.id}>
+                    <React.Fragment key={group.spo_number}>
                       <tr className="border-b hover:bg-accent/50">
                         {table.getHeaderGroups()[0]?.headers.map((header) => {
                           const cell = table
-                            .getRow(group.inbound_shipment.id)
+                            .getRow(group.spo_number)
                             ?.getVisibleCells()
                             .find((c) => c.column.id === header.id);
                           return (
                             <td
                               key={header.id}
-                              className="p-4 truncate"
+                              className="p-3 truncate text-sm"
                               style={{
                                 width: header.getSize(),
                                 minWidth: header.getSize(),
@@ -361,106 +579,152 @@ export default function SPOAllocationsList() {
                           );
                         })}
                       </tr>
-                      {expandedGroups.has(group.inbound_shipment.id) && (
+                      {expandedGroups.has(group.spo_number) && (
                         <tr>
                           <td
                             colSpan={columns.length}
                             className="p-0 bg-muted/30 align-top"
                           >
-                            <div className="p-4">
-                              <div className="mb-3 font-medium text-sm text-muted-foreground">
-                                SPO allocations for {group.inbound_shipment.shipment_number}
+                            <div className="p-3">
+                              <div className="mb-2 text-xs font-medium text-muted-foreground">
+                                Allocations for SPO {group.spo_number}
                               </div>
-                              <table className="w-full border-collapse">
+                              <table className="w-full border-collapse text-xs">
                                 <thead>
                                   <tr className="border-b">
-                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground min-w-[160px]">
+                                    <th className="text-left p-1.5 font-medium text-muted-foreground w-8">
+                                      <Checkbox
+                                        checked={
+                                          group.spo_allocations.length === 0
+                                            ? false
+                                            : group.spo_allocations.every((a) =>
+                                                selectedAllocationIds.has(a.id),
+                                              )
+                                            ? true
+                                            : group.spo_allocations.some((a) =>
+                                                selectedAllocationIds.has(a.id),
+                                              )
+                                              ? 'indeterminate'
+                                              : false
+                                        }
+                                        onCheckedChange={() =>
+                                          toggleSelectAllInGroup(group)
+                                        }
+                                        aria-label="Select all in this SPO"
+                                      />
+                                    </th>
+                                    <th className="text-left p-1.5 font-medium text-muted-foreground min-w-[120px]">
                                       Product
                                     </th>
-                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[100px]">
-                                      Qty shipped (PL)
+                                    <th className="text-left p-1.5 font-medium text-muted-foreground w-[80px]">
+                                      Location
                                     </th>
-                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[140px]">
-                                      SPO Number
+                                    <th className="text-left p-1.5 font-medium text-muted-foreground w-[70px]">
+                                      Allocated
                                     </th>
-                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[120px]">
-                                      Warehouse
+                                    <th className="text-left p-1.5 font-medium text-muted-foreground w-[70px]">
+                                      Received
                                     </th>
-                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[100px]">
-                                      Allocated Qty
+                                    <th className="text-left p-1.5 font-medium text-muted-foreground min-w-[140px]">
+                                      Packing List
                                     </th>
-                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[100px]">
-                                      Received Qty
-                                    </th>
-                                    <th className="text-left p-2 text-xs font-medium text-muted-foreground w-[120px]">
+                                    <th className="text-left p-1.5 font-medium text-muted-foreground w-[90px]">
                                       Status
                                     </th>
-                                    <th className="w-8" />
+                                    <th className="w-6" />
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {groupByProduct(group).map(
-                                    ({
-                                      productId,
-                                      productName,
-                                      productCode,
-                                      quantityShipped,
-                                      allocations,
-                                      isNotOnPackingList,
-                                    }) => (
-                                      <React.Fragment key={productId}>
-                                        <tr className="border-b bg-muted/40">
-                                          <td className="p-2 text-sm font-medium">
-                                            {productCode ? `${productCode}${productName !== productCode ? ` — ${productName}` : ''}` : productName}
+                                  {(() => {
+                                    // Group allocations by product so shipped qty is shown once per product
+                                    const byProduct = new Map<string, SPOAllocationWithShipped[]>();
+                                    for (const a of group.spo_allocations) {
+                                      const key = a.product_id ?? a.product?.id ?? a.id;
+                                      if (!byProduct.has(key)) byProduct.set(key, []);
+                                      byProduct.get(key)!.push(a);
+                                    }
+                                    return Array.from(byProduct.entries()).flatMap(([, allocations]) => {
+                                      const first = allocations[0];
+                                      const qtyShipped = first.quantity_shipped ?? null;
+                                      const productLabel = first.product?.product_code ?? '-';
+                                      const productName = first.product?.product_name;
+                                      const fullLabel = productName && productName !== productLabel
+                                        ? `${productLabel} — ${productName}`
+                                        : productLabel;
+                                      return allocations.map((allocation, idx) => (
+                                        <tr
+                                          key={allocation.id}
+                                          className="border-b hover:bg-background cursor-pointer"
+                                          onClick={() => handleAllocationClick(allocation)}
+                                        >
+                                          <td className="p-1.5" onClick={(e) => e.stopPropagation()}>
+                                            <Checkbox
+                                              checked={selectedAllocationIds.has(allocation.id)}
+                                              onCheckedChange={() => toggleAllocationSelection(allocation.id)}
+                                            />
                                           </td>
-                                          <td className="p-2 text-sm text-muted-foreground">
-                                            {isNotOnPackingList ? '—' : quantityShipped}
-                                          </td>
-                                          <td className="p-2" colSpan={6} />
-                                        </tr>
-                                        {allocations.map((allocation) => (
-                                          <tr
-                                            key={allocation.id}
-                                            className="border-b hover:bg-background cursor-pointer"
-                                            onClick={() => handleAllocationClick(allocation)}
-                                          >
-                                            <td className="p-2 text-sm text-muted-foreground" />
-                                            <td className="p-2 text-sm text-muted-foreground" />
-                                            <td className="p-2 text-sm">
-                                              {allocation.spo_number ?? '-'}
-                                            </td>
-                                            <td className="p-2 text-sm">
-                                              {allocation.warehouse?.warehouse_code ?? '-'}
-                                            </td>
-                                            <td className="p-2 text-sm">
-                                              {allocation.allocated_quantity}
-                                            </td>
-                                            <td className="p-2 text-sm">
-                                              {allocation.quantity_received}
-                                            </td>
-                                            <td className="p-2">
-                                              <Badge
-                                                variant={getStatusBadgeVariant(
-                                                  allocation.receipt_status,
+                                          <td className="p-1.5">
+                                            {idx === 0 ? (
+                                              <span className="font-medium">
+                                                {fullLabel}
+                                                {qtyShipped != null && (
+                                                  <span className="text-muted-foreground font-normal ms-1">
+                                                    ({qtyShipped} shipped)
+                                                  </span>
                                                 )}
-                                                size="sm"
-                                              >
-                                                {allocation.receipt_status
-                                                  ?.split('_')
-                                                  .map((w) =>
-                                                    w.charAt(0).toUpperCase() + w.slice(1),
-                                                  )
-                                                  .join(' ') ?? '-'}
-                                              </Badge>
-                                            </td>
-                                            <td className="p-2">
-                                              <ChevronRight className="text-muted-foreground/70 size-3.5" />
-                                            </td>
-                                          </tr>
-                                        ))}
-                                      </React.Fragment>
-                                    ),
-                                  )}
+                                              </span>
+                                            ) : (
+                                              <span className="text-muted-foreground/70">↳</span>
+                                            )}
+                                          </td>
+                                          <td className="p-1.5">
+                                            {allocation.warehouse?.warehouse_code ?? allocation.warehouse?.warehouse_name ?? '-'}
+                                          </td>
+                                          <td className="p-1.5">
+                                            {allocation.allocated_quantity}
+                                          </td>
+                                      <td className="p-1.5">
+                                        {allocation.quantity_received}
+                                      </td>
+                                      <td className="p-1.5">
+                                        {allocation.inbound_shipment ? (
+                                          <Link
+                                            href={`/procurement-management/packing-lists/${allocation.inbound_shipment.id}`}
+                                            className="text-primary hover:underline"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <span className="flex items-center gap-1">
+                                              <LinkIcon className="size-3" />
+                                              {allocation.inbound_shipment.shipment_number}
+                                              {allocation.inbound_shipment.shipping_container_number && (
+                                                <span className="text-muted-foreground">
+                                                  ({allocation.inbound_shipment.shipping_container_number})
+                                                </span>
+                                              )}
+                                            </span>
+                                          </Link>
+                                        ) : (
+                                          '—'
+                                        )}
+                                      </td>
+                                      <td className="p-1.5">
+                                        <Badge
+                                          variant={getStatusBadgeVariant(allocation.receipt_status)}
+                                          size="sm"
+                                        >
+                                          {allocation.receipt_status
+                                            ?.split('_')
+                                            .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                                            .join(' ') ?? '-'}
+                                        </Badge>
+                                      </td>
+                                      <td className="p-1.5">
+                                        <ChevronRight className="text-muted-foreground/70 size-3" />
+                                      </td>
+                                    </tr>
+                                      ));
+                                    });
+                                  })()}
                                 </tbody>
                               </table>
                             </div>
@@ -479,6 +743,12 @@ export default function SPOAllocationsList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+      <SPOBulkDeleteDialog
+        open={bulkDeleteDialogOpen}
+        onOpenChange={setBulkDeleteDialogOpen}
+        allocationIds={Array.from(selectedAllocationIds)}
+        onSuccess={handleBulkDeleteSuccess}
+      />
     </DataGrid>
   );
 }

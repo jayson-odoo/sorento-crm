@@ -61,8 +61,12 @@ export async function deleteCategory(id: string): Promise<void> {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to delete category' }));
-    throw new Error(error.message || 'Failed to delete category');
+    const error = await response.json().catch(() => ({}));
+    const message =
+      (typeof error.detail === 'object' && error.detail?.message) ||
+      error.message ||
+      'Failed to delete category';
+    throw new Error(message);
   }
 }
 

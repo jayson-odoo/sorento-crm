@@ -415,34 +415,6 @@ export default function AttachmentUploadDialog({
             </div>
           </div>
 
-          {/* Entity Linking (Optional) */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="entity-type">Entity Type (Optional)</Label>
-              <Input
-                id="entity-type"
-                placeholder="e.g., product, order, complaint"
-                value={entityType}
-                onChange={(e) => setEntityType(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Link this attachment to a specific entity type
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="entity-id">Entity ID (Optional)</Label>
-              <Input
-                id="entity-id"
-                placeholder="UUID"
-                value={entityId}
-                onChange={(e) => setEntityId(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Link this attachment to a specific entity
-              </p>
-            </div>
-          </div>
-
           <div className="space-y-2">
             <Label>Access Levels</Label>
             <div className="flex flex-wrap gap-4">

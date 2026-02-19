@@ -812,6 +812,7 @@ class AccessAgentService:
             "id": user.id,
             "email": user.email,
             "name": user.name or user.email,
+            "respond_user_id": user.respond_user_id,
         }
 
     def list_agent_teams(self, agent_id: str) -> list[dict]:
@@ -822,6 +823,78 @@ class AccessAgentService:
             .all()
         )
         return [{"code": r[0], "team_id": str(r[1])} for r in rows]
+
+    def _user_info(self, user: Optional[User]) -> Optional[dict]:
+        """Return {id, name, email} for display; None if user is None."""
+        if not user:
+            return None
+        return {
+            "id": user.id,
+            "name": user.name or user.email or user.id,
+            "email": user.email,
+        }
+
+    def _peek_next_assignee(self, agent_id: str, team_id: str) -> tuple[Optional[str], Optional[str]]:
+        """Return (last_assigned_user_id, next_user_id) without updating the cursor."""
+        members = (
+            self.db.query(TeamMember)
+            .filter(TeamMember.team_id == team_id)
+            .order_by(TeamMember.sort_order.asc().nullslast(), TeamMember.user_id.asc())
+            .all()
+        )
+        if not members:
+            return None, None
+        user_ids = [m.user_id for m in members]
+        cursor = (
+            self.db.query(AgentTeamRoundRobinCursor)
+            .filter(
+                AgentTeamRoundRobinCursor.agent_id == agent_id,
+                AgentTeamRoundRobinCursor.team_id == team_id,
+            )
+            .first()
+        )
+        last_id = cursor.last_assigned_user_id if cursor else None
+        try:
+            idx = user_ids.index(last_id) if last_id else -1
+        except ValueError:
+            idx = -1
+        next_idx = (idx + 1) % len(user_ids)
+        return last_id, user_ids[next_idx]
+
+    def list_agent_teams_with_round_robin_state(self, agent_id: str) -> list[dict]:
+        """Return assignments with team name, members (ordered), last_assigned, next_in_line (read-only peek)."""
+        rows = (
+            self.db.query(AgentTeam.code, AgentTeam.team_id)
+            .filter(AgentTeam.agent_id == agent_id)
+            .all()
+        )
+        result = []
+        for code, team_id in rows:
+            team_id_str = str(team_id)
+            team = self.db.query(Team).filter(Team.id == team_id).first()
+            team_name = team.name if team else team_id_str
+            members = (
+                self.db.query(TeamMember)
+                .filter(TeamMember.team_id == team_id)
+                .order_by(TeamMember.sort_order.asc().nullslast(), TeamMember.user_id.asc())
+                .all()
+            )
+            member_infos = []
+            for m in members:
+                u = self.db.query(User).filter(User.id == m.user_id).first()
+                member_infos.append(self._user_info(u) or {"id": m.user_id, "name": m.user_id, "email": None})
+            last_id, next_id = self._peek_next_assignee(agent_id, team_id_str)
+            last_user = self.db.query(User).filter(User.id == last_id).first() if last_id else None
+            next_user = self.db.query(User).filter(User.id == next_id).first() if next_id else None
+            result.append({
+                "code": code,
+                "team_id": team_id_str,
+                "team_name": team_name,
+                "members": member_infos,
+                "last_assigned": self._user_info(last_user) if last_id else None,
+                "next_in_line": self._user_info(next_user) if next_id else None,
+            })
+        return result
 
     def set_agent_teams(self, agent_id: str, assignments: list[dict]) -> None:
         """Replace agent's team links with the given assignments [{code, team_id}...]."""
@@ -841,6 +914,11 @@ class AccessAgentService:
             .first()
         )
         return str(row[0]) if row else None
+
+    def get_agent_id_by_code(self, code: str) -> str | None:
+        """Resolve agent_id from access agent code. Returns None if not found."""
+        agent = self.db.query(AccessAgent.id).filter(AccessAgent.code == code).first()
+        return str(agent[0]) if agent else None
 
 
 class TeamService:

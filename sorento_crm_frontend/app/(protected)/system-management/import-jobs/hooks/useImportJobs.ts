@@ -9,6 +9,13 @@ export function useImportJobs(params: DataGridApiFetchParams & { job_type?: stri
     staleTime: 1000 * 30, // 30 seconds - jobs update frequently
     refetchOnWindowFocus: true,
     retry: 1,
+    refetchInterval: (query) => {
+      const data = query.state.data?.data;
+      const hasInProgress = data?.some((j: { status: string }) =>
+        ['pending', 'queued', 'started'].includes(j.status),
+      );
+      return hasInProgress ? 2000 : false; // Poll every 2s when any job is in progress
+    },
   });
 }
 

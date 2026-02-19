@@ -15,5 +15,6 @@ export interface ImportJob {
   created_at: Date;
   started_at?: Date | null;
   completed_at?: Date | null;
+  updated_at?: Date | null;
   job_metadata?: any;
 }

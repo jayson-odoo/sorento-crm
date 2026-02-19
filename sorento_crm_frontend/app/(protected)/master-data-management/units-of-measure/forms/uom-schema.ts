@@ -20,6 +20,7 @@ export const UOMSchema = z.object({
     .optional()
     .nullable(),
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
+  is_active: z.boolean(),
 });
 
 export type UOMSchemaType = z.infer<typeof UOMSchema>;

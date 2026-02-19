@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, getAttachmentMetadata, checkDuplicateByHash, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
-import { getDirectoryTree, createDirectory, updateDirectory, deleteDirectory, restoreDirectory } from '../services/directoryService';
+import { getDirectoryTree, createDirectory, updateDirectory, deleteDirectory, restoreDirectory, permanentDeleteDirectory } from '../services/directoryService';
 import { apiFetch } from '@/lib/api';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 
@@ -234,6 +234,21 @@ export function useRestoreDirectory() {
       toast.success(`Restored ${dirs} folder(s) and ${atts} attachment(s)`);
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to restore directory'),
+  });
+}
+
+export function usePermanentDeleteDirectory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => permanentDeleteDirectory(id),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      const dirs = data?.directories_deleted ?? 0;
+      const atts = data?.attachments_deleted ?? 0;
+      toast.success(`Permanently deleted ${dirs} folder(s) and ${atts} attachment(s)`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to permanently delete directory'),
   });
 }
 

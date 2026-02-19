@@ -131,7 +131,7 @@ function DataGrid<TData extends object>({ children, table, ...props }: DataGridP
       headerBorder: true,
       width: 'fixed',
       columnsVisibility: false,
-      columnsResizable: false,
+      columnsResizable: true,
       columnsPinnable: false,
       columnsMovable: false,
       columnsDraggable: false,

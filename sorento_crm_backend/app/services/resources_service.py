@@ -77,17 +77,25 @@ class AttachmentDirectoryService:
         return d
 
     def delete_directory(self, directory_id: str, deleted_by: str):
-        """Soft-delete a directory and all descendants; archive attachments in them."""
+        """Soft-delete a directory and all descendants; archive attachments in them. Uses bulk update for speed."""
         from datetime import datetime
 
-        d = self.get_directory(directory_id)
+        self.get_directory(directory_id)  # validate exists
         dir_ids = self.get_descendant_directory_ids(directory_id)
-        for did in dir_ids:
-            child = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == did).first()
-            if child:
-                child.is_deleted = True
-                child.deleted_at = datetime.utcnow()
-                child.deleted_by = deleted_by
+        if not dir_ids:
+            self.db.commit()
+            return
+        now = datetime.utcnow()
+        self.db.query(AttachmentDirectory).filter(
+            AttachmentDirectory.id.in_(dir_ids)
+        ).update(
+            {
+                AttachmentDirectory.is_deleted: True,
+                AttachmentDirectory.deleted_at: now,
+                AttachmentDirectory.deleted_by: deleted_by,
+            },
+            synchronize_session=False,
+        )
         self.db.commit()
 
     def get_directory_by_parent_and_name(self, parent_id: Optional[str], name: str, include_deleted: bool = False):
@@ -134,15 +142,33 @@ class AttachmentDirectoryService:
         return " --> ".join(parts) if parts else None
 
     def get_descendant_directory_ids(self, directory_id: str, include_deleted: bool = True) -> List[str]:
-        """Return all directory IDs in the subtree rooted at directory_id (including the directory itself)."""
-        ids: List[str] = [directory_id]
-        q = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.parent_id == directory_id)
-        if not include_deleted:
-            q = q.filter(AttachmentDirectory.is_deleted == False)
-        children = q.all()
-        for c in children:
-            ids.extend(self.get_descendant_directory_ids(str(c.id), include_deleted=include_deleted))
-        return ids
+        """Return all directory IDs in the subtree rooted at directory_id (including the directory itself). Uses recursive CTE for speed."""
+        from sqlalchemy import text
+
+        if include_deleted:
+            stmt = text("""
+                WITH RECURSIVE descendants AS (
+                    SELECT id FROM attachment_directories WHERE id = :root_id
+                    UNION ALL
+                    SELECT d.id FROM attachment_directories d
+                    INNER JOIN descendants p ON d.parent_id = p.id
+                )
+                SELECT id::text FROM descendants
+            """)
+        else:
+            stmt = text("""
+                WITH RECURSIVE descendants AS (
+                    SELECT id FROM attachment_directories WHERE id = :root_id AND is_deleted = false
+                    UNION ALL
+                    SELECT d.id FROM attachment_directories d
+                    INNER JOIN descendants p ON d.parent_id = p.id
+                    WHERE d.is_deleted = false
+                )
+                SELECT id::text FROM descendants
+            """)
+
+        result = self.db.execute(stmt, {"root_id": directory_id})
+        return [row[0] for row in result]
 
     def get_deleted_tree(self) -> list:
         """Return tree of deleted directories only (for trash view). Roots are deleted dirs whose parent is not deleted (or has no parent)."""
@@ -190,25 +216,52 @@ class AttachmentDirectoryService:
         ]
 
     def restore_directory(self, directory_id: str) -> dict:
-        """Restore a directory, its descendants, and all attachments in them. Returns counts."""
-        from datetime import datetime
-
+        """Restore a directory, its descendants, and all attachments in them. Uses bulk updates for speed."""
         d = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == directory_id).first()
         if not d:
             raise handle_not_found("Attachment directory", directory_id)
         if not d.is_deleted:
             raise handle_conflict("Directory is not deleted.")
         dir_ids = self.get_descendant_directory_ids(directory_id, include_deleted=True)
-        for did in dir_ids:
-            child = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == did).first()
-            if child and child.is_deleted:
-                child.is_deleted = False
-                child.deleted_at = None
-                child.deleted_by = None
+        # Bulk update directories
+        self.db.query(AttachmentDirectory).filter(
+            AttachmentDirectory.id.in_(dir_ids),
+            AttachmentDirectory.is_deleted == True,
+        ).update(
+            {
+                AttachmentDirectory.is_deleted: False,
+                AttachmentDirectory.deleted_at: None,
+                AttachmentDirectory.deleted_by: None,
+            },
+            synchronize_session=False,
+        )
         attachment_service = AttachmentService(self.db)
         restored = attachment_service.restore_attachments_in_directories(dir_ids)
         self.db.commit()
         return {"directories_restored": len(dir_ids), "attachments_restored": restored}
+
+    def permanent_delete_directory(self, directory_id: str, deleted_by: str) -> dict:
+        """Permanently delete a deleted directory, its descendants, and all attachments in them. Cannot be undone."""
+        d = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == directory_id).first()
+        if not d:
+            raise handle_not_found("Attachment directory", directory_id)
+        if not d.is_deleted:
+            raise handle_conflict("Directory must be in Trash before permanent delete. Move to Trash first.")
+        dir_ids = self.get_descendant_directory_ids(directory_id, include_deleted=True)
+        attachment_service = AttachmentService(self.db)
+        attachments = self.db.query(Attachment).filter(
+            Attachment.directory_id.in_(dir_ids),
+        ).all()
+        attachment_ids = [str(a.id) for a in attachments]
+        if attachment_ids:
+            attachment_service.delete_attachments(attachment_ids, deleted_by)
+        # Delete directories (leaf-first for parent_id FK)
+        for did in reversed(dir_ids):
+            child = self.db.query(AttachmentDirectory).filter(AttachmentDirectory.id == did).first()
+            if child:
+                self.db.delete(child)
+        self.db.commit()
+        return {"directories_deleted": len(dir_ids), "attachments_deleted": len(attachment_ids)}
 
 
 class AttachmentTypeService:

@@ -119,6 +119,7 @@ class InboundShipmentLineResponse(InboundShipmentLineBase):
     created_at: datetime
     updated_at: Optional[datetime] = None
     product: Optional[ProductSimple] = None
+    spo_allocated_quantity: Optional[int] = None  # Total SPO allocated qty for this product on this shipment (all warehouses)
 
     class Config:
         from_attributes = True
@@ -126,7 +127,7 @@ class InboundShipmentLineResponse(InboundShipmentLineBase):
 
 class InboundShipmentBase(BaseModel):
     shipment_number: str
-    supplier_id: str
+    supplier_id: Optional[str] = None
     shipment_date: date
     expected_arrival_date: Optional[date] = None
     actual_arrival_date: Optional[date] = None
@@ -145,6 +146,7 @@ class InboundShipmentCreate(InboundShipmentBase):
 
 
 class InboundShipmentUpdate(BaseModel):
+    supplier_id: Optional[str] = None
     shipment_date: Optional[date] = None
     expected_arrival_date: Optional[date] = None
     actual_arrival_date: Optional[date] = None
@@ -156,6 +158,7 @@ class InboundShipmentUpdate(BaseModel):
     total_cartons: Optional[int] = None
     notes: Optional[str] = None
     attachment_id: Optional[str] = None
+    shipment_lines: Optional[List[InboundShipmentLineCreate]] = None
 
 
 class AttachmentSimple(BaseModel):
@@ -222,6 +225,10 @@ class SPOAllocationCreate(SPOAllocationBase):
 
 
 class SPOAllocationUpdate(BaseModel):
+    spo_number: Optional[str] = None
+    inbound_shipment_id: Optional[str] = None
+    warehouse_id: Optional[str] = None
+    product_id: Optional[str] = None
     storage_zone_id: Optional[str] = None
     allocated_quantity: Optional[int] = None
     receipt_status: Optional[str] = None
@@ -230,10 +237,15 @@ class SPOAllocationUpdate(BaseModel):
     allocation_notes: Optional[str] = None
 
 
+class BulkDeleteSPOAllocationsRequest(BaseModel):
+    ids: List[str]
+
+
 class InboundShipmentSimple(BaseModel):
     id: str
     shipment_number: str
-    
+    shipping_container_number: Optional[str] = None
+
     class Config:
         from_attributes = True
 
@@ -288,6 +300,17 @@ class ShipmentWithAllocationsGroup(BaseModel):
     inbound_shipment: InboundShipmentSimple
     spo_allocations: List[SPOAllocationResponse]
     shipment_lines: Optional[List[InboundShipmentLineResponse]] = None
+
+
+class SPOAllocationWithShippedResponse(SPOAllocationResponse):
+    """SPO allocation with quantity_shipped from packing list (shipment lines)."""
+    quantity_shipped: Optional[int] = None
+
+
+class SPOWithAllocationsGroup(BaseModel):
+    """SPO number with its allocations (grouped list view by SPO)."""
+    spo_number: str
+    spo_allocations: List[SPOAllocationWithShippedResponse]
 
 
 class PickingLineBase(BaseModel):

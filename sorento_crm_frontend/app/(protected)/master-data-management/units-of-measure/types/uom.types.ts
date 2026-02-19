@@ -8,4 +8,5 @@ export interface UOMFormData {
   description?: string;
   base_uom_id?: string;
   conversion_factor?: number;
+  is_active: boolean;
 }

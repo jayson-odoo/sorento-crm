@@ -92,33 +92,35 @@ export interface UnitOfMeasure {
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
-  
+  product_count?: number;
+
   // Relations
   base_uom?: UnitOfMeasure;
   alternatives?: UnitOfMeasure[];
 }
 
 // Product Form Data (for create/edit operations)
+// Optional fields allow null for update - sending null clears the value in the backend
 export interface ProductFormData {
   product_code: string;
   product_name: string;
   description?: string;
   category_id: string;
-  brand_id?: string;
+  brand_id?: string | null;
   base_uom_id: string;
   list_price: number;
-  cost_price?: number;
-  invoice_price?: number;
-  weight?: number;
-  dimensions_length?: number;
-  dimensions_width?: number;
-  dimensions_height?: number;
-  warranty_months?: number;
+  cost_price?: number | null;
+  invoice_price?: number | null;
+  weight?: number | null;
+  dimensions_length?: number | null;
+  dimensions_width?: number | null;
+  dimensions_height?: number | null;
+  warranty_months?: number | null;
   has_serial_tracking: boolean;
   has_batch_tracking: boolean;
   reorder_level: number;
   reorder_quantity: number;
-  item_type?: ProductItemType;
+  item_type?: ProductItemType | null;
   is_active: boolean;
 }
 
@@ -274,6 +276,7 @@ export interface ProductListItem {
   list_price: number;
   is_active: boolean;
   created_at: Date;
+  updated_at?: Date | null;
   category?: ProductCategory;
   brand?: Brand;
 }

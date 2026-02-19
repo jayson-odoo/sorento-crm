@@ -39,6 +39,7 @@ export function ConfirmDeleteDialog({
   onDelete,
   queryKeysToInvalidate = [],
   successMessage = 'Deleted successfully',
+  onSuccess,
 }: ConfirmDeleteDialogProps) {
   const queryClient = useQueryClient();
 
@@ -59,7 +60,7 @@ export function ConfirmDeleteDialog({
       queryKeysToInvalidate.forEach((key) => {
         queryClient.invalidateQueries({ queryKey: key });
       });
-      onSuccessProp?.();
+      onSuccess?.();
       onOpenChange(false);
     },
     onError: (error: Error) => {

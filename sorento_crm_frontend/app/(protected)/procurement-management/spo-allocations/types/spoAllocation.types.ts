@@ -21,6 +21,7 @@ export interface SPOAllocation {
   inbound_shipment?: {
     id: string;
     shipment_number: string;
+    shipping_container_number?: string | null;
   };
   warehouse?: {
     id: string;
@@ -54,9 +55,21 @@ export interface ShipmentWithAllocationsGroup {
   inbound_shipment: {
     id: string;
     shipment_number: string;
+    shipping_container_number?: string | null;
   };
   spo_allocations: SPOAllocation[];
   shipment_lines?: ShipmentLineForGroup[] | null;
+}
+
+/** SPO allocation with quantity_shipped from packing list. */
+export interface SPOAllocationWithShipped extends SPOAllocation {
+  quantity_shipped?: number | null;
+}
+
+/** SPO number with its allocations (grouped list view by SPO). */
+export interface SPOWithAllocationsGroup {
+  spo_number: string;
+  spo_allocations: SPOAllocationWithShipped[];
 }
 
 export interface SPOAllocationFormData {

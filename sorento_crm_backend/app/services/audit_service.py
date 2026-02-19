@@ -27,6 +27,9 @@ def _audit_entity_type(cls: type) -> str:
 
 
 def _entity_id_str(obj: Any) -> str:
+    """Return the entity's primary key as a string. For pending (new) objects, identity
+    is not set yet; we read PK from the object's attributes (e.g. obj.id) when present.
+    """
     if obj is None:
         return ""
     insp = inspect(obj)
@@ -36,7 +39,16 @@ def _entity_id_str(obj: Any) -> str:
         return str(v) if v is not None else ""
     if pk is not None:
         return "_".join(str(v) for v in pk)
-    return ""
+    # Pending (new) object: identity not set until after flush. Read PK from attributes.
+    mapper = insp.mapper
+    pk_cols = mapper.primary_key
+    if not pk_cols:
+        return ""
+    if len(pk_cols) == 1:
+        v = getattr(obj, pk_cols[0].key, None)
+        return str(v) if v is not None else ""
+    parts = [str(getattr(obj, c.key, None) or "") for c in pk_cols]
+    return "_".join(parts) if all(p for p in parts) else ""
 
 
 def _old_new_from_dirty(obj: Any, columns: Optional[list[str]] = None) -> tuple[dict, dict]:
@@ -160,6 +172,8 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         cls = obj.__class__
         entity_type = _audit_entity_type(cls)
         entity_id = _entity_id_str(obj)
+        if not entity_id:
+            continue  # Pending object with no PK yet (e.g. DB-generated); skip to avoid invalid UUID ""
         if _should_skip(entity_type, entity_id):
             continue
         cols = getattr(cls, "__audit_columns__", None)

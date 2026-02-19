@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { useConversationSLATrackingDetail, useDeleteConversationSLAEventLog } from '../hooks/useConversationSLATracking';
-import { formatDateTime, formatDuration, parseNaiveDateTimeAsLocal } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, formatDuration, parseDateTimeAsUTC } from '@/lib/helpers';
 import type { ConversationSLAEventLog } from '../types/conversationSLATracking.types';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
@@ -104,13 +104,13 @@ export default function EventLogTable({ trackingId }: EventLogTableProps) {
       {
         accessorKey: 'event_at',
         header: ({ column }) => <DataGridColumnHeader title="Event At" column={column} />,
-        cell: ({ row }) => formatDateTime(parseNaiveDateTimeAsLocal(row.original.event_at)),
+        cell: ({ row }) => formatDateTimeInMalaysia(row.original.event_at),
         size: 200,
       },
       {
         accessorKey: 'from_time',
         header: ({ column }) => <DataGridColumnHeader title="From Time" column={column} />,
-        cell: ({ row }) => row.original.from_time ? formatDateTime(parseNaiveDateTimeAsLocal(row.original.from_time)) : '-',
+        cell: ({ row }) => row.original.from_time ? formatDateTimeInMalaysia(row.original.from_time) : '-',
         size: 200,
       },
       {
@@ -118,12 +118,11 @@ export default function EventLogTable({ trackingId }: EventLogTableProps) {
         header: ({ column }) => <DataGridColumnHeader title="Duration" column={column} />,
         cell: ({ row }) => {
           const log = row.original;
-          // Recalculate duration from from_time and event_at
-          // Both are UTC from database, getTime() returns UTC milliseconds, so difference is correct
+          // Recalculate duration from from_time and event_at (both stored as UTC in DB)
           if (log.from_time && log.event_at) {
-            const fromTime = parseNaiveDateTimeAsLocal(log.from_time); // UTC from database
-            const eventAt = parseNaiveDateTimeAsLocal(log.event_at); // UTC from database
-            const diff = eventAt.getTime() - fromTime.getTime(); // UTC milliseconds difference
+            const fromTime = parseDateTimeAsUTC(log.from_time);
+            const eventAt = parseDateTimeAsUTC(log.event_at);
+            const diff = eventAt.getTime() - fromTime.getTime();
             return formatDuration(diff);
           }
           // Fallback to stored duration if from_time is not available
@@ -258,7 +257,7 @@ export default function EventLogTable({ trackingId }: EventLogTableProps) {
                 <div className="mt-2 text-sm">
                   <strong>Event Type:</strong> {logToDelete.event_type}
                   <br />
-                  <strong>Event At:</strong> {formatDateTime(parseNaiveDateTimeAsLocal(logToDelete.event_at))}
+                  <strong>Event At:</strong> {formatDateTimeInMalaysia(logToDelete.event_at)}
                 </div>
               )}
             </AlertDialogDescription>

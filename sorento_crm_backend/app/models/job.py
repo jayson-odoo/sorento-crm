@@ -46,6 +46,7 @@ class ImportJob(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     started_at = Column(DateTime(timezone=False), nullable=True)
     completed_at = Column(DateTime(timezone=False), nullable=True)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
     
     # Additional metadata
     job_metadata = Column('metadata', JSONB, nullable=True)  # Store additional job metadata

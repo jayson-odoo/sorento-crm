@@ -14,6 +14,39 @@ from app.services.queue_service import enqueue_job, get_job_status, cancel_job a
 logger = logging.getLogger(__name__)
 
 
+def _notify_import_job_event(
+    db: Session,
+    job: ImportJob,
+    event_type: str,
+    title: str,
+    body: str,
+) -> None:
+    """Create an idempotent in-app notification for the job owner. Swallowed on error."""
+    try:
+        from app.services.notification_service import NotificationService
+        NotificationService(db).create(
+            user_id=job.user_id,
+            type=f"import_job_{event_type}",
+            title=title,
+            body=body,
+            data={
+                "job_id": job.job_id,
+                "job_type": job.job_type,
+                "filename": job.filename,
+                "total_rows": job.total_rows,
+                "processed_rows": job.processed_rows,
+                "successful_rows": getattr(job, "successful_rows", None),
+                "failed_rows": getattr(job, "failed_rows", None),
+                "skipped_rows": getattr(job, "skipped_rows", None),
+            },
+            source_entity_type="import_job",
+            source_entity_id=job.job_id,
+            event_type=event_type,
+        )
+    except Exception as e:
+        logger.warning("Failed to create import job notification: %s", e, exc_info=True)
+
+
 class JobService:
     """Service for managing import jobs."""
     
@@ -44,15 +77,17 @@ class JobService:
         """Update job with RQ job ID."""
         job.job_id = rq_job_id
         job.status = JobStatus.QUEUED.value
+        job.updated_at = datetime.utcnow()
         self.db.commit()
         return job
-    
+
     def start_job(self, job_id: str) -> Optional[ImportJob]:
         """Mark job as started."""
         job = self.db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
         if job:
             job.status = JobStatus.STARTED.value
             job.started_at = datetime.utcnow()
+            job.updated_at = datetime.utcnow()
             self.db.commit()
         return job
     
@@ -69,8 +104,10 @@ class JobService:
         """Mark job as completed."""
         job = self.db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
         if job:
+            now = datetime.utcnow()
             job.status = JobStatus.FINISHED.value
-            job.completed_at = datetime.utcnow()
+            job.completed_at = now
+            job.updated_at = now
             job.result = result
             job.successful_rows = successful_rows
             job.failed_rows = failed_rows
@@ -81,16 +118,32 @@ class JobService:
             elif job.total_rows == 0 and processed_rows > 0:
                 job.total_rows = processed_rows
             self.db.commit()
+            _notify_import_job_event(
+                self.db,
+                job,
+                "finished",
+                "Import job finished",
+                f"Your {job.job_type} import completed: {processed_rows}/{job.total_rows} rows processed, {successful_rows} successful, {failed_rows} failed, {skipped_rows} skipped.",
+            )
         return job
-    
+
     def fail_job(self, job_id: str, error: str) -> Optional[ImportJob]:
         """Mark job as failed."""
         job = self.db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
         if job:
+            now = datetime.utcnow()
             job.status = JobStatus.FAILED.value
-            job.completed_at = datetime.utcnow()
+            job.completed_at = now
+            job.updated_at = now
             job.error = error
             self.db.commit()
+            _notify_import_job_event(
+                self.db,
+                job,
+                "failed",
+                "Import job failed",
+                f"Your {job.job_type} import failed: {error[:500]}",
+            )
         return job
 
     def update_job_progress(
@@ -119,10 +172,11 @@ class JobService:
             job.total_rows = total_rows
         if result is not None:
             job.result = result
+        job.updated_at = datetime.utcnow()
         self.db.commit()
         self.db.refresh(job)
         return job
-    
+
     def get_job(self, job_id: str) -> Optional[ImportJob]:
         """Get job by RQ job ID."""
         return self.db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
@@ -162,9 +216,19 @@ class JobService:
             return False
 
         # Update DB first so the API can return immediately (avoids UI stuck on "Cancelling...")
+        now = datetime.utcnow()
         job.status = JobStatus.CANCELLED.value
-        job.completed_at = datetime.utcnow()
+        job.completed_at = now
+        job.updated_at = now
         self.db.commit()
+
+        _notify_import_job_event(
+            self.db,
+            job,
+            "cancelled",
+            "Import job cancelled",
+            f"Your {job.job_type} import was cancelled.",
+        )
 
         # Tell RQ to stop the worker in background so we never block the API response
         rq_job_id = job.job_id
@@ -193,25 +257,51 @@ class JobService:
         if not rq_status:
             return job
 
+        now = datetime.utcnow()
         rq_status_str = rq_status.get('status') or ''
         if rq_status_str == 'canceled':
             job.status = JobStatus.CANCELLED.value
             if not job.completed_at:
-                job.completed_at = datetime.utcnow()
+                job.completed_at = now
+            job.updated_at = now
+            self.db.commit()
+            _notify_import_job_event(self.db, job, "cancelled", "Import job cancelled", f"Your {job.job_type} import was cancelled.")
+            return job
         elif rq_status_str == 'started' and job.status != JobStatus.STARTED.value:
             job.status = JobStatus.STARTED.value
             if not job.started_at:
-                job.started_at = datetime.utcnow()
+                job.started_at = now
+            job.updated_at = now
         elif rq_status_str == 'finished' and job.status != JobStatus.FINISHED.value:
             job.status = JobStatus.FINISHED.value
-            job.completed_at = datetime.utcnow()
+            job.completed_at = now
+            job.updated_at = now
             if rq_status.get('result'):
                 job.result = rq_status['result']
+            self.db.commit()
+            _notify_import_job_event(
+                self.db,
+                job,
+                "finished",
+                "Import job finished",
+                f"Your {job.job_type} import completed: {job.processed_rows}/{job.total_rows} rows processed.",
+            )
+            return job
         elif rq_status_str == 'failed' and job.status != JobStatus.FAILED.value:
             job.status = JobStatus.FAILED.value
-            job.completed_at = datetime.utcnow()
+            job.completed_at = now
+            job.updated_at = now
             if rq_status.get('exc_info'):
                 job.error = str(rq_status['exc_info'])
+            self.db.commit()
+            _notify_import_job_event(
+                self.db,
+                job,
+                "failed",
+                "Import job failed",
+                f"Your {job.job_type} import failed.",
+            )
+            return job
 
         self.db.commit()
         return job

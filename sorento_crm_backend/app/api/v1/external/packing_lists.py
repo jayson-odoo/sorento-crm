@@ -22,13 +22,14 @@ def create_packing_list(
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
-    # Validate supplier
-    supplier = db.query(Supplier).filter(Supplier.id == payload.packing_list.supplier_id).first()
-    if not supplier:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid supplier_id",
-        )
+    # Validate supplier only when provided (supplier_id is optional for packing lists)
+    if payload.packing_list.supplier_id is not None:
+        supplier = db.query(Supplier).filter(Supplier.id == payload.packing_list.supplier_id).first()
+        if not supplier:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid supplier_id",
+            )
 
     # Validate attachment
     attachment = db.query(Attachment).filter(Attachment.id == payload.packing_list.attachment_id).first()
@@ -54,6 +55,12 @@ def create_packing_list(
         if normalize_code(item.product_code) in products_map
     ]
 
+    # Group by product_id and sum quantity (one row per product per shipment)
+    by_product: dict[str, int] = {}
+    for item in valid_items:
+        product_id = products_map[normalize_code(item.product_code)].id
+        by_product[product_id] = by_product.get(product_id, 0) + item.quantity
+
     try:
         shipment_date = parse_date_value(payload.packing_list.shipment_date)
     except ValueError as exc:
@@ -69,7 +76,7 @@ def create_packing_list(
 
     shipment = InboundShipmentCreate(
         shipment_number=payload.packing_list.shipment_number,
-        supplier_id=payload.packing_list.supplier_id,
+        supplier_id=payload.packing_list.supplier_id or None,
         shipment_date=shipment_date,
         expected_arrival_date=expected_arrival_date,
         actual_arrival_date=actual_arrival_date,
@@ -83,10 +90,10 @@ def create_packing_list(
         attachment_id=payload.packing_list.attachment_id,
         shipment_lines=[
             InboundShipmentLineCreate(
-                product_id=products_map[normalize_code(item.product_code)].id,
-                quantity_shipped=item.quantity,
+                product_id=pid,
+                quantity_shipped=qty,
             )
-            for item in valid_items
+            for pid, qty in by_product.items()
         ],
     )
 

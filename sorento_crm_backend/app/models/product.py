@@ -70,6 +70,7 @@ class UnitOfMeasure(Base):
     base_uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
     conversion_factor = Column(Numeric(10, 4), nullable=True)
     description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     
@@ -79,12 +80,16 @@ class UnitOfMeasure(Base):
     
     __table_args__ = (
         Index("ix_units_of_measure_base_uom_id", "base_uom_id"),
+        Index("ix_units_of_measure_is_active", "is_active"),
     )
 
 
 class Product(Base):
+    """Product model. Set __audit_track__ = True for automatic audit logging of changes."""
     __tablename__ = "products"
-    
+    __audit_track__ = True
+    __audit_entity_type__ = "product"
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_code = Column(String(100), unique=True, nullable=False)
     product_name = Column(String(255), nullable=False)
@@ -114,14 +119,31 @@ class Product(Base):
     category = relationship("ProductCategory", back_populates="products")
     brand = relationship("Brand", back_populates="products")
     base_uom = relationship("UnitOfMeasure", back_populates="products", foreign_keys=[base_uom_id])
-    product_suppliers = relationship("ProductSupplier", back_populates="product", foreign_keys="ProductSupplier.product_id")
-    stock = relationship("Stock", back_populates="product")
-    stock_batches = relationship("StockBatch", back_populates="product")
-    promotion_products = relationship("PromotionProduct", back_populates="product")
+    product_suppliers = relationship(
+        "ProductSupplier",
+        back_populates="product",
+        foreign_keys="ProductSupplier.product_id",
+        passive_deletes=True,
+    )
+    stock = relationship("Stock", back_populates="product", passive_deletes=True)
+    stock_batches = relationship("StockBatch", back_populates="product", passive_deletes=True)
+    promotion_products = relationship(
+        "PromotionProduct",
+        back_populates="product",
+        passive_deletes=True,
+    )
     inbound_shipment_lines = relationship("InboundShipmentLine", back_populates="product")
-    spo_allocations = relationship("SPOAllocation", back_populates="product")
+    spo_allocations = relationship(
+        "SPOAllocation",
+        back_populates="product",
+        passive_deletes=True,
+    )
     picking_lines = relationship("PickingLine", back_populates="product")
-    product_attachments = relationship("ProductAttachment", back_populates="product")
+    product_attachments = relationship(
+        "ProductAttachment",
+        back_populates="product",
+        passive_deletes=True,
+    )
     
     __table_args__ = (
         Index("ix_products_category_id", "category_id"),

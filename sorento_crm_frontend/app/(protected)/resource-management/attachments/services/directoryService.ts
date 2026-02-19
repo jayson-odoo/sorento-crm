@@ -78,3 +78,14 @@ export async function deleteDirectory(id: string): Promise<void> {
     throw new Error(err.detail || 'Failed to delete directory');
   }
 }
+
+export async function permanentDeleteDirectory(id: string): Promise<{ message: string; directories_deleted: number; attachments_deleted: number }> {
+  const response = await apiFetch(`/api/v1/resource-management/directories/${id}/permanent-delete`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to permanently delete directory');
+  }
+  return response.json();
+}
