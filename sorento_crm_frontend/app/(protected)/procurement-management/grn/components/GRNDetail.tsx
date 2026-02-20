@@ -3,10 +3,16 @@
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Edit, Trash2 } from 'lucide-react';
+import { Edit, Trash2, Settings, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -16,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useGRN, useGRNs } from '../hooks/useGRN';
+import { useGRN, useGRNs, useUpdateGRN } from '../hooks/useGRN';
 import { formatDate } from '@/lib/helpers';
 import GRNDeleteDialog from './grn-delete-dialog';
 import RecordNavigation from '@/components/common/RecordNavigation';
@@ -25,14 +31,21 @@ interface GRNDetailProps {
   grnId: string;
 }
 
+const STATUS_OPTIONS = [
+  { value: 'draft', label: 'Draft' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'rejected', label: 'Rejected' },
+] as const;
+
 export default function GRNDetail({ grnId }: GRNDetailProps) {
   const router = useRouter();
   const { data: grn, isLoading } = useGRN(grnId);
+  const updateMutation = useUpdateGRN();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const navParams = useMemo(
     () => ({
       pageIndex: 0,
-      pageSize: 100,
+      pageSize: 50,
       sorting: [{ id: 'picking_date', desc: true }],
       searchQuery: '',
     }),
@@ -84,27 +97,7 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
     }
   };
 
-  const getInspectionStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'secondary';
-      case 'passed':
-        return 'primary';
-      case 'failed':
-        return 'destructive';
-      case 'partial_pass':
-        return 'primary';
-      default:
-        return 'secondary';
-    }
-  };
-
   const pickingStatusLabel = grn.picking_status
-    ?.split('_')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ') || '-';
-
-  const inspectionStatusLabel = grn.inspection_status
     ?.split('_')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ') || '-';
@@ -119,11 +112,6 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
             <Badge variant={getPickingStatusBadgeVariant(grn.picking_status)}>
               {pickingStatusLabel}
             </Badge>
-            <Badge
-              variant={getInspectionStatusBadgeVariant(grn.inspection_status)}
-            >
-              {inspectionStatusLabel}
-            </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
             Picking Date:{' '}
@@ -137,6 +125,38 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
             items={grnListItems}
             ariaLabel="GRN"
           />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" title="Change status">
+                <Settings className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {STATUS_OPTIONS.map((opt) => (
+                <DropdownMenuItem
+                  key={opt.value}
+                  onClick={async () => {
+                    try {
+                      await updateMutation.mutateAsync({
+                        id: grnId,
+                        data: { picking_status: opt.value },
+                      });
+                    } catch {
+                      // toast handled by mutation
+                    }
+                  }}
+                  disabled={updateMutation.isPending || grn.picking_status === opt.value}
+                >
+                  <span className="inline-flex w-5 shrink-0">
+                    {grn.picking_status === opt.value ? (
+                      <Check className="size-4" />
+                    ) : null}
+                  </span>
+                  {opt.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="outline"
             onClick={() =>
@@ -175,6 +195,10 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
               <p className="font-medium">{grn.picking_number}</p>
             </div>
             <div>
+              <p className="text-sm text-muted-foreground">SPO Number</p>
+              <p className="font-medium">{grn.spo_number ?? '-'}</p>
+            </div>
+            <div>
               <p className="text-sm text-muted-foreground">Picking Date</p>
               <p className="font-medium">
                 {grn.picking_date
@@ -190,53 +214,6 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
                 {pickingStatusLabel}
               </Badge>
             </div>
-            <div>
-              <p className="text-sm text-muted-foreground">
-                Inspection Status
-              </p>
-              <Badge
-                variant={getInspectionStatusBadgeVariant(
-                  grn.inspection_status,
-                )}
-              >
-                {inspectionStatusLabel}
-              </Badge>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">
-                Total Items Picked
-              </p>
-              <p className="font-medium">{grn.total_items_picked || 0}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">
-                Total Items Discrepancy
-              </p>
-              <p className="font-medium">
-                {grn.total_items_discrepancy || 0}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Total Cost</p>
-              <p className="font-medium">
-                {grn.total_cost
-                  ? new Intl.NumberFormat('en-US', {
-                      style: 'currency',
-                      currency: 'MYR',
-                    }).format(grn.total_cost)
-                  : '-'}
-              </p>
-            </div>
-            {grn.inspection_date && (
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  Inspection Date
-                </p>
-                <p className="font-medium">
-                  {formatDate(new Date(grn.inspection_date))}
-                </p>
-              </div>
-            )}
           </div>
           {grn.quality_remarks && (
             <div>
@@ -266,12 +243,9 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
                   <TableRow>
                     <TableHead>SPO Allocation</TableHead>
                     <TableHead>Product</TableHead>
+                    <TableHead>Location</TableHead>
                     <TableHead>Expected</TableHead>
                     <TableHead>Picked</TableHead>
-                    <TableHead>Discrepancy</TableHead>
-                    <TableHead>Condition</TableHead>
-                    <TableHead>Unit Cost</TableHead>
-                    <TableHead>Line Total</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -292,36 +266,11 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
                       <TableCell>
                         {line.product?.product_code || '-'}
                       </TableCell>
+                      <TableCell>
+                        {line.source_warehouse?.warehouse_code ?? line.destination_warehouse?.warehouse_code ?? '-'}
+                      </TableCell>
                       <TableCell>{line.quantity_expected}</TableCell>
                       <TableCell>{line.quantity_picked}</TableCell>
-                      <TableCell>{line.quantity_discrepancy}</TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">
-                          {line.picked_condition
-                            ?.split('_')
-                            .map(
-                              (word) =>
-                                word.charAt(0).toUpperCase() + word.slice(1),
-                            )
-                            .join(' ') || '-'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {line.unit_cost
-                          ? new Intl.NumberFormat('en-US', {
-                              style: 'currency',
-                              currency: 'MYR',
-                            }).format(line.unit_cost)
-                          : '-'}
-                      </TableCell>
-                      <TableCell>
-                        {line.line_total
-                          ? new Intl.NumberFormat('en-US', {
-                              style: 'currency',
-                              currency: 'MYR',
-                            }).format(line.line_total)
-                          : '-'}
-                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

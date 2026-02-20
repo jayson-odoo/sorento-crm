@@ -89,3 +89,37 @@ export async function deleteGRN(id: string): Promise<void> {
     throw new Error(error.message);
   }
 }
+
+export interface GRNImportResult {
+  message: string;
+  job_id: string;
+  id: string;
+}
+
+export async function importGRNListing(file: File): Promise<GRNImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const response = await apiFetch('/api/v1/procurement/grn/import-listing', {
+    method: 'POST',
+    body: form,
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Import failed' }));
+    throw new Error(err.detail ?? 'GRN listing import failed');
+  }
+  return response.json();
+}
+
+export async function importGRNLines(file: File): Promise<GRNImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const response = await apiFetch('/api/v1/procurement/grn/import-lines', {
+    method: 'POST',
+    body: form,
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Import failed' }));
+    throw new Error(err.detail ?? 'GRN lines import failed');
+  }
+  return response.json();
+}

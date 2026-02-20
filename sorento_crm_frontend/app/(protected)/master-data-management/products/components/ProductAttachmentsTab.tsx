@@ -14,6 +14,7 @@ import { useDownloadAttachment } from '@/app/(protected)/resource-management/att
 import type { ProductAttachment } from '../../product-attachments/types/productAttachment.types';
 import { formatDate } from '@/lib/helpers';
 import LinkAttachmentBrowserDialog from './LinkAttachmentBrowserDialog';
+import AttachmentDetailModal from '@/app/(protected)/resource-management/attachments/components/AttachmentDetailModal';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 function attachmentDirectoriesHref(directoryId: string | null | undefined): string {
@@ -33,6 +34,7 @@ export default function ProductAttachmentsTab({
 }: ProductAttachmentsTabProps) {
   const queryClient = useQueryClient();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [detailModalAttachmentId, setDetailModalAttachmentId] = useState<string | null>(null);
 
   // Fetch existing product attachments
   const { data: productAttachments, isLoading: isLoadingAttachments } = useProductAttachmentsByProduct(productId || null);
@@ -91,6 +93,14 @@ export default function ProductAttachmentsTab({
     );
   };
 
+  const attachmentNeighbourItems = useMemo(
+    () =>
+      (productAttachments ?? [])
+        .map((pa) => pa.attachment?.id)
+        .filter(Boolean) as string[],
+    [productAttachments]
+  );
+
   // Group attachments by full_directory_path; use "Uncategorized" when null/empty
   const groupedByDirectory = useMemo(() => {
     if (!productAttachments || productAttachments.length === 0) return [];
@@ -128,22 +138,22 @@ export default function ProductAttachmentsTab({
             {formatFileSize(pa.attachment?.file_size_bytes)} •{' '}
             {pa.attachment?.uploaded_at && formatDate(new Date(pa.attachment.uploaded_at))}
           </p>
-          {renderAccessLevels(pa.access_levels)}
+          {renderAccessLevels(pa.attachment?.access_levels ?? pa.access_levels)}
         </div>
       </div>
       <div className="flex gap-2">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="sm" asChild>
-              <Link
-                href={attachmentDirectoriesHref(pa.attachment?.directory_id)}
-                title="Show in attachment directories"
-              >
-                <FolderOpen className="size-4" />
-              </Link>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => pa.attachment?.id && setDetailModalAttachmentId(pa.attachment.id)}
+              title="View attachment details"
+            >
+              <FolderOpen className="size-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Show in attachment directories</TooltipContent>
+          <TooltipContent>View attachment details</TooltipContent>
         </Tooltip>
         <Button
           type="button"
@@ -220,11 +230,55 @@ export default function ProductAttachmentsTab({
 
   if (!isEditMode) {
     return (
+      <>
+        <Card>
+          <CardHeader>
+            <CardTitle>Attachments</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoadingAttachments ? (
+              <div className="space-y-2">
+                <Skeleton className="h-10 w-full" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            ) : productAttachments && productAttachments.length > 0 ? (
+              renderDirectoryGroups()
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No attachments linked to this product.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+        <AttachmentDetailModal
+          open={detailModalAttachmentId != null}
+          onOpenChange={(open) => !open && setDetailModalAttachmentId(null)}
+          attachmentId={detailModalAttachmentId}
+          neighbourItems={attachmentNeighbourItems.map((id) => ({ id }))}
+          onAttachmentChange={setDetailModalAttachmentId}
+        />
+      </>
+    );
+  }
+
+  return (
+    <>
       <Card>
         <CardHeader>
-          <CardTitle>Attachments</CardTitle>
+          <div className="flex items-center justify-between gap-6">
+            <CardTitle>Attachments</CardTitle>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setLinkDialogOpen(true)}
+            >
+              <Plus className="size-4" />
+              Link Attachment
+            </Button>
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           {isLoadingAttachments ? (
             <div className="space-y-2">
               <Skeleton className="h-10 w-full" />
@@ -234,50 +288,23 @@ export default function ProductAttachmentsTab({
             renderDirectoryGroups()
           ) : (
             <p className="text-sm text-muted-foreground">
-              No attachments linked to this product.
+              No attachments linked to this product. Upload a new attachment or link an existing one.
             </p>
           )}
         </CardContent>
       </Card>
-    );
-  }
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between gap-6">
-          <CardTitle>Attachments</CardTitle>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setLinkDialogOpen(true)}
-          >
-            <Plus className="size-4" />
-            Link Attachment
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {isLoadingAttachments ? (
-          <div className="space-y-2">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </div>
-        ) : productAttachments && productAttachments.length > 0 ? (
-          renderDirectoryGroups()
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            No attachments linked to this product. Upload a new attachment or link an existing one.
-          </p>
-        )}
-      </CardContent>
-
       <LinkAttachmentBrowserDialog
         open={linkDialogOpen}
         onOpenChange={setLinkDialogOpen}
         productId={productId}
       />
-    </Card>
+      <AttachmentDetailModal
+        open={detailModalAttachmentId != null}
+        onOpenChange={(open) => !open && setDetailModalAttachmentId(null)}
+        attachmentId={detailModalAttachmentId}
+        neighbourItems={attachmentNeighbourItems.map((id) => ({ id }))}
+        onAttachmentChange={setDetailModalAttachmentId}
+      />
+    </>
   );
 }

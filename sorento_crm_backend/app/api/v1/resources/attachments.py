@@ -228,7 +228,7 @@ async def create_attachment(
                 detail=f"Failed to upload file to storage: {str(s3_error)}"
             )
         
-        # Parse access levels for webhook payload (JSON array string expected)
+        # Parse access levels for attachment record and webhook (JSON array string expected)
         access_levels_payload = None
         if access_levels:
             try:
@@ -237,6 +237,8 @@ async def create_attachment(
                     access_levels_payload = parsed
             except Exception:
                 logger.warning("Invalid access_levels payload; expected JSON array.")
+        if not access_levels_payload:
+            access_levels_payload = ["dealer", "end_user"]
 
         # Create attachment record
         attachment_data = AttachmentCreate(
@@ -250,12 +252,13 @@ async def create_attachment(
             entity_type=entity_type,  # Store original entity_type if provided
             entity_id=entity_id,
             directory_id=directory_id,
+            access_levels=access_levels_payload,
         )
         
         service = AttachmentService(db)
         attachment = service.create_attachment(attachment_data, current_user["id"])
         try:
-            _create_and_send_webhook(db, attachment, attachment_type, access_levels_payload, current_user["id"])
+            _create_and_send_webhook(db, attachment, attachment_type, access_levels_payload or attachment.access_levels, current_user["id"])
         except Exception as e:
             logger.error("Failed to create integration log for attachment %s: %s", attachment.id, e, exc_info=True)
         return attachment

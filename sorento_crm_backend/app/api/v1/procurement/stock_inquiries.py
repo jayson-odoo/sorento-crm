@@ -75,8 +75,7 @@ async def get_stock_inquiry(
     """Get a single stock inquiry by ID."""
     try:
         service = StockInquiryService(db)
-        inquiry = service.get_inquiry(inquiry_id)
-        return inquiry
+        return service.get_inquiry_for_response(inquiry_id)
     except HTTPException:
         raise
     except Exception as e:

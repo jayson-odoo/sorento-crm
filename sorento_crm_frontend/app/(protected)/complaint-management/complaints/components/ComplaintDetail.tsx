@@ -88,7 +88,8 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           {complaint.last_responded_at && (
             <p className="text-sm text-muted-foreground">
               Last responded: {formatDate(new Date(complaint.last_responded_at))}
-              {complaint.last_responded_by && ` by ${complaint.last_responded_by}`}
+              {(complaint.last_responded_by_name ?? complaint.last_responded_by) &&
+                ` by ${complaint.last_responded_by_name ?? complaint.last_responded_by}`}
             </p>
           )}
         </div>
@@ -239,7 +240,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               <p className="text-sm text-muted-foreground">Last responded</p>
               <p className="font-medium">
                 {formatDate(new Date(complaint.last_responded_at))}
-                {complaint.last_responded_by && ` by ${complaint.last_responded_by}`}
+                {complaint.last_responded_by_name && ` by ${complaint.last_responded_by_name}`}
               </p>
             </div>
           )}

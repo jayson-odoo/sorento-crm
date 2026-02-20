@@ -20,7 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getImportJob, getImportJobStatus, getImportJobs } from '../services/importJobService';
 import { useCancelImportJob, useImportJobStatus } from '../hooks/useImportJobs';
 import type { ImportJob } from '../types/importJob.types';
@@ -33,6 +33,8 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   stock_import: 'Stock Import',
   spo_import: 'SPO Import',
   attachment_bulk_import: 'Attachment Bulk Import',
+  grn_listing_import: 'Upload GRN',
+  grn_lines_import: 'Upload GRN Lines',
 };
 
 function getJobTypeLabel(jobType: string): string {
@@ -312,24 +314,24 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                 )}
                 <div>
                   <p className="text-muted-foreground">Created At</p>
-                  <p className="font-medium">{formatDateTime(new Date(job.created_at))}</p>
+                  <p className="font-medium">{formatDateTimeInMalaysia(job.created_at)}</p>
                 </div>
                 {job.started_at && (
                   <div>
                     <p className="text-muted-foreground">Started At</p>
-                    <p className="font-medium">{formatDateTime(new Date(job.started_at))}</p>
+                    <p className="font-medium">{formatDateTimeInMalaysia(job.started_at)}</p>
                   </div>
                 )}
                 {job.completed_at && (
                   <div>
                     <p className="text-muted-foreground">Completed At</p>
-                    <p className="font-medium">{formatDateTime(new Date(job.completed_at))}</p>
+                    <p className="font-medium">{formatDateTimeInMalaysia(job.completed_at)}</p>
                   </div>
                 )}
               </div>
 
-              {/* Progress Bar */}
-              {job.total_rows > 0 && ['pending', 'queued', 'started'].includes(job.status) && (
+              {/* Progress Bar - show when we have total from progress (polled) or job */}
+              {(progress?.total ?? job.total_rows) > 0 && ['pending', 'queued', 'started'].includes(currentStatus) && (
                 <div className="mt-6 space-y-2">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Progress</span>

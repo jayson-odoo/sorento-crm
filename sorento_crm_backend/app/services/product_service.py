@@ -776,7 +776,7 @@ class ProductAttachmentService:
             q = q.filter(ProductAttachment.attachment_id == attachment_id)
         
         if user_type:
-            q = q.filter(ProductAttachment.access_levels.contains([user_type]))
+            q = q.filter(ProductAttachment.attachment.has(Attachment.access_levels.contains([user_type])))
         
         sort_map = {
             "created_at": ProductAttachment.created_at,
@@ -878,5 +878,5 @@ class ProductAttachmentService:
             ProductAttachment.created_at.asc()
         )
         if user_type:
-            q = q.filter(ProductAttachment.access_levels.contains([user_type]))
+            q = q.filter(ProductAttachment.attachment.has(Attachment.access_levels.contains([user_type])))
         return q.all()

@@ -156,7 +156,7 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
 
 export async function updateAttachment(
   attachmentId: string,
-  data: { directory_id?: string | null }
+  data: { directory_id?: string | null; description?: string | null; access_levels?: string[] | null }
 ): Promise<Attachment> {
   const response = await apiFetch(`/api/v1/resource-management/attachments/${attachmentId}`, {
     method: 'PUT',

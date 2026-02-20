@@ -66,6 +66,22 @@ class ComplaintService:
             return None
         return f"{base}/space/{space_id.strip()}/inbox/{contact_id.strip()}"
 
+    def _resolve_user_display_name(self, user_id: Optional[str]) -> Optional[str]:
+        """Resolve user id (CRM id or respond_user_id) to display name (name or email)."""
+        if not user_id or not str(user_id).strip():
+            return None
+        from app.models.user import User
+        user = (
+            self.db.query(User)
+            .filter(
+                or_(User.id == user_id, User.respond_user_id == user_id)
+            )
+            .first()
+        )
+        if not user:
+            return None
+        return user.name or user.email or None
+
     def _serialize_complaint(self, complaint: Complaint) -> dict:
         """Serialize complaint with attachments from complaint_attachments table only."""
         data = {attr.key: getattr(complaint, attr.key) for attr in inspect(complaint).mapper.column_attrs}
@@ -75,6 +91,10 @@ class ComplaintService:
             if link.attachment is not None
         ]
         data["attachments"] = link_attachments
+        if data.get("last_responded_by"):
+            data["last_responded_by_name"] = self._resolve_user_display_name(data["last_responded_by"])
+        else:
+            data["last_responded_by_name"] = None
         return data
     
     def list_complaints(

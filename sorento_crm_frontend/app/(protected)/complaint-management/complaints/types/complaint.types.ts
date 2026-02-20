@@ -34,6 +34,7 @@ export interface Complaint {
   technical_team_response?: string | null;
   status?: string | null;
   last_responded_by?: string | null;
+  last_responded_by_name?: string | null;
   last_responded_at?: string | null;
   attachments: ComplaintAttachment[];
 }

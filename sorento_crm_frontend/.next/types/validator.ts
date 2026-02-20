@@ -1055,10 +1055,28 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/procurement-management/grn/[id]/edit/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/procurement-management/grn/[id]/edit">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/procurement-management/grn/[id]/edit/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/(protected)/procurement-management/grn/[id]/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/procurement-management/grn/[id]">> = Specific
   const handler = {} as typeof import("../../app/(protected)/procurement-management/grn/[id]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/procurement-management/grn/new/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/procurement-management/grn/new">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/procurement-management/grn/new/page.js")
   type __Check = __IsExpected<typeof handler>
   // @ts-ignore
   type __Unused = __Check
@@ -1104,6 +1122,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
 {
   type __IsExpected<Specific extends AppPageConfig<"/procurement-management/packing-lists">> = Specific
   const handler = {} as typeof import("../../app/(protected)/procurement-management/packing-lists/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/procurement-management/picking-lines/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/procurement-management/picking-lines">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/procurement-management/picking-lines/page.js")
   type __Check = __IsExpected<typeof handler>
   // @ts-ignore
   type __Unused = __Check

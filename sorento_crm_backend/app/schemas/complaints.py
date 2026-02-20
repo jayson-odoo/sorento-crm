@@ -91,6 +91,7 @@ class ComplaintResponse(ComplaintBase):
     respond_inbox_url: Optional[str] = None
     status: Optional[str] = None
     last_responded_by: Optional[str] = None
+    last_responded_by_name: Optional[str] = None
     last_responded_at: Optional[datetime] = None
     attachments: Optional[list[ComplaintAttachmentResponse]] = []
 

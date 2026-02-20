@@ -11,10 +11,16 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Settings, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
@@ -25,11 +31,17 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useGRNs } from '../hooks/useGRN';
 import type { GRN } from '../types/grn.types';
 import { formatDate } from '@/lib/helpers';
+import { GRNImportDialog } from './GRNImportDialog';
+import { importGRNListing, importGRNLines } from '../services/grnService';
+import { useQueryClient } from '@tanstack/react-query';
 
 export default function GRNList() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const spoAllocationId = searchParams.get('spo_allocation_id');
+
+  const [uploadMode, setUploadMode] = useState<'listing' | 'lines' | null>(null);
 
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -58,30 +70,13 @@ export default function GRNList() {
       case 'draft':
         return 'secondary';
       case 'submitted':
-        return 'primary';
       case 'approved':
-        return 'primary';
       case 'posted':
         return 'primary';
       case 'rejected':
         return 'destructive';
       case 'closed':
         return 'secondary';
-      default:
-        return 'secondary';
-    }
-  };
-
-  const getInspectionStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'secondary';
-      case 'passed':
-        return 'primary';
-      case 'failed':
-        return 'destructive';
-      case 'partial_pass':
-        return 'primary';
       default:
         return 'secondary';
     }
@@ -95,6 +90,15 @@ export default function GRNList() {
           <DataGridColumnHeader title="GRN Number" column={column} />
         ),
         size: 150,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        accessorKey: 'spo_number',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="SPO Number" column={column} />
+        ),
+        cell: ({ row }) => row.original.spo_number ?? '-',
+        size: 140,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
@@ -127,50 +131,6 @@ export default function GRNList() {
           );
         },
         size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
-      },
-      {
-        accessorKey: 'inspection_status',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Inspection" column={column} />
-        ),
-        cell: ({ row }) => {
-          const status = row.original.inspection_status;
-          const statusLabel = status
-            ?.split('_')
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(' ') || '-';
-          return (
-            <Badge variant={getInspectionStatusBadgeVariant(status)}>
-              {statusLabel}
-            </Badge>
-          );
-        },
-        size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
-      },
-      {
-        accessorKey: 'total_items_picked',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Items Picked" column={column} />
-        ),
-        cell: ({ row }) => row.original.total_items_picked || 0,
-        size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
-      },
-      {
-        accessorKey: 'total_cost',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Total Cost" column={column} />
-        ),
-        cell: ({ row }) => {
-          const cost = row.original.total_cost || 0;
-          return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'MYR',
-          }).format(cost);
-        },
-        size: 130,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
@@ -229,13 +189,60 @@ export default function GRNList() {
               </Button>
             )}
           </div>
-          <Button
-            onClick={() => router.push('/procurement-management/grn/new')}
-          >
-            <Plus />
-            Create GRN
-          </Button>
+          <div className="flex items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" className="h-8 w-8" title="Import options">
+                  <Settings className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setUploadMode('listing')}>
+                  <Upload className="size-4" />
+                  Upload GRN
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setUploadMode('lines')}>
+                  <Upload className="size-4" />
+                  Upload GRN Lines
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button
+              onClick={() => router.push('/procurement-management/grn/new')}
+            >
+              <Plus />
+              Create GRN
+            </Button>
+          </div>
         </CardHeader>
+        {uploadMode === 'listing' && (
+          <GRNImportDialog
+            open={true}
+            onOpenChange={(open) => !open && setUploadMode(null)}
+            title="Upload GRN"
+            description="Upload GRN listing Excel"
+            onUpload={async (file) => {
+              const result = await importGRNListing(file);
+              queryClient.invalidateQueries({ queryKey: ['grn'] });
+              queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
+              return result;
+            }}
+          />
+        )}
+        {uploadMode === 'lines' && (
+          <GRNImportDialog
+            open={true}
+            onOpenChange={(open) => !open && setUploadMode(null)}
+            title="Upload GRN Lines"
+            description="Upload GRN lines Excel"
+            onUpload={async (file) => {
+              const result = await importGRNLines(file);
+              queryClient.invalidateQueries({ queryKey: ['grn'] });
+              queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
+              return result;
+            }}
+          />
+        )}
         <CardTable>
           <ScrollArea>
             <DataGridTable />

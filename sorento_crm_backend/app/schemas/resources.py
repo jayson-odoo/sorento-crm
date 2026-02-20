@@ -89,6 +89,8 @@ class AttachmentBase(BaseModel):
     entity_id: Optional[str] = None
     directory_id: Optional[str] = None
     full_directory_path: Optional[str] = None  # e.g. "SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve"
+    description: Optional[str] = None
+    access_levels: Optional[list[str]] = None  # e.g. ["dealer", "end_user"]
     sort_order: Optional[int] = None
 
 
@@ -101,6 +103,8 @@ class AttachmentUpdate(BaseModel):
     entity_type: Optional[str] = None
     entity_id: Optional[str] = None
     directory_id: Optional[str] = None
+    description: Optional[str] = None
+    access_levels: Optional[list[str]] = None
     sort_order: Optional[int] = None
 
 

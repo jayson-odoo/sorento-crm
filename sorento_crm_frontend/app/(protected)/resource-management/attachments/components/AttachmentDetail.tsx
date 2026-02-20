@@ -8,7 +8,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useQueryClient } from '@tanstack/react-query';
+import { LoaderCircleIcon } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDate } from '@/lib/helpers';
@@ -19,6 +23,7 @@ import {
   useDownloadAttachment,
   useResubmitAttachmentWebhook,
   useRestoreAttachment,
+  useUpdateAttachment,
 } from '../hooks/useAttachments';
 import { getAttachmentMetadata } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
@@ -29,6 +34,11 @@ const ENTITY_ROUTES = {
   promotion: { label: 'Promotion', path: '/marketing-management/promotions' },
   form: { label: 'Form', path: '/forms-management/forms' },
 } as const;
+
+const ACCESS_LEVEL_OPTIONS = [
+  { value: 'dealer', label: 'Dealer' },
+  { value: 'end_user', label: 'End User' },
+] as const;
 
 function LinkedEntityLink({
   type,
@@ -157,11 +167,15 @@ export default function AttachmentDetail({
   directoryId,
 }: AttachmentDetailProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [descriptionEdit, setDescriptionEdit] = useState<string | null>(null);
+  const [accessLevelsEdit, setAccessLevelsEdit] = useState<string[] | null>(null);
   const deleteMutation = useDeleteAttachment();
   const downloadMutation = useDownloadAttachment();
   const resubmitMutation = useResubmitAttachmentWebhook();
   const restoreMutation = useRestoreAttachment();
+  const updateMutation = useUpdateAttachment();
 
   const { data: attachment, isLoading } = useQuery({
     queryKey: ['attachment-metadata', attachmentId],
@@ -331,6 +345,114 @@ export default function AttachmentDetail({
                 {attachment.is_deleted ? 'Deleted' : 'Active'}
               </Badge>
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm text-muted-foreground">Description</Label>
+            {descriptionEdit !== null ? (
+              <div className="space-y-2">
+                <textarea
+                  className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  value={descriptionEdit}
+                  onChange={(e) => setDescriptionEdit(e.target.value)}
+                  placeholder="Add a description..."
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      updateMutation.mutate(
+                        { attachmentId: attachment.id, data: { description: descriptionEdit || null } },
+                        {
+                          onSuccess: () => {
+                            queryClient.invalidateQueries({ queryKey: ['attachment-metadata', attachment.id] });
+                            setDescriptionEdit(null);
+                          },
+                        }
+                      );
+                    }}
+                    disabled={updateMutation.isPending}
+                  >
+                    {updateMutation.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : 'Save'}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setDescriptionEdit(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start justify-between gap-2">
+                <p className="font-medium text-sm min-h-[1.5rem]">
+                  {attachment.description?.trim() || '—'}
+                </p>
+                <Button variant="ghost" size="sm" onClick={() => setDescriptionEdit(attachment.description ?? '')}>
+                  {attachment.description?.trim() ? 'Edit' : 'Add'}
+                </Button>
+              </div>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label className="text-sm text-muted-foreground">Access levels</Label>
+            {accessLevelsEdit !== null ? (
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-4">
+                  {ACCESS_LEVEL_OPTIONS.map((opt) => (
+                    <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+                      <Checkbox
+                        checked={accessLevelsEdit.includes(opt.value)}
+                        onCheckedChange={(checked) => {
+                          setAccessLevelsEdit((prev) => {
+                            const arr = prev ?? [];
+                            if (checked) return arr.includes(opt.value) ? arr : [...arr, opt.value];
+                            return arr.filter((v) => v !== opt.value);
+                          });
+                        }}
+                      />
+                      <span className="text-sm">{opt.label}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      const levels = accessLevelsEdit?.length ? accessLevelsEdit : ['dealer', 'end_user'];
+                      updateMutation.mutate(
+                        { attachmentId: attachment.id, data: { access_levels: levels } },
+                        {
+                          onSuccess: () => {
+                            queryClient.invalidateQueries({ queryKey: ['attachment-metadata', attachment.id] });
+                            setAccessLevelsEdit(null);
+                          },
+                        }
+                      );
+                    }}
+                    disabled={updateMutation.isPending}
+                  >
+                    {updateMutation.isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : 'Save'}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setAccessLevelsEdit(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {(attachment.access_levels ?? []).length === 0 ? (
+                    <span className="text-sm text-muted-foreground">—</span>
+                  ) : (
+                    (attachment.access_levels ?? []).map((level) => (
+                      <Badge key={level} variant="secondary">
+                        {level === 'dealer' ? 'Dealer' : 'End User'}
+                      </Badge>
+                    ))
+                  )}
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => setAccessLevelsEdit(attachment.access_levels ?? ['dealer', 'end_user'])}>
+                  Edit
+                </Button>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

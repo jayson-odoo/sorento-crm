@@ -18,6 +18,8 @@ export interface Attachment {
   entity_id: string | null;
   directory_id?: string | null;
   full_directory_path?: string | null;  // e.g. "SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve"
+  description?: string | null;
+  access_levels?: string[] | null;  // e.g. ["dealer", "end_user"]
   entity_display_name?: string | null;
   linked_products?: LinkedEntityRef[];
   linked_promotions?: LinkedEntityRef[];
@@ -63,6 +65,7 @@ export interface AttachmentSimple {
   uploaded_at: Date | string;
   attachment_type?: AttachmentTypeSimple | null;
   full_directory_path?: string | null;
+  access_levels?: string[] | null;
 }
 
 export interface AttachmentResponse {
@@ -78,6 +81,8 @@ export interface AttachmentResponse {
   entity_id?: string | null;
   directory_id?: string | null;
   full_directory_path?: string | null;
+  description?: string | null;
+  access_levels?: string[] | null;
   entity_display_name?: string | null;
   linked_products?: LinkedEntityRef[];
   linked_promotions?: LinkedEntityRef[];

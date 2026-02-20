@@ -1,6 +1,6 @@
 """Resource management models."""
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Index
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -61,6 +61,8 @@ class Attachment(Base):
     deleted_by = Column(String, nullable=True)
     directory_id = Column(UUID(as_uuid=False), ForeignKey("attachment_directories.id", ondelete="SET NULL"), nullable=True)
     full_directory_path = Column(Text, nullable=True)  # e.g. "SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve"
+    description = Column(Text, nullable=True)  # User-editable description for search / n8n AI agent
+    access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')  # dealer / end_user visibility
     sort_order = Column(Integer, nullable=True)
 
     attachment_type = relationship("AttachmentType", back_populates="attachments")
@@ -72,4 +74,5 @@ class Attachment(Base):
         Index("ix_attachments_is_deleted", "is_deleted"),
         Index("ix_attachments_file_hash", "file_hash"),
         Index("ix_attachments_directory_id", "directory_id"),
+        Index("ix_attachments_access_levels", "access_levels", postgresql_using="gin"),
     )

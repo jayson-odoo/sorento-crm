@@ -34,6 +34,15 @@ export interface SPOAllocation {
     product_name: string;
   };
   grn_lines_count?: number;
+  /** GRN headers linked to this SPO (same spo_number); for quick navigation. */
+  linked_grns?: LinkedGRNSimple[];
+}
+
+export interface LinkedGRNSimple {
+  id: string;
+  picking_number?: string | null;
+  picking_status?: string | null;
+  picking_date?: string | null;
 }
 
 export interface SPOAllocationDetail extends SPOAllocation {}

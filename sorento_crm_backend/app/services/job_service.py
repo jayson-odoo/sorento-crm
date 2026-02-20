@@ -118,13 +118,16 @@ class JobService:
             elif job.total_rows == 0 and processed_rows > 0:
                 job.total_rows = processed_rows
             self.db.commit()
-            _notify_import_job_event(
-                self.db,
-                job,
-                "finished",
-                "Import job finished",
-                f"Your {job.job_type} import completed: {processed_rows}/{job.total_rows} rows processed, {successful_rows} successful, {failed_rows} failed, {skipped_rows} skipped.",
-            )
+            try:
+                _notify_import_job_event(
+                    self.db,
+                    job,
+                    "finished",
+                    "Import job finished",
+                    f"Your {job.job_type} import completed: {processed_rows}/{job.total_rows} rows processed, {successful_rows} successful, {failed_rows} failed, {skipped_rows} skipped.",
+                )
+            except Exception:
+                pass  # Do not let notification failure mark the job as failed
         return job
 
     def fail_job(self, job_id: str, error: str) -> Optional[ImportJob]:
@@ -288,6 +291,11 @@ class JobService:
             )
             return job
         elif rq_status_str == 'failed' and job.status != JobStatus.FAILED.value:
+            # Do not overwrite if the task already marked the job as FINISHED (e.g. complete_job
+            # succeeded then something in cleanup raised, so RQ reports failed but work is done).
+            if job.status == JobStatus.FINISHED.value:
+                self.db.commit()
+                return job
             job.status = JobStatus.FAILED.value
             job.completed_at = now
             job.updated_at = now

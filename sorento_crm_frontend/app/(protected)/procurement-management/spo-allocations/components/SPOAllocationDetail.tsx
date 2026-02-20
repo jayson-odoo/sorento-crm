@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Link as LinkIcon } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Edit, Trash2, Link as LinkIcon, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,7 +11,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   useSPOAllocation,
   useDeleteSPOAllocation,
+  useUpdateSPOAllocation,
 } from '../hooks/useSPOAllocations';
+import { toast } from 'sonner';
 import { formatDate } from '@/lib/helpers';
 import SPOAllocationDeleteDialog from './spo-allocation-delete-dialog';
 import Link from 'next/link';
@@ -23,8 +26,23 @@ export default function SPOAllocationDetail({
   spoAllocationId,
 }: SPOAllocationDetailProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { data: spoAllocation, isLoading } = useSPOAllocation(spoAllocationId);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const updateMutation = useUpdateSPOAllocation();
+
+  const handleSetToPending = () => {
+    updateMutation.mutate(
+      { id: spoAllocationId, data: { receipt_status: 'pending' } },
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: ['spo-allocation', spoAllocationId] });
+          toast.success('Status set to Pending');
+        },
+        onError: (err) => toast.error(err.message || 'Failed to update status'),
+      }
+    );
+  };
 
   if (isLoading) {
     return (
@@ -57,7 +75,7 @@ export default function SPOAllocationDetail({
       case 'pending':
         return 'secondary';
       case 'partial_received':
-        return 'primary';
+      case 'received':
       case 'fully_received':
         return 'primary';
       case 'rejected':
@@ -91,6 +109,17 @@ export default function SPOAllocationDetail({
           </p>
         </div>
         <div className="flex gap-2">
+          {(spoAllocation.receipt_status === 'received' ||
+            spoAllocation.receipt_status === 'fully_received') && (
+            <Button
+              variant="outline"
+              onClick={handleSetToPending}
+              disabled={updateMutation.isPending}
+            >
+              <RotateCcw className="size-4" />
+              Set to Pending
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() =>
@@ -215,8 +244,32 @@ export default function SPOAllocationDetail({
                 </Link>
               </div>
             )}
+            {spoAllocation.linked_grns && spoAllocation.linked_grns.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">Linked GRNs</p>
+                <ul className="list-none space-y-1">
+                  {spoAllocation.linked_grns.map((grn) => (
+                    <li key={grn.id}>
+                      <Link
+                        href={`/procurement-management/grn/${grn.id}`}
+                        className="flex items-center gap-2 text-sm text-primary hover:underline"
+                      >
+                        <LinkIcon className="size-4 shrink-0" />
+                        {grn.picking_number || grn.id}
+                        {grn.picking_status && (
+                          <Badge variant="secondary" className="text-xs">
+                            {grn.picking_status}
+                          </Badge>
+                        )}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {spoAllocation.grn_lines_count !== undefined &&
-              spoAllocation.grn_lines_count > 0 && (
+              spoAllocation.grn_lines_count > 0 &&
+              (!spoAllocation.linked_grns || spoAllocation.linked_grns.length === 0) && (
                 <div>
                   <Link
                     href={`/procurement-management/grn?spo_allocation_id=${spoAllocationId}`}

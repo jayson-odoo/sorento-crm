@@ -31,6 +31,8 @@ export interface RecordNavigationListProps {
   onSelect?: (id: string) => void;
   /** When true (default), navigation wraps: next on last goes to first, previous on first goes to last */
   circular?: boolean;
+  /** When provided, display total uses this (e.g. API pagination total) instead of items.length */
+  totalCount?: number;
 }
 
 export type RecordNavigationProps = RecordNavigationIdsProps | RecordNavigationListProps;
@@ -66,32 +68,33 @@ export default function RecordNavigation(props: RecordNavigationProps) {
         totalCount: total,
       };
     }
-    const { currentId, items, circular = true } = props;
-    const total = items.length;
+    const { currentId, items, circular = true, totalCount: totalOverride } = props;
+    const listLength = items.length;
+    const displayTotal = totalOverride != null ? totalOverride : listLength;
     const idx = items.findIndex((item) => item.id === currentId);
     const currentOneBased = idx >= 0 ? idx + 1 : 0;
 
     let previousId: string | null;
     let nextId: string | null;
-    if (total === 0) {
+    if (listLength === 0) {
       previousId = null;
       nextId = null;
     } else if (circular) {
       previousId =
-        idx <= 0 ? items[total - 1].id : items[idx - 1].id;
+        idx <= 0 ? items[listLength - 1].id : items[idx - 1].id;
       nextId =
-        idx < 0 || idx >= total - 1 ? items[0].id : items[idx + 1].id;
+        idx < 0 || idx >= listLength - 1 ? items[0].id : items[idx + 1].id;
     } else {
       previousId = idx > 0 ? items[idx - 1].id : null;
       nextId =
-        idx >= 0 && idx < total - 1 ? items[idx + 1].id : null;
+        idx >= 0 && idx < listLength - 1 ? items[idx + 1].id : null;
     }
 
     return {
       previousId,
       nextId,
       currentIndex: currentOneBased,
-      totalCount: total,
+      totalCount: displayTotal,
     };
   }, [props]);
 

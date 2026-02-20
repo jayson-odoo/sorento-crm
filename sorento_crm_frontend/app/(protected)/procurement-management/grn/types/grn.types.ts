@@ -30,11 +30,22 @@ export interface PickingLine {
       shipment_number: string;
     };
   };
+  source_warehouse?: {
+    id: string;
+    warehouse_code: string;
+    warehouse_name: string;
+  } | null;
+  destination_warehouse?: {
+    id: string;
+    warehouse_code: string;
+    warehouse_name: string;
+  } | null;
 }
 
 export interface GRN {
   id: string;
   picking_number: string;
+  spo_number?: string | null;
   picking_type: string;
   source_entity_type?: string | null;
   source_entity_id?: string | null;
@@ -60,6 +71,7 @@ export interface GRNDetail extends GRN {
 
 export interface GRNFormData {
   picking_number: string;
+  spo_number?: string;
   source_entity_type?: string;
   source_entity_id?: string;
   picking_date: Date;

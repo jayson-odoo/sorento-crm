@@ -259,7 +259,8 @@ class AttachmentSimple(BaseModel):
     uploaded_at: datetime
     attachment_type: Optional[AttachmentTypeSimple] = None
     full_directory_path: Optional[str] = None  # e.g. "SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve"
-    
+    access_levels: Optional[list[str]] = None  # e.g. ["dealer", "end_user"]; source of truth at attachment level
+
     @field_validator('id', mode='before')
     @classmethod
     def convert_uuid_to_string(cls, v):

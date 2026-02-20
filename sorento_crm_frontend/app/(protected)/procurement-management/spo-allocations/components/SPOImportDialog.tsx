@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Upload, X, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { Upload, X, FileSpreadsheet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -30,7 +30,7 @@ export function SPOImportDialog({
 }: SPOImportDialogProps) {
   const router = useRouter();
   const [files, setFiles] = useState<File[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
 
   const validExtensions = ACCEPT.split(',').map((ext) => ext.trim().replace('.', ''));
   const isValidFile = (file: File) => {
@@ -38,13 +38,15 @@ export function SPOImportDialog({
     return ext && validExtensions.includes(ext);
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = Array.from(e.target.files ?? []);
-    const valid = selected.filter(isValidFile);
-    const invalid = selected.filter((f) => !isValidFile(f));
+  const handleFiles = useCallback((fileList: FileList | File[]) => {
+    const list = Array.from(fileList);
+    const valid = list.filter(isValidFile);
+    const invalid = list.filter((f) => !isValidFile(f));
+    
     if (invalid.length > 0) {
       toast.error(`Skipped ${invalid.length} file(s): only .xlsx and .xls are allowed.`);
     }
+    
     if (valid.length > 0) {
       setFiles((prev) => {
         const names = new Set(prev.map((f) => f.name));
@@ -52,6 +54,33 @@ export function SPOImportDialog({
         return [...prev, ...added];
       });
     }
+  }, []);
+
+  const handleDrag = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setDragActive(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragActive(false);
+      if (e.dataTransfer.files?.length) {
+        handleFiles(e.dataTransfer.files);
+      }
+    },
+    [handleFiles]
+  );
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files;
+    if (selected?.length) handleFiles(selected);
     e.target.value = '';
   };
 
@@ -59,44 +88,42 @@ export function SPOImportDialog({
     setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleUpload = async () => {
+  const handleUpload = () => {
     if (files.length === 0) {
       toast.error('Please select at least one Excel file.');
       return;
     }
+    // Close dialog immediately; processing runs in background; toast when queued
+    const filesToUpload = [...files];
+    onOpenChange(false);
+    setFiles([]);
 
-    setIsUploading(true);
-    try {
-      const result = await onUpload(files);
-      onOpenChange(false);
-      setFiles([]);
-      const count = result.job_ids?.length ?? 0;
-      toast.success(result.message ?? `${count} import job(s) queued.`, {
-        duration: 5000,
-        action:
-          count > 0
-            ? {
-                label: 'View import jobs',
-                onClick: () =>
-                  router.push(
-                    count === 1
-                      ? `/system-management/import-jobs/${result.job_ids[0]}`
-                      : '/system-management/import-jobs'
-                  ),
-              }
-            : undefined,
+    onUpload(filesToUpload)
+      .then((result) => {
+        const count = result.job_ids?.length ?? 0;
+        toast.success('Import queued. Processing in the background.', {
+          duration: 6000,
+          action:
+            count > 0
+              ? {
+                  label: count === 1 ? 'View job' : 'View jobs',
+                  onClick: () =>
+                    router.push(
+                      count === 1
+                        ? `/system-management/import-jobs/${result.job_ids[0]}`
+                        : '/system-management/import-jobs'
+                    ),
+                }
+              : undefined,
+        });
+      })
+      .catch((error) => {
+        toast.error(error instanceof Error ? error.message : 'Upload failed');
       });
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to upload files');
-    } finally {
-      setIsUploading(false);
-    }
   };
 
   const handleOpenChange = (next: boolean) => {
-    if (!next && !isUploading) {
-      setFiles([]);
-    }
+    if (!next) setFiles([]);
     onOpenChange(next);
   };
 
@@ -109,8 +136,20 @@ export function SPOImportDialog({
             Upload one or more Excel files (.xlsx or .xls).
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
+        <div className="space-y-4 py-4">
+          <div
+            onDragEnter={handleDrag}
+            onDragLeave={handleDrag}
+            onDragOver={handleDrag}
+            onDrop={handleDrop}
+            className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+              dragActive ? 'border-primary bg-primary/5' : 'border-border'
+            }`}
+          >
+            <Upload className="size-8 mx-auto mb-3 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground mb-2">
+              Drag and drop your Excel files here, or click to browse
+            </p>
             <input
               type="file"
               accept={ACCEPT}
@@ -119,57 +158,47 @@ export function SPOImportDialog({
               className="hidden"
               id="spo-import-files"
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => document.getElementById('spo-import-files')?.click()}
-              disabled={isUploading}
-            >
-              <Upload className="mr-2 size-4" />
-              Select files
-            </Button>
-            <span className="text-muted-foreground text-sm">
-              {files.length === 0 ? 'No files selected' : `${files.length} file(s) selected`}
-            </span>
+            <label htmlFor="spo-import-files">
+              <Button type="button" variant="outline" asChild>
+                <span>Choose files</span>
+              </Button>
+            </label>
+            <p className="text-xs text-muted-foreground mt-2">.xlsx or .xls only</p>
           </div>
           {files.length > 0 && (
-            <ul className="max-h-40 overflow-y-auto rounded-md border p-2 space-y-1 text-sm">
-              {files.map((file, i) => (
-                <li key={`${file.name}-${i}`} className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-2 truncate">
-                    <FileSpreadsheet className="size-4 shrink-0 text-muted-foreground" />
-                    {file.name}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0 shrink-0"
-                    onClick={() => removeFile(i)}
-                    disabled={isUploading}
-                    aria-label={`Remove ${file.name}`}
-                  >
-                    <X className="size-4" />
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                {files.length} file{files.length !== 1 ? 's' : ''} selected
+              </p>
+              <ul className="max-h-40 overflow-y-auto rounded-md border bg-muted/40 p-2 space-y-1 text-sm">
+                {files.map((file, i) => (
+                  <li key={`${file.name}-${i}`} className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-2 truncate">
+                      <FileSpreadsheet className="size-4 shrink-0 text-muted-foreground" />
+                      {file.name}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 shrink-0"
+                      onClick={() => removeFile(i)}
+                      aria-label={`Remove ${file.name}`}
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => handleOpenChange(false)} disabled={isUploading}>
+          <Button variant="outline" onClick={() => handleOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleUpload} disabled={files.length === 0 || isUploading}>
-            {isUploading ? (
-              <>
-                <Loader2 className="mr-2 size-4 animate-spin" />
-                Uploading…
-              </>
-            ) : (
-              'Import'
-            )}
+          <Button onClick={handleUpload} disabled={files.length === 0}>
+            Import
           </Button>
         </DialogFooter>
       </DialogContent>

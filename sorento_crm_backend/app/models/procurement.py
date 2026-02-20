@@ -206,6 +206,7 @@ class PickingHeader(Base):
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     picking_number = Column(String(50), unique=True, nullable=False)
+    spo_number = Column(String(50), nullable=True)
     picking_type = Column(String(50), nullable=False)
     source_entity_type = Column(String(50), nullable=True)
     source_entity_id = Column(String, nullable=True)
@@ -229,6 +230,7 @@ class PickingHeader(Base):
         Index("ix_picking_headers_picking_type", "picking_type"),
         Index("ix_picking_headers_picking_number", "picking_number"),
         Index("ix_picking_headers_picking_status", "picking_status"),
+        Index("ix_picking_headers_spo_number", "spo_number"),
     )
 
 

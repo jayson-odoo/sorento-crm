@@ -13,6 +13,7 @@ from app.schemas.procurement import (
     SPOAllocationCreate,
     SPOAllocationUpdate,
     SPOAllocationResponse,
+    LinkedGRNSimple,
     ShipmentWithAllocationsGroup,
     SPOWithAllocationsGroup,
     BulkDeleteSPOAllocationsRequest,
@@ -175,14 +176,39 @@ async def get_spo_allocation(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get a single SPO allocation by ID."""
+    """Get a single SPO allocation by ID. quantity_received is computed on load (sum quantity_expected from approved GRN lines); returns linked GRNs."""
     try:
         service = SPOAllocationService(db)
         allocation = service.get_allocation(allocation_id)
-        return allocation
+        computed_received = service.compute_received_for_allocation(allocation_id)
+        receipt_status = "received" if computed_received >= (allocation.allocated_quantity or 0) else "pending"
+        linked = service.get_linked_grns_for_spo(allocation.spo_number)
+        linked_grns_list = []
+        for g in linked:
+            try:
+                linked_grns_list.append(LinkedGRNSimple(
+                    id=str(g["id"]),
+                    picking_number=g.get("picking_number"),
+                    picking_status=g.get("picking_status"),
+                    picking_date=g.get("picking_date"),
+                ))
+            except Exception:
+                continue
+        response = SPOAllocationResponse.model_validate(allocation)
+        out = response.model_dump()
+        out["quantity_received"] = computed_received
+        out["receipt_status"] = receipt_status
+        out["linked_grns"] = linked_grns_list
+        return SPOAllocationResponse(**out)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception(
+            "get_spo_allocation failed for allocation_id=%s: %s",
+            allocation_id,
+            str(e),
+            exc_info=True,
+        )
         raise handle_internal_error(str(e))
 
 

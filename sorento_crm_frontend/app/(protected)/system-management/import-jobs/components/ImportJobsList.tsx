@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useQueryClient } from '@tanstack/react-query';
 import { getImportJob } from '../services/importJobService';
 import { useImportJobs, useCancelImportJob } from '../hooks/useImportJobs';
@@ -34,6 +34,8 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   stock_import: 'Stock Import',
   spo_import: 'SPO Import',
   attachment_bulk_import: 'Attachment Bulk Import',
+  grn_listing_import: 'Upload GRN',
+  grn_lines_import: 'Upload GRN Lines',
 };
 
 function getJobTypeLabel(jobType: string): string {
@@ -162,25 +164,25 @@ export default function ImportJobsList() {
       {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Created At" column={column} />,
-        cell: ({ row }) => formatDateTime(new Date(row.original.created_at)),
+        cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
         size: 200,
       },
       {
         accessorKey: 'started_at',
         header: ({ column }) => <DataGridColumnHeader title="Started At" column={column} />,
-        cell: ({ row }) => row.original.started_at ? formatDateTime(new Date(row.original.started_at)) : '-',
+        cell: ({ row }) => row.original.started_at ? formatDateTimeInMalaysia(row.original.started_at) : '-',
         size: 200,
       },
       {
         accessorKey: 'completed_at',
         header: ({ column }) => <DataGridColumnHeader title="Completed At" column={column} />,
-        cell: ({ row }) => row.original.completed_at ? formatDateTime(new Date(row.original.completed_at)) : '-',
+        cell: ({ row }) => row.original.completed_at ? formatDateTimeInMalaysia(row.original.completed_at) : '-',
         size: 200,
       },
       {
         accessorKey: 'updated_at',
         header: ({ column }) => <DataGridColumnHeader title="Updated At" column={column} />,
-        cell: ({ row }) => row.original.updated_at ? formatDateTime(new Date(row.original.updated_at)) : '-',
+        cell: ({ row }) => row.original.updated_at ? formatDateTimeInMalaysia(row.original.updated_at) : '-',
         size: 200,
       },
       {

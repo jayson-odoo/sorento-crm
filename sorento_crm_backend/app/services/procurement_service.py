@@ -2,7 +2,8 @@
 import secrets
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
-from typing import Optional
+from sqlalchemy import inspect
+from typing import Optional, List, Dict, Any
 from datetime import date, datetime, timedelta, timezone
 from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
@@ -20,6 +21,13 @@ from app.schemas.procurement import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.config import settings
+
+
+def _normalize_spo_number(spo_number: Optional[str]) -> str:
+    """Normalize SPO number for matching (e.g. SPO-2026/01-0178 vs SPO-2026.01-0178)."""
+    if not spo_number or not str(spo_number).strip():
+        return ""
+    return str(spo_number).strip().replace("/", ".").replace("\\", ".")
 
 
 class SupplierService:
@@ -266,10 +274,13 @@ class SPOAllocationService:
         sort_field: str = "created_at",
         sort_dir: str = "asc"
     ):
-        """List SPO allocations."""
+        """List SPO allocations. quantity_received is computed on load from approved GRN lines."""
         from sqlalchemy.orm import joinedload
+        from app.schemas.procurement import SPOAllocationResponse
         q = self.db.query(SPOAllocation).options(
-            joinedload(SPOAllocation.product)
+            joinedload(SPOAllocation.product),
+            joinedload(SPOAllocation.warehouse),
+            joinedload(SPOAllocation.inbound_shipment),
         )
         
         filters = []
@@ -310,9 +321,21 @@ class SPOAllocationService:
         total = q.count()
         offset = (page - 1) * limit
         allocations = q.offset(offset).limit(limit).all()
-        
+        data = []
+        try:
+            alloc_ids = [str(a.id) for a in allocations]
+            received_map = self.get_computed_received_map(alloc_ids)
+            for a in allocations:
+                resp = SPOAllocationResponse.model_validate(a)
+                rec = received_map.get(str(a.id), 0)
+                data.append(resp.model_copy(update={
+                    "quantity_received": rec,
+                    "receipt_status": "received" if rec >= (a.allocated_quantity or 0) else "pending",
+                }))
+        except Exception:
+            data = [SPOAllocationResponse.model_validate(a) for a in allocations]
         return {
-            "data": allocations,
+            "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
@@ -431,6 +454,12 @@ class SPOAllocationService:
         for a in allocations:
             by_shipment.setdefault(a.inbound_shipment_id, []).append(a)
 
+        try:
+            all_alloc_ids = [str(a.id) for a in allocations]
+            received_map = self.get_computed_received_map(all_alloc_ids)
+        except Exception:
+            received_map = {}
+
         groups = []
         for ship in shipments_page:
             allocs = by_shipment.get(ship.id, [])
@@ -438,10 +467,21 @@ class SPOAllocationService:
             shipment_lines = [
                 InboundShipmentLineResponse.model_validate(line) for line in raw_lines
             ]
+            alloc_responses = []
+            for a in allocs:
+                resp = SPOAllocationResponse.model_validate(a)
+                try:
+                    rec = received_map.get(str(a.id), 0)
+                    alloc_responses.append(resp.model_copy(update={
+                        "quantity_received": rec,
+                        "receipt_status": "received" if rec >= (a.allocated_quantity or 0) else "pending",
+                    }))
+                except Exception:
+                    alloc_responses.append(resp)
             groups.append(
                 ShipmentWithAllocationsGroup(
                     inbound_shipment=InboundShipmentSimple.model_validate(ship),
-                    spo_allocations=[SPOAllocationResponse.model_validate(a) for a in allocs],
+                    spo_allocations=alloc_responses,
                     shipment_lines=shipment_lines if shipment_lines else None,
                 )
             )
@@ -548,15 +588,29 @@ class SPOAllocationService:
                 key = (line.shipment_id, line.product_id)
                 shipped_by_ship_product[key] = shipped_by_ship_product.get(key, 0) + (line.quantity_shipped or 0)
 
+        page_alloc_ids = [str(a.id) for spo_num in spo_page for a in by_spo.get(spo_num, [])]
+        try:
+            received_map = self.get_computed_received_map(page_alloc_ids)
+        except Exception:
+            received_map = {}
+
         groups = []
         for spo_num in spo_page:
             allocs = by_spo.get(spo_num, [])
             alloc_responses = []
             for a in allocs:
-                data = SPOAllocationResponse.model_validate(a).model_dump()
-                qty_shipped = shipped_by_ship_product.get((a.inbound_shipment_id, a.product_id))
-                data["quantity_shipped"] = qty_shipped
-                alloc_responses.append(SPOAllocationWithShippedResponse(**data))
+                try:
+                    data = SPOAllocationResponse.model_validate(a).model_dump()
+                    rec = received_map.get(str(a.id), 0)
+                    data["quantity_received"] = rec
+                    data["receipt_status"] = "received" if rec >= (a.allocated_quantity or 0) else "pending"
+                    qty_shipped = shipped_by_ship_product.get((a.inbound_shipment_id, a.product_id))
+                    data["quantity_shipped"] = qty_shipped
+                    alloc_responses.append(SPOAllocationWithShippedResponse(**data))
+                except Exception:
+                    data = SPOAllocationResponse.model_validate(a).model_dump()
+                    data["quantity_shipped"] = shipped_by_ship_product.get((a.inbound_shipment_id, a.product_id))
+                    alloc_responses.append(SPOAllocationWithShippedResponse(**data))
             groups.append(SPOWithAllocationsGroup(spo_number=spo_num, spo_allocations=alloc_responses))
 
         return {
@@ -623,6 +677,70 @@ class SPOAllocationService:
         self.db.commit()
         return {"message": f"Deleted {deleted} SPO allocation(s)", "deleted_count": deleted}
 
+    def compute_received_for_allocation(self, allocation_id: str) -> int:
+        """Computed on read: sum quantity_expected from picking lines where spo_allocation_id = allocation_id
+        and the picking line's header (GRN) is approved. Not stored in DB."""
+        from sqlalchemy import func
+        total = (
+            self.db.query(func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+            .filter(
+                PickingLine.spo_allocation_id == allocation_id,
+                PickingHeader.picking_type == "goods_received",
+                PickingHeader.picking_status == "approved",
+            )
+            .scalar()
+        )
+        return int(total)
+
+    def get_computed_received_map(self, allocation_ids: list[str]) -> dict[str, int]:
+        """Bulk: for each allocation id, return computed quantity_received (sum quantity_expected from approved GRN lines)."""
+        if not allocation_ids:
+            return {}
+        from sqlalchemy import func
+        rows = (
+            self.db.query(PickingLine.spo_allocation_id, func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+            .filter(
+                PickingLine.spo_allocation_id.in_(allocation_ids),
+                PickingHeader.picking_type == "goods_received",
+                PickingHeader.picking_status == "approved",
+            )
+            .group_by(PickingLine.spo_allocation_id)
+            .all()
+        )
+        received_map = {str(r[0]): int(r[1]) for r in rows}
+        return {aid: received_map.get(aid, 0) for aid in allocation_ids}
+
+    def get_linked_grns_for_spo(self, spo_number: Optional[str]):
+        """Return list of GRN headers (id, picking_number, picking_status, picking_date) for this SPO number.
+        Matches by normalized SPO number."""
+        if not spo_number or not spo_number.strip():
+            return []
+        target_norm = _normalize_spo_number(spo_number)
+        if not target_norm:
+            return []
+        rows = (
+            self.db.query(
+                PickingHeader.id,
+                PickingHeader.picking_number,
+                PickingHeader.picking_status,
+                PickingHeader.picking_date,
+                PickingHeader.spo_number,
+            )
+            .filter(
+                PickingHeader.picking_type == "goods_received",
+                PickingHeader.spo_number.isnot(None),
+            )
+            .order_by(PickingHeader.picking_date.desc().nulls_last(), PickingHeader.picking_number)
+            .all()
+        )
+        return [
+            {"id": str(r[0]), "picking_number": r[1], "picking_status": r[2], "picking_date": r[3]}
+            for r in rows
+            if _normalize_spo_number(r[4]) == target_norm
+        ]
+
 
 class PickingHeaderService:
     """Service for picking header (GRN) operations."""
@@ -682,12 +800,62 @@ class PickingHeaderService:
             "empty": total == 0
         }
     
+    def list_picking_lines(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        sort_field: str = "spo_allocation",
+        sort_dir: str = "asc",
+    ):
+        """List picking lines (GRN lines) with sort and search by SPO allocation or product."""
+        from sqlalchemy.orm import joinedload
+        from app.schemas.procurement import PickingLineResponse
+        q = (
+            self.db.query(PickingLine)
+            .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+            .outerjoin(SPOAllocation, PickingLine.spo_allocation_id == SPOAllocation.id)
+            .outerjoin(Product, PickingLine.product_id == Product.id)
+            .filter(PickingHeader.picking_type == "goods_received")
+            .options(
+                joinedload(PickingLine.product),
+                joinedload(PickingLine.spo_allocation),
+                joinedload(PickingLine.source_warehouse),
+                joinedload(PickingLine.destination_warehouse),
+            )
+        )
+        if query and query.strip():
+            q_str = f"%{query.strip()}%"
+            q = q.filter(or_(
+                SPOAllocation.spo_number.ilike(q_str),
+                Product.product_code.ilike(q_str),
+                Product.product_name.ilike(q_str),
+            ))
+        sort_map = {
+            "spo_allocation": SPOAllocation.spo_number,
+            "product": Product.product_code,
+            "quantity_expected": PickingLine.quantity_expected,
+            "quantity_picked": PickingLine.quantity_picked,
+        }
+        sort_col = sort_map.get(sort_field, SPOAllocation.spo_number)
+        if sort_dir == "desc":
+            q = q.order_by(sort_col.desc().nulls_last())
+        else:
+            q = q.order_by(sort_col.asc().nulls_last())
+        total = q.count()
+        offset = (page - 1) * limit
+        lines = q.offset(offset).limit(limit).all()
+        data = [PickingLineResponse.model_validate(line) for line in lines]
+        return {"data": data, "pagination": {"total": total, "page": page, "limit": limit}, "empty": total == 0}
+
     def get_grn(self, grn_id: str):
         """Get a GRN by ID."""
         from sqlalchemy.orm import selectinload, joinedload
         grn = self.db.query(PickingHeader).options(
             selectinload(PickingHeader.picking_lines).joinedload(PickingLine.product),
             selectinload(PickingHeader.picking_lines).joinedload(PickingLine.spo_allocation),
+            selectinload(PickingHeader.picking_lines).joinedload(PickingLine.source_warehouse),
+            selectinload(PickingHeader.picking_lines).joinedload(PickingLine.destination_warehouse),
         ).filter(
             PickingHeader.id == grn_id,
             PickingHeader.picking_type == "goods_received"
@@ -708,7 +876,7 @@ class PickingHeaderService:
         grn_dict = grn_data.model_dump(exclude={"picking_lines"})
         grn_dict["picking_type"] = "goods_received"
         if not grn_dict.get("picked_by_user_id"):
-            grn_dict["picked_by_user_id"] = created_by
+            grn_dict["picked_by_user_id"] = str(created_by) if created_by else None
         
         grn = PickingHeader(**grn_dict)
         self.db.add(grn)
@@ -726,15 +894,52 @@ class PickingHeaderService:
         return grn
     
     def update_grn(self, grn_id: str, grn_data: PickingHeaderUpdate):
-        """Update a GRN."""
+        """Update a GRN. If picking_lines is provided, replace all lines. If status becomes approved, sync to SPO."""
         grn = self.get_grn(grn_id)
-        
+        prev_status = grn.picking_status
+
         update_data = grn_data.model_dump(exclude_unset=True)
+        picking_lines_payload = update_data.pop("picking_lines", None)
+
         for key, value in update_data.items():
             setattr(grn, key, value)
-        
+        self.db.flush()
+
+        if picking_lines_payload is not None:
+            self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).delete()
+            if grn.spo_number and str(grn.spo_number).strip():
+                self._create_grn_lines_with_spo_fifo(grn_id, grn.spo_number, picking_lines_payload)
+            else:
+                for line_data in picking_lines_payload:
+                    line_dict = {k: v for k, v in line_data.items() if k != "quantity_discrepancy"}
+                    line = PickingLine(**line_dict, picking_header_id=grn_id)
+                    self.db.add(line)
+        elif grn.picking_status == "approved" and prev_status != "approved" and grn.spo_number and str(grn.spo_number).strip():
+            # Status just changed to approved without sending lines: link existing lines to SPO via FIFO (same as manual import)
+            existing_lines = (
+                self.db.query(PickingLine)
+                .filter(PickingLine.picking_header_id == grn_id)
+                .all()
+            )
+            if existing_lines:
+                lines_payload = [
+                    {
+                        "product_id": str(line.product_id),
+                        "source_warehouse_id": str(line.source_warehouse_id) if line.source_warehouse_id else None,
+                        "quantity_expected": line.quantity_expected or 0,
+                        "quantity_picked": line.quantity_picked or 0,
+                    }
+                    for line in existing_lines
+                ]
+                self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).delete()
+                self._create_grn_lines_with_spo_fifo(grn_id, grn.spo_number, lines_payload)
+
         self.db.commit()
         self.db.refresh(grn)
+
+        if grn.picking_status == "approved" and prev_status != "approved":
+            self.sync_grn_received_to_spo(grn_id)
+
         return grn
     
     def delete_grn(self, grn_id: str):
@@ -748,6 +953,291 @@ class PickingHeaderService:
         self.db.delete(grn)
         self.db.commit()
         return {"message": "GRN deleted successfully"}
+
+    def get_grn_by_picking_number(self, picking_number: str):
+        """Get GRN (picking header) by picking_number. Returns None if not found."""
+        return self.db.query(PickingHeader).filter(
+            PickingHeader.picking_number == picking_number,
+            PickingHeader.picking_type == "goods_received",
+        ).first()
+
+    def upsert_grn_header_for_import(self, picking_number: str, spo_number: Optional[str], picking_date: date):
+        """Create or update GRN header by picking_number (idempotent). Returns the header."""
+        existing = self.get_grn_by_picking_number(picking_number)
+        if existing:
+            existing.spo_number = spo_number
+            existing.picking_date = picking_date
+            existing.picking_status = "approved"
+            self.db.commit()
+            self.db.refresh(existing)
+            return existing
+        grn = PickingHeader(
+            picking_number=picking_number,
+            spo_number=spo_number,
+            picking_type="goods_received",
+            picking_date=picking_date,
+            picking_status="approved",
+            inspection_status="pending",
+        )
+        self.db.add(grn)
+        self.db.commit()
+        self.db.refresh(grn)
+        return grn
+
+    def upsert_grn_line_for_import(
+        self,
+        picking_header_id: str,
+        product_id: str,
+        source_warehouse_id: str,
+        quantity: int,
+        spo_allocation_id: Optional[str] = None,
+    ):
+        """Create or update one picking line by (header, product, source_warehouse, spo_allocation_id).
+        Allows multiple lines with same (header, product, warehouse) when spo_allocation_id differs (for splitting).
+        Idempotent."""
+        # Match by (header, product, warehouse, spo_allocation_id) to allow splitting across multiple SPOs
+        filters = [
+            PickingLine.picking_header_id == picking_header_id,
+            PickingLine.product_id == product_id,
+            PickingLine.source_warehouse_id == source_warehouse_id,
+        ]
+        if spo_allocation_id is not None:
+            filters.append(PickingLine.spo_allocation_id == spo_allocation_id)
+        else:
+            filters.append(PickingLine.spo_allocation_id.is_(None))
+        
+        line = self.db.query(PickingLine).filter(*filters).first()
+        if line:
+            line.quantity_expected = quantity
+            line.quantity_picked = quantity
+            self.db.flush()
+            return line
+        line = PickingLine(
+            picking_header_id=picking_header_id,
+            product_id=product_id,
+            source_warehouse_id=source_warehouse_id,
+            quantity_expected=quantity,
+            quantity_picked=quantity,
+            spo_allocation_id=spo_allocation_id,
+        )
+        self.db.add(line)
+        self.db.flush()
+        return line
+
+    def _add_picking_line(
+        self,
+        picking_header_id: str,
+        product_id: str,
+        source_warehouse_id: Optional[str],
+        quantity_expected: int,
+        quantity_picked: int,
+        spo_allocation_id: Optional[str] = None,
+    ) -> PickingLine:
+        """Create one picking line (used by FIFO when splitting)."""
+        line = PickingLine(
+            picking_header_id=picking_header_id,
+            product_id=product_id,
+            source_warehouse_id=source_warehouse_id,
+            quantity_expected=quantity_expected,
+            quantity_picked=quantity_picked,
+            spo_allocation_id=spo_allocation_id,
+            picked_condition="good",
+        )
+        self.db.add(line)
+        self.db.flush()
+        return line
+
+    def _create_grn_lines_with_spo_fifo(
+        self,
+        grn_id: str,
+        spo_number: str,
+        lines_payload: List[Dict[str, Any]],
+    ) -> None:
+        """Create picking lines for a GRN, assigning spo_allocation_id via FIFO by SPO number + product.
+        Matches import logic: same SPO number + product, consume from allocations (same warehouse first, then others)."""
+        spo_normalized = _normalize_spo_number(spo_number)
+        if not spo_normalized:
+            for line_data in lines_payload:
+                line_dict = {k: v for k, v in line_data.items() if k != "quantity_discrepancy"}
+                line = PickingLine(**line_dict, picking_header_id=grn_id)
+                self.db.add(line)
+            return
+
+        for line_data in lines_payload:
+            product_id = line_data.get("product_id")
+            if not product_id:
+                continue
+            source_warehouse_id = line_data.get("source_warehouse_id")
+            quantity_expected = int(line_data.get("quantity_expected") or 0)
+            quantity_picked = int(line_data.get("quantity_picked") or 0)
+            if quantity_expected <= 0 and quantity_picked <= 0:
+                continue
+
+            # SPO allocations for this product, same normalized spo_number, FIFO by created_at
+            allocations = (
+                self.db.query(SPOAllocation)
+                .filter(
+                    SPOAllocation.product_id == product_id,
+                    SPOAllocation.spo_number.isnot(None),
+                )
+                .order_by(SPOAllocation.created_at.asc())
+                .all()
+            )
+            spo_allocations = [
+                a for a in allocations
+                if _normalize_spo_number(a.spo_number) == spo_normalized
+            ]
+            # Pool: [alloc_id, alloc_warehouse_id, available]
+            spo_pool: List[List[Any]] = []
+            for alloc in spo_allocations:
+                received = self.compute_received_for_allocation(str(alloc.id))
+                available = alloc.allocated_quantity - received
+                if available > 0:
+                    spo_pool.append([str(alloc.id), alloc.warehouse_id, available])
+
+            remaining = quantity_picked
+            first_chunk = True
+
+            # First pass: same warehouse
+            for entry in spo_pool:
+                alloc_id, alloc_wh, avail = entry
+                if alloc_wh != source_warehouse_id or avail <= 0 or remaining <= 0:
+                    continue
+                take = min(remaining, avail)
+                qty_exp = quantity_expected if first_chunk else 0
+                self._add_picking_line(
+                    grn_id, product_id, source_warehouse_id,
+                    qty_exp, take, alloc_id,
+                )
+                remaining -= take
+                entry[2] = avail - take
+                first_chunk = False
+
+            # Second pass: other warehouses
+            for entry in spo_pool:
+                alloc_id, alloc_wh, avail = entry
+                if alloc_wh == source_warehouse_id or avail <= 0 or remaining <= 0:
+                    continue
+                take = min(remaining, avail)
+                qty_exp = quantity_expected if first_chunk else 0
+                self._add_picking_line(
+                    grn_id, product_id, source_warehouse_id,
+                    qty_exp, take, alloc_id,
+                )
+                remaining -= take
+                entry[2] = avail - take
+                first_chunk = False
+
+            if remaining > 0:
+                qty_exp = quantity_expected if first_chunk else 0
+                self._add_picking_line(
+                    grn_id, product_id, source_warehouse_id,
+                    qty_exp, remaining, None,
+                )
+            elif first_chunk and (quantity_expected > 0 or quantity_picked > 0):
+                # No SPO consumption (e.g. quantity_picked is 0) but we still need one line
+                self._add_picking_line(
+                    grn_id, product_id, source_warehouse_id,
+                    quantity_expected, quantity_picked, None,
+                )
+
+    def compute_received_for_allocation(self, allocation_id: str) -> int:
+        """Computed on read: sum quantity_expected from picking lines where spo_allocation_id = allocation_id
+        and the picking line's header (GRN) is approved. Not stored in DB."""
+        from sqlalchemy import func
+        total = (
+            self.db.query(func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+            .filter(
+                PickingLine.spo_allocation_id == allocation_id,
+                PickingHeader.picking_type == "goods_received",
+                PickingHeader.picking_status == "approved",
+            )
+            .scalar()
+        )
+        return int(total)
+
+    def get_computed_received_map(self, allocation_ids: list[str]) -> dict[str, int]:
+        """Bulk: for each allocation id, return computed quantity_received (sum quantity_expected from approved GRN lines)."""
+        if not allocation_ids:
+            return {}
+        from sqlalchemy import func
+        rows = (
+            self.db.query(PickingLine.spo_allocation_id, func.coalesce(func.sum(PickingLine.quantity_expected), 0))
+            .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+            .filter(
+                PickingLine.spo_allocation_id.in_(allocation_ids),
+                PickingHeader.picking_type == "goods_received",
+                PickingHeader.picking_status == "approved",
+            )
+            .group_by(PickingLine.spo_allocation_id)
+            .all()
+        )
+        received_map = {str(r[0]): int(r[1]) for r in rows}
+        return {aid: received_map.get(aid, 0) for aid in allocation_ids}
+
+    def sync_grn_received_to_spo(self, picking_header_id: str) -> None:
+        """After GRN is approved: set quantity_received on each affected SPO allocation (DB field, for legacy/reports).
+        From picking lines (spo_allocation_id = allocation, header approved). Idempotent."""
+        lines = self.db.query(PickingLine).filter(
+            PickingLine.picking_header_id == picking_header_id,
+            PickingLine.spo_allocation_id.isnot(None),
+        ).all()
+        allocation_ids = {str(line.spo_allocation_id) for line in lines if line.spo_allocation_id}
+        for alloc_id in allocation_ids:
+            alloc = self.db.query(SPOAllocation).filter(SPOAllocation.id == alloc_id).first()
+            if not alloc:
+                continue
+            total = self.compute_received_for_allocation(alloc_id)
+            alloc.quantity_received = total
+            alloc.receipt_status = "received" if total >= alloc.allocated_quantity else "pending"
+        self.db.commit()
+
+    def sync_received_for_spo_number(self, spo_number: Optional[str]) -> None:
+        """Re-sync DB quantity_received for all allocations under this SPO (optional background use)."""
+        if not spo_number or not spo_number.strip():
+            return
+        target_norm = _normalize_spo_number(spo_number)
+        if not target_norm:
+            return
+        allocations = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None)).all()
+        for alloc in allocations:
+            if _normalize_spo_number(alloc.spo_number) != target_norm:
+                continue
+            alloc_id = str(alloc.id)
+            total = self.compute_received_for_allocation(alloc_id)
+            alloc.quantity_received = total
+            alloc.receipt_status = "received" if total >= alloc.allocated_quantity else "pending"
+        self.db.commit()
+
+    def get_linked_grns_for_spo(self, spo_number: Optional[str]):
+        """Return list of GRN headers (id, picking_number, picking_status, picking_date) for this SPO number.
+        Matches by normalized SPO number."""
+        if not spo_number or not spo_number.strip():
+            return []
+        target_norm = _normalize_spo_number(spo_number)
+        if not target_norm:
+            return []
+        rows = (
+            self.db.query(
+                PickingHeader.id,
+                PickingHeader.picking_number,
+                PickingHeader.picking_status,
+                PickingHeader.picking_date,
+                PickingHeader.spo_number,
+            )
+            .filter(
+                PickingHeader.picking_type == "goods_received",
+                PickingHeader.spo_number.isnot(None),
+            )
+            .order_by(PickingHeader.picking_date.desc().nulls_last(), PickingHeader.picking_number)
+            .all()
+        )
+        return [
+            {"id": str(r[0]), "picking_number": r[1], "picking_status": r[2], "picking_date": r[3]}
+            for r in rows
+            if _normalize_spo_number(r[4]) == target_norm
+        ]
 
 
 class StockInquiryService:
@@ -816,6 +1306,29 @@ class StockInquiryService:
         if not inquiry:
             raise handle_not_found("Stock Inquiry", inquiry_id)
         return inquiry
+
+    def _resolve_user_display_name(self, user_id: Optional[str]) -> Optional[str]:
+        """Resolve user id (CRM id or respond_user_id) to display name (name or email)."""
+        if not user_id or not str(user_id).strip():
+            return None
+        from app.models.user import User
+        user = (
+            self.db.query(User)
+            .filter(or_(User.id == user_id, User.respond_user_id == user_id))
+            .first()
+        )
+        if not user:
+            return None
+        return user.name or user.email or None
+
+    def get_inquiry_for_response(self, inquiry_id: str) -> dict:
+        """Get stock inquiry as dict with last_responded_by_name resolved for API response."""
+        inquiry = self.get_inquiry(inquiry_id)
+        data = {attr.key: getattr(inquiry, attr.key) for attr in inspect(inquiry).mapper.column_attrs}
+        data["last_responded_by_name"] = (
+            self._resolve_user_display_name(inquiry.last_responded_by) if inquiry.last_responded_by else None
+        )
+        return data
 
     def get_neighbour_ids(self, inquiry_id: str) -> dict:
         """Return prev_id and next_id for the given inquiry (order: id desc, same as default list)."""

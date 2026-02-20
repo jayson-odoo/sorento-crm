@@ -49,12 +49,15 @@ export function useAttachmentTypesList() {
 export function useUpdateAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ attachmentId, data }: { attachmentId: string; data: { directory_id?: string | null } }) =>
+    mutationFn: ({ attachmentId, data }: { attachmentId: string; data: { directory_id?: string | null; description?: string | null; access_levels?: string[] | null } }) =>
       updateAttachment(attachmentId, data),
-    onSuccess: () => {
+    onSuccess: (_, { attachmentId }) => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['attachment-metadata', attachmentId] });
+      queryClient.invalidateQueries({ queryKey: ['product-attachments-by-product'] });
+      queryClient.invalidateQueries({ queryKey: ['promotion-attachments-by-promotion'] });
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to move attachment'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to update attachment'),
   });
 }
 

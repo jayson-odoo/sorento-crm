@@ -1,6 +1,7 @@
 """Resources service for business logic."""
 import logging
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import Optional, List
 
 logger = logging.getLogger(__name__)
@@ -398,7 +399,12 @@ class AttachmentService:
             q = q.filter(Attachment.directory_id == directory_id)
         if query and query.strip():
             term = f"%{query.strip()}%"
-            q = q.filter(Attachment.original_filename.ilike(term))
+            q = q.filter(
+                or_(
+                    Attachment.original_filename.ilike(term),
+                    Attachment.description.ilike(term),
+                )
+            )
         
         sort_desc = (dir or "desc").lower() == "desc"
         if sort:
@@ -542,7 +548,10 @@ class AttachmentService:
             attachment_dict["uploaded_by"] = str(uploaded_by)
         else:
             attachment_dict["uploaded_by"] = str(uploaded_by) if uploaded_by else None
-        
+        # Let DB server_default apply for access_levels if not provided
+        if attachment_dict.get("access_levels") is None:
+            attachment_dict.pop("access_levels", None)
+
         # Compute and set full_directory_path when directory_id is provided
         directory_id = attachment_dict.get("directory_id")
         if directory_id:

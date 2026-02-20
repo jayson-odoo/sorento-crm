@@ -269,6 +269,17 @@ class SPOAllocationSimple(BaseModel):
         from_attributes = True
 
 
+class LinkedGRNSimple(BaseModel):
+    """Minimal GRN info for SPO → GRN navigation."""
+    id: str
+    picking_number: Optional[str] = None
+    picking_status: Optional[str] = None
+    picking_date: Optional[date] = None
+
+    class Config:
+        from_attributes = True
+
+
 class SPOAllocationResponse(SPOAllocationBase):
     id: str
     created_at: datetime
@@ -280,6 +291,7 @@ class SPOAllocationResponse(SPOAllocationBase):
     warehouse: Optional[WarehouseSimple] = None
     product: Optional[ProductSimple] = None
     grn_lines_count: Optional[int] = 0
+    linked_grns: Optional[List["LinkedGRNSimple"]] = None
     
     @field_validator('created_by', mode='before')
     @classmethod
@@ -342,6 +354,8 @@ class PickingLineResponse(PickingLineBase):
     updated_at: Optional[datetime] = None
     product: Optional[ProductSimple] = None
     spo_allocation: Optional[SPOAllocationSimple] = None
+    source_warehouse: Optional[WarehouseSimple] = None
+    destination_warehouse: Optional[WarehouseSimple] = None
 
     class Config:
         from_attributes = True
@@ -349,6 +363,7 @@ class PickingLineResponse(PickingLineBase):
 
 class PickingHeaderBase(BaseModel):
     picking_number: str
+    spo_number: Optional[str] = None
     picking_type: str
     source_entity_type: Optional[str] = None
     source_entity_id: Optional[str] = None
@@ -364,12 +379,20 @@ class PickingHeaderBase(BaseModel):
     total_cost: Optional[Decimal] = None
     notes: Optional[str] = None
 
+    @field_validator("picked_by_user_id", "inspected_by_user_id", mode="before")
+    @classmethod
+    def coerce_user_id_to_str(cls, v: object) -> Optional[str]:
+        if v is None:
+            return None
+        return str(v)
+
 
 class PickingHeaderCreate(PickingHeaderBase):
     picking_lines: Optional[List[PickingLineCreate]] = None
 
 
 class PickingHeaderUpdate(BaseModel):
+    spo_number: Optional[str] = None
     picking_date: Optional[date] = None
     picked_by_user_id: Optional[str] = None
     inspection_status: Optional[str] = None
@@ -381,6 +404,7 @@ class PickingHeaderUpdate(BaseModel):
     total_items_discrepancy: Optional[int] = None
     total_cost: Optional[Decimal] = None
     notes: Optional[str] = None
+    picking_lines: Optional[List[PickingLineCreate]] = None
 
 
 class PickingHeaderResponse(PickingHeaderBase):
@@ -459,10 +483,11 @@ class StockInquiryResponse(StockInquiryBase):
     respond_inbox_url: Optional[str] = None
     status: Optional[str] = None
     last_responded_by: Optional[str] = None
+    last_responded_by_name: Optional[str] = None
     last_responded_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
-    
+
     class Config:
         from_attributes = True
 

@@ -432,6 +432,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/procurement-management/grn',
       },
       {
+        title: 'Picking Lines',
+        path: '/procurement-management/picking-lines',
+      },
+      {
         title: 'Stock Inquiries',
         path: '/procurement-management/stock-inquiries',
       },
@@ -517,10 +521,6 @@ export const MENU_SIDEBAR: MenuConfig = [
     icon: Folder,
     children: [
       {
-        title: 'Attachments',
-        path: '/resource-management/attachments',
-      },
-      {
         title: 'Attachment Directories',
         path: '/resource-management/attachment-directories',
       },
@@ -531,10 +531,6 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Attachment Types',
         path: '/resource-management/attachment-types',
-      },
-      {
-        title: 'Smart Linkage',
-        path: '/resource-management/smart-linkage',
       },
     ],
   },
@@ -1078,6 +1074,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/procurement-management/grn',
       },
       {
+        title: 'Picking Lines',
+        path: '/procurement-management/picking-lines',
+      },
+      {
         title: 'Stock Inquiries',
         path: '/procurement-management/stock-inquiries',
       },
@@ -1163,10 +1163,6 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     icon: Folder,
     children: [
       {
-        title: 'Attachments',
-        path: '/resource-management/attachments',
-      },
-      {
         title: 'Attachment Directories',
         path: '/resource-management/attachment-directories',
       },
@@ -1177,10 +1173,6 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Attachment Types',
         path: '/resource-management/attachment-types',
-      },
-      {
-        title: 'Smart Linkage',
-        path: '/resource-management/smart-linkage',
       },
     ],
   },

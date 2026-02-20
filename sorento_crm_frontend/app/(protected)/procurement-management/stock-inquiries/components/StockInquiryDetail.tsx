@@ -103,7 +103,8 @@ export default function StockInquiryDetail({
           {inquiry.last_responded_at && (
             <p className="text-sm text-muted-foreground">
               Last responded: {formatDate(new Date(inquiry.last_responded_at))}
-              {inquiry.last_responded_by && ` by ${inquiry.last_responded_by}`}
+              {(inquiry.last_responded_by_name ?? inquiry.last_responded_by) &&
+                ` by ${inquiry.last_responded_by_name ?? inquiry.last_responded_by}`}
             </p>
           )}
         </div>
@@ -241,7 +242,7 @@ export default function StockInquiryDetail({
                 <p className="text-sm text-muted-foreground">Last responded</p>
                 <p className="font-medium">
                   {formatDate(new Date(inquiry.last_responded_at))}
-                  {inquiry.last_responded_by && ` by ${inquiry.last_responded_by}`}
+                  {inquiry.last_responded_by_name && ` by ${inquiry.last_responded_by_name}`}
                 </p>
               </div>
             )}
