@@ -1,4 +1,9 @@
-"""S3 service for file storage operations."""
+"""S3 service for file storage operations.
+
+Uploads files to S3 and returns CloudFront signed URLs suitable for external
+use (e.g. sending in respond.io / WhatsApp messages). Requires CloudFront
+key group configuration via environment variables.
+"""
 import os
 import logging
 from typing import Optional
@@ -7,7 +12,12 @@ import boto3
 from botocore.exceptions import ClientError, BotoCoreError
 from botocore.config import Config
 
+from app.services.cloudfront_signer import CloudFrontSigner
+
 logger = logging.getLogger(__name__)
+
+# Default path for CloudFront private key if CLOUDFRONT_PRIVATE_KEY_PATH not set
+_DEFAULT_CLOUDFRONT_PRIVATE_KEY_PATH = "./cloudfront_private_key.pem"
 
 # Load environment variables from .env file if it exists
 try:
@@ -64,45 +74,83 @@ class S3Service:
             region_name=self.region,
             config=config
         )
-    
+
+        # CloudFront signer: single instance, key loaded once (fail fast if config missing)
+        cloudfront_domain = os.getenv("CLOUDFRONT_DOMAIN")
+        cloudfront_key_pair_id = os.getenv("CLOUDFRONT_KEY_PAIR_ID")
+        cloudfront_private_key_path = os.getenv(
+            "CLOUDFRONT_PRIVATE_KEY_PATH", _DEFAULT_CLOUDFRONT_PRIVATE_KEY_PATH
+        )
+        missing_cf = []
+        if not (cloudfront_domain and cloudfront_domain.strip()):
+            missing_cf.append("CLOUDFRONT_DOMAIN")
+        if not (cloudfront_key_pair_id and cloudfront_key_pair_id.strip()):
+            missing_cf.append("CLOUDFRONT_KEY_PAIR_ID")
+        if not (cloudfront_private_key_path and cloudfront_private_key_path.strip()):
+            missing_cf.append("CLOUDFRONT_PRIVATE_KEY_PATH")
+        if missing_cf:
+            raise ValueError(
+                "CloudFront configuration incomplete: set the following in the backend environment: "
+                + ", ".join(missing_cf)
+            )
+        self._cloudfront_signer: CloudFrontSigner = CloudFrontSigner(
+            key_pair_id=cloudfront_key_pair_id.strip(),
+            private_key_path=cloudfront_private_key_path.strip(),
+            dist_domain=cloudfront_domain.strip(),
+        )
+
     def upload_file(
         self,
         file_content: bytes,
         file_path: str,
-        content_type: Optional[str] = None
+        content_type: Optional[str] = None,
+        signed_url_expires_in: int = 3600,
     ) -> tuple[str, str]:
         """
-        Upload file to S3.
-        
+        Upload file to S3 and return a CloudFront signed URL.
+
+        The returned URL is suitable for external use (e.g. respond.io / WhatsApp).
+
         Args:
             file_content: File content as bytes
             file_path: S3 key (path) where file will be stored
             content_type: MIME type of the file (optional)
-        
+            signed_url_expires_in: Expiry in seconds for the CloudFront signed URL (default 3600)
+
         Returns:
-            Tuple of (S3 key, S3 URL) where file was stored
-        
+            Tuple of (S3 key, CloudFront signed URL) where file was stored
+
         Raises:
-            Exception: If upload fails
+            Exception: If upload or signing fails
+
+        Example:
+            s3_service = S3Service()
+            key, url = s3_service.upload_file(file_bytes, "videos/demo.mp4", content_type="video/mp4")
+            # url is a CloudFront signed URL suitable to send to respond.io
         """
         try:
             extra_args = {}
             if content_type:
                 extra_args['ContentType'] = content_type
-            
+
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
                 Key=file_path,
                 Body=file_content,
                 **extra_args
             )
-            
-            # Generate S3 URL
-            s3_url = self.get_file_url(file_path)
-            
-            logger.info(f"Successfully uploaded file to S3: {file_path}")
-            return file_path, s3_url
-        
+
+            # Return CloudFront signed URL instead of raw S3 URL
+            cloudfront_url = self._cloudfront_signer.generate_url(
+                file_path, expires_in=signed_url_expires_in
+            )
+
+            logger.info(
+                "Successfully uploaded file to S3: %s (CloudFront signed URL generated)",
+                file_path,
+            )
+            return file_path, cloudfront_url
+
         except ClientError as e:
             error_code = e.response.get('Error', {}).get('Code', 'Unknown')
             error_message = e.response.get('Error', {}).get('Message', str(e))
@@ -112,7 +160,27 @@ class S3Service:
         except BotoCoreError as e:
             logger.error(f"S3 connection error: {str(e)}")
             raise Exception(f"Failed to connect to S3: {str(e)}")
-    
+
+    def get_signed_url(self, s3_key: str, expires_in: int = 3600) -> str:
+        """
+        Generate a fresh CloudFront signed URL for an S3 key.
+        Use this when returning attachment links so the path always matches the object and the URL is not expired.
+        """
+        key = (s3_key or "").lstrip("/")
+        if not key:
+            raise ValueError("S3 key is required to generate signed URL")
+        return self._cloudfront_signer.generate_url(key, expires_in=expires_in)
+
+    def get_cloudfront_base_url(self, s3_key: str) -> str:
+        """
+        Build the CloudFront base URL for an S3 key (https://domain/key).
+        Use this when storing file_path so the DB format matches other attachments.
+        """
+        key = (s3_key or "").lstrip("/")
+        if not key:
+            raise ValueError("S3 key is required to build CloudFront URL")
+        return f"https://{self._cloudfront_signer.dist_domain}/{key}"
+
     def get_file_url(self, file_path: str) -> str:
         """
         Get the S3 URL for a file.

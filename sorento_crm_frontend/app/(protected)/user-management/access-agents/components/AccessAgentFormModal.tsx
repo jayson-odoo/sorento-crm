@@ -75,6 +75,7 @@ export default function AccessAgentFormModal({
       description: '',
       pic_respond_user_id: '',
       is_active: true,
+      assign_to_new_internal_contacts: false,
     },
     mode: 'onSubmit',
   });
@@ -89,6 +90,7 @@ export default function AccessAgentFormModal({
         description: accessAgent.description || '',
         pic_respond_user_id: accessAgent.pic_respond_user_id || null,
         is_active: accessAgent.is_active,
+        assign_to_new_internal_contacts: accessAgent.assign_to_new_internal_contacts ?? false,
       });
       setFormInitialized(true);
     }
@@ -111,6 +113,7 @@ export default function AccessAgentFormModal({
         description: data.description || undefined,
         pic_respond_user_id: data.pic_respond_user_id && data.pic_respond_user_id !== '__none__' ? data.pic_respond_user_id : undefined,
         is_active: data.is_active,
+        assign_to_new_internal_contacts: data.assign_to_new_internal_contacts,
       };
 
       if (isEditMode && accessAgentId) {
@@ -146,11 +149,11 @@ export default function AccessAgentFormModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{isEditMode ? 'Edit Access Agent' : 'Create Access Agent'}</DialogTitle>
         </DialogHeader>
-        <ScrollArea className="flex-1 pr-4 -mr-4">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} id="access-agent-form" className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -240,6 +243,20 @@ export default function AccessAgentFormModal({
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="assign_to_new_internal_contacts"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <FormLabel className="text-base">Assign to new internal users</FormLabel>
+                      </div>
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
               </div>
 
               {isEditMode && (
@@ -249,57 +266,61 @@ export default function AccessAgentFormModal({
                     <p className="text-sm text-muted-foreground">No teams yet. Create teams first.</p>
                   ) : (
                     <>
-                      {localAssignments.map((a, idx) => (
-                        <div key={idx} className="flex flex-wrap items-center gap-3 rounded-md border p-3">
-                          <div className="flex-1 min-w-[120px]">
-                            <label className="text-xs text-muted-foreground mb-1 block">Code</label>
-                            <Input
-                              placeholder="e.g. marketing"
-                              value={a.code}
-                              disabled={isLoading}
-                              onChange={(e) => {
-                                const next = [...localAssignments];
-                                next[idx] = { ...next[idx], code: e.target.value };
-                                setLocalAssignments(next);
-                              }}
-                              className="font-mono text-sm"
-                            />
-                          </div>
-                          <div className="flex-1 min-w-[160px]">
-                            <label className="text-xs text-muted-foreground mb-1 block">Team</label>
-                            <Select
-                              value={a.team_id}
-                              disabled={isLoading}
-                              onValueChange={(teamId) => {
-                                const next = [...localAssignments];
-                                next[idx] = { ...next[idx], team_id: teamId };
-                                setLocalAssignments(next);
-                              }}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select team" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {teamsList.map((t: { id: string; name: string }) => (
-                                  <SelectItem key={t.id} value={t.id}>
-                                    {t.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="text-destructive hover:text-destructive mt-6"
-                            disabled={isLoading}
-                            onClick={() => setLocalAssignments(localAssignments.filter((_, i) => i !== idx))}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
+                      <ScrollArea className="h-[200px] rounded-md border">
+                        <div className="space-y-3 p-3">
+                          {localAssignments.map((a, idx) => (
+                            <div key={idx} className="flex flex-wrap items-center gap-3 rounded-md border p-3">
+                              <div className="flex-1 min-w-[120px]">
+                                <label className="text-xs text-muted-foreground mb-1 block">Code</label>
+                                <Input
+                                  placeholder="e.g. marketing"
+                                  value={a.code}
+                                  disabled={isLoading}
+                                  onChange={(e) => {
+                                    const next = [...localAssignments];
+                                    next[idx] = { ...next[idx], code: e.target.value };
+                                    setLocalAssignments(next);
+                                  }}
+                                  className="font-mono text-sm"
+                                />
+                              </div>
+                              <div className="flex-1 min-w-[160px]">
+                                <label className="text-xs text-muted-foreground mb-1 block">Team</label>
+                                <Select
+                                  value={a.team_id}
+                                  disabled={isLoading}
+                                  onValueChange={(teamId) => {
+                                    const next = [...localAssignments];
+                                    next[idx] = { ...next[idx], team_id: teamId };
+                                    setLocalAssignments(next);
+                                  }}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select team" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {teamsList.map((t: { id: string; name: string }) => (
+                                      <SelectItem key={t.id} value={t.id}>
+                                        {t.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive hover:text-destructive mt-6"
+                                disabled={isLoading}
+                                onClick={() => setLocalAssignments(localAssignments.filter((_, i) => i !== idx))}
+                              >
+                                <Trash2 className="size-4" />
+                              </Button>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      </ScrollArea>
                       <Button
                         type="button"
                         variant="outline"
@@ -317,8 +338,8 @@ export default function AccessAgentFormModal({
               )}
             </form>
           </Form>
-        </ScrollArea>
-        <div className="flex justify-end gap-2 pt-4 border-t">
+        </div>
+        <div className="flex shrink-0 justify-end gap-2 pt-4 border-t">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isLoading}>
             Cancel
           </Button>

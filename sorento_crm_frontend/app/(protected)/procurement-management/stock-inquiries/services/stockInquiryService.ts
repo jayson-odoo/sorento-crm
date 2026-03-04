@@ -108,6 +108,48 @@ export async function deleteStockInquiry(id: string): Promise<void> {
     const error = await response
       .json()
       .catch(() => ({ message: 'Failed to delete stock inquiry' }));
-    throw new Error(error.message);
+    throw new Error(error.detail || error.message);
   }
+}
+
+export async function bulkDeleteStockInquiries(
+  ids: string[],
+): Promise<{ message: string; deleted_count: number }> {
+  const response = await apiFetch('/api/v1/procurement/stock-inquiries/bulk', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to bulk delete stock inquiries' }));
+    throw new Error(error.detail || error.message);
+  }
+  return response.json();
+}
+
+export interface ViewLinkResponse {
+  view_token: string;
+  view_url: string;
+}
+
+export async function getOrCreateStockInquiryViewLink(
+  inquiryId: string,
+  baseUrl?: string,
+): Promise<ViewLinkResponse> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${inquiryId}/view-link`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(baseUrl != null ? { base_url: baseUrl } : {}),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Failed to get view link' }));
+    const msg = typeof err.detail === 'string' ? err.detail : err.message || 'Failed to get view link';
+    throw new Error(msg);
+  }
+  return response.json();
 }

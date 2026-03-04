@@ -9,7 +9,7 @@ from app.schemas.user import RespondContactCreate, RespondContactUpdate, Respond
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.integration_service import RespondClient, IntegrationLogService
 from app.schemas.integration import IntegrationLogCreate
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, PaginationResponse
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,7 @@ class ContactService:
                     'id': str(contact.id),
                     'phone_number': contact.phone_number,
                     'name': contact.name,
+                    'user_type': contact.user_type,
                     'created_at': contact.created_at,
                     'updated_at': contact.updated_at,
                     'created_by': contact.created_by,
@@ -88,11 +89,7 @@ class ContactService:
         
         return ListResponse(
             data=contact_responses,
-            pagination={
-                "total": total,
-                "page": page,
-                "limit": limit
-            },
+            pagination=PaginationResponse(total=total, page=page, limit=limit),
             empty=total == 0
         )
     
@@ -118,7 +115,7 @@ class ContactService:
         # Check phone number uniqueness if being updated
         if 'phone_number' in update_data and update_data['phone_number'] != contact.phone_number:
             existing = self.get_contact_by_phone(update_data['phone_number'])
-            if existing and existing.id != contact_id:
+            if existing is not None and str(existing.id) != contact_id:
                 raise handle_conflict("Contact with this phone number already exists.")
         
         for key, value in update_data.items():
@@ -155,7 +152,7 @@ class ContactService:
         try:
             client = RespondClient()
             # Use phone: prefix format
-            payload = client.get_contact_by_phone(contact.phone_number)
+            payload = client.get_contact_by_phone(str(contact.phone_number))
             
             # Extract name from response - Respond.io returns firstName and lastName
             name = None
@@ -201,9 +198,9 @@ class ContactService:
             
             if name or user_type is not None:
                 if name:
-                    contact.name = name
+                    setattr(contact, "name", name)
                 if user_type is not None:
-                    contact.user_type = str(user_type).strip() if user_type is not None else None
+                    setattr(contact, "user_type", str(user_type).strip() if user_type is not None else None)
                 self.db.commit()
                 self.db.refresh(contact)
                 logger.info(
@@ -352,10 +349,11 @@ class ContactService:
     def get_or_create_contact(self, phone_number: str, name: Optional[str] = None) -> RespondContact:
         """Get existing contact or create a new one."""
         contact = self.get_contact_by_phone(phone_number)
-        if contact:
+        if contact is not None:
             # Update name if provided and different
-            if name and contact.name != name:
-                contact.name = name
+            current_name = getattr(contact, "name", None) or ""
+            if name and current_name != name:
+                setattr(contact, "name", name)
                 self.db.commit()
                 self.db.refresh(contact)
             return contact

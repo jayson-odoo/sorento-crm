@@ -11,9 +11,10 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Settings, Upload } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Settings, Upload, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import {
   DropdownMenu,
@@ -31,7 +32,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useGRNs } from '../hooks/useGRN';
 import type { GRN } from '../types/grn.types';
 import { formatDate } from '@/lib/helpers';
+import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import { GRNImportDialog } from './GRNImportDialog';
+import GRNBulkDeleteDialog from './GRNBulkDeleteDialog';
 import { importGRNListing, importGRNLines } from '../services/grnService';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -42,6 +45,8 @@ export default function GRNList() {
   const spoAllocationId = searchParams.get('spo_allocation_id');
 
   const [uploadMode, setUploadMode] = useState<'listing' | 'lines' | null>(null);
+  const [selectedGrnIds, setSelectedGrnIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -65,25 +70,49 @@ export default function GRNList() {
     router.push(`/procurement-management/grn/${grnId}`);
   };
 
-  const getPickingStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case 'draft':
-        return 'secondary';
-      case 'submitted':
-      case 'approved':
-      case 'posted':
-        return 'primary';
-      case 'rejected':
-        return 'destructive';
-      case 'closed':
-        return 'secondary';
-      default:
-        return 'secondary';
+  const toggleGrnSelection = (grnId: string) => {
+    setSelectedGrnIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(grnId)) next.delete(grnId);
+      else next.add(grnId);
+      return next;
+    });
+  };
+
+  const selectAllGrns = () => {
+    const pageGrns = data?.data ?? [];
+    if (selectedGrnIds.size === pageGrns.length) {
+      setSelectedGrnIds(new Set());
+    } else {
+      setSelectedGrnIds(new Set(pageGrns.map((g) => g.id)));
     }
   };
 
+  const pageGrns = data?.data ?? [];
+  const isAllSelected = pageGrns.length > 0 && selectedGrnIds.size === pageGrns.length;
+
   const columns = useMemo<ColumnDef<GRN>[]>(
     () => [
+      {
+        id: 'select',
+        header: () => (
+          <Checkbox
+            checked={isAllSelected}
+            onCheckedChange={selectAllGrns}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={selectedGrnIds.has(row.original.id)}
+            onCheckedChange={() => toggleGrnSelection(row.original.id)}
+            aria-label={`Select ${row.original.picking_number ?? row.original.id}`}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        size: 44,
+        enableResizing: false,
+      },
       {
         accessorKey: 'picking_number',
         header: ({ column }) => (
@@ -114,19 +143,25 @@ export default function GRNList() {
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
+        accessorKey: 'lines_count',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Number of Items" column={column} />
+        ),
+        cell: ({ row }) =>
+          row.original.lines_count != null ? String(row.original.lines_count) : '0',
+        size: 120,
+        meta: { skeleton: <Skeleton className="h-4 w-12" /> },
+      },
+      {
         accessorKey: 'picking_status',
         header: ({ column }) => (
           <DataGridColumnHeader title="Status" column={column} />
         ),
         cell: ({ row }) => {
           const status = row.original.picking_status;
-          const statusLabel = status
-            ?.split('_')
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(' ') || '-';
           return (
-            <Badge variant={getPickingStatusBadgeVariant(status)}>
-              {statusLabel}
+            <Badge variant={getStatusBadgeVariant(status)}>
+              {formatStatusLabel(status) || '-'}
             </Badge>
           );
         },
@@ -142,7 +177,7 @@ export default function GRNList() {
         size: 40,
       },
     ],
-    [],
+    [selectedGrnIds, isAllSelected],
   );
 
   const table = useReactTable({
@@ -190,6 +225,17 @@ export default function GRNList() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {selectedGrnIds.size > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setBulkDeleteDialogOpen(true)}
+                className="text-destructive hover:text-destructive"
+              >
+                <Trash2 className="size-4" />
+                Bulk Delete ({selectedGrnIds.size})
+              </Button>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="icon" className="h-8 w-8" title="Import options">
@@ -253,6 +299,15 @@ export default function GRNList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+      <GRNBulkDeleteDialog
+        open={bulkDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setBulkDeleteDialogOpen(open);
+          if (!open) setSelectedGrnIds(new Set());
+        }}
+        grnIds={Array.from(selectedGrnIds)}
+        onSuccess={() => setSelectedGrnIds(new Set())}
+      />
     </DataGrid>
   );
 }

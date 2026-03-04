@@ -15,6 +15,7 @@ import { parseExcelFile } from '@/lib/excel-utils';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
 
 export interface TemplateUploadHelpers {
   setProgress: (percent: number) => void;
@@ -24,7 +25,7 @@ export interface TemplateUploadHelpers {
 interface TemplateUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onUpload: (data: any[], helpers?: TemplateUploadHelpers) => Promise<void>;
+  onUpload: (data: any[], helpers?: TemplateUploadHelpers, file?: File) => Promise<void>;
   accept?: string;
   maxRows?: number; // If undefined, no limit
 }
@@ -40,18 +41,48 @@ export function TemplateUploadDialog({
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusLabel, setStatusLabel] = useState<string>('');
+  const [isDragging, setIsDragging] = useState(false);
+
+  const validExtensions = accept.split(',').map((ext) => ext.trim().replace(/^\./, ''));
+  const validateFile = (f: File): boolean => {
+    const fileExtension = f.name.split('.').pop()?.toLowerCase();
+    if (!fileExtension || !validExtensions.includes(fileExtension)) {
+      toast.error(`Invalid file type. Please use: ${accept}`);
+      return false;
+    }
+    return true;
+  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      // Validate file type
-      const validExtensions = accept.split(',').map(ext => ext.trim().replace('.', ''));
-      const fileExtension = selectedFile.name.split('.').pop()?.toLowerCase();
-      if (!fileExtension || !validExtensions.includes(fileExtension)) {
-        toast.error(`Invalid file type. Please upload a file with extension: ${accept}`);
-        return;
-      }
+    if (selectedFile && validateFile(selectedFile)) {
       setFile(selectedFile);
+    }
+    e.target.value = '';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isUploading) setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (isUploading) return;
+    const droppedFiles = e.dataTransfer?.files;
+    if (!droppedFiles?.length) return;
+    const droppedFile = droppedFiles[0];
+    if (validateFile(droppedFile)) {
+      setFile(droppedFile);
     }
   };
 
@@ -88,7 +119,7 @@ export function TemplateUploadDialog({
         setProgress,
         setStatus: setStatusLabel,
       };
-      await onUpload(data, helpers);
+      await onUpload(data, helpers, file);
 
       setProgress(100);
       setStatusLabel('Complete');
@@ -119,7 +150,25 @@ export function TemplateUploadDialog({
         </DialogHeader>
         <div className="space-y-4">
           {!file ? (
-            <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center">
+            <div
+              role="button"
+              tabIndex={0}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={cn(
+                'border-2 border-dashed rounded-lg p-8 text-center transition-colors',
+                isDragging
+                  ? 'border-primary bg-primary/5'
+                  : 'border-muted-foreground/25 hover:border-muted-foreground/40'
+              )}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  document.getElementById('file-upload')?.click();
+                }
+              }}
+            >
               <FileSpreadsheet className="size-12 mx-auto mb-4 text-muted-foreground" />
               <Label htmlFor="file-upload" className="cursor-pointer">
                 <Button variant="outline" asChild>
@@ -137,6 +186,9 @@ export function TemplateUploadDialog({
                 className="hidden"
               />
               <p className="text-sm text-muted-foreground mt-2">
+                {isDragging ? 'Drop your file here' : 'or drag and drop your file here'}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
                 Accepted formats: {accept}
               </p>
             </div>

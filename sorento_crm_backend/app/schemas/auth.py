@@ -54,3 +54,12 @@ class VerifyEmailRequest(BaseModel):
 class VerifyEmailResponse(BaseModel):
     message: str
 
+
+class VerifyResetTokenRequest(BaseModel):
+    token: str
+
+
+class VerifyResetTokenResponse(BaseModel):
+    valid: bool = True
+    email: str | None = None  # optional masked email for display
+

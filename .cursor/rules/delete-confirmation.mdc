@@ -1,0 +1,15 @@
+---
+description: Standard behaviour for delete actions in the app
+globs: 
+  - "**/*.tsx"
+  - "**/*.ts"
+---
+
+# Delete confirmation standard
+
+- **Every deletion in the system must show a confirmation** before performing the delete.
+- Do not use the browser’s native `confirm()` for delete. Use the app’s shared UI:
+  - Prefer **AlertDialog** (from `@/components/ui/alert-dialog`) for destructive confirmations: title “Confirm delete” (or similar), a short description (e.g. “Are you sure you want to delete …? This action cannot be undone.”), **Cancel** and **Delete** (destructive style: `className="bg-destructive text-destructive-foreground hover:bg-destructive/90"`).
+  - Alternatively use the shared **ConfirmDeleteDialog** from `@/components/common/ConfirmDeleteDialog` when the flow fits (title, description, onDelete callback).
+- For bulk deletes, show the count in the message (e.g. “Are you sure you want to delete 5 user(s)?”).
+- Keep copy consistent: “Confirm delete”, “This action cannot be undone” where applicable.

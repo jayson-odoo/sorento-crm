@@ -1,7 +1,8 @@
 """Promotion attachments API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Any, Optional
+
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.marketing_service import PromotionAttachmentService
@@ -10,6 +11,12 @@ from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
+
+
+def _promotion_attachment_to_response(pa: Any) -> dict:
+    """Serialize promotion attachment without mutating stored attachment file_path."""
+    data = PromotionAttachmentResponse.model_validate(pa).model_dump()
+    return data
 
 
 @router.get("/", response_model=ListResponse[PromotionAttachmentResponse])
@@ -34,6 +41,7 @@ async def get_promotion_attachments(
             promotion_id=promotion_id,
             attachment_id=attachment_id
         )
+        result["data"] = [_promotion_attachment_to_response(pa) for pa in result["data"]]
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -49,7 +57,7 @@ async def get_promotion_attachment(
     try:
         service = PromotionAttachmentService(db)
         promotion_attachment = service.get_promotion_attachment(promotion_attachment_id)
-        return promotion_attachment
+        return _promotion_attachment_to_response(promotion_attachment)
     except HTTPException:
         raise
     except Exception as e:
@@ -67,7 +75,7 @@ async def create_promotion_attachment(
         service = PromotionAttachmentService(db)
         created_by = str(current_user.get("id", "")) if current_user else None
         promotion_attachment = service.create_promotion_attachment(promotion_attachment_data, created_by=created_by)
-        return promotion_attachment
+        return _promotion_attachment_to_response(promotion_attachment)
     except HTTPException:
         raise
     except Exception as e:
@@ -85,7 +93,7 @@ async def update_promotion_attachment(
     try:
         service = PromotionAttachmentService(db)
         promotion_attachment = service.update_promotion_attachment(promotion_attachment_id, promotion_attachment_data)
-        return promotion_attachment
+        return _promotion_attachment_to_response(promotion_attachment)
     except HTTPException:
         raise
     except Exception as e:
@@ -119,6 +127,6 @@ async def get_promotion_attachments_by_promotion(
     try:
         service = PromotionAttachmentService(db)
         promotion_attachments = service.get_promotion_attachments_by_promotion(promotion_id)
-        return promotion_attachments
+        return [_promotion_attachment_to_response(pa) for pa in promotion_attachments]
     except Exception as e:
         raise handle_internal_error(str(e))

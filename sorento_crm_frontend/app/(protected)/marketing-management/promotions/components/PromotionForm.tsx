@@ -37,6 +37,14 @@ import RecordNavigation from '@/components/common/RecordNavigation';
 type AccessLevel = 'dealer' | 'end_user';
 const ACCESS_LEVELS: AccessLevel[] = ['dealer', 'end_user'];
 
+/** Safe date to YYYY-MM-DD for <input type="date">; avoids Invalid time value when date is invalid. */
+function toDateInputValue(value: Date | string | null | undefined): string {
+  if (value == null) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString().split('T')[0];
+}
+
 interface PromotionFormProps {
   promotionId?: string;
   onSuccess?: () => void;
@@ -84,13 +92,15 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
       // Use setTimeout to ensure SelectContent items are rendered before form reset
       // This is especially important when navigating from list view
       const timeoutId = setTimeout(() => {
+        const startDate = new Date(promotion.start_date);
+        const endDate = new Date(promotion.end_date);
         form.reset({
           promo_code: promotion.promo_code,
           name: promotion.name,
           promo_type: promotion.promo_type,
           description: promotion.description || '',
-          start_date: new Date(promotion.start_date),
-          end_date: new Date(promotion.end_date),
+          start_date: Number.isNaN(startDate.getTime()) ? new Date() : startDate,
+          end_date: Number.isNaN(endDate.getTime()) ? new Date() : endDate,
           is_active: promotion.is_active,
           access_levels: promotion.access_levels && promotion.access_levels.length > 0
             ? (promotion.access_levels as AccessLevel[])
@@ -186,11 +196,10 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                       <Input
                         placeholder="PROMO-001"
                         {...field}
-                        disabled={isEditMode}
                       />
                     </FormControl>
                     <FormDescription>
-                      Unique promotion identifier (alphanumeric, dashes, underscores only)
+                      Unique promotion identifier (alphanumeric, dashes, underscores only). Editable; must not duplicate another promotion.
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -302,8 +311,11 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                       <Input
                         type="date"
                         {...field}
-                        value={field.value ? field.value.toISOString().split('T')[0] : ''}
-                        onChange={(e) => field.onChange(new Date(e.target.value))}
+                        value={toDateInputValue(field.value)}
+                        onChange={(e) => {
+                          const d = e.target.value ? new Date(e.target.value) : undefined;
+                          field.onChange(d && !Number.isNaN(d.getTime()) ? d : field.value);
+                        }}
                       />
                     </FormControl>
                     <FormMessage />
@@ -321,8 +333,11 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                       <Input
                         type="date"
                         {...field}
-                        value={field.value ? field.value.toISOString().split('T')[0] : ''}
-                        onChange={(e) => field.onChange(new Date(e.target.value))}
+                        value={toDateInputValue(field.value)}
+                        onChange={(e) => {
+                          const d = e.target.value ? new Date(e.target.value) : undefined;
+                          field.onChange(d && !Number.isNaN(d.getTime()) ? d : field.value);
+                        }}
                       />
                     </FormControl>
                     <FormMessage />

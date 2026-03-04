@@ -5,8 +5,83 @@ from apscheduler.triggers.interval import IntervalTrigger
 from app.database import SessionLocal
 from app.services.integration_service import IntegrationLogService
 from app.services.queue_service import get_queue
+from app.services.scheduled_task_service import (
+    run_due_tasks,
+    register_handler,
+)
+from app.services.respond_sync_handler import run_respond_contacts_sync
 
 logger = logging.getLogger(__name__)
+
+
+def _handler_integration_log_retry(db, task):
+    """Handler for integration_log_retry: process pending integration logs."""
+    service = IntegrationLogService(db)
+    result = service.process_pending_logs()
+    return {
+        "processed": result.get("processed", 0),
+        "succeeded": result.get("succeeded", 0),
+        "failed": result.get("failed", 0),
+    }
+
+
+def _handler_import_job_processor(db, task):
+    """Handler for import_job_processor: process RQ import jobs (no db from task)."""
+    result = _run_import_jobs_impl()
+    return result
+
+
+def _run_import_jobs_impl():
+    """Logic of process_import_jobs, returns summary dict."""
+    from rq.job import Job
+    from app.services.queue_service import redis_conn
+
+    queue = get_queue("imports")
+    queue_length = len(queue)
+    if queue_length == 0:
+        return {"processed": 0, "queued": 0}
+    all_job_ids = queue.get_job_ids()
+    if not all_job_ids:
+        return {"processed": 0, "queued": 0}
+    queued_jobs = []
+    for job_id in all_job_ids:
+        try:
+            job = Job.fetch(job_id, connection=redis_conn)
+            if job.get_status() == "queued":
+                queued_jobs.append(job)
+            else:
+                try:
+                    queue.remove(job)
+                except Exception:
+                    pass
+        except Exception:
+            continue
+    if not queued_jobs:
+        return {"processed": 0, "queued": 0}
+    max_jobs_per_run = 2
+    processed = 0
+    for job in queued_jobs[:max_jobs_per_run]:
+        try:
+            job.set_status("started")
+            job.save()
+            result = job.func(*job.args, **job.kwargs)
+            job.set_status("finished")
+            job.save()
+            try:
+                queue.remove(job)
+            except Exception:
+                pass
+            processed += 1
+        except Exception as e:
+            logger.error("Error processing import job %s: %s", job.id, e, exc_info=True)
+            try:
+                job.set_status("failed")
+                job.meta["exc_info"] = str(e)
+                job.save()
+                queue.remove(job)
+            except Exception:
+                pass
+    return {"processed": processed, "queued": len(queued_jobs)}
 
 
 def process_pending_integration_logs():
@@ -44,13 +119,15 @@ def process_import_jobs():
         # Get the imports queue
         queue = get_queue('imports')
         
-        # Check if there are any jobs in the queue
+        # Check if there are any job IDs in the RQ (Redis) queue.
+        # Note: This is the RQ queue, not the import_jobs DB table. Old processed
+        # jobs are removed below so this count stays accurate.
         queue_length = len(queue)
         if queue_length == 0:
-            logger.debug("Queue is empty, no jobs to process")
+            logger.debug("RQ queue is empty, no jobs to process")
             return
         
-        logger.info(f"Found {queue_length} job(s) in queue, checking for queued jobs...")
+        logger.debug(f"RQ queue has {queue_length} job ID(s), checking for queued jobs...")
         
         # Get all job IDs from the queue
         all_job_ids = queue.get_job_ids()
@@ -58,13 +135,19 @@ def process_import_jobs():
             logger.debug("No job IDs found in queue")
             return
         
-        # Filter for queued jobs only
+        # Filter for queued jobs only; remove stale (finished/failed) job IDs from queue
         queued_jobs = []
         for job_id in all_job_ids:
             try:
                 job = Job.fetch(job_id, connection=redis_conn)
                 if job.get_status() == 'queued':
                     queued_jobs.append(job)
+                else:
+                    # Already processed or failed; remove from queue so len(queue) is accurate
+                    try:
+                        queue.remove(job)
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.debug(f"Could not fetch job {job_id}: {str(e)}")
                 continue
@@ -92,21 +175,26 @@ def process_import_jobs():
                 # The job function handles its own database job status updates
                 result = job.func(*job.args, **job.kwargs)
                 
-                # Mark job as finished in RQ
+                # Mark job as finished in RQ and remove from queue so queue length stays accurate
                 job.set_status('finished')
                 job.save()
+                try:
+                    queue.remove(job)
+                except Exception as remove_err:
+                    logger.debug(f"Could not remove job {job.id} from queue: {remove_err}")
                 
                 jobs_processed += 1
                 logger.info(f"Successfully processed import job {job.id} via scheduler")
             except Exception as e:
                 logger.error(f"Error processing import job {job.id}: {str(e)}", exc_info=True)
-                # Try to mark job as failed
+                # Try to mark job as failed and remove from queue
                 try:
                     job.set_status('failed')
                     job.meta['exc_info'] = str(e)
                     job.save()
+                    queue.remove(job)
                 except Exception as save_error:
-                    logger.error(f"Could not mark job {job.id} as failed: {str(save_error)}")
+                    logger.debug(f"Could not update/remove job {job.id}: {save_error}")
         
         if jobs_processed > 0:
             logger.info(f"Scheduler successfully processed {jobs_processed} import job(s) from queue")
@@ -117,35 +205,38 @@ def process_import_jobs():
         logger.error(f"Error processing import jobs in scheduler: {str(e)}", exc_info=True)
 
 
+def _scheduled_tasks_heartbeat():
+    """Heartbeat: run due DB-configured scheduled tasks and persist run logs."""
+    db = SessionLocal()
+    try:
+        run_due_tasks(db)
+    except Exception as e:
+        logger.error("Scheduled tasks heartbeat failed: %s", str(e), exc_info=True)
+    finally:
+        db.close()
+
+
 def start_scheduler():
     """
     Start the APScheduler background scheduler.
-    
-    Returns:
-        BackgroundScheduler instance
+    Uses a single heartbeat to execute due DB-configured tasks; handlers are registered below.
     """
+    # Register handlers for task keys (used when tasks are due in DB)
+    register_handler("integration_log_retry", _handler_integration_log_retry)
+    register_handler("import_job_processor", _handler_import_job_processor)
+    register_handler("respond_contacts_sync", run_respond_contacts_sync)
+
     scheduler = BackgroundScheduler()
-    
-    # Schedule integration log processing every 2 minutes
+
+    # Single heartbeat every 60s: query due scheduled_tasks, run handlers, persist run logs
     scheduler.add_job(
-        process_pending_integration_logs,
-        trigger=IntervalTrigger(minutes=2),
-        id='process_integration_logs',
-        name='Process Pending Integration Logs',
-        replace_existing=True
+        _scheduled_tasks_heartbeat,
+        trigger=IntervalTrigger(seconds=60),
+        id="scheduled_tasks_heartbeat",
+        name="Scheduled tasks heartbeat",
+        replace_existing=True,
     )
-    
-    # Schedule import job processing every 5 seconds (for faster response)
-    # This processes jobs from the Redis queue
-    scheduler.add_job(
-        process_import_jobs,
-        trigger=IntervalTrigger(seconds=5),
-        id='process_import_jobs',
-        name='Process Import Jobs',
-        replace_existing=True
-    )
-    
+
     scheduler.start()
-    logger.info("Scheduler started: integration logs (every 2 min), import jobs (every 5 sec)")
-    
+    logger.info("Scheduler started: scheduled tasks heartbeat (every 60s)")
     return scheduler

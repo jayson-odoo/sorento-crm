@@ -119,24 +119,46 @@ export default function Page() {
     mode: 'onSubmit',
   });
 
+  // When settings are refetched (e.g. after save), reset form so saved values show
+  useEffect(() => {
+    if (!settings) return;
+    form.reset({
+      ...settings,
+      logoFile: null,
+      logoAction: '',
+      name: settings.name ?? '',
+      active: settings.active ?? true,
+      address: settings.address ?? '',
+      websiteURL: settings.websiteURL ?? '',
+      language: settings.language ?? 'en',
+      supportEmail: settings.supportEmail ?? '',
+      supportPhone: settings.supportPhone ?? '',
+      currency: settings.currency ?? 'MYR',
+      currencyFormat: settings.currencyFormat ?? 'RM {value}',
+      timezone: settings.timezone ?? 'Europe/London',
+    });
+  }, [settings, form]);
+
   const mutation = useMutation({
     mutationFn: async (values: GeneralSettingsSchemaType) => {
-      const formData = new FormData();
-
-      Object.keys(values).forEach((key) => {
-        if (key === 'logoFile' && values.logoFile instanceof File) {
-          formData.append('logoFile', values.logoFile);
-        } else if (key !== 'logoFile') {
-          formData.append(
-            key,
-            values[key as keyof GeneralSettingsSchemaType] as string,
-          );
-        }
-      });
+      // Send JSON with snake_case so backend receives valid SystemSettingUpdate
+      const body: Record<string, unknown> = {
+        name: values.name,
+        active: values.active,
+        address: values.address ?? null,
+        website_url: values.websiteURL ?? null,
+        support_email: values.supportEmail,
+        support_phone: values.supportPhone ?? null,
+        language: values.language,
+        timezone: values.timezone,
+        currency: values.currency,
+        currency_format: values.currencyFormat,
+      };
 
       const response = await apiFetch('/api/user-management/settings/general', {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {

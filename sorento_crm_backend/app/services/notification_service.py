@@ -84,6 +84,52 @@ class NotificationService:
             logger.warning("Failed to enqueue notification deliveries: %s", e)
         return notification
 
+    def create_in_app_only(
+        self,
+        user_id: str,
+        type: str,
+        title: str,
+        body: Optional[str] = None,
+        source_entity_type: Optional[str] = None,
+        source_entity_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+    ) -> Optional[Notification]:
+        """Create a notification with in-app delivery only (no email or web_push). Used when sending one email to many recipients."""
+        if source_entity_type and source_entity_id and event_type:
+            existing = (
+                self.db.query(Notification)
+                .filter(
+                    Notification.user_id == user_id,
+                    Notification.source_entity_type == source_entity_type,
+                    Notification.source_entity_id == source_entity_id,
+                    Notification.event_type == event_type,
+                )
+                .first()
+            )
+            if existing:
+                return existing
+        notification = Notification(
+            user_id=user_id,
+            type=type,
+            title=title,
+            body=body,
+            data={},
+            source_entity_type=source_entity_type,
+            source_entity_id=source_entity_id,
+            event_type=event_type,
+        )
+        self.db.add(notification)
+        self.db.flush()
+        self.db.add(NotificationDelivery(
+            notification_id=notification.id,
+            channel="in_app",
+            status="sent",
+            sent_at=datetime.utcnow(),
+        ))
+        self.db.commit()
+        self.db.refresh(notification)
+        return notification
+
     def list(
         self,
         user_id: str,

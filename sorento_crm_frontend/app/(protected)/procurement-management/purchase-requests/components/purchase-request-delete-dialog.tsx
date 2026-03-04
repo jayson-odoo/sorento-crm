@@ -55,11 +55,11 @@ export default function PurchaseRequestDeleteDialog({
             Are you sure you want to delete this record? This action cannot be
             undone.
             {(request.customer_name || request.project_title) && (
-              <div className="mt-2">
+              <span className="mt-2 block">
                 <strong>
                   {request.customer_name || request.project_title}
                 </strong>
-              </div>
+              </span>
             )}
           </AlertDialogDescription>
         </AlertDialogHeader>

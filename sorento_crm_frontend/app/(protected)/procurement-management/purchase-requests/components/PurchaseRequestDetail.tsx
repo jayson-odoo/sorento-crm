@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Command,
   CommandCheck,
@@ -40,7 +41,7 @@ import {
 } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { usePurchaseRequest, usePurchaseRequestNeighbours } from '../hooks/usePurchaseRequests';
+import { usePurchaseRequest, usePurchaseRequestNeighbours, useUpdatePurchaseRequestAndReply } from '../hooks/usePurchaseRequests';
 import { formatDate } from '@/lib/helpers';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -49,7 +50,8 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect } from '../services/purchaseRequestService';
+import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink } from '../services/purchaseRequestService';
+import { exportPurchaseRequestOrSponsorshipToExcel } from '../lib/purchase-request-excel-export';
 import { toast } from 'sonner';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
@@ -90,10 +92,16 @@ export default function PurchaseRequestDetail({
   const [approverEmail, setApproverEmail] = useState('');
   const [approvalLink, setApprovalLink] = useState<string | null>(null);
   const [approvalSending, setApprovalSending] = useState(false);
+  const [approvalAction, setApprovalAction] = useState<'create' | 'send' | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [approverComboboxOpen, setApproverComboboxOpen] = useState(false);
   const [settingPending, setSettingPending] = useState(false);
+  const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
+  const [replyMessage, setReplyMessage] = useState('');
+  const [exportingExcel, setExportingExcel] = useState(false);
+  const [viewLinkCopying, setViewLinkCopying] = useState(false);
+  const updateAndReplyMutation = useUpdatePurchaseRequestAndReply();
 
   const { data: usersForApprover = [] } = useQuery({
     queryKey: ['users-for-approver'],
@@ -208,11 +216,88 @@ export default function PurchaseRequestDetail({
                 {settingPending ? 'Updating…' : 'Change to pending approval'}
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem
+              disabled={viewLinkCopying}
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!requestId) return;
+                setViewLinkCopying(true);
+                try {
+                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                  const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
+                  if (view_url) {
+                    await navigator.clipboard.writeText(view_url);
+                    toast.success('View link copied to clipboard');
+                  } else {
+                    toast.error('Could not generate view link');
+                  }
+                } catch {
+                  toast.error('Could not generate view link');
+                } finally {
+                  setViewLinkCopying(false);
+                }
+              }}
+            >
+              <Link2 className="size-4" />
+              {viewLinkCopying ? 'Generating…' : 'Copy view link'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={exportingExcel}
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!request) return;
+                setExportingExcel(true);
+                try {
+                  await exportPurchaseRequestOrSponsorshipToExcel(request);
+                  toast.success(
+                    request.request_type === 'sponsorship_form'
+                      ? 'Sponsorship form exported to Excel'
+                      : 'Purchase request exported to Excel',
+                  );
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : 'Export failed');
+                } finally {
+                  setExportingExcel(false);
+                }
+              }}
+            >
+              <FileDown className="size-4" />
+              {exportingExcel ? 'Exporting…' : 'Export to Excel'}
+            </DropdownMenuItem>
+            {request.respond_inbox_url && (
+              <DropdownMenuItem
+                disabled={updateAndReplyMutation.isPending}
+                onClick={async () => {
+                  const typeLabelVal =
+                    REQUEST_TYPE_LABELS[request.request_type] ?? request.request_type;
+                  let defaultReply =
+                    `This is the form number ${request.request_number ?? ''} for ${typeLabelVal} for project title ${request.project_title ?? ''}.`;
+                  try {
+                    if (requestId) {
+                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                      const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
+                      if (view_url) {
+                        defaultReply += `\n\nView full details: ${view_url}`;
+                      }
+                    }
+                  } catch {
+                    toast.error('Could not generate view link. You can still send the message.');
+                  }
+                  setReplyMessage(defaultReply);
+                  setUpdateAndReplyDialogOpen(true);
+                }}
+              >
+                <MessageSquare className="size-4" />
+                {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
+              </DropdownMenuItem>
+            )}
           </DetailActionsMenu>
           <RecordNavigation
             basePath={basePath}
             prevId={neighbours?.prev_id ?? null}
             nextId={neighbours?.next_id ?? null}
+            currentIndex={(neighbours?.current_index ?? 1) - 1}
+            totalCount={neighbours?.total_count ?? undefined}
             ariaLabel="purchase request"
           />
           <Button
@@ -234,7 +319,7 @@ export default function PurchaseRequestDetail({
           <DialogHeader>
             <DialogTitle>Send for approval</DialogTitle>
             <DialogDescription>
-              Choose a user to pull their email, or enter an email if the approver is not in the system. A one-time approval link will be created.
+              Choose a user to pull their email, or enter an email if the approver is not in the system. Create a one-time approval link only, or create and send it by email to the approver.
             </DialogDescription>
           </DialogHeader>
           {!approvalLink ? (
@@ -323,15 +408,20 @@ export default function PurchaseRequestDetail({
                   Cancel
                 </Button>
                 <Button
+                  variant="outline"
                   disabled={!approverEmail.trim() || approvalSending}
                   onClick={async () => {
                     setApprovalError(null);
                     setApprovalSending(true);
+                    setApprovalAction('create');
                     try {
+                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
                       const res = await sendApprovalLink(requestId, {
                         approver_email: approverEmail.trim(),
                         approver_user_id: approverUserId || undefined,
                         expires_hours: 24,
+                        send_email: false,
+                        base_url: baseUrl,
                       });
                       const url = res.approval_url.startsWith('http')
                         ? res.approval_url
@@ -340,14 +430,53 @@ export default function PurchaseRequestDetail({
                           : res.approval_url;
                       setApprovalLink(url);
                       void queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+                      toast.success('Approval link created. Copy the link below to share.');
                     } catch (e) {
                       setApprovalError(e instanceof Error ? e.message : 'Failed to create link');
                     } finally {
                       setApprovalSending(false);
+                      setApprovalAction(null);
                     }
                   }}
                 >
-                  {approvalSending ? 'Creating...' : 'Create link'}
+                  {approvalSending && approvalAction === 'create' ? 'Creating…' : 'Create link only'}
+                </Button>
+                <Button
+                  disabled={!approverEmail.trim() || approvalSending}
+                  onClick={async () => {
+                    setApprovalError(null);
+                    setApprovalSending(true);
+                    setApprovalAction('send');
+                    try {
+                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                      const res = await sendApprovalLink(requestId, {
+                        approver_email: approverEmail.trim(),
+                        approver_user_id: approverUserId || undefined,
+                        expires_hours: 24,
+                        send_email: true,
+                        base_url: baseUrl,
+                      });
+                      const url = res.approval_url.startsWith('http')
+                        ? res.approval_url
+                        : typeof window !== 'undefined'
+                          ? `${window.location.origin}${res.approval_url.startsWith('/') ? res.approval_url : `/${res.approval_url}`}`
+                          : res.approval_url;
+                      setApprovalLink(url);
+                      void queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+                      if (res.email_sent) {
+                        toast.success(`Approval link created and sent to ${approverEmail.trim()}`);
+                      } else if (res.email_error) {
+                        toast.warning(`Link created but email could not be sent: ${res.email_error}. You can copy the link below.`);
+                      }
+                    } catch (e) {
+                      setApprovalError(e instanceof Error ? e.message : 'Failed to create link');
+                    } finally {
+                      setApprovalSending(false);
+                      setApprovalAction(null);
+                    }
+                  }}
+                >
+                  {approvalSending && approvalAction === 'send' ? 'Creating & sending…' : 'Create link & send email'}
                 </Button>
               </DialogFooter>
             </>
@@ -377,6 +506,61 @@ export default function PurchaseRequestDetail({
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Update & Reply</DialogTitle>
+            <DialogDescription>
+              This message will be sent to the conversation in Respond. You can edit it below before
+              sending.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="reply_message">Message to send</Label>
+              <Textarea
+                id="reply_message"
+                value={replyMessage}
+                onChange={(e) => setReplyMessage(e.target.value)}
+                placeholder="This is the form number ... for ... for project title ..."
+                rows={4}
+                className="resize-none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setUpdateAndReplyDialogOpen(false)}
+              disabled={updateAndReplyMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={updateAndReplyMutation.isPending || !replyMessage.trim()}
+              onClick={async () => {
+                if (!requestId) return;
+                try {
+                  await updateAndReplyMutation.mutateAsync({
+                    id: requestId,
+                    data: {
+                      request_number: request.request_number ?? undefined,
+                      reply_message: replyMessage.trim(),
+                    },
+                  });
+                  setUpdateAndReplyDialogOpen(false);
+                  setReplyMessage('');
+                } catch {
+                  // toast handled by mutation
+                }
+              }}
+            >
+              {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -420,6 +604,10 @@ export default function PurchaseRequestDetail({
                           ? 'Rejected'
                           : request.approval_status}
                 </Badge>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Form number</p>
+                <p className="font-medium">{request.request_number || '—'}</p>
               </div>
               {request.approved_at && (
                 <div>

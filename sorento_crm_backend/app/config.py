@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # Redis Queue
     redis_url: str = "redis://localhost:6379/0"
 
+    # Frontend app URL (for password reset and other links in emails)
+    frontend_base_url: str | None = None
+
     # Feature flags (progressive rollout)
     notifications_v1_enabled: bool = True  # NOTIFICATIONS_V1_ENABLED
 

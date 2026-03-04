@@ -15,7 +15,8 @@ import {
 import { Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridTable } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { Input } from '@/components/ui/input';
@@ -92,8 +93,8 @@ export default function PickingLinesList() {
       {
         id: 'location',
         accessorFn: (row) =>
-          row.original.source_warehouse?.warehouse_code ??
-          row.original.destination_warehouse?.warehouse_code ??
+          row.source_warehouse?.warehouse_code ??
+          row.destination_warehouse?.warehouse_code ??
           '',
         header: 'Location',
         cell: ({ row }) =>

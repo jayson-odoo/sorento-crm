@@ -26,50 +26,70 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/layout.js"
     ],
-    "/(protected)/page": [
+    "/(protected)/system-management/scheduled-tasks/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/page.js"
+      "static/chunks/app/(protected)/system-management/scheduled-tasks/[id]/page.js"
     ],
     "/api/auth/token/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/token/route.js"
     ],
-    "/(protected)/procurement-management/grn/page": [
+    "/(protected)/user-management/contact-access-agents/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/grn/page.js"
+      "static/chunks/app/(protected)/user-management/contact-access-agents/page.js"
     ],
-    "/(protected)/procurement-management/grn/[id]/page": [
+    "/(protected)/user-management/contacts/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/grn/[id]/page.js"
+      "static/chunks/app/(protected)/user-management/contacts/[id]/page.js"
     ],
-    "/(protected)/procurement-management/grn/[id]/edit/page": [
+    "/(protected)/user-management/access-agents/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/grn/[id]/edit/page.js"
+      "static/chunks/app/(protected)/user-management/access-agents/page.js"
     ],
-    "/(protected)/procurement-management/spo-allocations/page": [
+    "/(protected)/user-management/access-agents/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/spo-allocations/page.js"
+      "static/chunks/app/(protected)/user-management/access-agents/[id]/page.js"
     ],
-    "/(protected)/procurement-management/spo-allocations/[id]/page": [
+    "/api/user-management/access-agents/[id]/contact-access/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/spo-allocations/[id]/page.js"
+      "static/chunks/app/api/user-management/access-agents/[id]/contact-access/route.js"
     ],
-    "/(protected)/master-data-management/products/layout": [
+    "/(protected)/user-management/users/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/layout.js"
+      "static/chunks/app/(protected)/user-management/users/page.js"
     ],
-    "/(protected)/master-data-management/products/page": [
+    "/(protected)/system-management/scheduled-tasks/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/page.js"
+      "static/chunks/app/(protected)/system-management/scheduled-tasks/page.js"
+    ],
+    "/(protected)/integration-management/integration-logs/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/integration-management/integration-logs/page.js"
+    ],
+    "/(protected)/integration-management/integration-logs/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/integration-management/integration-logs/[id]/page.js"
+    ],
+    "/(auth)/reset-password/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(auth)/reset-password/page.js"
+    ],
+    "/api/auth/reset-password/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/auth/reset-password/route.js"
     ]
   }
 }

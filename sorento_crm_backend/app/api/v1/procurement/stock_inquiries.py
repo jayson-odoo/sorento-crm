@@ -1,15 +1,23 @@
 """Stock inquiries API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
+
 from app.database import get_db
-from app.dependencies import get_current_user_or_api_key
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.procurement_service import StockInquiryService
 from app.schemas.procurement import StockInquiryCreate, StockInquiryUpdate, StockInquiryResponse
+from app.schemas.procurement import ViewLinkRequest, ViewLinkResponse
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
+from app.config import settings as app_settings
 
 router = APIRouter()
+
+
+class BulkDeleteStockInquiriesRequest(BaseModel):
+    ids: list[str]
 
 
 def _respond_user_id_from_current_user(current_user: dict) -> str:
@@ -82,6 +90,28 @@ async def get_stock_inquiry(
         raise handle_internal_error(str(e))
 
 
+@router.post("/{inquiry_id}/view-link", response_model=ViewLinkResponse)
+async def get_or_create_stock_inquiry_view_link(
+    inquiry_id: str,
+    data: Optional[ViewLinkRequest] = Body(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get or create a shareable view link for this stock inquiry (no login required to view)."""
+    try:
+        service = StockInquiryService(db)
+        service.get_inquiry(inquiry_id)  # ensure exists and user can access
+        token = service.get_or_create_view_token(inquiry_id)
+        db.commit()
+        base = ((data.base_url if data else None) or getattr(app_settings, "frontend_base_url", "") or "").rstrip("/")
+        view_url = f"{base}/view/stock-inquiry?token={token}" if base else f"/view/stock-inquiry?token={token}"
+        return ViewLinkResponse(view_token=token, view_url=view_url)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.post("/", response_model=StockInquiryResponse, status_code=status.HTTP_201_CREATED)
 async def create_stock_inquiry(
     inquiry_data: StockInquiryCreate,
@@ -147,6 +177,22 @@ async def update_stock_inquiry_and_reply(
         raise handle_internal_error(str(e))
 
 
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_stock_inquiries(
+    body: BulkDeleteStockInquiriesRequest = Body(...),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db)
+):
+    """Bulk delete stock inquiries by ID."""
+    try:
+        service = StockInquiryService(db)
+        return service.bulk_delete_inquiries(body.ids)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.delete("/{inquiry_id}", status_code=status.HTTP_200_OK)
 async def delete_stock_inquiry(
     inquiry_id: str,
@@ -156,8 +202,7 @@ async def delete_stock_inquiry(
     """Delete a stock inquiry."""
     try:
         service = StockInquiryService(db)
-        # Implement delete logic
-        return {"message": "Stock inquiry deleted successfully"}
+        return service.delete_inquiry(inquiry_id)
     except HTTPException:
         raise
     except Exception as e:

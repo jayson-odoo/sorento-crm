@@ -19,9 +19,11 @@ def create_form(
     db: Session = Depends(get_db),
 ):
     """
-    Create a form from external payload. Only form (code, name, description, language) is used;
+    Create a form from external payload. Only form (code, name, description, language, attachment_id) is used;
     form_sections and form_fields are accepted but ignored.
-    If form code already exists, returns success with already_existed=true and message about duplication.
+    When attachment_id is provided, the form is linked to that attachment (forms.attachment_id);
+    the attachment must exist. If form code already exists, returns success with already_existed=true
+    and message about duplication.
     """
     f = payload.form
     form_data = FormCreate(

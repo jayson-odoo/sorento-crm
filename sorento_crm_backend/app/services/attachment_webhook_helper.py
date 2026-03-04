@@ -4,12 +4,33 @@ import json
 import logging
 import threading
 from typing import Optional
+from urllib.parse import urlparse, unquote
 from sqlalchemy.orm import Session
 
 from app.services.integration_service import IntegrationLogService
 from app.schemas.integration import IntegrationLogCreate
 
 logger = logging.getLogger(__name__)
+
+
+def _build_signed_attachment_url(file_path: Optional[str]) -> Optional[str]:
+    """Build a short-lived signed URL for webhook consumers."""
+    if not file_path:
+        return file_path
+    try:
+        from app.services.s3_service import S3Service
+
+        s3 = S3Service()
+        if file_path.startswith(("https://", "http://")):
+            parsed = urlparse(file_path)
+            if parsed.query and "Policy=" in parsed.query and "Key-Pair-Id=" in parsed.query:
+                return file_path
+            key = unquote((parsed.path or "").lstrip("/"))
+            return s3.get_signed_url(key) if key else file_path
+        return s3.get_signed_url(unquote(file_path))
+    except Exception as e:
+        logger.warning("Could not generate signed attachment URL for webhook: %s", e)
+        return file_path
 
 
 def create_and_send_webhook(
@@ -40,9 +61,12 @@ def create_and_send_webhook(
         status="pending",
     )
     integration_log = integration_service.create_integration_log(integration_log_data)
+    signed_attachment_url = _build_signed_attachment_url(getattr(attachment, "file_path", None))
     webhook_payload = {
         "integration_log_id": integration_log.id,
-        "s3_url": attachment.file_path,
+        "attachment_url": signed_attachment_url,
+        "s3_url": signed_attachment_url,
+        "file_path": attachment.file_path,
         "attachment_id": attachment.id,
         "attachment_filename": attachment.original_filename,
         "attachment_mime_type": attachment.mime_type,

@@ -26,6 +26,7 @@ import { getImportJob } from '../services/importJobService';
 import { useImportJobs, useCancelImportJob } from '../hooks/useImportJobs';
 import type { ImportJob } from '../types/importJob.types';
 import { toast } from 'sonner';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   order_import: 'Order Import',
@@ -59,23 +60,6 @@ export default function ImportJobsList() {
   });
   const cancelJobMutation = useCancelImportJob();
 
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, { variant: 'primary' | 'secondary' | 'destructive' | 'outline'; appearance?: 'ghost' }> = {
-      pending: { variant: 'outline' },
-      queued: { variant: 'secondary' },
-      started: { variant: 'secondary', appearance: 'ghost' },
-      finished: { variant: 'primary' },
-      failed: { variant: 'destructive' },
-      cancelled: { variant: 'outline' },
-    };
-    const config = variants[status] || { variant: 'secondary' };
-    return (
-      <Badge {...config}>
-        {status.toUpperCase()}
-      </Badge>
-    );
-  };
-
   const columns = useMemo<ColumnDef<ImportJob>[]>(
     () => [
       {
@@ -93,7 +77,11 @@ export default function ImportJobsList() {
       {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        cell: ({ row }) => getStatusBadge(row.original.status),
+        cell: ({ row }) => (
+          <Badge variant={getStatusBadgeVariant(row.original.status)}>
+            {(row.original.status || '').toUpperCase()}
+          </Badge>
+        ),
         size: 120,
         minSize: 80,
       },

@@ -19,13 +19,11 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { LoaderCircleIcon } from 'lucide-react';
-import { RecaptchaPopover } from '@/components/common/recaptcha-popover';
 
 export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
-  const [showRecaptcha, setShowRecaptcha] = useState(false);
 
   const formSchema = z.object({
     email: z.string().email({ message: 'Please enter a valid email address.' }),
@@ -43,36 +41,27 @@ export default function Page() {
     const result = await form.trigger();
     if (!result) return;
 
-    setShowRecaptcha(true);
-  };
-
-  const handleVerifiedSubmit = async (token: string) => {
     try {
       const values = form.getValues();
-
       setIsProcessing(true);
       setError(null);
       setSuccess(null);
-      setShowRecaptcha(false);
 
       const response = await apiFetch('/api/auth/reset-password', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-recaptcha-token': token,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data.message);
+        const msg = Array.isArray(data.detail) ? data.detail[0]?.msg ?? data.detail : data.detail ?? data.message ?? 'Request failed.';
+        setError(typeof msg === 'string' ? msg : 'Request failed.');
         return;
       }
 
-      setSuccess(data.message);
-      form.reset();
+      setSuccess(data.message ?? 'A password reset link has been sent to your email.');
     } catch (err) {
       setError(
         err instanceof Error
@@ -134,25 +123,14 @@ export default function Page() {
             )}
           />
 
-          <RecaptchaPopover
-            open={showRecaptcha}
-            onOpenChange={(open) => {
-              if (!open) {
-                setShowRecaptcha(false);
-              }
-            }}
-            onVerify={handleVerifiedSubmit}
-            trigger={
-              <Button
-                type="submit"
-                disabled={!!success || isProcessing}
-                className="w-full"
-              >
-                {isProcessing ? <LoaderCircleIcon className="animate-spin" /> : null}
-                Submit
-              </Button>
-            }
-          />
+          <Button
+            type="submit"
+            disabled={!!success || isProcessing}
+            className="w-full"
+          >
+            {isProcessing ? <LoaderCircleIcon className="animate-spin" /> : null}
+            Submit
+          </Button>
 
           <div className="space-y-3">
             <Button type="button" variant="outline" className="w-full" asChild>

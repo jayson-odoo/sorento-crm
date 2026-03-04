@@ -59,20 +59,56 @@ class OrderService:
             q = q.filter(and_(*filters))
         
         total = q.count()
-        
+
+        # Nullable columns: use nulls_last so NULLs don't break sort order
+        nullable_sort_fields = {
+            "order_date",
+            "promised_delivery_date",
+            "actual_delivery_date",
+            "delivery_days",
+            "debtor_name",
+            "debtor_code",
+            "agent",
+            "remarks_cs",
+            "order_type",
+        }
         sort_map = {
             "order_number": Order.order_number,
             "order_date": Order.order_date,
+            "promised_delivery_date": Order.promised_delivery_date,
+            "actual_delivery_date": Order.actual_delivery_date,
+            "delivery_days": Order.delivery_days,
+            "debtor_name": Order.debtor_name,
+            "debtor_code": Order.debtor_code,
+            "agent": Order.agent,
+            "is_cancelled": Order.is_cancelled,
+            "remarks_cs": Order.remarks_cs,
+            "order_type": Order.order_type,
             "total_amount": Order.total_amount,
             "created_at": Order.created_at,
             "updated_at": Order.updated_at,
         }
-        sort_column = sort_map.get(sort_field, Order.created_at)
-        if sort_dir == "desc":
-            q = q.order_by(sort_column.desc())
+        if sort_field == "order_status.status_name":
+            q = q.outerjoin(Order.order_status)
+            status_col = OrderStatus.status_name
+            if sort_dir == "desc":
+                q = q.order_by(status_col.desc().nulls_last())
+            else:
+                q = q.order_by(status_col.asc().nulls_last())
         else:
-            q = q.order_by(sort_column.asc())
-        
+            sort_column = sort_map.get(sort_field, Order.created_at)
+            nullable_sort = sort_field in nullable_sort_fields
+            if sort_dir == "desc":
+                if nullable_sort:
+                    q = q.order_by(sort_column.desc().nulls_last())
+                else:
+                    q = q.order_by(sort_column.desc())
+            else:
+                if nullable_sort:
+                    q = q.order_by(sort_column.asc().nulls_last())
+                else:
+                    q = q.order_by(sort_column.asc())
+
         offset = (page - 1) * limit
         orders = q.offset(offset).limit(limit).all()
         
@@ -96,6 +132,15 @@ class OrderService:
             raise handle_not_found("Order", order_id)
         return order
     
+    @staticmethod
+    def _normalize_uuid_fields(data: dict, keys: tuple = ("customer_id", "order_status_id", "billing_address_id", "shipping_address_id")) -> dict:
+        """Set empty-string UUID fields to None so PostgreSQL accepts them."""
+        out = dict(data)
+        for key in keys:
+            if key in out and out[key] == "":
+                out[key] = None
+        return out
+
     def create_order(self, order_data: OrderCreate, created_by: str):
         """Create a new order."""
         # Check if order_number already exists
@@ -110,6 +155,7 @@ class OrderService:
         total = subtotal - discount + tax
         
         order_dict = order_data.model_dump()
+        order_dict = self._normalize_uuid_fields(order_dict)
         order_dict["total_amount"] = total
         order_dict["created_by"] = created_by
         
@@ -125,6 +171,7 @@ class OrderService:
         
         update_data = order_data.model_dump(exclude_unset=True)
         if update_data:
+            update_data = self._normalize_uuid_fields(update_data)
             # Recalculate total if amounts changed
             if any(k in update_data for k in ["subtotal_amount", "discount_amount", "tax_amount"]):
                 subtotal = update_data.get("subtotal_amount", order.subtotal_amount) or Decimal("0")
@@ -171,7 +218,15 @@ class OrderService:
         self.db.delete(order)
         self.db.commit()
         return {"message": "Order deleted successfully"}
-    
+
+    def bulk_delete_orders(self, order_ids: list[str]):
+        """Delete multiple orders by ID. Returns count of deleted."""
+        if not order_ids:
+            return {"message": "No orders to delete", "deleted_count": 0}
+        deleted = self.db.query(Order).filter(Order.id.in_(order_ids)).delete(synchronize_session=False)
+        self.db.commit()
+        return {"message": f"Deleted {deleted} order(s)", "deleted_count": deleted}
+
     def bulk_import_orders(self, orders_data: list[dict], user_id: str):
         """Bulk import orders from Excel data.
         
@@ -359,6 +414,16 @@ class OrderService:
         master_rows = 0
         tracking_rows = 0
         calendar_service = CalendarService(self.db)
+
+        # Resolve "new" and "delivered" status ids (case-insensitive match to status_code)
+        status_rows = (
+            self.db.query(OrderStatus)
+            .filter(func.lower(OrderStatus.status_code).in_(["new", "delivered"]))
+            .all()
+        )
+        status_by_code_lower = {str(s.status_code).lower(): s.id for s in status_rows}
+        new_status_id = status_by_code_lower.get("new")
+        delivered_status_id = status_by_code_lower.get("delivered")
 
         try:
             workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
@@ -575,10 +640,15 @@ class OrderService:
                     for key, value in mapped.items():
                         if key != "order_number":
                             setattr(existing_order, key, value)
+                    # Orders without actual delivery date should be "new"; Tracking will set "delivered" where applicable
+                    if new_status_id:
+                        existing_order.order_status_id = new_status_id
                     existing_order.updated_by = user_id
                     updated += 1
                 else:
                     mapped["created_by"] = user_id
+                    if new_status_id:
+                        mapped["order_status_id"] = new_status_id
                     order = Order(**mapped)
                     self.db.add(order)
                     created += 1
@@ -643,9 +713,13 @@ class OrderService:
                     min_tracking_date = start_date_value if min_tracking_date is None else min(min_tracking_date, start_date_value)
                     max_tracking_date = end_date_value if max_tracking_date is None else max(max_tracking_date, end_date_value)
                     tracking_updates.append((order, delivery_date))
+                    if delivered_status_id:
+                        order.order_status_id = delivered_status_id
                 else:
                     order.delivery_days = None
                     order.kpi_warning = False
+                    if new_status_id:
+                        order.order_status_id = new_status_id
 
                 order.updated_by = user_id
                 updated += 1
@@ -732,7 +806,7 @@ class OrderService:
                 created_rows=created,
                 updated_rows=updated,
                 failed_rows=len(errors),
-                skipped_rows=0,
+                skipped_rows=len(warnings),
                 warnings=json_safe(warnings),
                 errors=json_safe(errors),
                 summary=json_safe({"kpi_warnings": kpi_warnings, "master_rows": master_rows, "tracking_rows": tracking_rows, "warnings": len(warnings)}),

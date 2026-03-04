@@ -9,8 +9,12 @@ async function handleProxy(
   const { path = [] } = await params;
   const segment = path.length ? `/${path.join('/')}` : '';
   const targetPath = `/api/v1/notifications${segment}`;
+  // Only read body for methods that typically have one (POST); PATCH with no body must not consume stream
   const isBodyMethod = method && !['GET', 'HEAD'].includes(method);
-  const body = isBodyMethod ? await request.json().catch(() => undefined) : undefined;
+  const body =
+    isBodyMethod && method === 'POST'
+      ? await request.json().catch(() => undefined)
+      : undefined;
 
   return proxyToFastAPI(request, targetPath, {
     method: method || request.method,

@@ -1,7 +1,7 @@
 """SQLAlchemy models."""
 # Import all models here so Alembic can discover them
 # Import order matters for relationships - import base models first
-from app.models.user import User, UserRole, UserPermission, UserRolePermission, SystemLog, SystemSetting
+from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission, SystemLog, SystemSetting, UserQuickAccess
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
 from app.models.order import Order, OrderStatus, Customer
@@ -19,14 +19,17 @@ from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob
 from app.models.audit import AuditLog
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
+from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
 
 __all__ = [
     "User",
     "UserRole",
+    "UserRoleAssignment",
     "UserPermission",
     "UserRolePermission",
     "SystemLog",
     "SystemSetting",
+    "UserQuickAccess",
     "Product",
     "ProductCategory",
     "Brand",
@@ -80,4 +83,6 @@ __all__ = [
     "Notification",
     "NotificationDelivery",
     "PushSubscription",
+    "ScheduledTask",
+    "ScheduledTaskRun",
 ]

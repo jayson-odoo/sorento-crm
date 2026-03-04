@@ -10,7 +10,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, Download, Upload } from 'lucide-react';
+import { Search, X, ChevronRight, Download, Upload, FileSpreadsheet, Filter } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -19,15 +19,22 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useStockBalance } from '../hooks/useStock';
+import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
+import type { Warehouse } from '@/app/(protected)/inventory-management/warehouses/types/warehouse.types';
 import type { Stock } from '../types/stock.types';
 import { TemplateDownloadDialog } from '@/components/template/TemplateDownloadDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { exportStockBalance, bulkImportStock } from '../services/stockService';
-import { useQueryClient } from '@tanstack/react-query';
+import { replaceLatestStockList, getCurrentStockListAttachment } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
+import { useQueryClient, useQuery } from '@tanstack/react-query';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import type { ColumnOption } from '@/lib/excel-utils';
 import { useRouter } from 'next/navigation';
@@ -36,22 +43,34 @@ export default function StockBalanceGrid() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'product_code', desc: false }]);
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'product.product_code', desc: false }]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [quantityOperator, setQuantityOperator] = useState<string>('all');
-  const [quantityValue, setQuantityValue] = useState<string>('');
+  const [warehouseId, setWarehouseId] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [filterOpen, setFilterOpen] = useState(false);
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [exportData, setExportData] = useState<Stock[]>([]);
   const [isLoadingExport, setIsLoadingExport] = useState(false);
+
+  const { data: stockListAttachment } = useQuery({
+    queryKey: ['current-stock-list-attachment'],
+    queryFn: () => getCurrentStockListAttachment(),
+  });
+
+  const { data: warehousesData } = useQuery({
+    queryKey: ['warehouses-select-stock'],
+    queryFn: () => getWarehouses({ pageIndex: 0, pageSize: 100, sorting: [], searchQuery: '', is_active: true }),
+  });
+  const warehouses: Warehouse[] = warehousesData?.data ?? [];
 
   const { data, isLoading } = useStockBalance({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    quantity_operator: quantityOperator && quantityOperator !== 'all' ? quantityOperator : undefined,
-    quantity_value: quantityValue || undefined,
+    warehouse_id: warehouseId || undefined,
+    status: statusFilter || undefined,
   });
 
   // Define column options for export
@@ -86,10 +105,18 @@ export default function StockBalanceGrid() {
     }
   };
 
-  const handleUploadTemplate = async (data: any[]) => {
+  const handleUploadTemplate = async (data: any[], _helpers?: unknown, file?: File) => {
     try {
-      const result = await bulkImportStock(data);
-      // Job has been queued - show success message and close dialog
+      await bulkImportStock(data);
+      if (file) {
+        try {
+          await replaceLatestStockList(file);
+          queryClient.invalidateQueries({ queryKey: ['current-stock-list-attachment'] });
+          queryClient.invalidateQueries({ queryKey: ['attachments'] });
+        } catch (attachErr) {
+          toast.error(attachErr instanceof Error ? attachErr.message : 'Failed to save as Stock List attachment');
+        }
+      }
       toast.success('Import job queued successfully. Processing in background. Please refresh after a while to see results.', {
         duration: 5000,
         action: {
@@ -98,10 +125,9 @@ export default function StockBalanceGrid() {
         },
       });
       queryClient.invalidateQueries({ queryKey: ['stock-balance'] });
-      // Return success to close dialog
       return;
     } catch (error) {
-      throw error; // Let the dialog handle the error display
+      throw error;
     }
   };
 
@@ -168,15 +194,9 @@ export default function StockBalanceGrid() {
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => {
           const status = row.original.status || 'normal';
-          const variants: Record<string, 'destructive' | 'warning' | 'success' | 'secondary'> = {
-            low: 'destructive',
-            critical: 'warning',
-            normal: 'success',
-            overstock: 'secondary',
-          };
           return (
-            <Badge variant={variants[status] || 'secondary'} appearance="ghost">
-              {status.charAt(0).toUpperCase() + status.slice(1)}
+            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
+              {(status || '').charAt(0).toUpperCase() + (status || '').slice(1)}
             </Badge>
           );
         },
@@ -243,52 +263,84 @@ export default function StockBalanceGrid() {
                 </Button>
               )}
             </div>
-            <div className="flex items-center gap-2">
-              <Select
-                value={quantityOperator}
-                onValueChange={setQuantityOperator}
-                disabled={isLoading}
-              >
-                <SelectTrigger className="w-32">
-                  <SelectValue placeholder="Quantity" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="gt">&gt;</SelectItem>
-                  <SelectItem value="gte">&gt;=</SelectItem>
-                  <SelectItem value="lt">&lt;</SelectItem>
-                  <SelectItem value="lte">&lt;=</SelectItem>
-                  <SelectItem value="eq">=</SelectItem>
-                </SelectContent>
-              </Select>
-              {quantityOperator && quantityOperator !== 'all' && (
-                <>
-                  <Input
-                    type="number"
-                    placeholder="Value"
-                    value={quantityValue}
-                    onChange={(e) => setQuantityValue(e.target.value)}
-                    className="w-24"
-                    disabled={isLoading}
-                  />
-                  {(quantityOperator !== 'all' || quantityValue) && (
+            <Popover open={filterOpen} onOpenChange={setFilterOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2">
+                  <Filter className="size-4" />
+                  Filters
+                  {(warehouseId || statusFilter) && (
+                    <span className="bg-primary text-primary-foreground rounded-full size-5 flex items-center justify-center text-xs">
+                      {(warehouseId ? 1 : 0) + (statusFilter ? 1 : 0)}
+                    </span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72" align="start">
+                <div className="space-y-4">
+                  <div>
+                    <Label>Warehouse</Label>
+                    <Select value={warehouseId || 'all'} onValueChange={(v) => setWarehouseId(v === 'all' ? '' : v)}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="All warehouses" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All warehouses</SelectItem>
+                        {warehouses.map((w) => (
+                          <SelectItem key={w.id} value={w.id}>
+                            {w.warehouse_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Status</Label>
+                    <Select value={statusFilter || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="All statuses" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        <SelectItem value="critical">Critical</SelectItem>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="normal">Normal</SelectItem>
+                        <SelectItem value="overstock">Overstock</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex justify-end gap-2">
                     <Button
-                      mode="icon"
-                      variant="dim"
+                      variant="ghost"
                       size="sm"
                       onClick={() => {
-                        setQuantityOperator('all');
-                        setQuantityValue('');
+                        setWarehouseId('');
+                        setStatusFilter('');
                       }}
                     >
-                      <X />
+                      Clear
                     </Button>
-                  )}
-                </>
-              )}
-            </div>
+                    <Button size="sm" onClick={() => setFilterOpen(false)}>
+                      Apply
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
           <div className="flex items-center gap-2">
+            {stockListAttachment ? (
+              <Button variant="outline" size="sm" asChild>
+                <Link href={`/resource-management/attachments/${stockListAttachment.id}`}>
+                  <FileSpreadsheet className="size-4" />
+                  Stock List
+                </Link>
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" disabled title="Import a stock file to create the Stock List attachment">
+                <FileSpreadsheet className="size-4" />
+                Stock List
+              </Button>
+            )}
             <Button variant="outline" onClick={handleDownloadTemplate} disabled={isLoadingExport}>
               <Download className="size-4" />
               Export

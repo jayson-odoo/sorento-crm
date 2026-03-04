@@ -39,11 +39,10 @@ def create_promotion(
     product_codes = [item.product_code for item in payload.promotion_products]
     products_map = get_products_by_code_exact(db, product_codes)
     missing_codes = [c for c in product_codes if (c or "").strip() not in products_map]
+    # Missing product codes are a warning only: create the promotion and link only products that exist
+    warnings = []
     if missing_codes:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"message": "Missing product codes (exact match)", "product_codes": missing_codes},
-        )
+        warnings.append({"message": "Missing product codes (exact match)", "product_codes": missing_codes})
 
     existing = db.query(Promotion).filter(Promotion.promo_code == payload.promotions.promo_code).first()
     if existing:
@@ -52,6 +51,7 @@ def create_promotion(
             promotion=PromotionResponse.model_validate(existing),
             already_existed=True,
             message="Promo code already exists.",
+            warnings=warnings,
         )
 
     try:
@@ -66,21 +66,28 @@ def create_promotion(
         is_active = start_date.date() <= today <= end_date.date()
 
     created_by = None if current_user.get("id") == "system" else current_user["id"]
-    promotion = Promotion(
-        promo_code=payload.promotions.promo_code,
-        name=payload.promotions.name or payload.promotions.promo_code,
-        promo_type=payload.promotions.promo_type,
-        description=payload.promotions.description,
-        start_date=start_date,
-        end_date=end_date,
-        is_active=is_active,
-        created_by=created_by,
-    )
+    promotion_kw: dict = {
+        "promo_code": payload.promotions.promo_code,
+        "name": payload.promotions.name or payload.promotions.promo_code,
+        "promo_type": payload.promotions.promo_type,
+        "description": payload.promotions.description,
+        "start_date": start_date,
+        "end_date": end_date,
+        "is_active": is_active,
+        "created_by": created_by,
+    }
+    if payload.access_levels is not None:
+        promotion_kw["access_levels"] = payload.access_levels
+    promotion = Promotion(**promotion_kw)
     db.add(promotion)
     db.flush()
 
+    # Only add promotion_products for products that exist; missing codes are already in warnings
     for item in payload.promotion_products:
-        product = products_map[(item.product_code or "").strip()]
+        code = (item.product_code or "").strip()
+        if code not in products_map:
+            continue
+        product = products_map[code]
         promo_price = item.selling_price
         discount_amount = item.discount_amount
         discount_percent = item.discount_percent
@@ -99,8 +106,10 @@ def create_promotion(
             )
         )
 
-    # Link attachments to the promotion if provided
-    attachment_ids = payload.promotions.attachment_id or []
+    # Link attachments to the promotion if provided (root-level attachment_id or promotions.attachment_id list)
+    attachment_ids = list(payload.promotions.attachment_id or [])
+    if payload.attachment_id and payload.attachment_id not in attachment_ids:
+        attachment_ids.insert(0, payload.attachment_id)
     if attachment_ids:
         created_by_uuid = created_by
         found = db.query(Attachment).filter(Attachment.id.in_(attachment_ids)).all()
@@ -128,4 +137,5 @@ def create_promotion(
         promotion=PromotionResponse.model_validate(promotion),
         already_existed=False,
         message=None,
+        warnings=warnings,
     )

@@ -8,6 +8,11 @@ export enum UserStatus {
 }
 
 // Models
+export interface UserRoleSimple {
+  id: string;
+  name: string;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -15,7 +20,7 @@ export interface User {
   country?: string | null;
   timezone?: string | null;
   name?: string | null;
-  roleId: string;
+  roleId?: string | null;
   status: UserStatus;
   createdAt: Date;
   updatedAt: Date;
@@ -29,7 +34,8 @@ export interface User {
   respondSynced?: string | null;
   superiorId?: string | null;
   superiorName?: string | null;
-  role: UserRole;
+  roles?: UserRoleSimple[];
+  role?: UserRole;
   sessions?: Session[];
   accounts?: Account[];
   agentAccesses?: UserAgentAccess[];

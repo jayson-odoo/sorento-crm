@@ -1,4 +1,5 @@
 """System settings API routes."""
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -7,6 +8,8 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import SystemSetting, UserRole
 from app.services.error_handler import handle_internal_error
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -100,6 +103,19 @@ async def get_settings(
         raise handle_internal_error(str(e))
 
 
+def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Session):
+    """Shared implementation for PUT/POST general settings."""
+    settings = db.query(SystemSetting).first()
+    if not settings:
+        raise HTTPException(status_code=404, detail="Settings not found")
+    update_data = settings_data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(settings, key, value)
+    db.commit()
+    db.refresh(settings)
+    return {"message": "General settings updated successfully", "data": settings}
+
+
 @router.put("/general", status_code=status.HTTP_200_OK)
 async def update_general_settings(
     settings_data: SystemSettingUpdate,
@@ -108,17 +124,22 @@ async def update_general_settings(
 ):
     """Update general system settings."""
     try:
-        settings = db.query(SystemSetting).first()
-        if not settings:
-            raise HTTPException(status_code=404, detail="Settings not found")
-        
-        update_data = settings_data.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            setattr(settings, key, value)
-        
-        db.commit()
-        db.refresh(settings)
-        return {"message": "General settings updated successfully", "data": settings}
+        return _update_general_settings_impl(settings_data, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/general", status_code=status.HTTP_200_OK)
+async def update_general_settings_post(
+    settings_data: SystemSettingUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update general system settings (POST allowed for frontend form submit)."""
+    try:
+        return _update_general_settings_impl(settings_data, db)
     except HTTPException:
         raise
     except Exception as e:
@@ -202,13 +223,19 @@ async def update_smtp_settings(
         smtp_fields = ["smtp_host", "smtp_port", "smtp_secure", "smtp_username", "smtp_password", "smtp_from"]
         update_data = {k: v for k, v in settings_data.model_dump(exclude_unset=True).items() if k in smtp_fields}
         for key, value in update_data.items():
-            setattr(settings, key, value)
+            if key == "smtp_secure":
+                setattr(settings, key, bool(value) if value is not None else True)
+            elif key in ("smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_from"):
+                setattr(settings, key, value if value and str(value).strip() else None)
+            else:
+                setattr(settings, key, value)
         db.commit()
         db.refresh(settings)
         return {"message": "SMTP settings updated successfully"}
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Failed to save SMTP settings: %s", e)
         raise handle_internal_error(str(e))
 
 

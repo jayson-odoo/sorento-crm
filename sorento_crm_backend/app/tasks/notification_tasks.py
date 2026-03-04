@@ -8,6 +8,7 @@ from app.models.notification import Notification, NotificationDelivery, PushSubs
 from app.models.user import User, SystemSetting
 from app.services.notification_email import (
     send_notification_email,
+    send_notification_email_multi,
     _smtp_config_from_settings,
 )
 
@@ -44,12 +45,23 @@ def send_notification_deliveries(notification_id: str) -> None:
 
         for delivery in pending:
             if delivery.channel == "email":
-                err = send_notification_email(
-                    to=user.email,
-                    subject=notification.title,
-                    body_text=notification.body or notification.title,
-                    smtp_config=smtp_config,
-                )
+                data = notification.data or {}
+                if data.get("single_email_to_all") and data.get("recipient_emails"):
+                    body_html = data.get("body_html")
+                    err = send_notification_email_multi(
+                        to_list=data["recipient_emails"],
+                        subject=notification.title,
+                        body_text=notification.body or notification.title,
+                        body_html=body_html,
+                        smtp_config=smtp_config,
+                    )
+                else:
+                    err = send_notification_email(
+                        to=user.email,
+                        subject=notification.title,
+                        body_text=notification.body or notification.title,
+                        smtp_config=smtp_config,
+                    )
                 delivery.status = "failed" if err else "sent"
                 delivery.sent_at = datetime.utcnow() if not err else None
                 delivery.error_message = err

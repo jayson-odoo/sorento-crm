@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -26,7 +27,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { LoaderCircleIcon } from 'lucide-react';
+import { Eye, EyeOff, LoaderCircleIcon } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { useSettings } from '../components/settings-context';
 import {
@@ -38,6 +39,7 @@ export default function SmtpSettingsPage() {
   const queryClient = useQueryClient();
   const { settings } = useSettings();
   const smtp = settings?.smtp;
+  const [showPassword, setShowPassword] = useState(false);
 
   const defaultValues: SmtpSettingsSchemaType = {
     smtp_host: smtp?.smtp_host ?? '',
@@ -268,13 +270,30 @@ export default function SmtpSettingsPage() {
                 <FormItem>
                   <FormLabel>Password</FormLabel>
                   <FormControl>
-                    <Input
-                      type="password"
-                      placeholder="••••••••"
-                      autoComplete="new-password"
-                      {...field}
-                      value={field.value ?? ''}
-                    />
+                    <div className="relative">
+                      <Input
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="••••••••"
+                        autoComplete="new-password"
+                        {...field}
+                        value={field.value ?? ''}
+                        className="pr-10"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                        onClick={() => setShowPassword((prev) => !prev)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showPassword ? (
+                          <EyeOff className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <Eye className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </Button>
+                    </div>
                   </FormControl>
                   <FormDescription>Leave blank to keep existing password</FormDescription>
                   <FormMessage />

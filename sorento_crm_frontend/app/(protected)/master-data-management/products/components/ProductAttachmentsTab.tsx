@@ -16,6 +16,7 @@ import { formatDate } from '@/lib/helpers';
 import LinkAttachmentBrowserDialog from './LinkAttachmentBrowserDialog';
 import AttachmentDetailModal from '@/app/(protected)/resource-management/attachments/components/AttachmentDetailModal';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 
 function attachmentDirectoriesHref(directoryId: string | null | undefined): string {
   const base = '/resource-management/attachment-directories';
@@ -54,6 +55,17 @@ export default function ProductAttachmentsTab({
       document.body.removeChild(a);
     } catch (error) {
       // Error is handled by the mutation hook
+    }
+  };
+
+  const handlePreview = async (attachmentId: string) => {
+    try {
+      const previewUrl = await getAttachmentPreviewUrl(attachmentId);
+      if (previewUrl) {
+        window.open(previewUrl, '_blank');
+      }
+    } catch {
+      // Keep UI quiet here; details/download remain available.
     }
   };
 
@@ -159,7 +171,7 @@ export default function ProductAttachmentsTab({
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => pa.attachment?.id && window.open(pa.attachment.file_path, '_blank')}
+          onClick={() => pa.attachment?.id && handlePreview(pa.attachment.id)}
         >
           <Eye className="size-4" />
         </Button>

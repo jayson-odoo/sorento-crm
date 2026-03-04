@@ -5,14 +5,13 @@ import re
 import time
 import zipfile
 import hashlib
-import uuid
 import mimetypes
 import logging
 from collections import defaultdict
 from datetime import date, datetime, time as dt_time
 from decimal import Decimal
 from io import BytesIO
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, cast
 
 from app.database import SessionLocal
 from app.services.inventory_service import StockService
@@ -50,6 +49,18 @@ def _normalize_zip_path(name: str) -> str:
     return name.replace("\\", "/").strip("/")
 
 
+def _is_macos_metadata_path(normalized_path: str) -> bool:
+    """True if path is macOS metadata (._* files or under __MACOSX)."""
+    if not normalized_path:
+        return False
+    parts = [p for p in normalized_path.split("/") if p.strip()]
+    if any(p == "__MACOSX" for p in parts):
+        return True
+    if parts and parts[-1].strip().startswith("._"):
+        return True
+    return False
+
+
 def _json_safe(value):
     if isinstance(value, (datetime, date, dt_time)):
         return value.isoformat()
@@ -82,10 +93,10 @@ def process_stock_import(db_job_id: str, stock_data: list, user_id: str):
         logger.error(f"Job not found: db_job_id={db_job_id}, rq_job_id={rq_job_id}")
         db.close()
         return
-    
+
+    job_id_str: str = str(job.job_id)
     try:
         # Mark job as started
-        job_id_str = job.job_id
         job_service.start_job(job_id_str)
         
         # Process import
@@ -113,7 +124,7 @@ def process_stock_import(db_job_id: str, stock_data: list, user_id: str):
         
     except Exception as e:
         logger.error(f"Stock import job {job.job_id} failed: {str(e)}", exc_info=True)
-        job_service.fail_job(job.job_id, str(e))
+        job_service.fail_job(job_id_str, str(e))
     finally:
         db.close()
 
@@ -137,8 +148,8 @@ def process_product_import(db_job_id: str, products_data: list, user_id: str):
         db.close()
         return
 
+    job_id_str: str = str(job.job_id)
     try:
-        job_id_str = job.job_id
         job_service.start_job(job_id_str)
         job_service.update_job_progress(job_id_str, total_rows=len(products_data))
 
@@ -173,7 +184,7 @@ def process_product_import(db_job_id: str, products_data: list, user_id: str):
         )
     except Exception as e:
         logger.error("Product import job %s failed: %s", job.job_id, str(e), exc_info=True)
-        job_service.fail_job(job.job_id, str(e))
+        job_service.fail_job(job_id_str, str(e))
     finally:
         db.close()
 
@@ -199,7 +210,7 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
         db.close()
         return
     
-    job_id_str = job.job_id
+    job_id_str: str = str(job.job_id)
     try:
         # Mark job as started
         job_service.start_job(job_id_str)
@@ -235,7 +246,7 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
             },
             successful_rows=successful_rows,
             failed_rows=failed_count,
-            skipped_rows=0,
+            skipped_rows=len(warnings),
             processed_rows=processed_rows,
             total_rows=total_rows,
         )
@@ -261,7 +272,7 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
                 entity_type="order",
                 entity_table="orders",
                 import_session_id=job_id_str,
-                filename=job.filename if job else None,
+                filename=str(job.filename) if (job and job.filename is not None) else None,
                 import_type="EXCEL_IMPORT",
                 total_rows=0,
                 successful_rows=0,
@@ -312,7 +323,7 @@ def process_attachment_bulk_import(
                 pass
         return
 
-    job_id_str = job.job_id
+    job_id_str: str = str(job.job_id)
     dir_service = AttachmentDirectoryService(db)
     attachment_service = AttachmentService(db)
     type_service = AttachmentTypeService(db)
@@ -336,12 +347,15 @@ def process_attachment_bulk_import(
             db.close()
             return
 
-        allowed_extensions = set(
+        _allowed_raw = attachment_type.allowed_extensions
+        _allowed_str = str(_allowed_raw) if _allowed_raw is not None else ""
+        allowed_extensions: set[str] = set(
             ext.strip().lower().replace(".", "")
-            for ext in (attachment_type.allowed_extensions or "").split(",")
+            for ext in _allowed_str.split(",")
             if ext.strip()
         )
-        max_bytes = (attachment_type.max_file_size_mb or 10) * 1024 * 1024
+        _mb = attachment_type.max_file_size_mb
+        max_bytes = (int(cast(int, _mb)) if _mb is not None else 10) * 1024 * 1024
 
         with zipfile.ZipFile(zip_path, "r") as zf:
             all_names = [_normalize_zip_path(n) for n in zf.namelist()]
@@ -351,9 +365,11 @@ def process_attachment_bulk_import(
         for name in all_names:
             if not name:
                 continue
+            if _is_macos_metadata_path(name):
+                continue
             if name.endswith("/"):
                 dir_path = name.rstrip("/")
-                if dir_path:
+                if dir_path and not _is_macos_metadata_path(dir_path):
                     dir_paths.add(dir_path)
             else:
                 file_paths.append(name)
@@ -402,15 +418,14 @@ def process_attachment_bulk_import(
                         processed += 1
                         continue
 
-                    file_uuid = str(uuid.uuid4())
                     safe_filename = "".join(
                         c for c in original_filename if c.isalnum() or c in (" ", "-", "_", ".")
                     ).strip()
-                    stored_filename = f"{file_uuid}-{safe_filename}"
+                    stored_filename = safe_filename or "file"
                     entity_type = (attachment_type.type_name or "general").lower().replace(" ", "_")
                     s3_file_path = f"{entity_type}/{stored_filename}"
                     guessed_type, _ = mimetypes.guess_type(original_filename)
-                    s3_key, s3_url = s3_service.upload_file(
+                    s3_key, _ = s3_service.upload_file(
                         file_content=file_content,
                         file_path=s3_file_path,
                         content_type=guessed_type,
@@ -422,7 +437,7 @@ def process_attachment_bulk_import(
                         attachment_type_id=attachment_type_id,
                         original_filename=original_filename,
                         stored_filename=stored_filename,
-                        file_path=s3_url,
+                        file_path=s3_service.get_cloudfront_base_url(s3_key),
                         file_size_bytes=len(file_content),
                         mime_type=guessed_type or "application/octet-stream",
                         file_hash=hashlib.sha256(file_content).hexdigest(),
@@ -432,13 +447,14 @@ def process_attachment_bulk_import(
                         access_levels=access_levels_payload if access_levels_payload else ["dealer", "end_user"],
                     )
                     attachment = attachment_service.create_attachment(attachment_data, user_id)
-                    try:
-                        create_and_send_webhook(
-                            db, attachment, attachment_type, access_levels_payload, user_id
-                        )
-                    except Exception as e:
-                        logger.warning("Webhook creation failed for %s: %s", attachment.id, e)
-                    created_attachments.append({"id": attachment.id, "path": file_path})
+                    if attachment is not None:
+                        try:
+                            create_and_send_webhook(
+                                db, attachment, attachment_type, access_levels_payload, user_id
+                            )
+                        except Exception as e:
+                            logger.warning("Webhook creation failed for %s: %s", attachment.id, e)
+                        created_attachments.append({"id": attachment.id, "path": file_path})
                     successful += 1
                 except Exception as e:
                     errors.append(f"{file_path}: {e}")
@@ -554,7 +570,7 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         db.close()
         return
 
-    job_id_str = job.job_id
+    job_id_str: str = str(job.job_id)
 
     try:
         job_service.start_job(job_id_str)
@@ -686,10 +702,10 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
             if not shipment:
                 skipped_rows_detail.append({"row": row_idx, "reason": f"Inbound shipment not found for container: {container}"})
                 continue
-            resolved_rows.append((product.id, warehouse.id, shipment.id, qty, row_idx))
+            resolved_rows.append((str(product.id), str(warehouse.id), str(shipment.id), qty, row_idx))
 
         # Group by (product_id, warehouse_id): sum qty, keep first shipment_id
-        groups: dict[tuple[str, str], tuple[int, str]] = defaultdict(lambda: (0, ""))
+        groups: Dict[tuple[str, str], tuple[int, str]] = defaultdict(lambda: (0, ""))
         for product_id, warehouse_id, shipment_id, qty, row_idx in resolved_rows:
             key = (product_id, warehouse_id)
             total, first_shipment = groups[key]
@@ -806,7 +822,7 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
         db.close()
         return
 
-    job_id_str = job.job_id
+    job_id_str: str = str(job.job_id)
     try:
         job_service.start_job(job_id_str)
         try:
@@ -868,7 +884,8 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
             spo_number = (transfer_from and str(transfer_from).strip()) or None
             date_val = _find(row, "date", "picking date", "picking date ")
             try:
-                picking_date = parse_date_value(date_val) if date_val is not None else date.today()
+                _pd = parse_date_value(date_val) if date_val is not None else date.today()
+                picking_date = _pd if _pd is not None else date.today()
             except Exception:
                 picking_date = date.today()
             try:
@@ -927,7 +944,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
         db.close()
         return
 
-    job_id_str = job.job_id
+    job_id_str: str = str(job.job_id)
     try:
         job_service.start_job(job_id_str)
         try:
@@ -1002,6 +1019,12 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
         warehouses_map = get_warehouses_by_code_or_name(db, all_locations)
         from app.api.v1.external.utils import normalize_code
 
+        product_id_to_code = {str(p.id): code for code, p in products_by_code.items()}
+        warehouse_id_to_display = {
+            str(w.id): (getattr(w, "code", None) or getattr(w, "name", None) or str(w.id))
+            for w in warehouses_map.values()
+        }
+
         # Resolve headers by picking_number
         headers_by_number: Dict[str, Any] = {}
         for pn in all_doc_nos:
@@ -1010,7 +1033,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 headers_by_number[pn] = h
 
         # Group by (doc_no, product_id, warehouse_id) and sum quantity; track skipped with Excel row number
-        groups: dict = defaultdict(lambda: 0)
+        groups: Dict[tuple[str, str, str], Dict[str, Any]] = {}
         skipped_detail: List[dict] = []  # [{"row": int, "reason": str}, ...]
         for row_idx, row_tuple in enumerate(data_rows, start=2):  # Excel row 2 = first data row
             doc_no, item_code, location, qty = row_tuple
@@ -1047,9 +1070,9 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 continue
             # Group by (doc_no, product_id, warehouse_id) - warehouse is still needed for the picking line
             # but we'll match SPO FIFO by product only
-            key = (doc_no, product.id, warehouse.id)
+            key = (doc_no, str(product.id), str(warehouse.id))
             if key not in groups:
-                groups[key] = {"qty": 0, "warehouse_id": warehouse.id}
+                groups[key] = {"qty": 0, "warehouse_id": str(warehouse.id)}
             groups[key]["qty"] += qty
             job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
 
@@ -1068,6 +1091,15 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
         successful = 0
         failed = 0
         errors: List[str] = []
+        successful_detail: List[Dict[str, Any]] = []
+
+        def _record_success(grn_number: str, product_id: str, warehouse_id: str, qty: int) -> None:
+            successful_detail.append({
+                "grn_number": grn_number,
+                "product_code": product_id_to_code.get(product_id, product_id),
+                "warehouse": warehouse_id_to_display.get(warehouse_id, warehouse_id),
+                "quantity": qty,
+            })
 
         # Group GR lines by (doc_no, product_id) for FIFO SPO matching
         # Keep warehouse info for creating picking lines
@@ -1086,7 +1118,8 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 failed += 1
                 continue
 
-            spo_number = getattr(header, "spo_number", None) or None
+            _spo = getattr(header, "spo_number", None)
+            spo_number: Optional[str] = str(_spo).strip() if (_spo is not None and str(_spo).strip()) else None
             if not spo_number:
                 # No SPO number, create all lines without spo_allocation_id
                 for warehouse_id, qty, hdr in gr_line_list:
@@ -1099,6 +1132,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                             spo_allocation_id=None,
                         )
                         successful += 1
+                        _record_success(doc_no, product_id, warehouse_id, qty)
                     except Exception as e:
                         failed += 1
                         errors.append(str(e))
@@ -1113,15 +1147,18 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 .order_by(SPOAllocation.created_at.asc())
                 .all()
             )
-            spo_allocations = [a for a in all_allocations if _normalize_spo_number(a.spo_number) == spo_normalized]
+            def _alloc_spo_val(a: Any) -> str:
+                v = a.spo_number
+                return str(v) if v is not None else ""
+            spo_allocations = [a for a in all_allocations if _normalize_spo_number(_alloc_spo_val(a)) == spo_normalized]
 
             # Build pool: (alloc_id, alloc_warehouse_id, available) FIFO by created_at.
             # FIFO from SPO allocation: prefer allocation whose warehouse matches GR line location.
-            spo_pool: List[tuple] = []
+            spo_pool: List[List[Any]] = []
             for alloc in spo_allocations:
-                available = alloc.allocated_quantity - alloc.quantity_received
-                if available > 0:
-                    spo_pool.append([alloc.id, alloc.warehouse_id, available])  # mutable for in-place update
+                available_val = int(cast(int, alloc.allocated_quantity or 0)) - int(cast(int, alloc.quantity_received or 0))
+                if available_val > 0:
+                    spo_pool.append([str(alloc.id), str(alloc.warehouse_id), available_val])  # mutable for in-place update
 
             for warehouse_id, gr_qty, hdr in gr_line_list:
                 remaining_qty = gr_qty
@@ -1141,6 +1178,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                             spo_allocation_id=alloc_id,
                         )
                         successful += 1
+                        _record_success(doc_no, product_id, warehouse_id, take_qty)
                         remaining_qty -= take_qty
                         entry[2] = avail - take_qty
                     except Exception as e:
@@ -1162,6 +1200,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                             spo_allocation_id=alloc_id,
                         )
                         successful += 1
+                        _record_success(doc_no, product_id, warehouse_id, take_qty)
                         remaining_qty -= take_qty
                         entry[2] = avail - take_qty
                     except Exception as e:
@@ -1178,6 +1217,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                             spo_allocation_id=None,
                         )
                         successful += 1
+                        _record_success(doc_no, product_id, warehouse_id, remaining_qty)
                     except Exception as e:
                         failed += 1
                         errors.append(str(e))
@@ -1206,6 +1246,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 "message": "GRN lines import completed",
                 "errors": _json_safe(errors[-100:]),
                 "skipped_rows_detail": _json_safe(skipped_detail[-500:]),
+                "successful_rows_detail": _json_safe(successful_detail[-500:]),
             },
             successful_rows=successful,
             failed_rows=failed,

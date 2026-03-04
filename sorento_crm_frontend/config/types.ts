@@ -14,6 +14,8 @@ export interface MenuItem {
   expandTitle?: string;
   badge?: string;
   separator?: boolean;
+  /** RBAC: permission slug required to view this item (e.g. "order_management.orders.view"). If set, item is hidden when user lacks this permission. */
+  permission?: string;
 }
 
 export type MenuConfig = MenuItem[];

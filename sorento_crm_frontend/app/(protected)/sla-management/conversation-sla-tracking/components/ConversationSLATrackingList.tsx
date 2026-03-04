@@ -319,8 +319,8 @@ export default function ConversationSLATrackingList() {
           const o = row.original;
           if (o.is_resolved) {
             const overdue = isResolutionOverdue(o);
-            const hours = o.resolution_duration ?? 0;
-            const str = hours < 1 ? formatSecondsToDurationWithSeconds((o.resolution_duration ?? 0) * 3600) : `${hours.toFixed(1)}h`;
+            const hours = Number(o.resolution_duration) || 0;
+            const str = hours < 1 ? formatSecondsToDurationWithSeconds(hours * 3600) : `${hours.toFixed(1)}h`;
             return (
               <div className="space-y-0.5">
                 <div className="text-xs text-muted-foreground">Resolution duration</div>

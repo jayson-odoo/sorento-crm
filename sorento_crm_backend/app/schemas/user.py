@@ -1,6 +1,6 @@
 """User management schemas."""
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, field_validator
+from typing import Optional, List, Any
 from datetime import datetime
 
 
@@ -48,6 +48,7 @@ class UserRoleUpdate(BaseModel):
     description: Optional[str] = None
     is_protected: Optional[bool] = None
     is_default: Optional[bool] = None
+    permissions: Optional[list[str]] = None  # Permission IDs; when set, replaces role's permissions
 
 
 class UserRoleSimple(BaseModel):
@@ -69,12 +70,37 @@ class UserSelectResponse(BaseModel):
         from_attributes = True
 
 
+class UserRolePermissionRef(BaseModel):
+    """Minimal permission ref for role response."""
+    id: str
+    slug: str
+
+    class Config:
+        from_attributes = True
+
+
 class UserRoleResponse(UserRoleBase):
     id: str
     created_at: datetime
-    
+    permissions: Optional[List[UserRolePermissionRef]] = None
+
     class Config:
         from_attributes = True
+
+    @field_validator("permissions", mode="before")
+    @classmethod
+    def permissions_from_orm(cls, v: Any) -> Optional[List[dict]]:
+        if v is None:
+            return None
+        if isinstance(v, list):
+            out = []
+            for p in v:
+                if hasattr(p, "permission") and p.permission:
+                    out.append({"id": p.permission.id, "slug": p.permission.slug})
+                elif isinstance(p, dict) and "id" in p and "slug" in p:
+                    out.append(p)
+            return out if out else None
+        return None
 
 
 class UserPermissionBase(BaseModel):
@@ -103,7 +129,6 @@ class UserPermissionResponse(UserPermissionBase):
 class UserBase(BaseModel):
     email: str
     name: Optional[str] = None
-    role_id: str
     status: str = "INACTIVE"
     country: Optional[str] = None
     timezone: Optional[str] = None
@@ -113,12 +138,11 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    pass
+    role_ids: Optional[list[str]] = None  # If omitted, default role is assigned
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
-    role_id: Optional[str] = None
     status: Optional[str] = None
     country: Optional[str] = None
     timezone: Optional[str] = None
@@ -134,7 +158,7 @@ class UserResponse(UserBase):
     created_at: datetime
     updated_at: datetime
     last_sign_in_at: Optional[datetime] = None
-    role: Optional[UserRoleSimple] = None
+    roles: Optional[List[UserRoleSimple]] = None  # Assigned roles from user_role_assignments
     superior_name: Optional[str] = None  # Superior's name for display
     
     class Config:
@@ -146,6 +170,7 @@ class AccessAgentBase(BaseModel):
     name: str
     description: Optional[str] = None
     is_active: bool = True
+    assign_to_new_internal_contacts: bool = False
     pic_respond_user_id: Optional[str] = None
 
 
@@ -157,6 +182,7 @@ class AccessAgentUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    assign_to_new_internal_contacts: Optional[bool] = None
     pic_respond_user_id: Optional[str] = None
 
 

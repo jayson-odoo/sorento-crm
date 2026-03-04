@@ -17,12 +17,15 @@ import {
 } from '@/components/ui/table';
 import { usePackingList, useDeletePackingList } from '../hooks/usePackingLists';
 import { formatDate } from '@/lib/helpers';
+import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 import PackingListNavigation from './PackingListNavigation';
 import Link from 'next/link';
 import { Eye, Download } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
+import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
+import { toast } from 'sonner';
 
 interface PackingListDetailProps {
   packingListId: string;
@@ -123,6 +126,17 @@ export default function PackingListDetail({
     }
   };
 
+  const handlePreview = async (attachmentId: string) => {
+    try {
+      const previewUrl = await getAttachmentPreviewUrl(attachmentId);
+      if (previewUrl) {
+        window.open(previewUrl, '_blank');
+      }
+    } catch {
+      toast.error('Failed to open attachment preview');
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -147,29 +161,7 @@ export default function PackingListDetail({
     );
   }
 
-  const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case 'in_transit':
-        return 'secondary';
-      case 'arrived_at_port':
-        return 'primary';
-      case 'at_warehouse':
-        return 'primary';
-      case 'partially_received':
-        return 'primary';
-      case 'fully_received':
-        return 'primary';
-      case 'closed':
-        return 'secondary';
-      default:
-        return 'secondary';
-    }
-  };
-
-  const statusLabel = packingList.shipment_status
-    ?.split('_')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ') || '-';
+  const statusLabel = formatStatusLabel(packingList.shipment_status) || '-';
 
   // Total items/cartons from shipment lines when present (source of truth)
   const totalItemsFromLines =
@@ -360,8 +352,8 @@ export default function PackingListDetail({
                       variant="ghost"
                       size="sm"
                       onClick={() => {
-                        if (packingList.attachment?.file_path) {
-                          window.open(packingList.attachment.file_path, '_blank');
+                        if (packingList.attachment_id) {
+                          handlePreview(packingList.attachment_id);
                         }
                       }}
                     >

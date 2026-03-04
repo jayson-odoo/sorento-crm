@@ -1,11 +1,11 @@
 """Orders API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Body
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.services.order_service import OrderService
-from app.schemas.order import OrderCreate, OrderUpdate, OrderResponse, BulkImportRequest, BulkImportResponse
+from app.schemas.order import OrderCreate, OrderUpdate, OrderResponse, BulkImportRequest, BulkImportResponse, BulkDeleteOrdersRequest
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
@@ -15,7 +15,7 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[OrderResponse])
 async def get_orders(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
     customer_id: Optional[str] = Query(None),
     order_status_id: Optional[str] = Query(None),
@@ -93,6 +93,22 @@ async def update_order(
         raise handle_internal_error(str(e))
 
 
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_orders(
+    body: BulkDeleteOrdersRequest = Body(...),
+    current_user: dict = Depends(require_permission("order_management.orders.delete")),
+    db: Session = Depends(get_db)
+):
+    """Bulk delete orders by ID."""
+    try:
+        service = OrderService(db)
+        return service.bulk_delete_orders(body.ids)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.delete("/{order_id}", status_code=status.HTTP_200_OK)
 async def delete_order(
     order_id: str,
@@ -147,7 +163,7 @@ async def restore_order(
 @router.post("/bulk-import", response_model=BulkImportResponse, status_code=status.HTTP_200_OK)
 async def bulk_import_orders(
     import_data: BulkImportRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("order_management.orders.import")),
     db: Session = Depends(get_db)
 ):
     """Bulk import orders from Excel data.

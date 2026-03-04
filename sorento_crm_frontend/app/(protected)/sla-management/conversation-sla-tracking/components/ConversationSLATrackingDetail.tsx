@@ -21,8 +21,13 @@ import {
 import { useConversationSLATrackingDetail, useConversationSLATracking, useDeleteConversationSLATracking, useSyncAssigneeFromRespond } from '../hooks/useConversationSLATracking';
 import { formatDate, formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface ConversationSLATrackingDetailProps {
@@ -280,7 +285,28 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                 <CardContent className="pt-0 pb-6 px-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4">
                     <div>
-                      <p className="text-sm text-muted-foreground">Assigned To</p>
+                      <div className="text-sm text-muted-foreground flex items-center gap-1.5">
+                        Assigned To
+                        {(tracking.assigned_user_name ?? tracking.assigned_user?.name ?? tracking.assigned_user?.email ?? tracking.assigned_to) && (
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button
+                                type="button"
+                                className="inline-flex text-muted-foreground hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+                                aria-label="Show assignee email"
+                              >
+                                <Info className="size-4" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-3" align="start">
+                              <div className="text-sm font-medium text-muted-foreground">Email</div>
+                              <div className="text-sm font-medium break-all">
+                                {tracking.assigned_user_email ?? tracking.assigned_user?.email ?? 'No email available'}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        )}
+                      </div>
                       <p className="font-medium">
                         {tracking.assigned_user_name ||
                           tracking.assigned_user?.name ||

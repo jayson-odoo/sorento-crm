@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.services.inventory_service import StockService
 from app.schemas.inventory import StockResponse, StockDashboardResponse, BulkImportStockRequest, BulkImportStockResponse, StockLedgerResponse
 from app.schemas.common import ListResponse
@@ -17,10 +17,13 @@ async def get_stock_balance(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query(None),
     warehouse_id: Optional[str] = Query(None),
     product_id: Optional[str] = Query(None),
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="Filter by status: critical, low, normal, overstock"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -31,10 +34,13 @@ async def get_stock_balance(
             page=page,
             limit=limit,
             query=query,
+            sort=sort,
+            dir=dir,
             warehouse_id=warehouse_id,
             product_id=product_id,
             quantity_operator=quantity_operator,
-            quantity_value=quantity_value
+            quantity_value=quantity_value,
+            status=status,
         )
         return result
     except Exception as e:
@@ -75,7 +81,7 @@ async def export_stock_balance(
     product_id: Optional[str] = Query(None),
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("inventory.stock.export")),
     db: Session = Depends(get_db)
 ):
     """Export all stock balance data (no pagination, returns all records)."""
@@ -121,7 +127,7 @@ async def get_stock_ledger_by_stock(
 @router.post("/bulk-import", status_code=status.HTTP_202_ACCEPTED)
 async def bulk_import_stock(
     import_data: BulkImportStockRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("inventory.stock.import")),
     db: Session = Depends(get_db)
 ):
     """Bulk import stock from Excel data (queued).

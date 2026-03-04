@@ -140,6 +140,7 @@ const RoleEditDialog = ({
       );
 
       queryClient.invalidateQueries({ queryKey: ['user-roles'] });
+      queryClient.invalidateQueries({ queryKey: ['user-role-select'] });
       closeDialog();
     },
     onError: (error: Error) => {
@@ -176,6 +177,15 @@ const RoleEditDialog = ({
         ? prev.filter((id) => id !== permissionId)
         : [...prev, permissionId],
     );
+  };
+
+  const selectAllPermissions = () => {
+    const allIds = (permissionList ?? []).map((p: UserPermission) => p.id);
+    setSelectedPermissions(allIds);
+  };
+
+  const clearAllPermissions = () => {
+    setSelectedPermissions([]);
   };
 
   return (
@@ -243,32 +253,34 @@ const RoleEditDialog = ({
               render={() => (
                 <FormItem>
                   <FormLabel>Permissions</FormLabel>
-                  <div className="flex items-center flex-wrap gap-1.5 text-2sm text-muted-foreground border border-input rounded-md px-3 py-3">
-                    {selectedPermissions.length > 0 ? (
-                      selectedPermissions.map((permissionId) => {
-                        const permission = permissionList?.find(
-                          (p: UserPermission) => p.id === permissionId,
-                        );
-                        return (
-                          <Badge key={permissionId} variant="secondary">
-                            {permission?.slug}
-                            <BadgeButton
-                              onClick={() =>
-                                togglePermissionSelection(permissionId)
-                              }
-                            >
-                              <X />
-                            </BadgeButton>
-                          </Badge>
-                        );
-                      })
-                    ) : (
-                      <span className="text-sm text-muted-foreground">
-                        No permissions assigned.
-                      </span>
-                    )}
-                  </div>
-                  <div className="space-y-0 pt-1">
+                  <ScrollArea className="h-[200px] rounded-md border border-input">
+                    <div className="flex items-center flex-wrap gap-1.5 p-3 text-2sm text-muted-foreground">
+                      {selectedPermissions.length > 0 ? (
+                        selectedPermissions.map((permissionId) => {
+                          const permission = permissionList?.find(
+                            (p: UserPermission) => p.id === permissionId,
+                          );
+                          return (
+                            <Badge key={permissionId} variant="secondary">
+                              {permission?.slug}
+                              <BadgeButton
+                                onClick={() =>
+                                  togglePermissionSelection(permissionId)
+                                }
+                              >
+                                <X />
+                              </BadgeButton>
+                            </Badge>
+                          );
+                        })
+                      ) : (
+                        <span className="text-sm text-muted-foreground">
+                          No permissions assigned.
+                        </span>
+                      )}
+                    </div>
+                  </ScrollArea>
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
                     <FormControl>
                       <Popover>
                         <PopoverTrigger asChild>
@@ -277,7 +289,7 @@ const RoleEditDialog = ({
                           </Button>
                         </PopoverTrigger>
                         <PopoverContent
-                          className="w-[200px] p-0 m-0"
+                          className="w-80 p-0 m-0"
                           align="start"
                           side="bottom"
                         >
@@ -286,6 +298,12 @@ const RoleEditDialog = ({
                             <CommandList>
                               <CommandEmpty>No permissions found.</CommandEmpty>
                               <CommandGroup>
+                                <CommandItem
+                                  onSelect={selectAllPermissions}
+                                  className="font-medium"
+                                >
+                                  Select all permissions
+                                </CommandItem>
                                 <ScrollArea className="h-[200px]">
                                   {permissionList?.map(
                                     (permission: UserPermission) => (
@@ -319,6 +337,25 @@ const RoleEditDialog = ({
                         </PopoverContent>
                       </Popover>
                     </FormControl>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={selectAllPermissions}
+                      disabled={!permissionList?.length}
+                    >
+                      Select all
+                    </Button>
+                    {selectedPermissions.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={clearAllPermissions}
+                      >
+                        Clear all
+                      </Button>
+                    )}
                   </div>
                   <FormMessage />
                 </FormItem>

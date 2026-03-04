@@ -31,7 +31,9 @@ import { useCreateForm, useUpdateForm, useForm as useFormQuery } from '../hooks/
 import { FormSchema, type FormSchemaType } from '../forms/form-schema';
 import type { FormFormData } from '../types/form.types';
 import { useAttachments } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
+import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { formatDate } from '@/lib/helpers';
+import { toast } from 'sonner';
 
 interface FormFormProps {
   formId?: string;
@@ -60,6 +62,17 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
 
   // Track if form has been initialized to prevent multiple resets
   const [formInitialized, setFormInitialized] = useState(false);
+
+  const handlePreview = async (attachmentId: string) => {
+    try {
+      const previewUrl = await getAttachmentPreviewUrl(attachmentId);
+      if (previewUrl) {
+        window.open(previewUrl, '_blank');
+      }
+    } catch {
+      toast.error('Failed to open attachment preview');
+    }
+  };
 
   // Load form data when editing
   useEffect(() => {
@@ -312,9 +325,7 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
                               variant="ghost"
                               size="sm"
                               onClick={() => {
-                                if (selectedAttachment.file_path) {
-                                  window.open(selectedAttachment.file_path, '_blank');
-                                }
+                                handlePreview(selectedAttachment.id);
                               }}
                             >
                               Preview

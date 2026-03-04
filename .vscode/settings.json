@@ -1,0 +1,4 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/sorento_crm_backend/venv/bin/python",
+  "python.analysis.extraPaths": ["${workspaceFolder}/sorento_crm_backend"]
+}

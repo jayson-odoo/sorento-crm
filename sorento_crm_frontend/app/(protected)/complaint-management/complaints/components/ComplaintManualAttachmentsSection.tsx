@@ -114,6 +114,8 @@ export default function ComplaintManualAttachmentsSection({
               </TableHeader>
               <TableBody>
                 {attachments.map((link) => {
+                  const displayName =
+                    link.original_filename ?? link.file_name ?? 'Unnamed file';
                   const previewUrl =
                     link.file_url?.startsWith('http') === true
                       ? link.file_url
@@ -122,8 +124,10 @@ export default function ComplaintManualAttachmentsSection({
                         : link.file_url ?? '#';
                   return (
                     <TableRow key={link.id}>
-                      <TableCell className="font-medium">
-                        {link.file_name || 'Unnamed file'}
+                      <TableCell className="font-medium" title={displayName}>
+                        <span className="truncate block max-w-[280px]" title={displayName}>
+                          {displayName}
+                        </span>
                       </TableCell>
                       <TableCell>{formatFileSize(link.file_size_bytes)}</TableCell>
                       <TableCell>
@@ -148,7 +152,7 @@ export default function ComplaintManualAttachmentsSection({
                                   ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
                                   : previewUrl
                               }
-                              download={link.file_name || 'download'}
+                              download={displayName}
                             >
                               <Download className="size-4" />
                               Download

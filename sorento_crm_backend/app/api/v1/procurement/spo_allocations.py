@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.services.procurement_service import SPOAllocationService
 from app.schemas.procurement import (
     SPOAllocationCreate,
@@ -90,7 +90,7 @@ async def get_spo_allocations_grouped_by_spo_number(
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
 async def import_spo_allocations(
     files: List[UploadFile] = File(..., description="One or more Excel files (.xlsx). Filename = SPO number."),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("procurement.spo_allocations.import")),
     db: Session = Depends(get_db),
 ):
     """Queue SPO allocation import jobs. One job per file. Processed in background; progress in Import Jobs; notification when done."""
@@ -232,7 +232,7 @@ async def create_spo_allocation(
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
 async def bulk_delete_spo_allocations(
     body: BulkDeleteSPOAllocationsRequest = Body(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("procurement.spo_allocations.delete")),
     db: Session = Depends(get_db)
 ):
     """Bulk delete SPO allocations by ID."""

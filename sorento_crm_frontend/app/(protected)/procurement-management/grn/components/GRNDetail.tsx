@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/table';
 import { useGRN, useGRNs, useUpdateGRN } from '../hooks/useGRN';
 import { formatDate } from '@/lib/helpers';
+import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import GRNDeleteDialog from './grn-delete-dialog';
 import RecordNavigation from '@/components/common/RecordNavigation';
 
@@ -78,25 +79,6 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
     );
   }
 
-  const getPickingStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case 'draft':
-        return 'secondary';
-      case 'submitted':
-        return 'primary';
-      case 'approved':
-        return 'primary';
-      case 'posted':
-        return 'primary';
-      case 'rejected':
-        return 'destructive';
-      case 'closed':
-        return 'secondary';
-      default:
-        return 'secondary';
-    }
-  };
-
   const pickingStatusLabel = grn.picking_status
     ?.split('_')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
@@ -109,8 +91,8 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
         <div className="space-y-1">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{grn.picking_number}</h1>
-            <Badge variant={getPickingStatusBadgeVariant(grn.picking_status)}>
-              {pickingStatusLabel}
+            <Badge variant={getStatusBadgeVariant(grn.picking_status)}>
+              {formatStatusLabel(grn.picking_status) || pickingStatusLabel}
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
@@ -209,7 +191,7 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
             <div>
               <p className="text-sm text-muted-foreground">Picking Status</p>
               <Badge
-                variant={getPickingStatusBadgeVariant(grn.picking_status)}
+                variant={getStatusBadgeVariant(grn.picking_status)}
               >
                 {pickingStatusLabel}
               </Badge>

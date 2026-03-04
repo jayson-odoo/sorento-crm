@@ -1,7 +1,9 @@
 """Forms API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
+
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.forms_service import FormService
@@ -15,6 +17,10 @@ from app.schemas.forms import (
 )
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
+
+
+class BulkDeleteFormsRequest(BaseModel):
+    ids: list[str]
 
 router = APIRouter()
 
@@ -108,17 +114,32 @@ async def update_form(
         raise handle_internal_error(str(e))
 
 
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_forms(
+    body: BulkDeleteFormsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk delete forms by ID."""
+    try:
+        service = FormService(db)
+        return service.bulk_delete_forms(body.ids)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.delete("/{form_id}", status_code=status.HTTP_200_OK)
 async def delete_form(
     form_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete a form."""
+    """Delete a form (cascades to sections, fields, versions, submissions)."""
     try:
         service = FormService(db)
-        # Implement delete logic
-        return {"message": "Form deleted successfully"}
+        return service.delete_form(form_id)
     except HTTPException:
         raise
     except Exception as e:

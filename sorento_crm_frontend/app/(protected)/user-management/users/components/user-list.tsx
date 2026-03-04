@@ -2,23 +2,40 @@
 
 import { useMemo, useState } from 'react';
 import { redirect } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ColumnDef,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, X } from 'lucide-react';
+import { ChevronRight, LoaderCircleIcon, Plus, Search, Settings, Trash2, UserCheck, UserX, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import { formatDate, formatDateTime, getInitials } from '@/lib/helpers';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { formatDateSafe, formatDateTimeSafe, getInitials } from '@/lib/helpers';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge, BadgeDot, BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { Card, CardFooter, CardHeader, CardTable, CardToolbar } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   DataGrid,
   DataGridApiFetchParams,
@@ -26,7 +43,11 @@ import {
 } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { DataGridTable } from '@/components/ui/data-grid-table';
+import {
+  DataGridTable,
+  DataGridTableRowSelect,
+  DataGridTableRowSelectAll,
+} from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
@@ -40,9 +61,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { User, UserStatus } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import { getUserStatusProps, UserStatusProps } from '../constants/status';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 import UserInviteDialog from './user-add-dialog';
+import { toast } from 'sonner';
 
 const UserList = () => {
+  const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 10,
@@ -50,10 +74,15 @@ const UserList = () => {
   const [sorting, setSorting] = useState<SortingState>([
     { id: 'createdAt', desc: true },
   ]);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | null>('all');
+  const [selectedTrashed, setSelectedTrashed] = useState<string>('exclude');
+  const [bulkActionPending, setBulkActionPending] = useState(false);
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const [bulkConfirmAction, setBulkConfirmAction] = useState<'delete' | 'activate' | 'deactivate' | 'permanent_delete' | null>(null);
 
   // Role select query
   const { data: roleList } = useRoleSelectQuery();
@@ -66,9 +95,11 @@ const UserList = () => {
     searchQuery,
     selectedRole,
     selectedStatus,
+    selectedTrashed,
   }: DataGridApiFetchParams & {
     selectedRole: string | null;
     selectedStatus: string | null;
+    selectedTrashed: string;
   }): Promise<DataGridApiResponse<User>> => {
     const sortField = sorting?.[0]?.id || '';
     const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
@@ -84,6 +115,9 @@ const UserList = () => {
       ...(selectedStatus && selectedStatus !== 'all'
         ? { status: selectedStatus }
         : {}),
+      ...(selectedTrashed && selectedTrashed !== 'exclude'
+        ? { trashed: selectedTrashed }
+        : {}),
     });
 
     const response = await apiFetch(
@@ -96,7 +130,14 @@ const UserList = () => {
       );
     }
 
-    return response.json();
+    const json = await response.json();
+    if (json.data?.length) {
+      json.data = json.data.map((u: Record<string, unknown>) => ({
+        ...u,
+        isTrashed: u.is_trashed ?? u.isTrashed,
+      }));
+    }
+    return json;
   };
 
   // Users query
@@ -108,6 +149,7 @@ const UserList = () => {
       searchQuery,
       selectedRole,
       selectedStatus,
+      selectedTrashed,
     ],
     queryFn: () =>
       fetchUsers({
@@ -117,6 +159,7 @@ const UserList = () => {
         searchQuery,
         selectedRole,
         selectedStatus,
+        selectedTrashed,
       }),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
@@ -135,13 +178,89 @@ const UserList = () => {
     setPagination({ ...pagination, pageIndex: 0 });
   };
 
+  const handleTrashedSelection = (trashed: string) => {
+    setSelectedTrashed(trashed);
+    setPagination({ ...pagination, pageIndex: 0 });
+  };
+
   const handleRowClick = (row: User) => {
     const userId = row.id;
     redirect(`/user-management/users/${userId}`);
   };
 
+  const selectedRowIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
+
+  const runBulkAction = (action: 'delete' | 'activate' | 'deactivate' | 'permanent_delete') => {
+    if (selectedRowIds.length === 0) return;
+    setBulkConfirmAction(action);
+    setBulkConfirmOpen(true);
+  };
+
+  const runBulkActionConfirm = async () => {
+    const action = bulkConfirmAction;
+    if (!action || selectedRowIds.length === 0) return;
+    setBulkActionPending(true);
+    try {
+      const res = await apiFetch('/api/user-management/users/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_ids: selectedRowIds,
+          action: action === 'permanent_delete' ? 'permanent_delete' : action,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || data.message || 'Bulk action failed');
+      toast.success(data.message || 'Done');
+      setRowSelection({});
+      setBulkConfirmOpen(false);
+      setBulkConfirmAction(null);
+      queryClient.invalidateQueries({ queryKey: ['user-users'] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Bulk action failed');
+    } finally {
+      setBulkActionPending(false);
+    }
+  };
+
+  const bulkConfirmConfig =
+    bulkConfirmAction === 'delete'
+      ? {
+          title: 'Confirm delete',
+          description: `Are you sure you want to trash ${selectedRowIds.length} user(s)? They can be restored from the Trashed filter.`,
+          actionLabel: 'Trash',
+        }
+      : bulkConfirmAction === 'permanent_delete'
+        ? {
+            title: 'Permanently delete users',
+            description: `Are you sure you want to permanently delete ${selectedRowIds.length} trashed user(s)? This cannot be undone.`,
+            actionLabel: 'Permanently delete',
+          }
+        : bulkConfirmAction === 'activate'
+          ? {
+              title: 'Confirm activate',
+              description: `Are you sure you want to activate ${selectedRowIds.length} user(s)?`,
+              actionLabel: 'Activate',
+            }
+          : bulkConfirmAction === 'deactivate'
+            ? {
+                title: 'Confirm deactivate',
+                description: `Are you sure you want to deactivate ${selectedRowIds.length} user(s)?`,
+                actionLabel: 'Deactivate',
+              }
+            : { title: '', description: '', actionLabel: '' };
+
   const columns = useMemo<ColumnDef<User>[]>(
     () => [
+      {
+        id: 'select',
+        header: () => <DataGridTableRowSelectAll />,
+        cell: ({ row }) => <DataGridTableRowSelect row={row} />,
+        size: 40,
+        enableSorting: false,
+        meta: { skeleton: <Skeleton className="size-5" /> },
+        enableResizing: false,
+      },
       {
         accessorKey: 'name',
         id: 'name',
@@ -192,23 +311,28 @@ const UserList = () => {
       },
       {
         accessorKey: 'role_name',
-        id: 'role_nameme',
+        id: 'roles',
         header: ({ column }) => (
           <DataGridColumnHeader
-            title="Role"
+            title="Roles"
             visibility={true}
             column={column}
           />
         ),
-        size: 150,
+        size: 180,
         cell: ({ row }) => {
-          const role = row.original.role || [];
-          if (!role) return '-';
-
-          return <Badge variant="secondary">{role.name}</Badge>;
+          const roles = row.original.roles ?? [];
+          if (!roles.length) return <span className="text-muted-foreground">—</span>;
+          return (
+            <span className="inline-flex flex-wrap gap-1">
+              {roles.map((r: { id: string; name: string }) => (
+                <Badge key={r.id} variant="secondary">{r.name}</Badge>
+              ))}
+            </span>
+          );
         },
         meta: {
-          headerTitle: 'Role',
+          headerTitle: 'Roles',
           skeleton: <Skeleton className="w-28 h-7" />,
         },
         enableSorting: true,
@@ -229,7 +353,7 @@ const UserList = () => {
             row.original.status as UserStatus,
           );
           const isTrashed = row.original.isTrashed;
-          const variant = statusProps.variant as keyof BadgeProps['variant'];
+          const variant = getStatusBadgeVariant(row.original.status);
 
           return (
             <div className="inline-flex gap-2.5">
@@ -263,7 +387,7 @@ const UserList = () => {
             column={column}
           />
         ),
-        cell: (info) => formatDate(new Date(info.getValue() as string)),
+        cell: (info) => formatDateSafe(info.getValue() as string | null),
         size: 150,
         meta: {
           headerTitle: 'Joined',
@@ -283,9 +407,7 @@ const UserList = () => {
           />
         ),
         cell: (info) =>
-          info.getValue()
-            ? formatDateTime(new Date(info.getValue() as string))
-            : '-',
+          formatDateTimeSafe(info.getValue() as string | null, 'Never'),
         size: 175,
         meta: {
           headerTitle: 'Last Sign In',
@@ -312,7 +434,7 @@ const UserList = () => {
     [],
   );
 
-  const [columnOrder, setColumnOrder] = useState<string[]>(
+  const [columnOrder, setColumnOrder] = useState<string[]>(() =>
     columns.map((column) => column.id as string),
   );
 
@@ -325,8 +447,11 @@ const UserList = () => {
       pagination,
       sorting,
       columnOrder,
+      rowSelection,
     },
     columnResizeMode: 'onChange',
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onColumnOrderChange: setColumnOrder,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
@@ -406,8 +531,71 @@ const UserList = () => {
               ))}
             </SelectContent>
           </Select>
+          <Select
+            onValueChange={handleTrashedSelection}
+            value={selectedTrashed}
+            disabled={isLoading}
+          >
+            <SelectTrigger className="w-full sm:w-40">
+              <SelectValue placeholder="Trashed" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="exclude">Active only</SelectItem>
+              <SelectItem value="only">Trashed only</SelectItem>
+              <SelectItem value="all">All</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <div className="flex items-center justify-end">
+        <CardToolbar className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isLoading || bulkActionPending || selectedRowIds.length === 0}
+                title={selectedRowIds.length === 0 ? 'Select users to perform bulk actions' : 'Bulk actions'}
+              >
+                <Settings className="size-4" />
+                {selectedRowIds.length > 0 && (
+                  <span className="ml-1.5">({selectedRowIds.length})</span>
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => runBulkAction('activate')}
+                disabled={bulkActionPending || selectedTrashed === 'only'}
+              >
+                <UserCheck className="size-4" />
+                Bulk activate
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => runBulkAction('deactivate')}
+                disabled={bulkActionPending || selectedTrashed === 'only'}
+              >
+                <UserX className="size-4" />
+                Bulk deactivate
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => runBulkAction('delete')}
+                disabled={bulkActionPending || selectedTrashed === 'only'}
+                className="text-destructive focus:text-destructive"
+              >
+                <Trash2 className="size-4" />
+                Trash
+              </DropdownMenuItem>
+              {selectedTrashed === 'only' && (
+                <DropdownMenuItem
+                  onClick={() => runBulkAction('permanent_delete')}
+                  disabled={bulkActionPending}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                  Permanently delete
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             disabled={isLoading && true}
             onClick={() => {
@@ -417,7 +605,7 @@ const UserList = () => {
             <Plus />
             Add user
           </Button>
-        </div>
+        </CardToolbar>
       </CardHeader>
     );
   };
@@ -457,6 +645,49 @@ const UserList = () => {
         open={inviteDialogOpen}
         closeDialog={() => setInviteDialogOpen(false)}
       />
+
+      <AlertDialog
+        open={bulkConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open) setBulkConfirmAction(null);
+          setBulkConfirmOpen(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{bulkConfirmConfig.title}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {bulkConfirmConfig.description}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkActionPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                runBulkActionConfirm();
+              }}
+              disabled={bulkActionPending}
+              className={
+                bulkConfirmAction === 'delete' || bulkConfirmAction === 'permanent_delete'
+                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                  : undefined
+              }
+            >
+              {bulkActionPending ? (
+                <>
+                  <LoaderCircleIcon className="size-4 animate-spin" />
+                  {bulkConfirmConfig.actionLabel}...
+                </>
+              ) : (
+                bulkConfirmConfig.actionLabel
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };

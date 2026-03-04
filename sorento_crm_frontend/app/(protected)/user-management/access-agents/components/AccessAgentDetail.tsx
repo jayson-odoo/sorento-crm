@@ -162,6 +162,17 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                 {accessAgent.is_active ? 'Active' : 'Inactive'}
               </Badge>
             </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Assign to new internal users</p>
+              <p className="font-medium">
+                {accessAgent.assign_to_new_internal_contacts ? 'Yes' : 'No'}
+              </p>
+              {accessAgent.assign_to_new_internal_contacts && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  This agent is automatically assigned when new internal users are created by the Respond.io sync
+                </p>
+              )}
+            </div>
             {accessAgent.description && (
               <div className="md:col-span-2">
                 <p className="text-sm text-muted-foreground">Description</p>

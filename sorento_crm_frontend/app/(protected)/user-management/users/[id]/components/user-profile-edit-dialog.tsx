@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -65,11 +65,21 @@ const UserProfileEditDialog = ({
   // Fetch available roles
   const { data: roleList } = useRoleSelectQuery();
 
+  const { data: userRoles = [] } = useQuery({
+    queryKey: ['user-roles', user?.id],
+    queryFn: async () => {
+      const response = await apiFetch(`/api/user-management/users/${user!.id}/roles`);
+      if (!response.ok) throw new Error('Failed to fetch user roles');
+      return response.json() as Promise<{ id: string; name: string }[]>;
+    },
+    enabled: open && !!user?.id,
+  });
+
   const form = useForm<UserProfileSchemaType>({
     resolver: zodResolver(UserProfileSchema),
     defaultValues: {
       name: user?.name || '',
-      roleId: user?.roleId || '',
+      roleIds: user?.roles?.length ? user.roles.map((r) => r.id) : (user?.roleId ? [user.roleId] : []),
       status: user?.status || '',
       respond_user_id: user?.respondUserId || '',
       superior_id: user?.superiorId || '',
@@ -77,17 +87,25 @@ const UserProfileEditDialog = ({
     mode: 'onSubmit',
   });
 
+  const lastResetRef = useRef<{ userId: string } | null>(null);
   useEffect(() => {
-    if (open) {
-      form.reset({
-        name: user?.name || '',
-        roleId: user?.roleId || '',
-        status: user?.status || '',
-        respond_user_id: user?.respondUserId || '',
-        superior_id: user?.superiorId || '',
-      });
+    if (!open) {
+      lastResetRef.current = null;
+      return;
     }
-  }, [open, user, form]);
+    if (!user?.id) return;
+    if (lastResetRef.current?.userId === user.id) return;
+    lastResetRef.current = { userId: user.id };
+    const roleIds = userRoles.length ? userRoles.map((r: { id: string }) => r.id) : (user?.roles?.length ? user.roles.map((r) => r.id) : (user?.roleId ? [user.roleId] : []));
+    form.reset({
+      name: user.name || '',
+      roleIds,
+      status: user.status || '',
+      respond_user_id: user.respondUserId || '',
+      superior_id: user.superiorId || '',
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; omit to avoid reset loop
+  }, [open, user?.id, user?.name, user?.status, user?.roles, user?.respondUserId, user?.superiorId, userRoles.length]);
 
   const { data: superiorUsers } = useQuery({
     queryKey: ['users-select'],
@@ -116,34 +134,35 @@ const UserProfileEditDialog = ({
 
   const mutation = useMutation({
     mutationFn: async (values: UserProfileSchemaType) => {
-      // Build the payload explicitly with all required fields
-      const profileData: Record<string, any> = {
+      const roleIds = values.roleIds?.length ? values.roleIds : [];
+      const rolesResponse = await apiFetch(`/api/user-management/users/${user.id}/roles`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role_ids: roleIds }),
+      });
+      if (!rolesResponse.ok) {
+        const err = await rolesResponse.json().catch(() => ({}));
+        throw new Error((err as { detail?: string }).detail || 'Failed to update roles');
+      }
+
+      const profileData: Record<string, unknown> = {
         name: values.name,
         status: values.status,
-        role_id: values.roleId,
       };
-      
-      // Always include respond_user_id - convert empty string to null
-      profileData.respond_user_id = values.respond_user_id && values.respond_user_id.trim() !== '' 
-        ? values.respond_user_id.trim() 
+      profileData.respond_user_id = values.respond_user_id?.trim() || null;
+      profileData.superior_id = (values.superior_id && values.superior_id !== '__none__' && values.superior_id.trim() !== '')
+        ? values.superior_id
         : null;
-      
-      // Always include superior_id - convert __none__ or empty to null
-      profileData.superior_id = (values.superior_id && values.superior_id !== '__none__' && values.superior_id.trim() !== '') 
-        ? values.superior_id 
-        : null;
-      
+
       const response = await apiFetch(`/api/user-management/users/${user.id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(profileData),
       });
 
       if (!response.ok) {
-        const { message } = await response.json();
-        throw new Error(message);
+        const err = await response.json().catch(() => ({}));
+        throw new Error((err as { message?: string }).message || 'Failed to update user');
       }
 
       const updatedUser = await response.json();
@@ -169,6 +188,7 @@ const UserProfileEditDialog = ({
       // Invalidate and refetch user data to get updated values
       queryClient.invalidateQueries({ queryKey: ['user-users'] });
       queryClient.invalidateQueries({ queryKey: ['user-user', user.id] });
+      queryClient.invalidateQueries({ queryKey: ['user-roles', user.id] });
       queryClient.refetchQueries({ queryKey: ['user-user', user.id] });
       closeDialog();
     },
@@ -294,28 +314,36 @@ const UserProfileEditDialog = ({
             />
             <FormField
               control={form.control}
-              name="roleId"
+              name="roleIds"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Role</FormLabel>
+                  <FormLabel>Roles</FormLabel>
                   <FormControl>
-                    <Select
-                      onValueChange={(value) => field.onChange(value)}
-                      value={field.value || ''}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a role" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          {roleList?.map((role: UserRole) => (
-                            <SelectItem key={role.id} value={role.id}>
-                              {role.name}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex flex-col gap-2 rounded-md border p-3">
+                      {(roleList ?? []).map((role: UserRole) => (
+                        <div
+                          key={role.id}
+                          className="flex flex-row items-center space-x-2"
+                        >
+                          <Checkbox
+                            id={`role-${role.id}`}
+                            checked={field.value?.includes(role.id)}
+                            onCheckedChange={(checked) => {
+                              const next = checked
+                                ? [...(field.value ?? []), role.id]
+                                : (field.value ?? []).filter((id) => id !== role.id);
+                              field.onChange(next);
+                            }}
+                          />
+                          <label
+                            htmlFor={`role-${role.id}`}
+                            className="font-normal cursor-pointer text-sm"
+                          >
+                            {role.name}
+                          </label>
+                        </div>
+                      ))}
+                    </div>
                   </FormControl>
                   <FormMessage />
                 </FormItem>

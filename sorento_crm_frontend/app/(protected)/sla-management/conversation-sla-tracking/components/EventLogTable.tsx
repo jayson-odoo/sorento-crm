@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { useConversationSLATrackingDetail, useDeleteConversationSLAEventLog } from '../hooks/useConversationSLATracking';
-import { formatDateTimeInMalaysia, formatDuration, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTime, formatDateTimeInMalaysia, formatDuration, parseDateTimeAsUTC, parseNaiveDateTimeAsLocal } from '@/lib/helpers';
 import type { ConversationSLAEventLog } from '../types/conversationSLATracking.types';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';

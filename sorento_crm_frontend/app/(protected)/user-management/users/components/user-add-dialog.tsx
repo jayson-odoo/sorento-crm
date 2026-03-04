@@ -69,6 +69,7 @@ const UserAddDialog = ({
   const [selectedAgent, setSelectedAgent] = useState<{ id: string; name: string } | null>(null);
   const [accessDialogOpen, setAccessDialogOpen] = useState(false);
   const [userAgentAccesses, setUserAgentAccesses] = useState<UserAgentAccess[]>([]);
+  const [sendInvitationEmail, setSendInvitationEmail] = useState(true);
 
   // Fetch available roles
   const { data: roleList } = useRoleSelectQuery();
@@ -101,6 +102,7 @@ const UserAddDialog = ({
       setUserAgentAccesses([]);
       setSelectedAgent(null);
       setAccessDialogOpen(false);
+      setSendInvitationEmail(true);
     }
   }, [open, form]);
 
@@ -154,13 +156,14 @@ const UserAddDialog = ({
   const mutation = useMutation({
     mutationFn: async (values: UserAddSchemaType) => {
       const { agent_ids, roleId, superior_id, ...rest } = values;
-      // Convert camelCase to snake_case for backend
       const payload = {
         ...rest,
-        role_id: roleId,
+        role_ids: roleId ? [roleId] : undefined,
         superior_id: superior_id === '__none__' || superior_id === '' ? null : superior_id,
       };
-      const response = await apiFetch('/api/user-management/users', {
+      const inviteUrl = '/api/user-management/users/invite';
+      const createUrl = '/api/user-management/users';
+      const response = await apiFetch(sendInvitationEmail ? inviteUrl : createUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -169,14 +172,13 @@ const UserAddDialog = ({
       });
 
       if (!response.ok) {
-        const { message } = await response.json();
-        throw new Error(message);
+        const data = await response.json();
+        throw new Error(data.detail ?? data.message ?? 'Request failed');
       }
 
       const userData = await response.json();
       const userId = userData.id;
 
-      // Create user agent accesses
       if (userAgentAccesses.length > 0) {
         for (const access of userAgentAccesses) {
           await apiFetch(`/api/user-management/users/${userId}/agents`, {
@@ -194,10 +196,12 @@ const UserAddDialog = ({
         }
       }
 
-      return userData;
+      return { ...userData, _invited: sendInvitationEmail };
     },
-    onSuccess: () => {
-      const message = 'User added successfully';
+    onSuccess: (data) => {
+      const message = data._invited
+        ? `Invitation sent to ${data.email}. They can set their password using the link in the email.`
+        : 'User added successfully';
       toast.custom(
         () => (
           <Alert variant="mono" icon="success" close={false}>
@@ -311,7 +315,6 @@ const UserAddDialog = ({
                     <FormControl>
                       <Select
                         onValueChange={(value) => {
-                          // Convert "__none__" to null/undefined for optional field
                           field.onChange(value === '__none__' ? null : value);
                         }}
                         value={field.value || '__none__'}
@@ -335,6 +338,20 @@ const UserAddDialog = ({
                   </FormItem>
                 )}
               />
+
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="send-invitation"
+                  checked={sendInvitationEmail}
+                  onCheckedChange={(checked) => setSendInvitationEmail(checked === true)}
+                />
+                <label
+                  htmlFor="send-invitation"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                >
+                  Send invitation email (they will set their password via the link)
+                </label>
+              </div>
 
               {/* Access Agents Section */}
               <div className="space-y-3">

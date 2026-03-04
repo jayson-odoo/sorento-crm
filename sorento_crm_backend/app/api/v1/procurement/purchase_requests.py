@@ -1,5 +1,6 @@
 """Purchase requests / sponsorship forms API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
+import html
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
 from sqlalchemy.orm import Session
 from typing import Optional
 
@@ -9,10 +10,14 @@ from app.services.procurement_service import PurchaseRequestService
 from app.schemas.procurement import (
     PurchaseRequestHeaderCreate,
     PurchaseRequestHeaderUpdate,
+    PurchaseRequestUpdateAndReply,
     PurchaseRequestHeaderResponse,
     PurchaseRequestHeaderListResponse,
     SendApprovalLinkRequest,
     SendApprovalLinkResponse,
+    ViewLinkRequest,
+    ViewLinkResponse,
+    BulkDeletePurchaseRequestsRequest,
 )
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -21,12 +26,24 @@ from app.config import settings
 router = APIRouter()
 
 
+def _respond_user_id_from_current_user(current_user: dict) -> str:
+    """Get respond_user_id for update-and-reply; fallback to user id."""
+    rid = (current_user or {}).get("respond_user_id") or (current_user or {}).get("respondUserId")
+    if rid and str(rid).strip():
+        return str(rid).strip()
+    uid = (current_user or {}).get("id")
+    if uid and str(uid).strip():
+        return str(uid).strip()
+    raise HTTPException(status_code=400, detail="User respond_user_id or id is required for Update & Reply.")
+
+
 @router.get("/", response_model=ListResponse[PurchaseRequestHeaderListResponse])
 async def get_purchase_requests(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
     request_type: Optional[str] = Query(None, description="purchase_request or sponsorship_form"),
+    approval_status: Optional[str] = Query(None, description="draft, pending, approved, rejected"),
     sort: Optional[str] = Query("request_date"),
     dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user),
@@ -40,6 +57,7 @@ async def get_purchase_requests(
             limit=limit,
             query=query,
             request_type=request_type,
+            approval_status=approval_status,
             sort_field=sort or "request_date",
             sort_dir=dir or "desc",
         )
@@ -133,6 +151,42 @@ async def update_purchase_request(
         raise handle_internal_error(str(e))
 
 
+@router.post("/{request_id}/update-and-reply", response_model=PurchaseRequestHeaderResponse)
+async def update_purchase_request_and_reply(
+    request_id: str,
+    data: PurchaseRequestUpdateAndReply,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update purchase request (e.g. form number) and send a reply to the conversation via Respond.io.
+    Either send reply_message or set request_number to auto-send 'Your request has been assigned form number: X'."""
+    try:
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = PurchaseRequestService(db)
+        header = service.update_request_and_reply(
+            request_id,
+            data,
+            respond_user_id=respond_user_id,
+            request_url=str(request.url) if request else "",
+        )
+        db.commit()
+        if getattr(header, "approver_user_id", None):
+            from app.models.user import User
+            user = db.query(User).filter(User.id == header.approver_user_id).first()
+            if user:
+                setattr(
+                    header,
+                    "approver_display_name",
+                    (user.name and user.name.strip()) or user.email or "",
+                )
+        return header
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.post("/{request_id}/set-pending-approval", response_model=PurchaseRequestHeaderResponse)
 async def set_pending_approval(
     request_id: str,
@@ -144,7 +198,7 @@ async def set_pending_approval(
     logger = logging.getLogger(__name__)
     try:
         service = PurchaseRequestService(db)
-        header = service.set_pending_approval(request_id)
+        header = service.set_pending_approval(request_id, requested_by_user_id=current_user.get("id"))
         if getattr(header, "approver_user_id", None):
             from app.models.user import User
             user = db.query(User).filter(User.id == header.approver_user_id).first()
@@ -159,6 +213,22 @@ async def set_pending_approval(
         raise
     except Exception as e:
         logger.error(f"Error in set_pending_approval for {request_id}: {type(e).__name__}: {str(e)}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_purchase_requests(
+    body: BulkDeletePurchaseRequestsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Bulk delete purchase requests and/or sponsorship forms by ID."""
+    try:
+        service = PurchaseRequestService(db)
+        return service.bulk_delete_requests(body.ids)
+    except HTTPException:
+        raise
+    except Exception as e:
         raise handle_internal_error(str(e))
 
 
@@ -186,25 +256,87 @@ async def send_approval_link(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Create one-time approval token and return public approval URL (frontend may send email with it)."""
+    """Create one-time approval token and return public approval URL; optionally send link by email to approver."""
     if not data.approver_email and not data.approver_user_id:
         raise HTTPException(status_code=400, detail="Provide approver_email or approver_user_id.")
     try:
         service = PurchaseRequestService(db)
-        base_url = getattr(settings, "frontend_base_url", "") or ""
+        base_url = (data.base_url or getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
         expires_hours = data.expires_hours or 24
         approval_token, approval_url = service.create_approval_token(
             request_id,
             approver_email=data.approver_email,
             approver_user_id=data.approver_user_id,
+            requested_by_user_id=current_user.get("id"),
             expires_hours=expires_hours,
             base_url=base_url,
         )
+        email_sent = None
+        email_error = None
+        if data.send_email and data.approver_email and data.approver_email.strip():
+            from app.models.user import SystemSetting
+            from app.services.notification_email import send_notification_email, _smtp_config_from_settings
+            sys_settings = db.query(SystemSetting).first()
+            smtp_config = _smtp_config_from_settings(sys_settings) if sys_settings else None
+            header = service.get_request(request_id)
+            type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
+            subject = f"{type_label} – Approval link"
+            full_url = approval_url if approval_url.startswith("http") else f"{base_url.rstrip('/')}{approval_url if approval_url.startswith('/') else '/' + approval_url}"
+            body_text = (
+                f"You have been sent a one-time approval link for a {type_label.lower()}.\n\n"
+                f"Form number: {getattr(header, 'request_number', None) or 'N/A'}\n"
+                f"Project: {getattr(header, 'project_title', None) or 'N/A'}\n\n"
+                f"Open this link to approve or reject (link expires after use or after the expiry time):\n{full_url}\n"
+            )
+            form_num = html.escape(str(getattr(header, "request_number", None) or "N/A"))
+            project = html.escape(str(getattr(header, "project_title", None) or "N/A"))
+            url_escaped = html.escape(full_url, quote=True)
+            body_html = (
+                f"<p>You have been sent a one-time approval link for a {html.escape(type_label.lower())}.</p>"
+                f"<p><strong>Form number:</strong> {form_num}<br>"
+                f"<strong>Project:</strong> {project}</p>"
+                f"<p>Open the link below to approve or reject (link expires after use or after the expiry time):</p>"
+                f'<p><a href="{url_escaped}" style="color: #2563eb; text-decoration: underline;">{url_escaped}</a></p>'
+                f"<p>Or copy and paste into your browser if the link does not work.</p>"
+            )
+            err = send_notification_email(
+                to=data.approver_email.strip(),
+                subject=subject,
+                body_text=body_text,
+                body_html=body_html,
+                smtp_config=smtp_config,
+            )
+            email_sent = err is None
+            email_error = err
         return SendApprovalLinkResponse(
             approval_url=approval_url,
             expires_at=approval_token.expires,
             token_id=str(approval_token.id),
+            email_sent=email_sent,
+            email_error=email_error,
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{request_id}/view-link", response_model=ViewLinkResponse)
+async def get_or_create_view_link(
+    request_id: str,
+    data: Optional[ViewLinkRequest] = Body(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get or create a shareable view link (no login required). Use in Update & Reply to send to Respond."""
+    try:
+        service = PurchaseRequestService(db)
+        service.get_request(request_id)  # ensure exists and user can access
+        token = service.get_or_create_view_token(request_id)
+        db.commit()
+        base = ((data.base_url if data else None) or getattr(settings, "frontend_base_url", "") or "").rstrip("/")
+        view_url = f"{base}/view/request?token={token}" if base else f"/view/request?token={token}"
+        return ViewLinkResponse(view_token=token, view_url=view_url)
     except HTTPException:
         raise
     except Exception as e:

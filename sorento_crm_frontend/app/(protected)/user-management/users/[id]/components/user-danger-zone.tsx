@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { User } from '@/app/models/user';
 import UserDeleteDialog from './user-delete-dialog';
 import UserRestoreDialog from './user-restore-dialog';
+import UserPermanentDeleteDialog from './user-permanent-delete-dialog';
 
 const UserDangerZone = ({
   user,
@@ -17,6 +18,7 @@ const UserDangerZone = ({
 }) => {
   const [isDeleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isRestoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [isPermanentDeleteDialogOpen, setPermanentDeleteDialogOpen] = useState(false);
 
   // Render skeleton when loading
   const Loading = () => (
@@ -32,23 +34,22 @@ const UserDangerZone = ({
     </div>
   );
 
-  // Content for the "Delete user" Danger Zone
+  // Content for the "Delete user" Danger Zone (trash = soft delete)
   const DeleteContent = () => (
     <div className="space-y-3">
       <h2 className="font-semibold text-destructive">Danger Zone</h2>
       <Card>
         <CardContent>
-          <h3 className="font-semibold mb-3">Delete user account</h3>
+          <h3 className="font-semibold mb-3">Trash user account</h3>
           <p className="text-sm text-muted-foreground mb-4">
-            This action will permanently delete the user and all related data.
-            It cannot be undone.
+            This will move the user to the trash. They can be restored later from the user list (Trashed only filter).
           </p>
           <Button
             variant="destructive"
             onClick={() => setDeleteDialogOpen(true)}
             disabled={user.role?.isProtected}
           >
-            Delete user
+            Trash user
           </Button>
         </CardContent>
       </Card>
@@ -60,25 +61,37 @@ const UserDangerZone = ({
     </div>
   );
 
-  // Content for restoring a trashed user—modeled after the delete dialog.
+  // Content for restoring or permanently deleting a trashed user.
   const RestoreContent = () => (
     <div className="space-y-3">
-      <h2 className="font-semibold text-destructive">Restore Account</h2>
+      <h2 className="font-semibold text-destructive">Trashed Account</h2>
       <Card>
-        <CardContent>
-          <h3 className="font-semibold mb-3">Restore user account</h3>
+        <CardContent className="space-y-4">
+          <h3 className="font-semibold mb-3">Restore or permanently delete</h3>
           <p className="text-sm text-muted-foreground mb-4">
-            This account is currently trashed. Restoring the account will
-            reactivate the user and all related data.
+            This account is currently trashed. You can restore it or permanently delete it and all related data.
           </p>
-          <Button variant="outline" onClick={() => setRestoreDialogOpen(true)}>
-            Restore user
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setRestoreDialogOpen(true)}>
+              Restore user
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => setPermanentDeleteDialogOpen(true)}
+            >
+              Permanently delete
+            </Button>
+          </div>
         </CardContent>
       </Card>
       <UserRestoreDialog
         open={isRestoreDialogOpen}
         closeDialog={() => setRestoreDialogOpen(false)}
+        user={user}
+      />
+      <UserPermanentDeleteDialog
+        open={isPermanentDeleteDialogOpen}
+        closeDialog={() => setPermanentDeleteDialogOpen(false)}
         user={user}
       />
     </div>

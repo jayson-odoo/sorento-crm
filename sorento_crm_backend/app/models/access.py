@@ -38,6 +38,7 @@ class AccessAgent(Base):
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    assign_to_new_internal_contacts = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)

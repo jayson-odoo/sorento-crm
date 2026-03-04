@@ -33,7 +33,7 @@ import {
   useBulkRestoreAttachments,
   useRestoreDirectory,
 } from '../../attachments/hooks/useAttachments';
-import { resubmitAttachmentWebhook } from '../../attachments/services/attachmentService';
+import { getAttachmentPreviewUrl, resubmitAttachmentWebhook } from '../../attachments/services/attachmentService';
 import type { Attachment } from '../../attachments/types/attachment.types';
 import { formatDateTime } from '@/lib/helpers';
 import AttachmentUploadDialog from '../../attachments/components/AttachmentUploadDialog';
@@ -41,7 +41,7 @@ import AttachmentBulkImportDialog from '../../attachments/components/AttachmentB
 import AttachmentDeleteDialog from '../../attachments/components/attachment-delete-dialog';
 import AttachmentBulkDeleteDialog from '../../attachments/components/AttachmentBulkDeleteDialog';
 import AttachmentDetailModal from '../../attachments/components/AttachmentDetailModal';
-import { TRASH_VIEW_ID, TRASH_FOLDER_PREFIX } from '../constants';
+import { TRASH_VIEW_ID, TRASH_FOLDER_PREFIX, FOLDER_ALL_ID } from '../constants';
 
 const DRAG_ID_PREFIX = 'attachment-';
 
@@ -110,12 +110,16 @@ export default function AttachmentsInFolderPanel({
   const trashFolderId =
     directoryId?.startsWith(TRASH_FOLDER_PREFIX) ? directoryId.slice(TRASH_FOLDER_PREFIX.length) : null;
 
+  // When "All attachments" is selected (directoryId null or FOLDER_ALL_ID), omit directory_id so the API
+  // returns all attachments including those with no folder (e.g. stock list uploads).
+  const effectiveDirectoryId =
+    directoryId === null || directoryId === FOLDER_ALL_ID ? undefined : directoryId;
   const { data, isLoading } = useAttachments({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    directory_id: trashFolderId ?? (isTrashView ? undefined : directoryId ?? undefined),
+    directory_id: trashFolderId ?? (isTrashView ? undefined : effectiveDirectoryId),
     is_deleted: isTrashView ? true : undefined,
   });
 
@@ -161,6 +165,17 @@ export default function AttachmentsInFolderPanel({
       document.body.removeChild(a);
     } catch {
       // Error handled by mutation toast
+    }
+  };
+
+  const handlePreview = async (attachmentId: string) => {
+    try {
+      const previewUrl = await getAttachmentPreviewUrl(attachmentId);
+      if (previewUrl) {
+        window.open(previewUrl, '_blank');
+      }
+    } catch {
+      toast.error('Failed to open attachment preview');
     }
   };
 
@@ -308,7 +323,7 @@ export default function AttachmentsInFolderPanel({
               title="Preview"
               onClick={(e) => {
                 e.stopPropagation();
-                if (row.original.file_path) window.open(row.original.file_path, '_blank');
+                handlePreview(row.original.id);
               }}
             >
               <Eye className="size-4" />

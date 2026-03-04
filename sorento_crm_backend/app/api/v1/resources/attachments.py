@@ -2,21 +2,18 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Form, Response, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional, List
-import uuid
 import hashlib
 import logging
 import os
 import json
 import zipfile
 import io
-import threading
 import mimetypes
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
 from app.services.integration_service import IntegrationLogService
 from app.schemas.resources import AttachmentCreate, AttachmentUpdate, AttachmentResponse, AttachmentBulkDeleteRequest, AttachmentReorderRequest
-from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
@@ -71,6 +68,7 @@ async def get_attachments(
     entity_id: Optional[str] = Query(None),
     directory_id: Optional[str] = Query(None),
     is_deleted: Optional[bool] = Query(None),
+    resolve_signed_urls: bool = Query(False, description="When false, return stored file_path without CloudFront signing."),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -95,11 +93,75 @@ async def get_attachments(
             user_info = _enrich_uploaded_by_user(db, att)
             if user_info:
                 data["uploaded_by_user"] = user_info
+
+            if resolve_signed_urls:
+                # Optional on-demand signing for list responses.
+                data["file_path"] = _resolve_attachment_file_path(data.get("file_path"))
             enriched.append(data)
+
         result["data"] = enriched
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+# Match attachment type by display name "Stock List" (UI) or legacy "Stock_List"
+STOCK_LIST_TYPE_NAMES = ("Stock List", "Stock_List")
+
+
+@router.get("/current-stock-list", response_model=AttachmentResponse)
+async def get_current_stock_list(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get the current (non-archived) Stock_List attachment, if any. For quick access from Stock page and n8n."""
+    from app.models.resources import Attachment, AttachmentType
+
+    attachment_type = db.query(AttachmentType).filter(AttachmentType.type_name.in_(STOCK_LIST_TYPE_NAMES)).first()
+    if not attachment_type:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment type 'Stock List' not found")
+    attachment = (
+        db.query(Attachment)
+        .filter(
+            Attachment.attachment_type_id == str(attachment_type.id),
+            Attachment.is_deleted == False,
+        )
+        .order_by(Attachment.uploaded_at.desc())
+        .first()
+    )
+    if not attachment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No Stock List file has been uploaded yet")
+    service = AttachmentService(db)
+    data = _attachment_response_with_linked_entities(service, attachment)
+    user_info = _enrich_uploaded_by_user(db, attachment)
+    if user_info:
+        data["uploaded_by_user"] = user_info
+    return data
+
+
+def _resolve_attachment_file_path(file_path: Optional[str]) -> Optional[str]:
+    """Return a fresh CloudFront signed URL. Accepts S3 key or existing CloudFront base URL (https://domain/key)."""
+    if not file_path:
+        return file_path
+    try:
+        from app.services.s3_service import S3Service
+        from urllib.parse import urlparse, unquote
+        s3 = S3Service()
+        if file_path.startswith("https://") or file_path.startswith("http://"):
+            parsed = urlparse(file_path)
+            # If already a signed CloudFront URL, keep it as-is (no re-sign needed).
+            if parsed.query and "Policy=" in parsed.query and "Key-Pair-Id=" in parsed.query:
+                return file_path
+            # If it's our CloudFront domain, extract path (S3 key) and return signed URL
+            # Decode any existing URL-encoding first to avoid double-encoding when signing.
+            path = unquote((parsed.path or "").lstrip("/"))
+            if path:
+                return s3.get_signed_url(path)
+            return file_path
+        return s3.get_signed_url(unquote(file_path))
+    except Exception as e:
+        logger.warning("Could not generate signed URL for key %s: %s", (file_path or "")[:50], e)
+        return file_path
 
 
 def _attachment_response_with_linked_entities(service: AttachmentService, attachment) -> dict:
@@ -108,6 +170,8 @@ def _attachment_response_with_linked_entities(service: AttachmentService, attach
 
     attachment_id = str(attachment.id) if attachment.id else attachment.id
     data = AttachmentResponse.model_validate(attachment).model_dump()
+    # On-demand signing only for single-attachment metadata/detail responses.
+    data["file_path"] = _resolve_attachment_file_path(data.get("file_path"))
     linked = service.get_linked_entities(attachment_id)
     data["linked_products"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_products"]]
     data["linked_promotions"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_promotions"]]
@@ -150,55 +214,78 @@ async def create_attachment(
     request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    attachment_type_id: str = Form(...),
+    attachment_type_id: Optional[str] = Form(None),
     entity_type: Optional[str] = Form(None),
     entity_id: Optional[str] = Form(None),
     directory_id: Optional[str] = Form(None),
     access_levels: Optional[str] = Form(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachments.upload")),
     db: Session = Depends(get_db)
 ):
-    """Upload a new attachment to S3."""
+    """Upload a new attachment to S3. If attachment_type_id is omitted, no webhook is triggered (e.g. promotion extra attachments)."""
     try:
+        # Normalize empty string to None for optional type
+        type_id = (attachment_type_id or "").strip() or None
+
         # Debug: Log request details
         logger.info(f"Content-Type: {request.headers.get('content-type')}")
         logger.info(f"File received: {file.filename if file else 'None'}")
-        logger.info(f"Attachment type ID: {attachment_type_id}")
-        
+        logger.info(f"Attachment type ID: {type_id}")
+
         # Validate file is provided
         if not file or not file.filename:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="File is required"
             )
+        # Reject macOS resource-fork / AppleDouble files (._*); they are metadata-only and not viewable
+        if file.filename.strip().startswith("._"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Files starting with ._ are macOS metadata files and cannot be uploaded. Please upload the actual file instead."
+            )
         from app.services.s3_service import S3Service
-        
+
         # Read file content
         file_content = await file.read()
         file_size = len(file_content)
-        
+
         # Calculate SHA-256 hash for duplicate detection
         file_hash = hashlib.sha256(file_content).hexdigest()
-        
-        # Generate stored filename
-        file_uuid = str(uuid.uuid4())
+
+        # Use original filename (sanitized) for S3 so objects appear with the name users expect
         original_filename = file.filename or "unknown"
-        # Sanitize filename - remove special characters that might cause issues
-        safe_filename = "".join(c for c in original_filename if c.isalnum() or c in (' ', '-', '_', '.')).strip()
-        stored_filename = f"{file_uuid}-{safe_filename}"
-        
-        # Get attachment type to determine entity_type if not provided
+        safe_filename = "".join(c for c in original_filename if c.isalnum() or c in (' ', '-', '_', '.')).strip() or "file"
+        stored_filename = safe_filename
+
+        # Get attachment type: required for DB (attachments.attachment_type_id is NOT NULL).
+        # When entity_type is "promotion" and no type_id given, use the promotion attachment type (code='promotion').
         type_service = AttachmentTypeService(db)
         attachment_type = None
-        if attachment_type_id:
+        if type_id:
             try:
-                attachment_type = type_service.get_type(attachment_type_id)
+                attachment_type = type_service.get_type(type_id)
             except HTTPException:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid attachment type ID"
                 )
-        
+        elif (entity_type or "").strip().lower() == "promotion":
+            promotion_type = type_service.get_type_by_code("promotion")
+            if promotion_type:
+                type_id = str(promotion_type.id)
+                attachment_type = promotion_type
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Promotion attachments require an attachment type with code 'promotion'. Please create one in Resource Management > Attachment Types, or run migrations to seed it."
+                )
+        if not type_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="attachment_type_id is required, or upload with entity_type 'promotion' (which uses the promotion attachment type)."
+            )
+
         # Determine entity_type:
         # 1. Use provided entity_type if given
         # 2. Otherwise, use attachment_type.type_name (sanitized for S3 path)
@@ -209,14 +296,17 @@ async def create_attachment(
             final_entity_type = attachment_type.type_name.lower().replace(' ', '_')
         else:
             final_entity_type = "general"
-        
-        # Construct S3 key: {entity_type}/{stored_filename}
-        s3_file_path = f"{final_entity_type}/{stored_filename}"
-        
+
+        # Construct S3 key. For promotions with entity_id, scope by promotion to avoid overwriting same name across promotions
+        if (entity_type or "").strip().lower() == "promotion" and entity_id:
+            s3_file_path = f"promotion/{entity_id}/{stored_filename}"
+        else:
+            s3_file_path = f"{final_entity_type}/{stored_filename}"
+
         # Upload to S3
         s3_service = S3Service()
         try:
-            s3_key, s3_url = s3_service.upload_file(
+            s3_key, _ = s3_service.upload_file(
                 file_content=file_content,
                 file_path=s3_file_path,
                 content_type=file.content_type
@@ -227,8 +317,13 @@ async def create_attachment(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to upload file to storage: {str(s3_error)}"
             )
-        
-        # Parse access levels for attachment record and webhook (JSON array string expected)
+
+        is_promotion_upload = (entity_type or "").strip().lower() == "promotion"
+        # Persist only a stable, non-signed CloudFront URL in DB.
+        stored_file_path = s3_service.get_cloudfront_base_url(s3_key)
+
+        # Parse access levels for attachment record and webhook (JSON array string expected).
+        # For promotion uploads, use the promotion's access_levels when entity_id is provided.
         access_levels_payload = None
         if access_levels:
             try:
@@ -237,15 +332,20 @@ async def create_attachment(
                     access_levels_payload = parsed
             except Exception:
                 logger.warning("Invalid access_levels payload; expected JSON array.")
+        if not access_levels_payload and (entity_type or "").strip().lower() == "promotion" and entity_id:
+            from app.models.marketing import Promotion
+            promo = db.query(Promotion).filter(Promotion.id == entity_id).first()
+            if promo and getattr(promo, "access_levels", None) and isinstance(promo.access_levels, list):
+                access_levels_payload = list(promo.access_levels)
         if not access_levels_payload:
             access_levels_payload = ["dealer", "end_user"]
 
-        # Create attachment record
+        # Create attachment record. file_path stored as CloudFront base URL for consistency with other attachments.
         attachment_data = AttachmentCreate(
-            attachment_type_id=attachment_type_id,
+            attachment_type_id=type_id,
             original_filename=original_filename,
             stored_filename=stored_filename,
-            file_path=s3_url,  # Store S3 URL (https://...)
+            file_path=stored_file_path,
             file_size_bytes=file_size,
             mime_type=file.content_type or "application/octet-stream",  # Default if None
             file_hash=file_hash,
@@ -254,13 +354,16 @@ async def create_attachment(
             directory_id=directory_id,
             access_levels=access_levels_payload,
         )
-        
+
         service = AttachmentService(db)
         attachment = service.create_attachment(attachment_data, current_user["id"])
-        try:
-            _create_and_send_webhook(db, attachment, attachment_type, access_levels_payload or attachment.access_levels, current_user["id"])
-        except Exception as e:
-            logger.error("Failed to create integration log for attachment %s: %s", attachment.id, e, exc_info=True)
+        # Trigger webhook for normal attachment uploads (including Files menu Promotion type).
+        # Only skip promotion-module uploads where entity_type=promotion.
+        if attachment_type is not None and not is_promotion_upload:
+            try:
+                _create_and_send_webhook(db, attachment, attachment_type, access_levels_payload or attachment.access_levels, current_user["id"])
+            except Exception as e:
+                logger.error("Failed to create integration log for attachment %s: %s", attachment.id, e, exc_info=True)
         return attachment
     
     except HTTPException:
@@ -288,6 +391,107 @@ async def create_attachment(
         raise handle_internal_error(error_msg)
 
 
+@router.post("/replace-latest-stock-list", response_model=AttachmentResponse, status_code=status.HTTP_201_CREATED)
+async def replace_latest_stock_list(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Replace the Stock_List attachment. Only one non-archived attachment with type Stock_List allowed; archives any existing, then creates new. For n8n AI agent."""
+    from datetime import datetime
+
+    if not file or not file.filename:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is required")
+
+    try:
+        from app.services.s3_service import S3Service
+        from app.models.resources import Attachment, AttachmentType
+
+        service = AttachmentService(db)
+
+        # Resolve attachment type by name "Stock List" (UI) or "Stock_List"
+        attachment_type = db.query(AttachmentType).filter(AttachmentType.type_name.in_(STOCK_LIST_TYPE_NAMES)).first()
+        if not attachment_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Attachment type 'Stock List' not found. Create an attachment type with name 'Stock List' first.",
+            )
+
+        # Archive any existing non-archived attachment with this type (only 1 allowed)
+        existing = (
+            db.query(Attachment)
+            .filter(
+                Attachment.attachment_type_id == str(attachment_type.id),
+                Attachment.is_deleted == False,
+            )
+            .all()
+        )
+        now = datetime.utcnow()
+        for att in existing:
+            att.is_deleted = True
+            att.deleted_at = now
+            att.deleted_by = current_user["id"]
+        if existing:
+            db.commit()
+
+        # Upload file (same flow as create_attachment); use sanitized original filename only (no UUID prefix)
+        file_content = await file.read()
+        file_size = len(file_content)
+        file_hash = hashlib.sha256(file_content).hexdigest()
+        original_filename = file.filename or "stock_list.xlsx"
+        safe_filename = "".join(c for c in original_filename if c.isalnum() or c in (" ", "-", "_", ".")).strip() or "stock_list.xlsx"
+        stored_filename = safe_filename
+        entity_type = (attachment_type.type_name or "general").lower().replace(" ", "_")
+        s3_file_path = f"{entity_type}/{stored_filename}"
+
+        s3_service = S3Service()
+        try:
+            s3_key, _ = s3_service.upload_file(
+                file_content=file_content,
+                file_path=s3_file_path,
+                content_type=file.content_type,
+            )
+        except Exception as s3_error:
+            logger.error("S3 upload failed for replace-latest-stock-list: %s", s3_error)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to upload file to storage: {str(s3_error)}",
+            )
+
+        stored_file_path = s3_service.get_cloudfront_base_url(s3_key)
+        access_levels_payload = ["dealer", "end_user"]
+        attachment_data = AttachmentCreate(
+            attachment_type_id=str(attachment_type.id),
+            original_filename=original_filename,
+            stored_filename=stored_filename,
+            file_path=stored_file_path,
+            file_size_bytes=file_size,
+            mime_type=file.content_type or "application/octet-stream",
+            file_hash=file_hash,
+            entity_type=entity_type,
+            entity_id=None,
+            directory_id=None,
+            description="Latest stock list",
+            access_levels=access_levels_payload,
+        )
+        attachment = service.create_attachment(attachment_data, current_user["id"])
+        try:
+            _create_and_send_webhook(db, attachment, attachment_type, access_levels_payload, current_user["id"])
+        except Exception as e:
+            logger.warning("Webhook failed for replace-latest-stock-list attachment %s: %s", attachment.id, e)
+
+        data = AttachmentResponse.model_validate(attachment).model_dump()
+        user_info = _enrich_uploaded_by_user(db, attachment)
+        if user_info:
+            data["uploaded_by_user"] = user_info
+        return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("replace_latest_stock_list failed")
+        raise handle_internal_error(str(e))
+
+
 def _normalize_zip_path(name: str) -> str:
     """Normalize zip entry name: strip slashes, use forward slash."""
     return name.replace("\\", "/").strip("/")
@@ -299,7 +503,7 @@ async def bulk_import_attachments(
     attachment_type_id: str = Form(...),
     access_levels: Optional[str] = Form(None),
     parent_directory_id: Optional[str] = Form(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachments.bulk_import")),
     db: Session = Depends(get_db),
 ):
     """Queue a ZIP import job. Import runs in the background with batch processing. Poll GET /api/v1/system/jobs/{job_id}/status for progress."""
@@ -433,6 +637,24 @@ async def get_attachment_metadata(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{attachment_id}/preview-url")
+async def get_attachment_preview_url(
+    attachment_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get a fresh signed URL for preview/open action."""
+    try:
+        service = AttachmentService(db)
+        attachment = service.get_attachment(attachment_id)
+        preview_url = _resolve_attachment_file_path(attachment.file_path)
+        return {"attachment_id": attachment_id, "preview_url": preview_url}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.delete("/{attachment_id}", status_code=status.HTTP_200_OK)
 async def delete_attachment(
     attachment_id: str,
@@ -487,7 +709,7 @@ async def restore_attachment(
 @router.post("/bulk-archive", status_code=status.HTTP_200_OK)
 async def bulk_archive_attachments(
     body: AttachmentBulkDeleteRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
 ):
     """Archive multiple attachments (soft delete)."""
@@ -504,7 +726,7 @@ async def bulk_archive_attachments(
 @router.post("/bulk-delete", status_code=status.HTTP_200_OK)
 async def bulk_delete_attachments(
     body: AttachmentBulkDeleteRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachments.bulk_delete")),
     db: Session = Depends(get_db)
 ):
     """Mass delete attachments permanently (hard delete)."""

@@ -1,7 +1,7 @@
 """Complaints API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, Union, List, Any
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.complaints_service import ComplaintService
@@ -11,10 +11,14 @@ from app.schemas.complaints import (
     ComplaintUpdate,
     ComplaintResponse,
     ComplaintAttachmentLinkRequest,
+    BulkDeleteComplaintsRequest,
 )
+from app.schemas.external import ComplaintIntegrationCreate
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
+from app.schemas.procurement import ViewLinkRequest, ViewLinkResponse
 from app.services.error_handler import handle_internal_error
+from app.config import settings as app_settings
 
 router = APIRouter()
 
@@ -35,22 +39,42 @@ async def get_complaints(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
+    assigned_to: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
     sort: Optional[str] = Query("complaint_date"),
     dir: Optional[str] = Query("asc"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get complaints with pagination, search, and sorting."""
+    """Get complaints with pagination, search, assignee/status filters, and sorting."""
     try:
         service = ComplaintService(db)
         result = service.list_complaints(
             page=page,
             limit=limit,
             query=query,
+            assigned_to=assigned_to,
+            status=status,
             sort_field=sort or "complaint_date",
             sort_dir=dir or "asc"
         )
         return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_complaints(
+    body: BulkDeleteComplaintsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk delete complaints by ID. Body: { ids: string[] }."""
+    try:
+        service = ComplaintService(db)
+        return service.bulk_delete_complaints(body.ids)
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -112,22 +136,66 @@ async def get_complaint(
         raise handle_internal_error(str(e))
 
 
+@router.post("/{complaint_id}/view-link", response_model=ViewLinkResponse)
+async def get_or_create_complaint_view_link(
+    complaint_id: str,
+    data: Optional[ViewLinkRequest] = Body(None),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get or create a shareable view link for this complaint (no login required to view)."""
+    try:
+        service = ComplaintService(db)
+        service.get_complaint(complaint_id)  # ensure exists and user can access
+        token = service.get_or_create_view_token(complaint_id)
+        db.commit()
+        base = ((data.base_url if data else None) or getattr(app_settings, "frontend_base_url", "") or "").rstrip("/")
+        view_url = f"{base}/view/complaint?token={token}" if base else f"/view/complaint?token={token}"
+        return ViewLinkResponse(view_token=token, view_url=view_url)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+def _is_integration_payload(body: Any) -> bool:
+    """True if body looks like integration payload (date_of_complaint, sales_person, delivery_order_numbers, defect_discovered_when)."""
+    if isinstance(body, list):
+        body = body[0] if body else {}
+    if not isinstance(body, dict):
+        return False
+    return any(
+        body.get(k) is not None
+        for k in ("date_of_complaint", "sales_person", "delivery_order_numbers", "defect_discovered_when")
+    )
+
+
 @router.post("/", response_model=ComplaintResponse, status_code=status.HTTP_201_CREATED)
 async def create_complaint(
-    complaint_data: ComplaintCreate,
-    request: Request,
+    body: Any = Body(..., embed=False),
+    request: Request = None,
     current_user: dict = Depends(get_current_user_or_api_key),  # Support both JWT and API key
     db: Session = Depends(get_db)
 ):
     """Create a new complaint with attachments.
-    
-    Supports both authenticated users (via JWT Bearer token) and external parties (via X-API-Key header).
+    Accepts either:
+    - Standard ComplaintCreate (complaint_date, salesperson, delivery_order_number, ...), or
+    - Integration payload (date_of_complaint, sales_person, delivery_order_numbers, defect_discovered_when, ...), single object or [{ ... }].
     """
     try:
+        if isinstance(body, list) and body and _is_integration_payload(body):
+            payload = ComplaintIntegrationCreate.model_validate(body[0])
+            complaint_data = payload.to_complaint_create()
+        elif isinstance(body, dict) and _is_integration_payload(body):
+            payload = ComplaintIntegrationCreate.model_validate(body)
+            complaint_data = payload.to_complaint_create()
+        else:
+            raw = body[0] if isinstance(body, list) and body else body
+            complaint_data = ComplaintCreate.model_validate(raw)
         service = ComplaintService(db)
         complaint = service.create_complaint(complaint_data)
         db.commit()
-        return complaint
+        return service.get_complaint_with_attachments(complaint.id)
     except HTTPException:
         raise
     except Exception as e:
@@ -136,12 +204,21 @@ async def create_complaint(
 
 @router.post("/integration", status_code=status.HTTP_200_OK)
 async def create_complaint_integration(
-    complaint_data: ComplaintCreate,
-    request: Request,
+    body: Union[List[ComplaintIntegrationCreate], ComplaintIntegrationCreate] = Body(..., embed=False),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
-    """Create a complaint from integration and log the request."""
+    """Create a complaint from integration and log the request.
+    Accepts integration payload with date_of_complaint, defect_discovered_when, delivery_order_numbers,
+    sales_person, address (and other fields). Single object or array of one element."""
     try:
+        if isinstance(body, list):
+            if not body:
+                raise HTTPException(status_code=400, detail="At least one complaint payload is required")
+            payload = body[0]
+        else:
+            payload = body
+        complaint_data = payload.to_complaint_create()
         service = ComplaintService(db)
         complaint = service.create_complaint(complaint_data)
 
@@ -153,14 +230,33 @@ async def create_complaint_integration(
                 business_id=complaint.id,
                 external_reference=complaint.delivery_order_number,
                 direction="inbound",
-                endpoint=str(request.url),
+                endpoint=str(request.url) if request else "",
                 http_method="POST",
                 status="success"
             ),
-            request_payload_dict=complaint_data.model_dump()
+            request_payload_dict=payload.model_dump()
         )
 
         return {"status": "success", "message": "Complaint created successfully.", "complaint_id": complaint.id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{complaint_id}/sync-assignee", status_code=status.HTTP_200_OK)
+async def sync_complaint_assignee(
+    complaint_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Sync assignee from Respond.io: fetch contact by complaint's contact_id, get assignee, match to CRM user by respond_user_id, update complaint.assigned_to."""
+    try:
+        service = ComplaintService(db)
+        result = service.sync_assignee_from_respond(complaint_id)
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 

@@ -295,22 +295,27 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Administrative Users',
         path: '/user-management/users',
+        permission: 'user_management.users.view',
       },
       {
         title: 'Roles',
         path: '/user-management/roles',
+        permission: 'user_management.roles.view',
       },
       {
         title: 'Permissions',
         path: '/user-management/permissions',
+        permission: 'user_management.permissions.view',
       },
       {
         title: 'AI Agents',
         path: '/user-management/access-agents',
+        permission: 'user_management.access_agents.view',
       },
       {
         title: 'Teams',
         path: '/user-management/teams',
+        permission: 'user_management.teams.view',
       },
       {
         title: 'Internal Users',
@@ -319,14 +324,17 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Account',
         path: '/user-management/account',
+        permission: 'user_management.account.view',
       },
       {
         title: 'Logs',
         path: '/user-management/logs',
+        permission: 'user_management.logs.view',
       },
       {
         title: 'Settings',
         path: '/user-management/settings',
+        permission: 'user_management.settings.view',
       },
     ],
   },
@@ -337,14 +345,17 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Orders',
         path: '/order-management/orders',
+        permission: 'order_management.orders.view',
       },
       {
         title: 'Order Status',
         path: '/order-management/order-statuses',
+        permission: 'order_management.order_statuses.view',
       },
       {
         title: 'Customers',
         path: '/order-management/customers',
+        permission: 'order_management.customers.view',
       },
     ],
   },
@@ -386,24 +397,29 @@ export const MENU_SIDEBAR: MenuConfig = [
         {
           title: 'All Products',
           path: '/master-data-management/products',
+          permission: 'master_data.products.view',
         },
         {
           title: 'Product Attachments',
           path: '/master-data-management/product-attachments',
+          permission: 'master_data.product_attachments.view',
         },
       ],
     },
     {
       title: 'Product Categories',
       path: '/master-data-management/product-categories',
+      permission: 'master_data.product_categories.view',
     },
     {
       title: 'Brands',
       path: '/master-data-management/brands',
+      permission: 'master_data.brands.view',
     },
     {
       title: 'Units of Measure',
       path: '/master-data-management/units-of-measure',
+      permission: 'master_data.units_of_measure.view',
     },
     ],
   },
@@ -414,38 +430,47 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Suppliers',
         path: '/procurement-management/suppliers',
+        permission: 'procurement.suppliers.view',
       },
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
+        permission: 'procurement.product_suppliers.view',
       },
       {
         title: 'Packing Lists',
         path: '/procurement-management/packing-lists',
+        permission: 'procurement.packing_lists.view',
       },
       {
         title: 'SPO Allocations',
         path: '/procurement-management/spo-allocations',
+        permission: 'procurement.spo_allocations.view',
       },
       {
         title: 'GRN',
         path: '/procurement-management/grn',
+        permission: 'procurement.grn.view',
       },
       {
         title: 'Picking Lines',
         path: '/procurement-management/picking-lines',
+        permission: 'procurement.picking_lines.view',
       },
       {
         title: 'Stock Inquiries',
         path: '/procurement-management/stock-inquiries',
+        permission: 'procurement.stock_inquiries.view',
       },
       {
         title: 'Purchase Requests',
         path: '/procurement-management/purchase-requests',
+        permission: 'procurement.purchase_requests.view',
       },
       {
         title: 'Sponsorship Forms',
         path: '/procurement-management/sponsorship-forms',
+        permission: 'procurement.sponsorship_forms.view',
       },
     ],
   },
@@ -456,22 +481,27 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Warehouses',
         path: '/inventory-management/warehouses',
+        permission: 'inventory.warehouses.view',
       },
       {
         title: 'Storage Zones',
         path: '/inventory-management/storage-zones',
+        permission: 'inventory.storage_zones.view',
       },
       {
         title: 'Stock',
         path: '/inventory-management/stock',
+        permission: 'inventory.stock.view',
       },
       {
         title: 'Stock Batches',
         path: '/inventory-management/stock-batches',
+        permission: 'inventory.stock_batches.view',
       },
       {
         title: 'Stock Ledger',
         path: '/inventory-management/stock-ledger',
+        permission: 'inventory.stock_ledger.view',
       },
     ],
   },
@@ -521,7 +551,7 @@ export const MENU_SIDEBAR: MenuConfig = [
     icon: Folder,
     children: [
       {
-        title: 'Attachment Directories',
+        title: 'Files',
         path: '/resource-management/attachment-directories',
       },
       {
@@ -555,6 +585,15 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Import Logs',
         path: '/system-management/import-logs',
+      },
+      {
+        title: 'Scheduled Tasks',
+        path: '/system-management/scheduled-tasks',
+      },
+      {
+        title: 'Outgoing Mails',
+        path: '/system-management/outgoing-mails',
+        permission: 'system.outgoing_mails.view',
       },
       {
         title: 'Work Calendar',
@@ -1028,24 +1067,29 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         {
           title: 'All Products',
           path: '/master-data-management/products',
+          permission: 'master_data.products.view',
         },
         {
           title: 'Product Attachments',
           path: '/master-data-management/product-attachments',
+          permission: 'master_data.product_attachments.view',
         },
       ],
     },
     {
       title: 'Product Categories',
       path: '/master-data-management/product-categories',
+      permission: 'master_data.product_categories.view',
     },
     {
       title: 'Brands',
       path: '/master-data-management/brands',
+      permission: 'master_data.brands.view',
     },
     {
       title: 'Units of Measure',
       path: '/master-data-management/units-of-measure',
+      permission: 'master_data.units_of_measure.view',
     },
     ],
   },
@@ -1056,38 +1100,47 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Suppliers',
         path: '/procurement-management/suppliers',
+        permission: 'procurement.suppliers.view',
       },
       {
         title: 'Product-Suppliers',
         path: '/procurement-management/product-suppliers',
+        permission: 'procurement.product_suppliers.view',
       },
       {
         title: 'Packing Lists',
         path: '/procurement-management/packing-lists',
+        permission: 'procurement.packing_lists.view',
       },
       {
         title: 'SPO Allocations',
         path: '/procurement-management/spo-allocations',
+        permission: 'procurement.spo_allocations.view',
       },
       {
         title: 'GRN',
         path: '/procurement-management/grn',
+        permission: 'procurement.grn.view',
       },
       {
         title: 'Picking Lines',
         path: '/procurement-management/picking-lines',
+        permission: 'procurement.picking_lines.view',
       },
       {
         title: 'Stock Inquiries',
         path: '/procurement-management/stock-inquiries',
+        permission: 'procurement.stock_inquiries.view',
       },
       {
         title: 'Purchase Requests',
         path: '/procurement-management/purchase-requests',
+        permission: 'procurement.purchase_requests.view',
       },
       {
         title: 'Sponsorship Forms',
         path: '/procurement-management/sponsorship-forms',
+        permission: 'procurement.sponsorship_forms.view',
       },
     ],
   },
@@ -1098,22 +1151,27 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Warehouses',
         path: '/inventory-management/warehouses',
+        permission: 'inventory.warehouses.view',
       },
       {
         title: 'Storage Zones',
         path: '/inventory-management/storage-zones',
+        permission: 'inventory.storage_zones.view',
       },
       {
         title: 'Stock',
         path: '/inventory-management/stock',
+        permission: 'inventory.stock.view',
       },
       {
         title: 'Stock Batches',
         path: '/inventory-management/stock-batches',
+        permission: 'inventory.stock_batches.view',
       },
       {
         title: 'Stock Ledger',
         path: '/inventory-management/stock-ledger',
+        permission: 'inventory.stock_ledger.view',
       },
     ],
   },
@@ -1163,7 +1221,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     icon: Folder,
     children: [
       {
-        title: 'Attachment Directories',
+        title: 'Files',
         path: '/resource-management/attachment-directories',
       },
       {

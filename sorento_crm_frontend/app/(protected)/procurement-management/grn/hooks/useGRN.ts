@@ -7,6 +7,7 @@ import {
   createGRN,
   updateGRN,
   deleteGRN,
+  bulkDeleteGRNs,
 } from '../services/grnService';
 import type { GRNFormData } from '../types/grn.types';
 
@@ -86,5 +87,20 @@ export function useDeleteGRN() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to delete GRN'),
+  });
+}
+
+export function useBulkDeleteGRNs() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteGRNs(ids),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['grn'] });
+      toast.success(
+        result?.message ?? `${result?.deleted_count ?? 0} GRN(s) deleted`,
+      );
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to bulk delete GRNs'),
   });
 }

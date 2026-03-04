@@ -8,11 +8,14 @@ import {
   createPurchaseRequest,
   updatePurchaseRequest,
   deletePurchaseRequest,
+  bulkDeletePurchaseRequests,
+  updatePurchaseRequestAndReply,
 } from '../services/purchaseRequestService';
+import type { PurchaseRequestUpdateAndReplyData } from '../services/purchaseRequestService';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
 
 export function usePurchaseRequests(
-  params: DataGridApiFetchParams & { requestType?: string },
+  params: DataGridApiFetchParams & { requestType?: string; approvalStatus?: string },
 ) {
   return useQuery({
     queryKey: [
@@ -22,6 +25,7 @@ export function usePurchaseRequests(
       params.sorting,
       params.searchQuery,
       params.requestType,
+      params.approvalStatus,
     ],
     queryFn: () => getPurchaseRequests(params),
     staleTime: Infinity,
@@ -50,7 +54,7 @@ export function usePurchaseRequestNeighbours(
   return useQuery({
     queryKey: ['purchase-request-neighbours', requestId, requestType],
     queryFn: () => {
-      if (!requestId) return { prev_id: null, next_id: null };
+      if (!requestId) return { prev_id: null, next_id: null, total_count: 0, current_index: 0 };
       return getPurchaseRequestNeighbours(requestId, requestType);
     },
     enabled: !!requestId,
@@ -101,5 +105,42 @@ export function useDeletePurchaseRequest() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to delete purchase request'),
+  });
+}
+
+export function useBulkDeletePurchaseRequests() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeletePurchaseRequests(ids),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
+      toast.success(
+        data.deleted_count === 1
+          ? '1 record deleted successfully'
+          : `${data.deleted_count} records deleted successfully`,
+      );
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to bulk delete'),
+  });
+}
+
+export function useUpdatePurchaseRequestAndReply() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: string;
+      data: PurchaseRequestUpdateAndReplyData;
+    }) => updatePurchaseRequestAndReply(id, data),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['purchase-request', id] });
+      toast.success('Updated and reply sent to conversation');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to update and reply'),
   });
 }

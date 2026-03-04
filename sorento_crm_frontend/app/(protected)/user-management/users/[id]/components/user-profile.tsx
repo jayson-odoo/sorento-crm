@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeSafe } from '@/lib/helpers';
 import { Badge, BadgeDot, BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -137,13 +137,16 @@ const UserProfile = ({
               </dd>
             </div>
             <div className="grid grid-cols-subgrid col-span-2 items-baseline">
-              <dt>Role:</dt>
+              <dt>Roles:</dt>
               <dd>
-                <span className="inline-flex items-center gap-1">
-                  {user.role?.name}
-                  {user.role?.isProtected && (
-                    <Badge variant="outline">System</Badge>
-                  )}
+                <span className="inline-flex flex-wrap items-center gap-1.5">
+                  {user.roles?.length
+                    ? user.roles.map((r) => (
+                        <Badge key={r.id} variant="secondary" appearance="light">
+                          {r.name}
+                        </Badge>
+                      ))
+                    : <span className="text-muted-foreground">No roles assigned</span>}
                 </span>
               </dd>
             </div>
@@ -166,9 +169,7 @@ const UserProfile = ({
             <div className="grid grid-cols-subgrid col-span-2 items-baseline">
               <dt>Last Sign In:</dt>
               <dd>
-                {user.lastSignInAt
-                  ? formatDateTime(new Date(user.lastSignInAt))
-                  : 'Never'}
+                {formatDateTimeSafe(user.lastSignInAt ?? null, 'Never')}
               </dd>
             </div>
             <div className="grid grid-cols-subgrid col-span-2 items-baseline">
@@ -217,7 +218,6 @@ const UserProfile = ({
           </dl>
           <Button
             variant="outline"
-            disabled={user.role?.isProtected}
             onClick={() => setEditDialogOpen(true)}
           >
             Edit user details

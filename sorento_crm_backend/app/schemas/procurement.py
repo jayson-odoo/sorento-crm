@@ -241,6 +241,11 @@ class BulkDeleteSPOAllocationsRequest(BaseModel):
     ids: List[str]
 
 
+class BulkDeletePurchaseRequestsRequest(BaseModel):
+    """Request body for bulk delete of purchase requests / sponsorship forms."""
+    ids: List[str]
+
+
 class InboundShipmentSimple(BaseModel):
     id: str
     shipment_number: str
@@ -515,6 +520,7 @@ class PurchaseRequestLineResponse(PurchaseRequestLineBase):
 
 class PurchaseRequestHeaderBase(BaseModel):
     request_type: str  # purchase_request | sponsorship_form
+    request_number: Optional[str] = None  # User-assignable form number (e.g. PR-2026-001)
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
@@ -556,6 +562,7 @@ class PurchaseRequestHeaderCreate(PurchaseRequestHeaderBase):
 
 class PurchaseRequestHeaderUpdate(BaseModel):
     request_type: Optional[str] = None
+    request_number: Optional[str] = None
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
@@ -588,6 +595,12 @@ class PurchaseRequestHeaderUpdate(BaseModel):
         return _parse_date_string(v)
 
 
+class PurchaseRequestUpdateAndReply(PurchaseRequestHeaderUpdate):
+    """Update purchase request and send a reply to the conversation via Respond.io.
+    Either reply_message or request_number must be set (form number is replied as assigned)."""
+    reply_message: Optional[str] = None
+
+
 class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
     """Response for list endpoint (no lines)."""
     id: str
@@ -614,16 +627,41 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
 
 
 class SendApprovalLinkRequest(BaseModel):
-    """Request to create approval token and get public link (optionally email is sent from frontend)."""
+    """Request to create approval token and get public link; optionally send link by email to approver."""
     approver_email: Optional[str] = None
     approver_user_id: Optional[str] = None
     expires_hours: Optional[int] = 24
+    send_email: Optional[bool] = False
+    base_url: Optional[str] = None  # Frontend origin (e.g. https://app.example.com) so approval link in email is absolute
 
 
 class SendApprovalLinkResponse(BaseModel):
     approval_url: str
     expires_at: datetime
     token_id: str
+    email_sent: Optional[bool] = None
+    email_error: Optional[str] = None
+
+
+class ViewLinkRequest(BaseModel):
+    """Optional base URL to build full view URL (e.g. frontend origin)."""
+    base_url: Optional[str] = None
+
+
+class ViewLinkResponse(BaseModel):
+    view_token: str
+    view_url: str  # Full URL if base_url was provided, else relative path
+
+
+class PublicApprovalLineSummary(BaseModel):
+    """Single line (product, quantity, remark) for public approval/view."""
+    item_code: Optional[str] = None
+    quantity: Optional[float] = None  # from Numeric in DB
+    remark: Optional[str] = None
+    sort_order: Optional[int] = None
+
+    class Config:
+        from_attributes = True
 
 
 class PublicApprovalSummaryResponse(BaseModel):
@@ -636,7 +674,13 @@ class PublicApprovalSummaryResponse(BaseModel):
     project_title: Optional[str] = None
     purpose: Optional[str] = None
     requested_by: Optional[str] = None
-    expires_at: datetime
+    request_date: Optional[date] = None
+    created_at: Optional[datetime] = None
+    expected_delivery_date: Optional[date] = None
+    expected_po_date: Optional[date] = None
+    expected_po_date_text: Optional[str] = None
+    expires_at: Optional[datetime] = None  # None when used for view (no expiry)
+    lines: Optional[List[PublicApprovalLineSummary]] = []
 
 
 class PublicApprovalSubmitRequest(BaseModel):

@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Plus } from 'lucide-react';
+import Link from 'next/link';
+import { Edit, Trash2, Plus, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -223,6 +224,16 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
               <p className="text-sm text-muted-foreground">End Date</p>
               <p className="font-medium">{formatDate(new Date(promotion.end_date))}</p>
             </div>
+            {promotion.access_levels && promotion.access_levels.length > 0 && (
+              <div className="md:col-span-2">
+                <p className="text-sm text-muted-foreground">Access type</p>
+                <p className="font-medium">
+                  {promotion.access_levels
+                    .map((l) => l.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()))
+                    .join(', ')}
+                </p>
+              </div>
+            )}
             {promotion.description && (
               <div className="md:col-span-2">
                 <p className="text-sm text-muted-foreground">Description</p>
@@ -234,14 +245,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
       </Card>
 
       {/* Attachments Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Attachments</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <PromotionAttachmentsTab promotionId={promotionId} isEditMode={false} />
-        </CardContent>
-      </Card>
+      <PromotionAttachmentsTab promotionId={promotionId} isEditMode={false} promotionAccessLevels={promotion.access_levels ?? undefined} />
 
       {/* Products Section */}
       <Card>
@@ -275,10 +279,36 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                       const discount = listPrice - promoPrice;
                       const discountPercent = listPrice > 0 ? (discount / listPrice) * 100 : 0;
 
+                      const productHref = pp.product_id
+                        ? `/master-data-management/products/${pp.product_id}`
+                        : null;
+
                       return (
                         <tr key={pp.id} className="border-b">
-                          <td className="p-2 text-sm">{pp.product?.product_code || '-'}</td>
-                          <td className="p-2 text-sm">{pp.product?.product_name || '-'}</td>
+                          <td className="p-2 text-sm">
+                            {productHref ? (
+                              <Link
+                                href={productHref}
+                                className="text-primary hover:underline font-medium"
+                              >
+                                {pp.product?.product_code || '-'}
+                              </Link>
+                            ) : (
+                              pp.product?.product_code || '-'
+                            )}
+                          </td>
+                          <td className="p-2 text-sm">
+                            {productHref ? (
+                              <Link
+                                href={productHref}
+                                className="text-primary hover:underline"
+                              >
+                                {pp.product?.product_name || '-'}
+                              </Link>
+                            ) : (
+                              pp.product?.product_name || '-'
+                            )}
+                          </td>
                           <td className="p-2 text-sm text-right">
                             {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(listPrice)}
                           </td>
@@ -303,6 +333,17 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                           </td>
                           <td className="p-2 text-right">
                             <div className="flex justify-end gap-2">
+                              {productHref && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  title="View product"
+                                  onClick={() => router.push(productHref)}
+                                >
+                                  <ExternalLink className="size-4" />
+                                </Button>
+                              )}
                               <Button
                                 type="button"
                                 variant="ghost"

@@ -7,15 +7,14 @@ import { useRouter } from 'next/navigation';
 import { LoaderCircleIcon, Save, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import {
   Form,
   FormControl,
@@ -36,6 +35,8 @@ import {
 } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateComplaint, useUpdateComplaint, useUpdateComplaintAndReply, useComplaint } from '../hooks/useComplaints';
+import { getOrCreateComplaintViewLink } from '../services/complaintService';
+import { toast } from 'sonner';
 import { ComplaintSchema, type ComplaintSchemaType } from '../forms/complaint-schema';
 import type { ComplaintFormData, ComplaintAttachment } from '../types/complaint.types';
 import ComplaintNavigation from './ComplaintNavigation';
@@ -84,6 +85,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
 
   const [formInitialized, setFormInitialized] = useState(false);
   const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
+  const [replyMessage, setReplyMessage] = useState('');
   const updateAndReplyMutation = useUpdateComplaintAndReply();
 
   // Load complaint data when editing
@@ -155,8 +157,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         contact_number: data.contact_number || undefined,
         customer_address: data.customer_address || undefined,
         project_title: data.project_title || undefined,
-        contact_id: data.contact_id || undefined,
-        space_id: data.space_id || undefined,
+        ...(isEditMode ? {} : { contact_id: data.contact_id || undefined, space_id: data.space_id || undefined }),
         technical_team_response: data.technical_team_response || undefined,
         attachments: validAttachments.length > 0 ? validAttachments : undefined,
       };
@@ -164,7 +165,17 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       if (isEditMode && complaintId) {
         await updateMutation.mutateAsync({ id: complaintId, data: formData });
       } else {
-        await createMutation.mutateAsync(formData);
+        const created = await createMutation.mutateAsync(formData);
+        if (created?.id) {
+          try {
+            const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+            const { view_url } = await getOrCreateComplaintViewLink(created.id, baseUrl);
+            await navigator.clipboard.writeText(view_url);
+            toast.success('Complaint created. View link copied to clipboard.');
+          } catch {
+            // view link optional
+          }
+        }
       }
 
       onSuccess?.();
@@ -177,6 +188,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
   const handleUpdateAndReplyClick = async () => {
     const valid = await form.trigger();
     if (!valid || !complaintId) return;
+    setReplyMessage(form.getValues().technical_team_response ?? '');
     setUpdateAndReplyDialogOpen(true);
   };
 
@@ -210,14 +222,13 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       contact_number: data.contact_number || undefined,
       customer_address: data.customer_address || undefined,
       project_title: data.project_title || undefined,
-      contact_id: data.contact_id || undefined,
-      space_id: data.space_id || undefined,
-      technical_team_response: data.technical_team_response || undefined,
+      technical_team_response: replyMessage.trim() || undefined,
       attachments: validAttachments.length > 0 ? validAttachments : undefined,
     };
     try {
       await updateAndReplyMutation.mutateAsync({ id: complaintId, data: formData });
       setUpdateAndReplyDialogOpen(false);
+      setReplyMessage('');
       onSuccess?.();
     } catch {
       // Error toast from mutation
@@ -583,59 +594,47 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
 
             <Card>
               <CardHeader>
-                <CardTitle>Respond conversation</CardTitle>
-                <FormDescription>
-                  Optional: set Contact ID and Space ID (from respond.io) to build the conversation inbox URL. When provided on create/update, the URL is generated automatically.
-                </FormDescription>
+                <CardTitle>Tecnical Team</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {complaint?.respond_inbox_url && (
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">Respond Inbox</p>
-                    <a
-                      href={complaint.respond_inbox_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline text-sm break-all"
-                    >
-                      {complaint.respond_inbox_url}
-                    </a>
-                  </div>
+                {!isEditMode && (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name="contact_id"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Contact ID</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="Respond.io contact ID"
+                              {...field}
+                              value={field.value ?? ''}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="space_id"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Space ID</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="Respond.io space ID"
+                              {...field}
+                              value={field.value ?? ''}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
                 )}
-                <FormField
-                  control={form.control}
-                  name="contact_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Contact ID</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Respond.io contact ID"
-                          {...field}
-                          value={field.value ?? ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="space_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Space ID</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Respond.io space ID"
-                          {...field}
-                          value={field.value ?? ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
                 <FormField
                   control={form.control}
                   name="technical_team_response"
@@ -711,32 +710,47 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         </div>
       </form>
 
-      <AlertDialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Update & Reply</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will save your changes and send the technical team response to the
-              customer via Respond.io. The conversation will be marked as responded.
-              Continue?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={updateAndReplyMutation.isPending}>
+      <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Update & Reply</DialogTitle>
+            <DialogDescription>
+              Edit the message below. It will be saved as the technical team response and sent to the customer via Respond.io. The conversation will be marked as responded.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="complaint-reply-message">Message to send</Label>
+              <Textarea
+                id="complaint-reply-message"
+                value={replyMessage}
+                onChange={(e) => setReplyMessage(e.target.value)}
+                placeholder="Technical team response..."
+                rows={5}
+                className="resize-none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setUpdateAndReplyDialogOpen(false)}
+              disabled={updateAndReplyMutation.isPending}
+            >
               Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
+            </Button>
+            <Button
+              disabled={updateAndReplyMutation.isPending || !replyMessage.trim()}
               onClick={(e) => {
                 e.preventDefault();
                 handleUpdateAndReplyConfirm();
               }}
-              disabled={updateAndReplyMutation.isPending}
             >
               {updateAndReplyMutation.isPending ? 'Sending...' : 'Update & Reply'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Form>
   );
 }

@@ -3,9 +3,10 @@ from fastapi import Depends, HTTPException, status, Request, Header
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
-from typing import Optional
+from typing import Optional, List
 from app.database import get_db
 from app.config import settings
+from app.services.user_service import UserPermissionService
 
 # OAuth2 scheme for JWT token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
@@ -119,11 +120,82 @@ async def get_current_user(
         )
 
 
+async def get_current_user_optional(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> Optional[dict]:
+    """
+    Same as get_current_user but returns None instead of raising.
+    Use for read-only endpoints where we want to avoid 500 on auth issues.
+    """
+    if not token:
+        token = extract_token_from_request(request)
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+        )
+        user_id = payload.get("sub") or payload.get("id")
+        if not user_id:
+            return None
+        return {
+            "id": user_id,
+            "email": payload.get("email"),
+            "role_id": payload.get("roleId"),
+            "name": payload.get("name"),
+            "avatar": payload.get("avatar"),
+            "status": payload.get("status"),
+            "role_name": payload.get("roleName"),
+        }
+    except Exception:
+        return None
+
+
 async def get_api_key(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key")
 ) -> Optional[str]:
     """Extract API key from X-API-Key header."""
     return x_api_key
+
+
+def require_permission(permission_slug: str):
+    """
+    Dependency that requires the current user to have the given permission (or superadmin/admin role).
+    Deny by default; raises 403 if the user lacks the permission.
+    """
+
+    async def _require(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+        service = UserPermissionService(db)
+        if not service.check_user_has_permission(current_user["id"], permission_slug):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission required: {permission_slug}",
+            )
+        return current_user
+
+    return _require
+
+
+def require_any_permission(permission_slugs: List[str]):
+    """
+    Dependency that requires the current user to have at least one of the given permissions
+    (or superadmin/admin role). Deny by default; raises 403 if the user has none.
+    """
+
+    async def _require(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+        service = UserPermissionService(db)
+        if not service.check_user_has_any_permission(current_user["id"], permission_slugs):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"One of these permissions required: {', '.join(permission_slugs)}",
+            )
+        return current_user
+
+    return _require
 
 
 async def get_external_api_user(

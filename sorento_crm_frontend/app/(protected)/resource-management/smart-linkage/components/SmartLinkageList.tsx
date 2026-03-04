@@ -27,6 +27,7 @@ import { useIntegrationLogs, useRetryIntegrationLog } from '@/app/(protected)/in
 import type { IntegrationLog } from '@/app/(protected)/integration-management/integration-logs/types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 export default function SmartLinkageList() {
   const router = useRouter();
@@ -75,22 +76,8 @@ export default function SmartLinkageList() {
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => {
           const status = (row.original.status || 'pending') as string;
-          const key = status.toLowerCase();
-          const variants: Record<string, 'destructive' | 'warning' | 'success' | 'secondary' | 'info'> = {
-            failed: 'destructive',
-            pending: 'warning',
-            processing: 'secondary',
-            sent: 'info',
-            success: 'success',
-          };
           return (
-            <Badge
-              variant={variants[key] || 'secondary'}
-              appearance="light"
-              shape="circle"
-              size="md"
-              className="rounded-full font-medium"
-            >
+            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost" className="capitalize">
               {status.charAt(0).toUpperCase() + status.slice(1)}
             </Badge>
           );

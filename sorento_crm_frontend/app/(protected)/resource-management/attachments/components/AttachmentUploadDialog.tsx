@@ -87,6 +87,10 @@ export default function AttachmentUploadDialog({
   }, [selectedFiles, selectedType]);
 
   const validateFile = (file: File, type: AttachmentType, showError: boolean = true): boolean => {
+    // Reject macOS metadata files (._*)
+    if (file.name.trim().startsWith('._')) {
+      return false;
+    }
     // Check file extension
     const allowedExtensions = type.allowed_extensions
       .split(',')
@@ -138,17 +142,23 @@ export default function AttachmentUploadDialog({
           return;
         }
         
-        const files = Array.from(e.dataTransfer.files);
+        const files = Array.from(e.dataTransfer.files).filter(f => !f.name.trim().startsWith('._'));
+        const skippedDotUnderscore = e.dataTransfer.files.length - files.length;
         const validFiles = files.filter(file => validateFile(file, selectedType, false));
         
         if (validFiles.length === 0) {
-          setValidationError('No valid files found. Please check file extensions and sizes.');
+          setValidationError(
+            skippedDotUnderscore
+              ? 'No valid files. Files starting with ._ are not allowed and were skipped.'
+              : 'No valid files found. Please check file extensions and sizes.'
+          );
           return;
         }
         
-        if (validFiles.length < files.length) {
-          setValidationError(`${files.length - validFiles.length} file(s) were skipped due to validation errors.`);
-        }
+        const msg = [];
+        if (skippedDotUnderscore) msg.push(`${skippedDotUnderscore} ._ file(s) skipped`);
+        if (validFiles.length < files.length) msg.push(`${files.length - validFiles.length} file(s) skipped (extension/size)`);
+        if (msg.length) setValidationError(msg.join('. '));
         
         setSelectedFiles(prev => [...prev, ...validFiles]);
       }
@@ -164,17 +174,24 @@ export default function AttachmentUploadDialog({
           return;
         }
         
-        const files = Array.from(e.target.files);
+        const files = Array.from(e.target.files).filter(f => !f.name.trim().startsWith('._'));
+        const skippedDotUnderscore = e.target.files.length - files.length;
         const validFiles = files.filter(file => validateFile(file, selectedType, false));
         
         if (validFiles.length === 0) {
-          setValidationError('No valid files found. Please check file extensions and sizes.');
+          setValidationError(
+            skippedDotUnderscore
+              ? 'No valid files. Files starting with ._ are not allowed and were skipped.'
+              : 'No valid files found. Please check file extensions and sizes.'
+          );
+          e.target.value = '';
           return;
         }
         
-        if (validFiles.length < files.length) {
-          setValidationError(`${files.length - validFiles.length} file(s) were skipped due to validation errors.`);
-        }
+        const msg = [];
+        if (skippedDotUnderscore) msg.push(`${skippedDotUnderscore} ._ file(s) skipped`);
+        if (validFiles.length < files.length) msg.push(`${files.length - validFiles.length} file(s) skipped (extension/size)`);
+        if (msg.length) setValidationError(msg.join('. '));
         
         setSelectedFiles(prev => [...prev, ...validFiles]);
         
@@ -439,9 +456,6 @@ export default function AttachmentUploadDialog({
                 );
               })}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              This will be sent to the webhook for product attachment linking.
-            </p>
           </div>
 
           {/* Validation Error */}

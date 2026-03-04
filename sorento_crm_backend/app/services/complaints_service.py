@@ -1,10 +1,12 @@
 """Complaints service for business logic."""
+import secrets
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, inspect
 from typing import Optional, Any
 from app.config import settings
 from app.models.complaints import Complaint, ComplaintAttachment
 from app.models.resources import Attachment, AttachmentType
+from app.models.procurement import ViewToken
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.s3_service import S3Service
@@ -19,6 +21,7 @@ def _attachment_response_from_link(link: ComplaintAttachment, resolve_url: Any) 
             "attachment_id": link.attachment_id,
             "complaint_id": link.complaint_id,
             "file_name": None,
+            "original_filename": None,
             "file_url": None,
             "file_size_bytes": None,
             "uploaded_at": link.created_at,
@@ -29,6 +32,7 @@ def _attachment_response_from_link(link: ComplaintAttachment, resolve_url: Any) 
         "attachment_id": link.attachment_id,
         "complaint_id": link.complaint_id,
         "file_name": att.original_filename,
+        "original_filename": att.original_filename,
         "file_url": resolve_url(att.file_path),
         "file_size_bytes": att.file_size_bytes,
         "uploaded_at": att.uploaded_at or link.created_at,
@@ -95,6 +99,10 @@ class ComplaintService:
             data["last_responded_by_name"] = self._resolve_user_display_name(data["last_responded_by"])
         else:
             data["last_responded_by_name"] = None
+        if data.get("assigned_to"):
+            data["assigned_to_name"] = self._resolve_user_display_name(data["assigned_to"])
+        else:
+            data["assigned_to_name"] = None
         return data
     
     def list_complaints(
@@ -102,10 +110,12 @@ class ComplaintService:
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
+        assigned_to: Optional[str] = None,
+        status: Optional[str] = None,
         sort_field: str = "complaint_date",
         sort_dir: str = "asc"
     ):
-        """List complaints."""
+        """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status."""
         q = self.db.query(Complaint).options(
             joinedload(Complaint.attachments).joinedload(ComplaintAttachment.attachment)
         )
@@ -120,12 +130,24 @@ class ComplaintService:
                     Complaint.project_title.ilike(f"%{query}%")
                 )
             )
+        if assigned_to is not None and str(assigned_to).strip():
+            if str(assigned_to).strip().lower() == "__unassigned__":
+                q = q.filter(
+                    (Complaint.assigned_to.is_(None)) | (Complaint.assigned_to == "")
+                )
+            else:
+                q = q.filter(Complaint.assigned_to == assigned_to.strip())
+        if status and str(status).strip():
+            q = q.filter(Complaint.status == status.strip())
         
         sort_map = {
             "complaint_date": Complaint.complaint_date,
+            "created_at": Complaint.created_at,
             "delivery_order_number": Complaint.delivery_order_number,
             "customer_name": Complaint.customer_name,
             "product_code": Complaint.product_code,
+            "assigned_to": Complaint.assigned_to,
+            "status": Complaint.status,
         }
         sort_column = sort_map.get(sort_field, Complaint.complaint_date)
         if sort_dir == "desc":
@@ -160,10 +182,77 @@ class ComplaintService:
         """Get a complaint with attachments from complaint_attachments table."""
         complaint = self.get_complaint(complaint_id)
         return self._serialize_complaint(complaint)
-    
+
+    def get_or_create_view_token(self, complaint_id: str) -> str:
+        """Get or create a reusable view token for this complaint. Returns the token string."""
+        self.get_complaint(complaint_id)  # ensure exists
+        row = (
+            self.db.query(ViewToken)
+            .filter(
+                ViewToken.entity_type == "complaint",
+                ViewToken.entity_id == complaint_id,
+            )
+            .first()
+        )
+        if row:
+            return row.token
+        token_value = secrets.token_urlsafe(32)
+        view_token = ViewToken(
+            entity_type="complaint",
+            entity_id=complaint_id,
+            token=token_value,
+        )
+        self.db.add(view_token)
+        self.db.flush()
+        return token_value
+
+    def get_complaint_summary_by_token(self, token_value: str) -> dict:
+        """Return read-only complaint summary for the given view token. No auth required."""
+        view_token = (
+            self.db.query(ViewToken)
+            .filter(ViewToken.token == token_value, ViewToken.entity_type == "complaint")
+            .first()
+        )
+        if not view_token or not view_token.entity_id:
+            raise handle_not_found("View link", "(invalid token)")
+        complaint = self.get_complaint(str(view_token.entity_id))
+        # Build public summary (read-only; no internal IDs like contact_id/space_id if desired)
+        link_attachments = [
+            _attachment_response_from_link(link, self._resolve_attachment_url)
+            for link in (complaint.attachments or [])
+            if link.attachment is not None
+        ]
+        return {
+            "entity_type": "complaint",
+            "entity_id": complaint.id,
+            "delivery_order_number": getattr(complaint, "delivery_order_number", None),
+            "complaint_date": getattr(complaint, "complaint_date", None),
+            "customer_type": getattr(complaint, "customer_type", None),
+            "customer_type_others": getattr(complaint, "customer_type_others", None),
+            "within_warranty": getattr(complaint, "within_warranty", None),
+            "product_type": getattr(complaint, "product_type", None),
+            "defects_discovered": getattr(complaint, "defects_discovered", None),
+            "complaint_type": getattr(complaint, "complaint_type", None),
+            "defect_description": getattr(complaint, "defect_description", None),
+            "product_code": getattr(complaint, "product_code", None),
+            "salesperson": getattr(complaint, "salesperson", None),
+            "customer_name": getattr(complaint, "customer_name", None),
+            "contact_person": getattr(complaint, "contact_person", None),
+            "contact_number": getattr(complaint, "contact_number", None),
+            "customer_address": getattr(complaint, "customer_address", None),
+            "project_title": getattr(complaint, "project_title", None),
+            "technical_team_response": getattr(complaint, "technical_team_response", None),
+            "status": getattr(complaint, "status", None),
+            "last_responded_at": getattr(complaint, "last_responded_at", None),
+            "created_at": getattr(complaint, "created_at", None),
+            "attachments": link_attachments,
+        }
+
     def create_complaint(self, complaint_data: ComplaintCreate):
         """Create a new complaint with attachments (each becomes Attachment + ComplaintAttachment link)."""
-        complaint_dict = complaint_data.model_dump(exclude={"attachments"})
+        complaint_dict = complaint_data.model_dump(
+            exclude={"attachments", "assigned_to_name", "last_responded_by_name"}
+        )
         contact_id = complaint_dict.get("contact_id")
         space_id = complaint_dict.get("space_id")
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -277,9 +366,10 @@ class ComplaintService:
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error("respond_inbox_url is missing or invalid; cannot send message.")
 
-        display_message = f"There has been an update in your account. {str(message_text).strip()[:200]}"
-        if len(str(message_text).strip()) > 200:
-            display_message += "..."
+        do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
+        do_spec = f" for delivery order {do_number}" if do_number else ""
+        technical_response = str(message_text).strip()
+        display_message = f"There has been an update regarding your complaint{do_spec}: {technical_response}"
 
         try:
             client = RespondClient()
@@ -366,11 +456,123 @@ class ComplaintService:
         self.db.refresh(complaint)
         return complaint
 
+    def sync_assignee_from_respond(self, complaint_id: str) -> dict:
+        """
+        Fetch contact from Respond.io by complaint's contact_id, get assignee.id,
+        match to CRM user by respond_user_id, and update complaint.assigned_to.
+        """
+        import json
+        import logging
+        from app.models.user import User
+        from app.services.integration_service import RespondClient, IntegrationLogService
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.error_handler import handle_validation_error
+
+        logger = logging.getLogger(__name__)
+        complaint = self.get_complaint(complaint_id)
+        contact_id = (complaint.contact_id or "").strip()
+        if not contact_id:
+            raise handle_validation_error(
+                "No contact_id for this complaint; cannot sync assignee from Respond.io. Set Contact ID (from respond.io) on the complaint."
+            )
+
+        log_service = IntegrationLogService(self.db)
+        endpoint_path = f"/v2/contact/id:{contact_id}"
+
+        try:
+            client = RespondClient()
+            payload = client.get_contact_by_identifier(contact_id)
+        except ValueError as e:
+            logger.warning("Respond.io not configured or error: %s", e)
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="complaints",
+                    business_id=complaint_id,
+                    direction="outbound",
+                    endpoint=endpoint_path,
+                    http_method="GET",
+                    status="failed",
+                    error_message=str(e),
+                ),
+                request_payload_dict={"action": "sync_assignee", "contact_id": contact_id},
+            )
+            raise handle_validation_error(f"Respond.io API is not configured or error: {e!s}")
+        except Exception as e:
+            logger.exception("Respond.io get_contact failed for complaint %s", complaint_id)
+            resp_payload = None
+            if hasattr(e, "response") and getattr(e.response, "text", None):
+                resp_payload = e.response.text[:2000] if len(e.response.text) > 2000 else e.response.text
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="complaints",
+                    business_id=complaint_id,
+                    direction="outbound",
+                    endpoint=endpoint_path,
+                    http_method="GET",
+                    status="failed",
+                    error_message=str(e),
+                    response_payload=resp_payload,
+                ),
+                request_payload_dict={"action": "sync_assignee", "contact_id": contact_id},
+            )
+            raise
+
+        log_service.create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="respond_io",
+                business_table="complaints",
+                business_id=complaint_id,
+                direction="outbound",
+                endpoint=endpoint_path,
+                http_method="GET",
+                status="success",
+                response_payload=json.dumps(payload, indent=2),
+            ),
+            request_payload_dict={"action": "sync_assignee", "contact_id": contact_id},
+        )
+
+        assignee = payload.get("assignee")
+        if not assignee or assignee.get("id") is None:
+            complaint.assigned_to = None
+            self.db.commit()
+            return {"updated": True, "message": "Sync successful. No assignee in Respond.io; Assigned To cleared."}
+
+        assignee_respond_id = str(assignee.get("id"))
+        user = self.db.query(User).filter(User.respond_user_id == assignee_respond_id).first()
+        if not user:
+            return {
+                "updated": False,
+                "message": f"Sync successful. No user in CRM with respond_user_id '{assignee_respond_id}'; Assigned To unchanged. Link Respond.io user ID in User Management to sync.",
+            }
+
+        if complaint.assigned_to == assignee_respond_id:
+            return {"updated": False, "message": "Sync successful. Assignee already in sync."}
+
+        complaint.assigned_to = assignee_respond_id
+        self.db.commit()
+        self.db.refresh(complaint)
+        return {
+            "updated": True,
+            "message": "Assignee synced from Respond.io.",
+            "assigned_to": user.name or user.email or assignee_respond_id,
+            "assigned_to_id": str(user.id),
+        }
+
     def delete_complaint(self, complaint_id: str) -> None:
         """Delete a complaint and its related attachments."""
         complaint = self.get_complaint(complaint_id)
         self.db.delete(complaint)
         self.db.commit()
+
+    def bulk_delete_complaints(self, complaint_ids: list[str]) -> dict:
+        """Delete multiple complaints by ID. Returns deleted_count."""
+        if not complaint_ids:
+            return {"message": "No complaints to delete.", "deleted_count": 0}
+        deleted = self.db.query(Complaint).filter(Complaint.id.in_(complaint_ids)).delete(synchronize_session=False)
+        self.db.commit()
+        return {"message": f"Deleted {deleted} complaint(s).", "deleted_count": deleted}
 
     def link_attachment_to_complaint(self, complaint_id: str, attachment_id: str, created_by: Optional[str] = None):
         """Link an existing attachment to a complaint (complaint_attachments table)."""

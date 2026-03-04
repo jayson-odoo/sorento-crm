@@ -158,6 +158,35 @@ class ConversationSLATrackingStatusUpdate(BaseModel):
         return self
 
 
+class ConversationSLAEscalateRequest(BaseModel):
+    """Request body for external escalation API (by respond_contact_id and policy_id)."""
+    respond_contact_id: str
+    policy_id: str
+    current_tier: int  # Escalated tier level
+    escalation_reason: str
+
+    @field_validator("respond_contact_id")
+    @classmethod
+    def validate_respond_contact_id(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise ValueError("respond_contact_id is required")
+        return str(v).strip()
+
+    @field_validator("policy_id")
+    @classmethod
+    def validate_policy_id(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise ValueError("policy_id is required")
+        return str(v).strip()
+
+    @field_validator("escalation_reason")
+    @classmethod
+    def validate_reason(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise ValueError("escalation_reason is required")
+        return str(v).strip()
+
+
 class SLAPolicySimple(BaseModel):
     """Simple policy reference for tracking responses."""
     id: str

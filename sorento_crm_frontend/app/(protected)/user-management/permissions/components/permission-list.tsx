@@ -14,6 +14,7 @@ import {
 } from '@tanstack/react-table';
 import { Ellipsis, Plus, Search, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import { formatDateTimeSafe } from '@/lib/helpers';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -235,8 +236,8 @@ const PermissionList = () => {
           <DataGridColumnHeader title="Created At" column={column} />
         ),
         cell: (info) => {
-          const value = info.getValue() as string;
-          return new Date(value).toLocaleString();
+          const value = info.getValue() as string | null;
+          return formatDateTimeSafe(value, '-');
         },
         enableSorting: true,
         enableHiding: false,

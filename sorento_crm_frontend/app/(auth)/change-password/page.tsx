@@ -86,7 +86,7 @@ export default function Page() {
       const response = await apiFetch('/api/auth/change-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, newPassword: values.newPassword }),
+        body: JSON.stringify({ token, new_password: values.newPassword }),
       });
 
       if (response.ok) {
@@ -94,7 +94,12 @@ export default function Page() {
         setTimeout(() => router.push('/signin'), 3000);
       } else {
         const errorData = await response.json();
-        setError(errorData.message || 'Password reset failed.');
+        const msg = typeof errorData.detail === 'string'
+          ? errorData.detail
+          : Array.isArray(errorData.detail)
+            ? errorData.detail[0]?.msg ?? 'Password reset failed.'
+            : errorData.message ?? 'Password reset failed.';
+        setError(msg);
       }
     } catch {
       setError('An error occurred while resetting the password.');

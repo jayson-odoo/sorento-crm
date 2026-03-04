@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import require_permission
 from app.services.product_service import UnitOfMeasureService
 from app.schemas.product import UnitOfMeasureCreate, UnitOfMeasureUpdate, UnitOfMeasureResponse
 from app.schemas.common import ListResponse
@@ -17,7 +17,7 @@ async def get_units_of_measure(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.units_of_measure.view")),
     db: Session = Depends(get_db)
 ):
     """Get units of measure with pagination and search."""
@@ -32,7 +32,7 @@ async def get_units_of_measure(
 @router.get("/select", response_model=List[UnitOfMeasureResponse])
 async def get_uoms_select(
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.units_of_measure.view")),
     db: Session = Depends(get_db)
 ):
     """Get units of measure for select dropdowns."""
@@ -58,7 +58,7 @@ async def get_uoms_select(
 @router.get("/{uom_id}", response_model=UnitOfMeasureResponse)
 async def get_uom(
     uom_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.units_of_measure.view")),
     db: Session = Depends(get_db)
 ):
     """Get a single UOM by ID."""
@@ -75,7 +75,7 @@ async def get_uom(
 @router.post("/", response_model=UnitOfMeasureResponse, status_code=status.HTTP_201_CREATED)
 async def create_uom(
     uom_data: UnitOfMeasureCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.units_of_measure.add")),
     db: Session = Depends(get_db)
 ):
     """Create a new UOM."""
@@ -93,7 +93,7 @@ async def create_uom(
 async def update_uom(
     uom_id: str,
     uom_data: UnitOfMeasureUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.units_of_measure.edit")),
     db: Session = Depends(get_db)
 ):
     """Update a UOM."""
@@ -110,7 +110,7 @@ async def update_uom(
 @router.delete("/{uom_id}", status_code=status.HTTP_200_OK)
 async def delete_uom(
     uom_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("master_data.units_of_measure.delete")),
     db: Session = Depends(get_db)
 ):
     """Delete a UOM."""

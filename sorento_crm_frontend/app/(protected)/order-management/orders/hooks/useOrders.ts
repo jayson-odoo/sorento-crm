@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getOrders, getOrder, createOrder, updateOrder, deleteOrder } from '../services/orderService';
+import { getOrders, getOrder, createOrder, updateOrder, deleteOrder, bulkDeleteOrders } from '../services/orderService';
 import type { OrderFormData } from '../types/order.types';
 
 export function useOrders(params: DataGridApiFetchParams & { customer_id?: string; order_status_id?: string }) {
@@ -61,5 +61,17 @@ export function useDeleteOrder() {
       toast.success('Order deleted successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete order'),
+  });
+}
+
+export function useBulkDeleteOrders() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteOrders(ids),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      toast.success(result?.message ?? `${result?.deleted_count ?? 0} order(s) deleted`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to bulk delete orders'),
   });
 }

@@ -1,6 +1,6 @@
 """Marketing service for business logic."""
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_, exists
 from typing import Optional
 from app.models.marketing import Promotion, PromotionProduct, PromotionAttachment, CampaignType, MarketingCampaign
 from app.models.product import Product
@@ -19,13 +19,50 @@ class PromotionService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_promotions(self, page: int = 1, limit: int = 50, user_type: Optional[str] = None):
-        """List promotions."""
-        q = self.db.query(Promotion).order_by(Promotion.created_at.desc())
-        
+    def list_promotions(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        user_type: Optional[str] = None,
+        query: Optional[str] = None,
+        status: Optional[str] = None,
+        promo_type: Optional[str] = None,
+    ):
+        """List promotions. When query is set, filter by promo_code, name, or product code of linked products."""
+        q = self.db.query(Promotion)
+
+        if query and (query := (query or "").strip()):
+            search_term = f"%{query}%"
+            # Correlated exists: promotions that have at least one product whose product_code matches
+            has_product_match = exists().where(
+                PromotionProduct.promotion_id == Promotion.id
+            ).where(
+                PromotionProduct.product_id == Product.id
+            ).where(
+                Product.product_code.ilike(search_term)
+            )
+            q = q.filter(
+                or_(
+                    Promotion.promo_code.ilike(search_term),
+                    Promotion.name.ilike(search_term),
+                    has_product_match,
+                )
+            )
+
+        if status and status != "all":
+            if status == "active":
+                q = q.filter(Promotion.is_active.is_(True))
+            elif status == "inactive":
+                q = q.filter(Promotion.is_active.is_(False))
+
+        if promo_type and (promo_type := (promo_type or "").strip()):
+            q = q.filter(Promotion.promo_type == promo_type)
+
+        q = q.order_by(Promotion.created_at.desc())
+
         if user_type:
             q = q.filter(Promotion.access_levels.contains([user_type]))
-        
+
         total = q.count()
         offset = (page - 1) * limit
         promotions = q.offset(offset).limit(limit).all()
@@ -88,16 +125,64 @@ class PromotionService:
         return promotion
     
     def update_promotion(self, promotion_id: str, promotion_data: PromotionUpdate):
-        """Update a promotion."""
+        """Update a promotion. Promo code is editable as long as it does not duplicate another promotion."""
         promotion = self.get_promotion(promotion_id)
-        
+
         update_data = promotion_data.model_dump(exclude_unset=True)
+
+        if "promo_code" in update_data:
+            new_code = (update_data["promo_code"] or "").strip()
+            if not new_code:
+                raise handle_conflict("Promo code cannot be empty.")
+            existing = (
+                self.db.query(Promotion)
+                .filter(Promotion.promo_code == new_code, Promotion.id != promotion_id)
+                .first()
+            )
+            if existing:
+                raise handle_conflict("Promo code already exists.")
+
         for key, value in update_data.items():
             setattr(promotion, key, value)
-        
+
         self.db.commit()
         self.db.refresh(promotion)
         return promotion
+
+    def delete_promotion(self, promotion_id: str):
+        """Delete a promotion (cascade deletes promotion_products and promotion_attachments)."""
+        promotion = self.get_promotion(promotion_id)
+        self.db.delete(promotion)
+        self.db.commit()
+
+    def bulk_delete_promotions(self, promotion_ids: list[str]):
+        """Delete multiple promotions. Returns count deleted."""
+        if not promotion_ids:
+            return {"message": "No promotions to delete", "deleted_count": 0}
+        deleted = self.db.query(Promotion).filter(Promotion.id.in_(promotion_ids)).delete(synchronize_session=False)
+        self.db.commit()
+        return {"message": f"{deleted} promotion(s) deleted", "deleted_count": deleted}
+
+    def bulk_update_access_levels(self, promotion_ids: list[str], access_levels: list[str]):
+        """Set access_levels on multiple promotions. Returns count updated."""
+        if not promotion_ids:
+            return {"message": "No promotions selected", "updated_count": 0}
+        if not access_levels:
+            raise handle_conflict("At least one access level must be selected.")
+        allowed = {"dealer", "end_user"}
+        invalid = [a for a in access_levels if (a or "").strip().lower() not in allowed]
+        if invalid:
+            raise handle_conflict(f"Invalid access level(s): {invalid}. Allowed: dealer, end_user.")
+        normalized = [a.strip().lower() for a in access_levels if (a or "").strip()]
+        if not normalized:
+            raise handle_conflict("At least one access level must be selected.")
+        updated = (
+            self.db.query(Promotion)
+            .filter(Promotion.id.in_(promotion_ids))
+            .update({"access_levels": normalized}, synchronize_session=False)
+        )
+        self.db.commit()
+        return {"message": f"Access levels set for {updated} promotion(s).", "updated_count": updated}
 
 
 class PromotionProductService:
@@ -105,6 +190,17 @@ class PromotionProductService:
     
     def __init__(self, db: Session):
         self.db = db
+
+    def _compute_discount_values(self, list_price: float, promo_price: float) -> tuple[float, float]:
+        """Compute discount amount/percent and guard DB precision for discount_percent NUMERIC(5,2)."""
+        discount_amount = list_price - promo_price
+        discount_percent = (discount_amount / list_price * 100) if list_price > 0 else 0
+        # DB column is NUMERIC(5,2) -> absolute value must be < 1000
+        if abs(discount_percent) >= 1000:
+            raise handle_conflict(
+                "Promotion price causes discount percent overflow. Please use a price that results in discount percentage between -999.99% and 999.99%."
+            )
+        return discount_amount, discount_percent
     
     def list_promotion_products(self, promotion_id: Optional[str] = None, page: int = 1, limit: int = 50, sort_field: str = "created_at", sort_dir: str = "asc", query: Optional[str] = None):
         """List products for a promotion or all promotion products."""
@@ -198,8 +294,7 @@ class PromotionProductService:
         if promo_selling_price and product.list_price:
             list_price = float(product.list_price)
             promo_price = float(promo_selling_price)
-            discount_amount = list_price - promo_price
-            discount_percent = (discount_amount / list_price * 100) if list_price > 0 else 0
+            discount_amount, discount_percent = self._compute_discount_values(list_price, promo_price)
         
         promotion_product = PromotionProduct(
             promotion_id=product_data.promotion_id,
@@ -234,8 +329,9 @@ class PromotionProductService:
         if 'promo_selling_price' in update_data and product and product.list_price:
             promo_price = float(update_data['promo_selling_price'])
             list_price = float(product.list_price)
-            update_data['discount_amount'] = list_price - promo_price
-            update_data['discount_percent'] = (update_data['discount_amount'] / list_price * 100) if list_price > 0 else 0
+            discount_amount, discount_percent = self._compute_discount_values(list_price, promo_price)
+            update_data['discount_amount'] = discount_amount
+            update_data['discount_percent'] = discount_percent
         
         for key, value in update_data.items():
             setattr(promotion_product, key, value)

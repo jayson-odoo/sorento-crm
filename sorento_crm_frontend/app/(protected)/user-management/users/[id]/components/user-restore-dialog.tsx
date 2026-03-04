@@ -73,7 +73,7 @@ const UserRestoreDialog = ({
       const response = await apiFetch(
         `/api/user-management/users/${user.id}/restore`,
         {
-          method: 'PATCH',
+          method: 'POST',
         },
       );
 

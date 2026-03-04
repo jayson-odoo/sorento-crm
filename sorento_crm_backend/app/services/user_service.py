@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from typing import Optional
 from datetime import datetime
-from app.models.user import User, UserRole, UserPermission, UserRolePermission
+from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission
 from app.models.access import (
     AccessAgent,
     ContactAgentAccess,
@@ -37,20 +37,23 @@ class UserService:
         status: Optional[str] = None,
         role_id: Optional[str] = None,
         respond_synced: Optional[str] = None,
+        trashed: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "asc"
     ):
-        """List users."""
-        # Eagerly load the role relationship to avoid lazy loading issues
-        q = self.db.query(User).options(joinedload(User.role))
-        
+        """List users. trashed: 'exclude' (default), 'only', or 'all'."""
+        q = self.db.query(User)
+        if trashed == "only":
+            q = q.filter(User.is_trashed == True)
+        elif trashed != "all":
+            q = q.filter(User.is_trashed == False)
         filters = []
-        
         if status and status != "all":
             filters.append(User.status == status)
-        
         if role_id and role_id != "all":
-            filters.append(User.role_id == role_id)
+            q = q.join(UserRoleAssignment, UserRoleAssignment.user_id == User.id)
+            q = q.filter(UserRoleAssignment.role_id == role_id)
+            q = q.distinct()
         
         if respond_synced:
             filters.append(User.respond_synced == respond_synced)
@@ -123,27 +126,65 @@ class UserService:
     
     def get_user(self, user_id: str):
         """Get a user by ID."""
-        # Eagerly load the role and superior relationships
         user = self.db.query(User).options(
-            joinedload(User.role),
             joinedload(User.superior)
         ).filter(User.id == user_id).first()
         if not user:
             raise handle_not_found("User", user_id)
         return user
-    
+
+    def _user_create_data(self, user_data: UserCreate) -> dict:
+        """Build User model dict from UserCreate, excluding role_ids."""
+        d = user_data.model_dump(exclude={"role_ids"})
+        return d
+
     def create_user(self, user_data: UserCreate):
-        """Create a new user."""
+        """Create a new user and assign roles via user_role_assignments."""
         existing = self.db.query(User).filter(User.email == user_data.email).first()
         if existing:
             raise handle_conflict("Email is already registered.")
-        
-        user = User(**user_data.model_dump())
+        data = self._user_create_data(user_data)
+        user = User(**data)
         self.db.add(user)
+        self.db.flush()
+        role_ids = user_data.role_ids
+        if not role_ids:
+            default_role = self.db.query(UserRole).filter(UserRole.is_default == True).first()
+            if default_role:
+                role_ids = [default_role.id]
+        for role_id in role_ids or []:
+            role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
+            if role:
+                self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
         self.db.commit()
         self.db.refresh(user)
         return user
-    
+
+    def invite_user(self, user_data: UserCreate, invited_by_user_id: str):
+        """Create a user without a password and mark them as invited. Used for invitation flow."""
+        existing = self.db.query(User).filter(User.email == user_data.email).first()
+        if existing:
+            raise handle_conflict("Email is already registered.")
+        data = self._user_create_data(user_data)
+        data["password"] = None
+        data["invited_by_user_id"] = invited_by_user_id
+        data["status"] = "INACTIVE"
+        user = User(**data)
+        self.db.add(user)
+        self.db.flush()
+        role_ids = user_data.role_ids
+        if not role_ids:
+            default_role = self.db.query(UserRole).filter(UserRole.is_default == True).first()
+            if default_role:
+                role_ids = [default_role.id]
+        for role_id in role_ids or []:
+            role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
+            if role:
+                self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
+        self.db.commit()
+        self.db.refresh(user)
+        return user
+
     def update_user(self, user_id: str, user_data: UserUpdate):
         """Update a user."""
         import logging
@@ -162,35 +203,82 @@ class UserService:
         logger.info(f"Received update_data keys: {list(update_data.keys())}")
         logger.info(f"Received update_data: {update_data}")
         
-        # Process each field explicitly
         for key, value in update_data.items():
             logger.info(f"Processing field '{key}' with value: {repr(value)} (type: {type(value).__name__})")
-            
-            # Handle empty strings for optional fields
             if key in optional_fields and value == '':
                 setattr(user, key, None)
                 logger.info(f"✓ Set {key} = None (converted from empty string)")
-            # Handle None values for optional fields
             elif value is None and key in optional_fields:
                 setattr(user, key, None)
                 logger.info(f"✓ Set {key} = None (explicit None)")
-            # Handle None for non-optional fields (skip them)
             elif value is None:
                 logger.warning(f"⚠ Skipping {key} (None value for non-optional field)")
-            # Handle all other values (including empty strings for non-optional)
             else:
                 setattr(user, key, value)
                 logger.info(f"✓ Set {key} = {repr(value)}")
         
-        # Log before commit
-        logger.info(f"Before commit - role_id: {user.role_id}, respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
-        
+        logger.info(f"Before commit - respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
         self.db.commit()
         self.db.refresh(user)
-        
-        # Log after commit and refresh
-        logger.info(f"After commit - role_id: {user.role_id}, respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
+        logger.info(f"After commit - respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
         return user
+
+    def delete_user(self, user_id: str) -> None:
+        """Soft-delete a user (set is_trashed=True)."""
+        user = self.get_user(user_id)
+        user.is_trashed = True
+        self.db.commit()
+
+    def restore_user(self, user_id: str) -> None:
+        """Restore a trashed user (set is_trashed=False)."""
+        user = self.get_user(user_id)
+        user.is_trashed = False
+        self.db.commit()
+
+    def permanent_delete_user(self, user_id: str) -> None:
+        """Permanently delete a user. Only allowed when user is trashed."""
+        user = self.get_user(user_id)
+        if not user.is_trashed:
+            raise handle_conflict("Only trashed users can be permanently deleted. Trash the user first.")
+        self.db.delete(user)
+        self.db.commit()
+
+    def bulk_delete_users(self, user_ids: list[str]) -> int:
+        """Soft-delete multiple users. Returns count of deleted."""
+        if not user_ids:
+            return 0
+        count = self.db.query(User).filter(
+            User.id.in_(user_ids),
+            User.is_trashed == False,
+        ).update({"is_trashed": True}, synchronize_session=False)
+        self.db.commit()
+        return count
+
+    def bulk_update_user_status(self, user_ids: list[str], status: str) -> int:
+        """Set status for multiple users. Returns count updated."""
+        if not user_ids:
+            return 0
+        count = self.db.query(User).filter(
+            User.id.in_(user_ids),
+            User.is_trashed == False,
+        ).update({"status": status}, synchronize_session=False)
+        self.db.commit()
+        return count
+
+    def bulk_permanent_delete_users(self, user_ids: list[str]) -> int:
+        """Permanently delete users that are trashed. Returns count deleted."""
+        if not user_ids:
+            return 0
+        users = self.db.query(User).filter(
+            User.id.in_(user_ids),
+            User.is_trashed == True,
+        ).all()
+        count = 0
+        for user in users:
+            self.db.delete(user)
+            count += 1
+        self.db.commit()
+        return count
 
     def sync_respond_user(self, user_id: str, respond_user_id: Optional[str] = None) -> dict:
         """Sync user with Respond.io and update respond_synced status."""
@@ -232,6 +320,51 @@ class UserService:
         self.db.refresh(user)
         return {"status": "failed", "message": "Respond email does not match system email."}
 
+    def list_user_roles(self, user_id: str) -> list:
+        """List roles assigned to a user (from user_role_assignments)."""
+        self.get_user(user_id)  # raise if not found
+        assignments = (
+            self.db.query(UserRoleAssignment)
+            .filter(UserRoleAssignment.user_id == user_id)
+            .all()
+        )
+        if not assignments:
+            return []
+        role_ids = [a.role_id for a in assignments]
+        return self.db.query(UserRole).filter(UserRole.id.in_(role_ids)).all()
+
+    def get_roles_for_user_ids(self, user_ids: list[str]) -> dict:
+        """Return map user_id -> list of UserRole for the given user ids."""
+        if not user_ids:
+            return {}
+        assignments = (
+            self.db.query(UserRoleAssignment)
+            .filter(UserRoleAssignment.user_id.in_(user_ids))
+            .all()
+        )
+        role_ids = list({a.role_id for a in assignments})
+        roles_by_id = {r.id: r for r in self.db.query(UserRole).filter(UserRole.id.in_(role_ids)).all()}
+        out = {uid: [] for uid in user_ids}
+        for a in assignments:
+            r = roles_by_id.get(a.role_id)
+            if r and a.user_id in out:
+                out[a.user_id].append(r)
+        return out
+
+    def set_user_roles(self, user_id: str, role_ids: list[str]) -> dict:
+        """Replace user's role assignments with the given role_ids."""
+        self.get_user(user_id)
+        self.db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == user_id).delete(
+            synchronize_session=False
+        )
+        self.db.flush()
+        for role_id in role_ids or []:
+            role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
+            if role:
+                self.db.add(UserRoleAssignment(user_id=user_id, role_id=role_id))
+        self.db.commit()
+        return {"message": "User roles updated successfully"}
+
 
 class UserRoleService:
     """Service for user role operations."""
@@ -253,22 +386,27 @@ class UserRoleService:
         return roles
     
     def list_roles(self, page: int = 1, limit: int = 50):
-        """List user roles."""
-        q = self.db.query(UserRole)
-        
+        """List user roles with permissions loaded."""
+        q = self.db.query(UserRole).options(
+            joinedload(UserRole.permissions).joinedload(UserRolePermission.permission)
+        )
         total = q.count()
         offset = (page - 1) * limit
         roles = q.offset(offset).limit(limit).all()
-        
         return {
             "data": roles,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
-    
+
     def get_role(self, role_id: str):
-        """Get a role by ID."""
-        role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
+        """Get a role by ID with permissions loaded."""
+        role = (
+            self.db.query(UserRole)
+            .options(joinedload(UserRole.permissions).joinedload(UserRolePermission.permission))
+            .filter(UserRole.id == role_id)
+            .first()
+        )
         if not role:
             raise handle_not_found("User Role", role_id)
         return role
@@ -301,13 +439,22 @@ class UserRoleService:
         return role
     
     def update_role(self, role_id: str, role_data: UserRoleUpdate):
-        """Update a role."""
+        """Update a role and optionally replace its permission assignments."""
         role = self.get_role(role_id)
-        
         update_data = role_data.model_dump(exclude_unset=True)
+        permission_ids = update_data.pop("permissions", None)
+
         for key, value in update_data.items():
             setattr(role, key, value)
-        
+
+        if permission_ids is not None:
+            self.db.query(UserRolePermission).filter(UserRolePermission.role_id == role_id).delete(
+                synchronize_session=False
+            )
+            self.db.flush()
+            for perm_id in permission_ids:
+                self.db.add(UserRolePermission(role_id=role_id, permission_id=perm_id))
+
         self.db.commit()
         self.db.refresh(role)
         return role
@@ -406,6 +553,58 @@ class UserPermissionService:
         self.db.commit()
         return {"message": f"Successfully deleted {deleted_count} permission(s)"}
 
+    # --- RBAC: effective permission resolution (multi-role + legacy role_id) ---
+    SUPERADMIN_ROLE_SLUG = "superadmin"
+
+    def get_user_role_ids(self, user_id: str) -> list[str]:
+        """Return all role IDs for a user (from user_role_assignments)."""
+        assignments = (
+            self.db.query(UserRoleAssignment.role_id)
+            .filter(UserRoleAssignment.user_id == user_id)
+            .all()
+        )
+        return [r.role_id for r in assignments]
+
+    def get_user_role_slugs(self, user_id: str) -> set[str]:
+        """Return all role slugs for a user (for superadmin bypass)."""
+        role_ids = self.get_user_role_ids(user_id)
+        if not role_ids:
+            return set()
+        roles = self.db.query(UserRole.slug).filter(UserRole.id.in_(role_ids)).all()
+        return {r.slug for r in roles}
+
+    def get_user_permission_slugs(self, user_id: str) -> set[str]:
+        """Return effective permission slugs for a user (union of all assigned roles).
+        Users with role slug 'superadmin' or 'admin' receive all known permissions (for frontend menu/actions)."""
+        role_slugs = self.get_user_role_slugs(user_id)
+        if role_slugs & {self.SUPERADMIN_ROLE_SLUG, "admin"}:
+            rows = self.db.query(UserPermission.slug).all()
+            return {r.slug for r in rows}
+        role_ids = self.get_user_role_ids(user_id)
+        if not role_ids:
+            return set()
+        rows = (
+            self.db.query(UserPermission.slug)
+            .join(UserRolePermission, UserRolePermission.permission_id == UserPermission.id)
+            .filter(UserRolePermission.role_id.in_(role_ids))
+            .distinct()
+            .all()
+        )
+        return {r.slug for r in rows}
+
+    def check_user_has_permission(self, user_id: str, permission_slug: str) -> bool:
+        """True if user has the permission or is superadmin."""
+        if self.get_user_role_slugs(user_id) & {self.SUPERADMIN_ROLE_SLUG, "admin"}:
+            return True
+        return permission_slug in self.get_user_permission_slugs(user_id)
+
+    def check_user_has_any_permission(self, user_id: str, permission_slugs: list[str]) -> bool:
+        """True if user has at least one of the permissions or is superadmin."""
+        if self.get_user_role_slugs(user_id) & {self.SUPERADMIN_ROLE_SLUG, "admin"}:
+            return True
+        user_slugs = self.get_user_permission_slugs(user_id)
+        return any(s in user_slugs for s in permission_slugs)
+
 
 class AccessAgentService:
     """Service for access agent operations."""
@@ -446,6 +645,7 @@ class AccessAgentService:
                 "name": agent.name,
                 "description": agent.description,
                 "is_active": agent.is_active,
+                "assign_to_new_internal_contacts": agent.assign_to_new_internal_contacts,
                 "created_at": agent.created_at,
                 "updated_at": agent.updated_at,
                 "synced_to_excel": agent.synced_to_excel,
@@ -484,6 +684,7 @@ class AccessAgentService:
             'name': agent.name,
             'description': agent.description,
             'is_active': agent.is_active,
+            'assign_to_new_internal_contacts': agent.assign_to_new_internal_contacts,
             'created_at': agent.created_at,
             'updated_at': agent.updated_at,
             'synced_to_excel': agent.synced_to_excel,
@@ -518,6 +719,17 @@ class AccessAgentService:
         self.db.commit()
         self.db.refresh(agent)
         return agent
+
+    def list_agents_assign_to_new_internal_contacts(self):
+        """Return access agents that should be assigned to newly created internal contacts (from sync)."""
+        return (
+            self.db.query(AccessAgent)
+            .filter(
+                AccessAgent.is_active == True,
+                AccessAgent.assign_to_new_internal_contacts == True,
+            )
+            .all()
+        )
 
     def list_contact_accesses(self, agent_id: str):
         """List contact access entries for an agent."""

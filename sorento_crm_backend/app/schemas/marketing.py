@@ -24,6 +24,7 @@ class PromotionCreate(PromotionBase):
 
 
 class PromotionUpdate(BaseModel):
+    promo_code: Optional[str] = None  # editable; must be unique (no duplicate in system)
     name: Optional[str] = None
     promo_type: Optional[str] = None
     description: Optional[str] = None
@@ -40,6 +41,16 @@ class PromotionResponse(PromotionBase):
     updated_at: datetime
     products_count: Optional[int] = 0
     products: Optional[list["PromotionProductResponse"]] = None
+
+    @field_validator('id', 'created_by', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v)
     
     class Config:
         from_attributes = True
@@ -206,6 +217,8 @@ class AttachmentSimple(BaseModel):
     mime_type: Optional[str] = None
     uploaded_at: datetime
     attachment_type: Optional[AttachmentTypeSimple] = None
+    access_levels: Optional[list[str]] = None
+    directory_id: Optional[str] = None  # for "Open in folder" link
     
     @field_validator('id', mode='before')
     @classmethod

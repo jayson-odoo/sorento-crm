@@ -1,7 +1,8 @@
 'use client';
 
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
@@ -26,6 +27,12 @@ import {
 import NotificationItem from './notifications/NotificationItem';
 
 const UNREAD_POLL_INTERVAL_MS = 10_000; // 10s so bell badge updates soon after job completion
+const TITLE_UNREAD_PREFIX = /^\(\d+\)\s*/; // strip "(3) " from title to get base
+
+function getBaseTitle(): string {
+  if (typeof document === 'undefined') return 'Sorento';
+  return document.title.replace(TITLE_UNREAD_PREFIX, '').trim() || 'Sorento';
+}
 
 export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -37,6 +44,24 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
     queryFn: () => getUnreadCount(false),
     refetchInterval: UNREAD_POLL_INTERVAL_MS,
   });
+
+  // Tab title: always show (n) in browser tab when there are unread notifications
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const base = getBaseTitle();
+    document.title = unreadCount > 0 ? `(${unreadCount}) ${base}` : base;
+  }, [unreadCount]);
+
+  // When tab becomes visible again, re-apply title in case another tab or route changed it
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const handleVisibility = () => {
+      const base = getBaseTitle();
+      document.title = unreadCount > 0 ? `(${unreadCount}) ${base}` : base;
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [unreadCount]);
 
   const { data: listData, isLoading, refetch } = useQuery({
     queryKey: ['notifications', 'list', tab],
@@ -64,6 +89,7 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
   const handleMarkAllRead = async () => {
     await markAllRead();
     invalidate();
+    await refetch();
   };
   const handleClearAll = async () => {
     try {
@@ -165,13 +191,15 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
             </Tabs>
           </ScrollArea>
         </SheetBody>
-        <SheetFooter className="border-t border-border p-5 grid grid-cols-2 gap-2.5">
-          <Button variant="outline" onClick={handleClearAll}>
-            Clear all
-          </Button>
-          <Button variant="outline" onClick={handleMarkAllRead}>
-            Mark all as read
-          </Button>
+        <SheetFooter className="border-t border-border p-5 flex flex-col gap-3">
+          <div className="grid grid-cols-2 gap-2.5 w-full">
+            <Button variant="outline" onClick={handleClearAll}>
+              Clear all
+            </Button>
+            <Button variant="outline" onClick={handleMarkAllRead}>
+              Mark all as read
+            </Button>
+          </div>
         </SheetFooter>
       </SheetContent>
     </Sheet>

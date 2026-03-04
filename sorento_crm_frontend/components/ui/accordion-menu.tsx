@@ -34,6 +34,8 @@ interface AccordionMenuProps {
   matchPath?: (href: string) => boolean;
   classNames?: AccordionMenuClassNames;
   onItemClick?: (value: string, event: React.MouseEvent) => void;
+  /** When set, this value is used as the initially expanded root section when no menu item matches the current path. */
+  defaultExpandedValue?: string;
 }
 
 const AccordionMenuContext = React.createContext<AccordionMenuContextValue>({
@@ -51,6 +53,7 @@ function AccordionMenu({
   children,
   selectedValue,
   onItemClick,
+  defaultExpandedValue,
   ...props
 }: React.ComponentPropsWithoutRef<typeof AccordionPrimitive.Root> & AccordionMenuProps) {
   const [internalSelectedValue, setInternalSelectedValue] = React.useState<string | undefined>(selectedValue);
@@ -84,7 +87,10 @@ function AccordionMenu({
     const chain = getActiveChain(children);
     const trimmedChain = chain.length > 1 ? chain.slice(0, chain.length - 1) : chain;
     const mapping: Record<string, string | string[]> = {};
-    if (trimmedChain.length > 0) {
+    // When defaultExpandedValue is set, use it as the initial expanded section (e.g. Quick Access on login).
+    if (defaultExpandedValue) {
+      mapping['root'] = defaultExpandedValue;
+    } else if (trimmedChain.length > 0) {
       if (props.type === 'multiple') {
         mapping['root'] = trimmedChain;
       } else {
@@ -95,7 +101,7 @@ function AccordionMenu({
       }
     }
     return mapping;
-  }, [children, matchPath, selectedValue, props.type]);
+  }, [children, matchPath, selectedValue, props.type, defaultExpandedValue]);
 
   const [nestedStates, setNestedStates] = React.useState<Record<string, string | string[]>>(initialNestedStates);
   const multipleValue = (

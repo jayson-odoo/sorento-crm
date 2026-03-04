@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { ScreenLoader } from '@/components/common/screen-loader';
 import { Demo1Layout } from '../components/layouts/demo1/layout';
@@ -13,6 +13,7 @@ export default function ProtectedLayout({
 }) {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const pathname = usePathname();
 
 // #region agent log
 useEffect(() => { fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'layout.tsx:17',message:'ProtectedLayout auth check',data:{status,hasSession:!!session},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H5'})}).catch(()=>{}); }, [status, session]);
@@ -26,9 +27,10 @@ fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{metho
 // #region agent log
 fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'layout.tsx:23',message:'Redirecting to signin',data:{status},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H5'})}).catch(()=>{});
 // #endregion
-      router.push('/signin');
+      const callbackUrl = pathname ? `/signin?callbackUrl=${encodeURIComponent(pathname)}` : '/signin';
+      router.push(callbackUrl);
     }
-  }, [status, router]);
+  }, [status, router, pathname]);
 
   if (status === 'loading' || status === 'unauthenticated') {
     return <ScreenLoader />;

@@ -4,6 +4,7 @@ export interface AccessAgent {
   name: string;
   description?: string | null;
   is_active: boolean;
+  assign_to_new_internal_contacts: boolean;
   created_at: Date;
   updated_at: Date;
   synced_to_excel: boolean;
@@ -18,6 +19,7 @@ export interface AccessAgentFormData {
   description?: string;
   pic_respond_user_id?: string;
   is_active: boolean;
+  assign_to_new_internal_contacts: boolean;
 }
 
 export interface RespondSyncedUser {

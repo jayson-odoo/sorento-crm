@@ -48,7 +48,7 @@ class Attachment(Base):
     attachment_type_id = Column(UUID(as_uuid=False), ForeignKey("attachment_types.id", ondelete="SET NULL"), nullable=True)
     original_filename = Column(String(255), nullable=False)
     stored_filename = Column(String(255), nullable=False)
-    file_path = Column(String(500), nullable=False)
+    file_path = Column(Text, nullable=False)  # URL or path; TEXT to support CloudFront signed URLs
     file_size_bytes = Column(Integer, nullable=True)
     mime_type = Column(String(100), nullable=True)
     file_hash = Column(String(64), nullable=True)

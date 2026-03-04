@@ -32,6 +32,7 @@ async function getFastAPIToken(request: NextRequest): Promise<string | null> {
         avatar: tokenPayload.avatar,
         status: tokenPayload.status,
         roleId: tokenPayload.roleId,
+        roleIds: tokenPayload.roleIds ?? (tokenPayload.roleId ? [tokenPayload.roleId] : []),
         roleName: tokenPayload.roleName,
       },
       secret,
@@ -106,13 +107,14 @@ export async function proxyToFastAPI(
     }
   }
 
-  // Get body
+  // Get body - avoid sending empty string so backend doesn't try to parse invalid JSON
   let body: string | undefined;
-  if (options.body !== undefined) {
+  if (options.body !== undefined && options.body !== null) {
     body = JSON.stringify(options.body);
   } else if (method !== 'GET' && method !== 'HEAD') {
     try {
-      body = await request.text();
+      const raw = await request.text();
+      body = raw && raw.trim() ? raw : undefined;
     } catch {
       // No body
     }
@@ -122,7 +124,7 @@ export async function proxyToFastAPI(
     const response = await fetch(url.toString(), {
       method,
       headers,
-      body,
+      ...(body !== undefined && body !== '' ? { body } : {}),
     });
 
     const data = await response.json().catch(() => ({}));

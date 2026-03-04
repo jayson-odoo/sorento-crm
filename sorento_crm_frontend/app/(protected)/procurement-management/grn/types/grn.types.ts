@@ -74,12 +74,13 @@ export interface GRNFormData {
   spo_number?: string;
   source_entity_type?: string;
   source_entity_id?: string;
-  picking_date: Date;
+  /** Date or ISO date string (form inputs use string). */
+  picking_date: Date | string;
   picked_by_user_id?: string;
   inspection_status: string;
   quality_remarks?: string;
   inspected_by_user_id?: string;
-  inspection_date?: Date;
+  inspection_date?: Date | string;
   picking_status: string;
   total_items_picked?: number;
   total_items_discrepancy?: number;

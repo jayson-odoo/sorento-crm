@@ -59,6 +59,8 @@ export default function FileUploadZone({
 
   const handleFiles = (files: File[]) => {
     const validFiles = files.filter((file) => {
+      // Skip macOS metadata files (._*)
+      if (file.name.trim().startsWith('._')) return false;
       // Validate file type
       if (acceptedTypes !== '*') {
         const extensions = acceptedTypes.split(',').map((ext) => ext.trim().replace('.', ''));

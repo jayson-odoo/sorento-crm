@@ -2,17 +2,31 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2 } from 'lucide-react';
+import { Edit, Trash2, UserRound, Send, Link2, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useComplaint } from '../hooks/useComplaints';
-import { formatDate } from '@/lib/helpers';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { useComplaint, useComplaintSyncAssignee, useUpdateComplaintAndReply } from '../hooks/useComplaints';
+import { getOrCreateComplaintViewLink } from '../services/complaintService';
+import { toast } from 'sonner';
+import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import ComplaintDeleteDialog from './complaint-delete-dialog';
 import ComplaintNavigation from './ComplaintNavigation';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
 import AuditTrail from '@/components/audit/AuditTrail';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 
 interface ComplaintDetailProps {
   complaintId: string;
@@ -24,7 +38,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   // Don't fetch if it's "new" or invalid
   const isValidId = complaintId && complaintId !== 'new' && complaintId !== 'edit';
   const { data: complaint, isLoading } = useComplaint(isValidId ? complaintId : null);
+  const syncAssigneeMutation = useComplaintSyncAssignee();
+  const updateAndReplyMutation = useUpdateComplaintAndReply();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
+  const [replyMessage, setReplyMessage] = useState('');
+  const [viewLinkCopying, setViewLinkCopying] = useState(false);
   
   if (!isValidId) {
     return (
@@ -94,20 +113,91 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           )}
         </div>
         <div className="flex gap-2">
+          <DetailActionsMenu ariaLabel="Complaint actions">
+            <DropdownMenuItem
+              onClick={() =>
+                router.push(`/complaint-management/complaints/${complaintId}/edit`)
+              }
+            >
+              <Edit className="size-4" />
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={viewLinkCopying}
+              onClick={async () => {
+                try {
+                  setViewLinkCopying(true);
+                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                  const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+                  await navigator.clipboard.writeText(view_url);
+                  toast.success('View link copied to clipboard');
+                } catch {
+                  toast.error('Failed to copy view link');
+                } finally {
+                  setViewLinkCopying(false);
+                }
+              }}
+            >
+              <Link2 className="size-4" />
+              {viewLinkCopying ? 'Copying…' : 'Copy view link'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={async () => {
+                try {
+                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                  const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+                  window.open(view_url, '_blank');
+                } catch {
+                  toast.error('Failed to open view link');
+                }
+              }}
+            >
+              <ExternalLink className="size-4" />
+              View in system
+            </DropdownMenuItem>
+            {complaint.respond_inbox_url && (
+              <DropdownMenuItem
+                disabled={updateAndReplyMutation.isPending}
+                onClick={async () => {
+                  let defaultMsg = complaint.technical_team_response ?? '';
+                  try {
+                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                    const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+                    if (view_url) {
+                      defaultMsg = defaultMsg.trim()
+                        ? `${defaultMsg.trim()}\n\nView full details: ${view_url}`
+                        : `View full details: ${view_url}`;
+                    }
+                  } catch {
+                    // keep default message without view link
+                  }
+                  setReplyMessage(defaultMsg);
+                  setUpdateAndReplyDialogOpen(true);
+                }}
+              >
+                <Send className="size-4" />
+                {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
+              </DropdownMenuItem>
+            )}
+            {complaint.contact_id && (
+              <DropdownMenuItem
+                onClick={() => syncAssigneeMutation.mutate(complaintId)}
+                disabled={syncAssigneeMutation.isPending}
+                title="Sync assignee from Respond.io"
+              >
+                <UserRound className={`size-4 ${syncAssigneeMutation.isPending ? 'animate-pulse' : ''}`} />
+                Sync assignee
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => setDeleteDialogOpen(true)}
+            >
+              <Trash2 className="size-4" />
+              Delete
+            </DropdownMenuItem>
+          </DetailActionsMenu>
           <ComplaintNavigation complaintId={complaintId} />
-          <Button
-            variant="outline"
-            onClick={() =>
-              router.push(`/complaint-management/complaints/${complaintId}/edit`)
-            }
-          >
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
         </div>
       </div>
 
@@ -121,6 +211,56 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           }}
         />
       )}
+
+      <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Update & Reply</DialogTitle>
+            <DialogDescription>
+              Edit the message below. It will be saved as the technical team response and sent to the customer via Respond.io. The conversation will be marked as responded.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="complaint-detail-reply-message">Message to send</Label>
+              <Textarea
+                id="complaint-detail-reply-message"
+                value={replyMessage}
+                onChange={(e) => setReplyMessage(e.target.value)}
+                placeholder="Technical team response..."
+                rows={5}
+                className="resize-none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setUpdateAndReplyDialogOpen(false)}
+              disabled={updateAndReplyMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={updateAndReplyMutation.isPending || !replyMessage.trim()}
+              onClick={async () => {
+                try {
+                  await updateAndReplyMutation.mutateAsync({
+                    id: complaintId,
+                    data: { technical_team_response: replyMessage.trim() },
+                  });
+                  setUpdateAndReplyDialogOpen(false);
+                  setReplyMessage('');
+                } catch {
+                  // toast from mutation
+                }
+              }}
+            >
+              {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Complaint Information */}
       <Card>
@@ -223,18 +363,24 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               </a>
             </div>
           )}
+          <div>
+            <p className="text-sm text-muted-foreground">Assignee</p>
+            <p className="font-medium">
+              {complaint.assigned_to_name ?? complaint.assigned_to ?? '-'}
+            </p>
+          </div>
           {complaint.status && (
             <div>
               <p className="text-sm text-muted-foreground">Status</p>
               <p className="font-medium capitalize">{complaint.status}</p>
             </div>
           )}
-          {complaint.technical_team_response && (
-            <div>
-              <p className="text-sm text-muted-foreground">Technical Team Response</p>
-              <p className="font-medium whitespace-pre-wrap">{complaint.technical_team_response}</p>
-            </div>
-          )}
+          <div>
+            <p className="text-sm text-muted-foreground">Technical Team Response</p>
+            <p className="font-medium whitespace-pre-wrap">
+              {complaint.technical_team_response || '-'}
+            </p>
+          </div>
           {complaint.last_responded_at && (
             <div>
               <p className="text-sm text-muted-foreground">Last responded</p>
@@ -244,6 +390,14 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               </p>
             </div>
           )}
+          <div>
+            <p className="text-sm text-muted-foreground">Created at</p>
+            <p className="font-medium">
+              {complaint.created_at
+                ? formatDateTimeInMalaysia(complaint.created_at)
+                : '-'}
+            </p>
+          </div>
         </CardContent>
       </Card>
 

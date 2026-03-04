@@ -17,11 +17,13 @@ from app.schemas.sla import (
     ConversationSLAEventLogCreate,
     ConversationSLAEventLogResponse,
     ConversationSLATrackingStatusUpdate,
+    ConversationSLAEscalateRequest,
 )
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error, handle_validation_error
 from app.models.sla import ConversationSLATracking, SLAPolicyTier
+from app.models.user import User
 
 router = APIRouter()
 
@@ -127,6 +129,75 @@ async def create_sla_tracking(
                     error_message=str(e),
                 ),
                 request_payload_dict=tracking_data.model_dump(),
+            )
+        except Exception:
+            pass
+        raise handle_internal_error(str(e))
+
+
+@router.post("/integration/escalate", status_code=status.HTTP_200_OK)
+async def escalate_sla_tracking_integration(
+    body: ConversationSLAEscalateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Escalate a conversation SLA tracking by respond_contact_id and policy_id (for external systems).
+
+    Finds the tracking by respond_contact_id and policy_id, sets current_tier, current_tier_started_at,
+    escalated_at, escalation_reason, and recalculates due_at (response) and due_at_resolution
+    from the policy tier KPIs. Creates an escalation event log.
+    """
+    log_service = IntegrationLogService(db)
+    try:
+        service = ConversationSLATrackingService(db)
+        tracking = service.escalate_tracking(
+            respond_contact_id=body.respond_contact_id,
+            policy_id=body.policy_id,
+            current_tier=body.current_tier,
+            escalation_reason=body.escalation_reason,
+        )
+        log_service.create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="sla_escalation",
+                business_table="conversation_sla_tracking",
+                business_id=tracking.id,
+                external_reference=body.respond_contact_id,
+                direction="inbound",
+                endpoint=str(request.url),
+                http_method="POST",
+                status="success",
+            ),
+            request_payload_dict=body.model_dump(),
+        )
+        assigned_to_respond_user_id = None
+        if tracking.assigned_to_id:
+            assigned_user = db.query(User).filter(User.id == tracking.assigned_to_id).first()
+            if assigned_user:
+                assigned_to_respond_user_id = assigned_user.respond_user_id
+        return {
+            "status": "success",
+            "message": "SLA tracking escalated successfully.",
+            "tracking_id": tracking.id,
+            "assigned_to_respond_user_id": assigned_to_respond_user_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="sla_escalation",
+                    business_table="conversation_sla_tracking",
+                    business_id="",
+                    external_reference=body.respond_contact_id,
+                    direction="inbound",
+                    endpoint=str(request.url),
+                    http_method="POST",
+                    status="failed",
+                    error_message=str(e),
+                ),
+                request_payload_dict=body.model_dump(),
             )
         except Exception:
             pass

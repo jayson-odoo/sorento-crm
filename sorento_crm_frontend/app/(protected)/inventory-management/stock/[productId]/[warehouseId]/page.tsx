@@ -3,7 +3,8 @@
 import { use } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { MoveLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import { MoveLeft } from 'lucide-react';
+import RecordNavigation from '@/components/common/RecordNavigation';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -79,15 +80,12 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
       return codeA.localeCompare(codeB);
     });
   }, [navigationItems]);
-  const currentStockId = stockQuery.data?.id;
-  const currentIndex = useMemo(() => {
-    if (!currentStockId) return -1;
-    return sortedNavigationItems.findIndex((item) => item.id === currentStockId);
-  }, [sortedNavigationItems, currentStockId]);
-  const previousStock = currentIndex > 0 ? sortedNavigationItems[currentIndex - 1] : null;
-  const nextStock = currentIndex >= 0 && currentIndex < sortedNavigationItems.length - 1 ? sortedNavigationItems[currentIndex + 1] : null;
-
   const stock = stockQuery.data as Stock | null;
+  const navigationItemsForRecordNav = useMemo(
+    () => sortedNavigationItems.map((s) => ({ id: `${s.product_id}/${s.warehouse_id}` })),
+    [sortedNavigationItems],
+  );
+  const currentRecordId = `${productId}/${warehouseId}`;
 
   const columns = useMemo<ColumnDef<StockLedgerEntry>[]>(
     () => [
@@ -269,25 +267,14 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="icon"
-                disabled={!previousStock}
-                onClick={() => previousStock && router.push(`/inventory-management/stock/${previousStock.product_id}/${previousStock.warehouse_id}`)}
-                aria-label="Previous stock"
-              >
-                <ChevronLeft className="size-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                disabled={!nextStock}
-                onClick={() => nextStock && router.push(`/inventory-management/stock/${nextStock.product_id}/${nextStock.warehouse_id}`)}
-                aria-label="Next stock"
-              >
-                <ChevronRight className="size-4" />
-              </Button>
+            <div className="flex items-center gap-2">
+              <RecordNavigation
+                basePath="/inventory-management/stock"
+                currentId={currentRecordId}
+                items={navigationItemsForRecordNav}
+                totalCount={navigationItemsForRecordNav.length}
+                ariaLabel="stock"
+              />
               <Button asChild variant="outline">
                 <Link href="/inventory-management/stock">
                   <MoveLeft /> Back to Stock

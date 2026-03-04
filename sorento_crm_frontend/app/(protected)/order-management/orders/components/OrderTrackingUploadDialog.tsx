@@ -16,6 +16,7 @@ import { parseExcelSheets } from '@/lib/excel-utils';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
 
 type ImportResult = {
   job_id: string;
@@ -41,18 +42,19 @@ export function OrderTrackingUploadDialog({
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [sheetSummary, setSheetSummary] = useState<{ masterRows: number; trackingRows: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
-
-    const validExtensions = accept.split(',').map(ext => ext.trim().replace('.', ''));
-    const fileExtension = selectedFile.name.split('.').pop()?.toLowerCase();
+  const validExtensions = accept.split(',').map((ext) => ext.trim().replace(/^\./, ''));
+  const validateFileType = (f: File): boolean => {
+    const fileExtension = f.name.split('.').pop()?.toLowerCase();
     if (!fileExtension || !validExtensions.includes(fileExtension)) {
-      toast.error(`Invalid file type. Please upload a file with extension: ${accept}`);
-      return;
+      toast.error(`Invalid file type. Please use: ${accept}`);
+      return false;
     }
+    return true;
+  };
 
+  const processFile = async (selectedFile: File) => {
     try {
       setProgress(10);
       const parsed = await parseExcelSheets(selectedFile);
@@ -61,7 +63,6 @@ export function OrderTrackingUploadDialog({
         setProgress(0);
         return;
       }
-
       setSheetSummary({
         masterRows: parsed.sheets['Master']?.length || 0,
         trackingRows: parsed.sheets['Daily Tracking']?.length || 0,
@@ -72,6 +73,38 @@ export function OrderTrackingUploadDialog({
     } finally {
       setProgress(0);
     }
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
+    if (!validateFileType(selectedFile)) return;
+    await processFile(selectedFile);
+    e.target.value = '';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isUploading) setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (isUploading) return;
+    const droppedFiles = e.dataTransfer?.files;
+    if (!droppedFiles?.length) return;
+    const droppedFile = droppedFiles[0];
+    if (!validateFileType(droppedFile)) return;
+    processFile(droppedFile);
   };
 
   const handleUpload = async () => {
@@ -121,8 +154,21 @@ export function OrderTrackingUploadDialog({
         </DialogHeader>
         <div className="space-y-4">
           {!file ? (
-            <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center">
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={cn(
+                'border-2 border-dashed rounded-lg p-8 text-center transition-colors',
+                isDragging
+                  ? 'border-primary bg-primary/5'
+                  : 'border-muted-foreground/25'
+              )}
+            >
               <FileSpreadsheet className="size-12 mx-auto mb-4 text-muted-foreground" />
+              <p className="text-sm font-medium text-foreground mb-2">
+                {isDragging ? 'Drop your file here' : 'or drag and drop'}
+              </p>
               <Label htmlFor="order-tracking-upload" className="cursor-pointer">
                 <Button variant="outline" asChild>
                   <span>

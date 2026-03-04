@@ -86,8 +86,25 @@ export async function deleteGRN(id: string): Promise<void> {
     const error = await response
       .json()
       .catch(() => ({ message: 'Failed to delete GRN' }));
-    throw new Error(error.message);
+    throw new Error(error.detail || error.message);
   }
+}
+
+export async function bulkDeleteGRNs(
+  ids: string[],
+): Promise<{ message: string; deleted_count: number }> {
+  const response = await apiFetch('/api/v1/procurement/grn/bulk', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to bulk delete GRNs' }));
+    throw new Error(error.detail || error.message);
+  }
+  return response.json();
 }
 
 export interface GRNImportResult {

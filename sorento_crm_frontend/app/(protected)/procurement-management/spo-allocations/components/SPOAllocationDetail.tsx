@@ -15,6 +15,7 @@ import {
 } from '../hooks/useSPOAllocations';
 import { toast } from 'sonner';
 import { formatDate } from '@/lib/helpers';
+import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import SPOAllocationDeleteDialog from './spo-allocation-delete-dialog';
 import Link from 'next/link';
 
@@ -70,25 +71,7 @@ export default function SPOAllocationDetail({
     );
   }
 
-  const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'secondary';
-      case 'partial_received':
-      case 'received':
-      case 'fully_received':
-        return 'primary';
-      case 'rejected':
-        return 'destructive';
-      default:
-        return 'secondary';
-    }
-  };
-
-  const statusLabel = spoAllocation.receipt_status
-    ?.split('_')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ') || '-';
+  const statusLabel = formatStatusLabel(spoAllocation.receipt_status) || '-';
 
   return (
     <div className="space-y-6">
