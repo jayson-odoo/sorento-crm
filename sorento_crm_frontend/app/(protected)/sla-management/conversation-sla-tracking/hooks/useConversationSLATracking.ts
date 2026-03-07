@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import type { ConversationSLATrackingDetail } from '../types/conversationSLATracking.types';
 import { getConversationSLATracking, getConversationSLATrackingDetail, getSLATrackingDashboardMetrics, deleteConversationSLATracking, deleteConversationSLAEventLog, syncAssigneeFromRespond } from '../services/conversationSLATrackingService';
 
 export function useConversationSLATracking(params: DataGridApiFetchParams & { policy_id?: string; status?: string; assigned_to?: string }) {
@@ -15,7 +16,7 @@ export function useConversationSLATracking(params: DataGridApiFetchParams & { po
 }
 
 export function useConversationSLATrackingDetail(id: string | null) {
-  return useQuery({
+  return useQuery<ConversationSLATrackingDetail>({
     queryKey: ['conversation-sla-tracking-detail', id],
     queryFn: () => {
       if (!id) throw new Error('Conversation SLA tracking ID is required');

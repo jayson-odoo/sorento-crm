@@ -8,6 +8,8 @@ export interface UserSimple {
   id: string;
   email: string;
   name?: string | null;
+  /** Superior of this user (e.g. for assignee tooltip in SLA tracking). */
+  superior?: { name?: string | null; email?: string | null } | null;
 }
 
 export interface SLAPolicySimple {
@@ -51,6 +53,8 @@ export interface ConversationSLATracking {
   contact_name?: string | null;
   assigned_user_name?: string | null;
   assigned_user_email?: string | null;
+  assigned_user_superior_name?: string | null;
+  assigned_user_superior_email?: string | null;
   responded_by_user_name?: string | null;
   resolved_by_user_name?: string | null;
   average_response_time?: number | null;
@@ -67,6 +71,9 @@ export interface ConversationSLATracking {
 
 export interface ConversationSLATrackingDetail extends ConversationSLATracking {
   event_logs?: ConversationSLAEventLog[];
+  // Explicitly repeated so detail response type includes superior fields (backend returns these)
+  assigned_user_superior_name?: string | null;
+  assigned_user_superior_email?: string | null;
 }
 
 export interface ConversationSLAEventLog {
