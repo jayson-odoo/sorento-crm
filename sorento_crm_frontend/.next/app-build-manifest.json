@@ -26,20 +26,25 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/layout.js"
     ],
-    "/(protected)/complaint-management/complaints/[id]/page": [
+    "/(protected)/procurement-management/purchase-requests/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/complaint-management/complaints/[id]/page.js"
+      "static/chunks/app/(protected)/procurement-management/purchase-requests/[id]/page.js"
     ],
     "/api/auth/token/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/token/route.js"
     ],
-    "/(protected)/complaint-management/complaints/[id]/edit/page": [
+    "/(protected)/sla-management/conversation-sla-tracking/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/complaint-management/complaints/[id]/edit/page.js"
+      "static/chunks/app/(protected)/sla-management/conversation-sla-tracking/page.js"
+    ],
+    "/(protected)/sla-management/conversation-sla-tracking/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js"
     ],
     "/(protected)/user-management/users/page": [
       "static/chunks/webpack.js",
@@ -55,41 +60,6 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/user-management/users/[id]/page.js"
-    ],
-    "/(protected)/complaint-management/complaints/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/complaint-management/complaints/page.js"
-    ],
-    "/(protected)/procurement-management/stock-inquiries/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/stock-inquiries/page.js"
-    ],
-    "/(protected)/procurement-management/stock-inquiries/new/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/stock-inquiries/new/page.js"
-    ],
-    "/(protected)/procurement-management/stock-inquiries/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/stock-inquiries/[id]/page.js"
-    ],
-    "/(protected)/procurement-management/stock-inquiries/[id]/edit/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/stock-inquiries/[id]/edit/page.js"
-    ],
-    "/(protected)/procurement-management/purchase-requests/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/purchase-requests/page.js"
-    ],
-    "/(protected)/procurement-management/purchase-requests/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/purchase-requests/[id]/page.js"
     ]
   }
 }

@@ -205,12 +205,19 @@ class ContactSimple(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class UserSuperiorSimple(BaseModel):
+    """Superior of assigned user (for tooltip)."""
+    name: Optional[str] = None
+    email: Optional[str] = None
+
+
 class UserSimple(BaseModel):
     """Simple user reference for tracking responses."""
     id: str
     email: str
     name: Optional[str] = None
-    
+    superior: Optional[UserSuperiorSimple] = None  # For assignee tooltip in tracking detail
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -327,6 +334,8 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     contact_name: Optional[str] = None  # From contact.name or respond_contact_name
     assigned_user_name: Optional[str] = None  # From assigned_user.name
     assigned_user_email: Optional[str] = None  # From assigned_user.email
+    assigned_user_superior_name: Optional[str] = None  # From assigned_user.superior (for tooltip)
+    assigned_user_superior_email: Optional[str] = None  # From assigned_user.superior (for tooltip)
     responded_by_user_name: Optional[str] = None  # Looked up from responded_by user ID
     resolved_by_user_name: Optional[str] = None  # Looked up from resolved_by user ID
     # Average times calculated from event logs
