@@ -26,70 +26,55 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/layout.js"
     ],
-    "/(protected)/system-management/scheduled-tasks/[id]/page": [
+    "/(protected)/complaint-management/complaints/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/system-management/scheduled-tasks/[id]/page.js"
+      "static/chunks/app/(protected)/complaint-management/complaints/[id]/page.js"
     ],
     "/api/auth/token/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/token/route.js"
     ],
-    "/(protected)/user-management/contact-access-agents/page": [
+    "/(protected)/complaint-management/complaints/[id]/edit/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/contact-access-agents/page.js"
-    ],
-    "/(protected)/user-management/contacts/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/contacts/[id]/page.js"
-    ],
-    "/(protected)/user-management/access-agents/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/access-agents/page.js"
-    ],
-    "/(protected)/user-management/access-agents/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/access-agents/[id]/page.js"
-    ],
-    "/api/user-management/access-agents/[id]/contact-access/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/user-management/access-agents/[id]/contact-access/route.js"
+      "static/chunks/app/(protected)/complaint-management/complaints/[id]/edit/page.js"
     ],
     "/(protected)/user-management/users/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/user-management/users/page.js"
     ],
-    "/(protected)/system-management/scheduled-tasks/page": [
+    "/(protected)/user-management/users/[id]/layout": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/system-management/scheduled-tasks/page.js"
+      "static/chunks/app/(protected)/user-management/users/[id]/layout.js"
     ],
-    "/(protected)/integration-management/integration-logs/page": [
+    "/(protected)/user-management/users/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/integration-management/integration-logs/page.js"
+      "static/chunks/app/(protected)/user-management/users/[id]/page.js"
     ],
-    "/(protected)/integration-management/integration-logs/[id]/page": [
+    "/(protected)/complaint-management/complaints/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/integration-management/integration-logs/[id]/page.js"
+      "static/chunks/app/(protected)/complaint-management/complaints/page.js"
     ],
-    "/(auth)/reset-password/page": [
+    "/(protected)/procurement-management/stock-inquiries/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(auth)/reset-password/page.js"
+      "static/chunks/app/(protected)/procurement-management/stock-inquiries/page.js"
     ],
-    "/api/auth/reset-password/route": [
+    "/(protected)/procurement-management/stock-inquiries/new/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/api/auth/reset-password/route.js"
+      "static/chunks/app/(protected)/procurement-management/stock-inquiries/new/page.js"
+    ],
+    "/(protected)/procurement-management/stock-inquiries/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/stock-inquiries/[id]/page.js"
     ]
   }
 }

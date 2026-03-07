@@ -25,7 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { formatDateSafe, formatDateTimeSafe, getInitials } from '@/lib/helpers';
+import { formatDateSafe, formatDateTimeInMalaysia, getInitials } from '@/lib/helpers';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge, BadgeDot, BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -399,6 +399,8 @@ const UserList = () => {
       {
         accessorKey: 'lastSignInAt',
         id: 'lastSignInAt',
+        accessorFn: (row: User & { last_sign_in_at?: string | null }) =>
+          row.last_sign_in_at ?? row.lastSignInAt ?? null,
         header: ({ column }) => (
           <DataGridColumnHeader
             title="Last Sign In"
@@ -406,8 +408,10 @@ const UserList = () => {
             column={column}
           />
         ),
-        cell: (info) =>
-          formatDateTimeSafe(info.getValue() as string | null, 'Never'),
+        cell: (info) => {
+          const v = info.getValue() as string | null;
+          return v ? formatDateTimeInMalaysia(v) : 'Never';
+        },
         size: 175,
         meta: {
           headerTitle: 'Last Sign In',

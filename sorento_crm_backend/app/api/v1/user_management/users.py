@@ -81,7 +81,9 @@ async def get_users(
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
                 "last_sign_in_at": user.last_sign_in_at,
+                "email_verified_at": user.email_verified_at,
                 "is_trashed": user.is_trashed,
+                "is_protected": user.is_protected,
                 "roles": [{"id": r.id, "name": r.name} for r in roles],
                 "superior_name": user.superior.name if user.superior else None,
             })
@@ -103,13 +105,20 @@ async def get_users(
 async def get_users_select(
     query: Optional[str] = Query(None),
     respond_synced: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="Filter by status, e.g. ACTIVE for active users only"),
+    trashed: Optional[str] = Query("exclude", description="exclude (default), only, or all"),
     current_user: dict = Depends(require_permission("user_management.users.view")),
     db: Session = Depends(get_db)
 ):
-    """Get users for select dropdowns."""
+    """Get users for select dropdowns. Use status=ACTIVE and trashed=exclude for active users only."""
     try:
         service = UserService(db)
-        users = service.list_users_select(query=query, respond_synced=respond_synced)
+        users = service.list_users_select(
+            query=query,
+            respond_synced=respond_synced,
+            status=status,
+            trashed=trashed or "exclude",
+        )
         return [UserSelectResponse.model_validate(user) for user in users]
     except Exception as e:
         import logging
@@ -221,6 +230,9 @@ async def get_current_user_profile(
             "created_at": user.created_at,
             "updated_at": user.updated_at,
             "last_sign_in_at": user.last_sign_in_at,
+            "email_verified_at": user.email_verified_at,
+            "is_trashed": user.is_trashed,
+            "is_protected": user.is_protected,
             "roles": [{"id": r.id, "name": r.name} for r in roles],
             "superior_name": user.superior.name if user.superior else None,
         }
@@ -304,6 +316,9 @@ async def get_user(
             "created_at": user.created_at,
             "updated_at": user.updated_at,
             "last_sign_in_at": user.last_sign_in_at,
+            "email_verified_at": user.email_verified_at,
+            "is_trashed": user.is_trashed,
+            "is_protected": user.is_protected,
             "roles": [{"id": r.id, "name": r.name} for r in roles],
             "superior_name": user.superior.name if user.superior else None
         }
@@ -341,15 +356,17 @@ async def invite_user(
         subject = "You're invited to join the platform"
         body_text = (
             f"Hello{f', {user.name}' if user.name else ''},\n\n"
-            f"You have been invited to join the platform. Set your password using the link below (valid for 7 days):\n\n"
+            "You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.\n\n"
             f"{invite_link}\n\n"
-            f"After setting your password, you can sign in with your email and the new password."
+            "After setting your password, you can sign in with your email and the new password.\n\n"
+            "This is a system-generated email. Please do not reply."
         )
         body_html = (
             f"<p>Hello{f', {user.name}' if user.name else ''},</p>\n"
-            f"<p>You have been invited to join the platform. "
-            f"<a href=\"{invite_link}\">Set your password here</a> (link valid for 7 days).</p>\n"
-            f"<p>After setting your password, you can sign in with your email and the new password.</p>"
+            "<p>You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.</p>\n"
+            f'<p><a href="{invite_link}">{invite_link}</a></p>\n'
+            "<p>After setting your password, you can sign in with your email and the new password.</p>\n"
+            "<p><em>This is a system-generated email. Please do not reply.</em></p>"
         )
         try:
             sys_settings = db.query(SystemSetting).first()
@@ -360,6 +377,7 @@ async def invite_user(
                 body_text=body_text,
                 body_html=body_html,
                 smtp_config=smtp_config,
+                from_name="Sorento AI System",
             )
             if err:
                 logger.warning("Invitation email failed for %s: %s", user.email, err)
@@ -473,15 +491,17 @@ async def resend_invite(
         subject = "You're invited to join the platform"
         body_text = (
             f"Hello{f', {user.name}' if user.name else ''},\n\n"
-            f"You have been invited to join the platform. Set your password using the link below (valid for 7 days):\n\n"
+            "You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.\n\n"
             f"{invite_link}\n\n"
-            f"After setting your password, you can sign in with your email and the new password."
+            "After setting your password, you can sign in with your email and the new password.\n\n"
+            "This is a system-generated email. Please do not reply."
         )
         body_html = (
             f"<p>Hello{f', {user.name}' if user.name else ''},</p>\n"
-            f"<p>You have been invited to join the platform. "
-            f"<a href=\"{invite_link}\">Set your password here</a> (link valid for 7 days).</p>\n"
-            f"<p>After setting your password, you can sign in with your email and the new password.</p>"
+            "<p>You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.</p>\n"
+            f'<p><a href="{invite_link}">{invite_link}</a></p>\n'
+            "<p>After setting your password, you can sign in with your email and the new password.</p>\n"
+            "<p><em>This is a system-generated email. Please do not reply.</em></p>"
         )
         try:
             sys_settings = db.query(SystemSetting).first()
@@ -492,6 +512,7 @@ async def resend_invite(
                 body_text=body_text,
                 body_html=body_html,
                 smtp_config=smtp_config,
+                from_name="Sorento AI System",
             )
             if err:
                 logger.warning("Resend invitation email failed for %s: %s", user.email, err)
@@ -522,63 +543,6 @@ async def sync_respond_user(
         respond_user_id = request_data.respond_user_id if request_data and request_data.respond_user_id else None
         result = service.sync_respond_user(user_id, respond_user_id=respond_user_id)
         return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-@router.put("/{user_id}/agents", status_code=status.HTTP_200_OK)
-async def update_user_agent_accesses(
-    user_id: str,
-    agent_ids: list[str],
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Update user agent accesses."""
-    try:
-        service = UserService(db)
-        result = service.update_user_agent_accesses(user_id, agent_ids)
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-class UserAgentAccessCreate(BaseModel):
-    agent_id: str
-    is_allowed: bool = True
-    valid_from: Optional[datetime] = None
-    valid_to: Optional[datetime] = None
-
-
-@router.post("/{user_id}/agents", status_code=status.HTTP_201_CREATED)
-async def create_user_agent_access(
-    user_id: str,
-    access_data: UserAgentAccessCreate,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Create a user agent access with allowed, valid_from, valid_to."""
-    try:
-        service = UserService(db)
-        access = service.create_user_agent_access(
-            user_id=user_id,
-            agent_id=access_data.agent_id,
-            is_allowed=access_data.is_allowed,
-            valid_from=access_data.valid_from,
-            valid_to=access_data.valid_to
-        )
-        return {
-            "id": str(access.id),
-            "user_id": access.user_id,
-            "agent_id": str(access.agent_id),
-            "is_allowed": access.is_allowed,
-            "valid_from": access.valid_from.isoformat() if access.valid_from else None,
-            "valid_to": access.valid_to.isoformat() if access.valid_to else None,
-            "created_at": access.created_at.isoformat()
-        }
     except HTTPException:
         raise
     except Exception as e:

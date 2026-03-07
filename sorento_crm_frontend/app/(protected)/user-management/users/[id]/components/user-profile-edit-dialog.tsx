@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,7 +13,6 @@ import {
   AlertIcon,
   AlertTitle,
 } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -32,6 +31,19 @@ import {
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -39,7 +51,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Button, ButtonArrow } from '@/components/ui/button';
 import { LoaderCircleIcon } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { User, UserRole } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../../roles/hooks/use-role-select-query';
 import { UserStatusProps } from '../../constants/status';
@@ -61,6 +75,7 @@ const UserProfileEditDialog = ({
   fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'user-profile-edit-dialog.tsx:60',message:'UserProfileEditDialog component rendered',data:{open,userId:user?.id,hasUser:!!user},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
   // #endregion
   const queryClient = useQueryClient();
+  const [superiorOpen, setSuperiorOpen] = useState(false);
 
   // Fetch available roles
   const { data: roleList } = useRoleSelectQuery();
@@ -285,15 +300,16 @@ const UserProfileEditDialog = ({
   // #endregion
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent className="max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Edit User Details</DialogTitle>
         </DialogHeader>
         <Form {...form}>
           <form
             onSubmit={form.handleSubmit(handleSubmit)}
-            className="space-y-6"
+            className="flex flex-1 min-h-0 flex-col overflow-hidden"
           >
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 space-y-6">
             {mutation.status === 'error' && (
               <Alert variant="destructive">
                 <AlertDescription>{mutation.error.message}</AlertDescription>
@@ -423,39 +439,72 @@ const UserProfileEditDialog = ({
             <FormField
               control={form.control}
               name="superior_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Superior</FormLabel>
-                  <FormControl>
-                    <Select
-                      onValueChange={(value) => {
-                        // Convert "__none__" to null/undefined for optional field
-                        field.onChange(value === '__none__' ? null : value);
-                      }}
-                      value={field.value || '__none__'}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a superior" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="__none__">None</SelectItem>
-                          {(superiorUsers || [])
-                            .filter((superior: { id: string }) => superior.id !== user.id)
-                            .map((superior: { id: string; name?: string | null; email: string }) => (
-                              <SelectItem key={superior.id} value={superior.id}>
-                                {superior.name || superior.email}
-                              </SelectItem>
-                            ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              render={({ field }) => {
+                const value = field.value || '__none__';
+                const selected = value === '__none__' ? null : (superiorUsers || []).find((u: { id: string }) => u.id === value);
+                const displayLabel = selected ? (selected.name || selected.email) : 'None';
+                const filteredSuperiors = (superiorUsers || []).filter((s: { id: string }) => s.id !== user.id);
+                return (
+                  <FormItem>
+                    <FormLabel>Superior</FormLabel>
+                    <FormControl>
+                      <Popover open={superiorOpen} onOpenChange={setSuperiorOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            role="combobox"
+                            mode="input"
+                            placeholder={!value || value === '__none__'}
+                            aria-expanded={superiorOpen}
+                            className={cn('w-full justify-between font-normal')}
+                          >
+                            <span className={cn('truncate', (!value || value === '__none__') && 'text-muted-foreground')}>
+                              {displayLabel}
+                            </span>
+                            <ButtonArrow />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-(--radix-popper-anchor-width) max-h-[min(320px,80vh)] flex flex-col p-0" align="start">
+                          <Command className="max-h-full min-h-0 flex flex-col">
+                            <CommandInput placeholder="Search by name or email..." />
+                            <CommandList className="max-h-[240px] min-h-0 overflow-y-auto overflow-x-hidden">
+                              <CommandEmpty>No user found.</CommandEmpty>
+                              <CommandGroup>
+                                <CommandItem
+                                  value="__none__"
+                                  onSelect={() => {
+                                    field.onChange(null);
+                                    setSuperiorOpen(false);
+                                  }}
+                                >
+                                  None
+                                </CommandItem>
+                                {filteredSuperiors.map((superior: { id: string; name?: string | null; email: string }) => (
+                                  <CommandItem
+                                    key={superior.id}
+                                    value={`${superior.name ?? ''} ${superior.email}`.trim() || superior.id}
+                                    onSelect={() => {
+                                      field.onChange(superior.id);
+                                      setSuperiorOpen(false);
+                                    }}
+                                  >
+                                    {superior.name || superior.email}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }}
             />
-            <DialogFooter>
+            </div>
+            <DialogFooter className="shrink-0">
               <Button type="button" variant="outline" onClick={closeDialog}>
                 Cancel
               </Button>

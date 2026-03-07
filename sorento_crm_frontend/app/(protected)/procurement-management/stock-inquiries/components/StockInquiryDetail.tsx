@@ -26,6 +26,7 @@ import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
 
 interface StockInquiryDetailProps {
   inquiryId: string;
@@ -374,6 +375,11 @@ export default function StockInquiryDetail({
           </CardContent>
         </Card>
       </div>
+
+      <StockInquiryAttachmentsSection
+        inquiryId={inquiryId}
+        attachments={inquiry.attachments ?? []}
+      />
 
       <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
     </div>

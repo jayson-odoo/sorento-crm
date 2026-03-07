@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, UserRound, Send, Link2, ExternalLink } from 'lucide-react';
+import { Edit, Trash2, Send, Link2, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,7 +18,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
-import { useComplaint, useComplaintSyncAssignee, useUpdateComplaintAndReply } from '../hooks/useComplaints';
+import { useComplaint, useUpdateComplaintAndReply } from '../hooks/useComplaints';
 import { getOrCreateComplaintViewLink } from '../services/complaintService';
 import { toast } from 'sonner';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -38,11 +38,11 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   // Don't fetch if it's "new" or invalid
   const isValidId = complaintId && complaintId !== 'new' && complaintId !== 'edit';
   const { data: complaint, isLoading } = useComplaint(isValidId ? complaintId : null);
-  const syncAssigneeMutation = useComplaintSyncAssignee();
   const updateAndReplyMutation = useUpdateComplaintAndReply();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
   const [replyMessage, setReplyMessage] = useState('');
+  const [replyViewUrl, setReplyViewUrl] = useState('');
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   
   if (!isValidId) {
@@ -155,40 +155,30 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               <ExternalLink className="size-4" />
               View in system
             </DropdownMenuItem>
-            {complaint.respond_inbox_url && (
-              <DropdownMenuItem
-                disabled={updateAndReplyMutation.isPending}
-                onClick={async () => {
-                  let defaultMsg = complaint.technical_team_response ?? '';
-                  try {
-                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
-                    if (view_url) {
-                      defaultMsg = defaultMsg.trim()
-                        ? `${defaultMsg.trim()}\n\nView full details: ${view_url}`
-                        : `View full details: ${view_url}`;
-                    }
-                  } catch {
-                    // keep default message without view link
-                  }
-                  setReplyMessage(defaultMsg);
-                  setUpdateAndReplyDialogOpen(true);
-                }}
-              >
-                <Send className="size-4" />
-                {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
-              </DropdownMenuItem>
-            )}
-            {complaint.contact_id && (
-              <DropdownMenuItem
-                onClick={() => syncAssigneeMutation.mutate(complaintId)}
-                disabled={syncAssigneeMutation.isPending}
-                title="Sync assignee from Respond.io"
-              >
-                <UserRound className={`size-4 ${syncAssigneeMutation.isPending ? 'animate-pulse' : ''}`} />
-                Sync assignee
-              </DropdownMenuItem>
-            )}
+            <DropdownMenuItem
+              disabled={updateAndReplyMutation.isPending}
+              onClick={async () => {
+                let viewUrl = '';
+                try {
+                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                  const res = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+                  viewUrl = res.view_url ?? '';
+                  setReplyViewUrl(viewUrl);
+                } catch {
+                  setReplyViewUrl('');
+                }
+                const doNumber = (complaint.delivery_order_number ?? '').toString().trim();
+                const doPart = doNumber ? ` for delivery order ${doNumber}` : '';
+                const linkPart = viewUrl ? ` ${viewUrl}` : '';
+                const technicalResponse = (complaint.technical_team_response ?? '').trim();
+                const fullMessage = `There has been an update regarding your complaint${doPart}${linkPart}: ${technicalResponse}`;
+                setReplyMessage(fullMessage);
+                setUpdateAndReplyDialogOpen(true);
+              }}
+            >
+              <Send className="size-4" />
+              {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
+            </DropdownMenuItem>
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onClick={() => setDeleteDialogOpen(true)}
@@ -213,23 +203,20 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
       )}
 
       <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Update & Reply</DialogTitle>
-            <DialogDescription>
-              Edit the message below. It will be saved as the technical team response and sent to the customer via Respond.io. The conversation will be marked as responded.
-            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="complaint-detail-reply-message">Message to send</Label>
+              <Label htmlFor="complaint-detail-reply-message">Message that will be sent to the contact</Label>
               <Textarea
                 id="complaint-detail-reply-message"
                 value={replyMessage}
                 onChange={(e) => setReplyMessage(e.target.value)}
-                placeholder="Technical team response..."
-                rows={5}
-                className="resize-none"
+                placeholder="Message to send..."
+                rows={6}
+                className="resize-none font-mono text-sm"
               />
             </div>
           </div>
@@ -251,6 +238,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                   });
                   setUpdateAndReplyDialogOpen(false);
                   setReplyMessage('');
+                  setReplyViewUrl('');
                 } catch {
                   // toast from mutation
                 }

@@ -8,10 +8,13 @@ from app.api.v1.external import (
     promotions,
     forms,
     complaint_attachments,
+    stock_inquiry_attachments,
+    entity_attachments,
     purchase_requests,
     next_assignee,
     conversation_assignee,
     presigned_url,
+    respond_contacts,
 )
 
 router = APIRouter()
@@ -23,7 +26,10 @@ router.include_router(product_attachments.router, prefix="/product-attachments",
 router.include_router(promotions.router, prefix="/promotions", tags=["external"])
 router.include_router(forms.router, prefix="/forms", tags=["external"])
 router.include_router(complaint_attachments.router, prefix="/complaint-attachments", tags=["external"])
+router.include_router(stock_inquiry_attachments.router, prefix="/stock-inquiry-attachments", tags=["external"])
+router.include_router(entity_attachments.router, prefix="/entity-attachments", tags=["external"])
 router.include_router(purchase_requests.router, prefix="/purchase-requests", tags=["external"])
 router.include_router(next_assignee.router, prefix="/next-assignee", tags=["external"])
 router.include_router(conversation_assignee.router, prefix="/conversation-assignee", tags=["external"])
 router.include_router(presigned_url.router, prefix="/presigned-url", tags=["external"])
+router.include_router(respond_contacts.router, prefix="/respond-contacts", tags=["external"])

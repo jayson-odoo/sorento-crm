@@ -1,13 +1,22 @@
 """User management service for business logic."""
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.exc import IntegrityError
 from typing import Optional
 from datetime import datetime
-from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission
+from app.models.user import (
+    User,
+    UserRole,
+    UserRoleAssignment,
+    UserPermission,
+    UserRolePermission,
+    SystemLog,
+    UserQuickAccess,
+)
 from app.models.access import (
     AccessAgent,
     ContactAgentAccess,
-    UserAgentAccess,
     Team,
     TeamMember,
     AgentTeam,
@@ -28,6 +37,53 @@ class UserService:
     
     def __init__(self, db: Session):
         self.db = db
+
+    def _has_table(self, table_name: str) -> bool:
+        """Return True if table exists in current DB schema."""
+        try:
+            bind = self.db.get_bind()
+            return sa_inspect(bind).has_table(table_name)
+        except Exception:
+            # If we can't inspect for any reason, assume it exists and let SQL errors surface elsewhere.
+            return True
+
+    def _prepare_user_for_hard_delete(self, user_id: str) -> None:
+        """
+        Best-effort cleanup before hard delete.
+
+        Some tables reference users without ON DELETE CASCADE (e.g. system_logs, self-referential superior_id),
+        so we clean those up explicitly to avoid 500 IntegrityError.
+        """
+        # Break self-referential FK (users.superior_id -> users.id)
+        self.db.query(User).filter(User.superior_id == user_id).update(
+            {"superior_id": None}, synchronize_session=False
+        )
+
+        # Remove non-cascading refs
+        if self._has_table(SystemLog.__tablename__):
+            self.db.query(SystemLog).filter(SystemLog.user_id == user_id).delete(
+                synchronize_session=False
+            )
+
+        # Defensive deletes even if FK cascades exist (keeps behavior consistent if DB constraints differ)
+        if self._has_table(UserRoleAssignment.__tablename__):
+            self.db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == user_id).delete(
+                synchronize_session=False
+            )
+        if self._has_table(TeamMember.__tablename__):
+            self.db.query(TeamMember).filter(TeamMember.user_id == user_id).delete(
+                synchronize_session=False
+            )
+        if self._has_table(UserQuickAccess.__tablename__):
+            self.db.query(UserQuickAccess).filter(UserQuickAccess.user_id == user_id).delete(
+                synchronize_session=False
+            )
+
+        # SET NULL modeled, but update defensively (cursor table might be missing FK constraint in some envs)
+        if self._has_table(AgentTeamRoundRobinCursor.__tablename__):
+            self.db.query(AgentTeamRoundRobinCursor).filter(
+                AgentTeamRoundRobinCursor.last_assigned_user_id == user_id
+            ).update({"last_assigned_user_id": None}, synchronize_session=False)
     
     def list_users(
         self,
@@ -100,16 +156,23 @@ class UserService:
     def list_users_select(
         self,
         query: Optional[str] = None,
-        respond_synced: Optional[str] = None
+        respond_synced: Optional[str] = None,
+        status: Optional[str] = None,
+        trashed: str = "exclude",
     ):
-        """List users for select dropdowns."""
-        # No need to load role for select dropdowns, but keep query simple
+        """List users for select dropdowns. Defaults to non-trashed only."""
         q = self.db.query(User)
 
+        if trashed == "only":
+            q = q.filter(User.is_trashed == True)
+        elif trashed != "all":
+            q = q.filter(User.is_trashed == False)
+
         filters = []
+        if status and status != "all":
+            filters.append(User.status == status)
         if respond_synced:
             filters.append(User.respond_synced == respond_synced)
-
         if query:
             filters.append(
                 or_(
@@ -240,8 +303,15 @@ class UserService:
         user = self.get_user(user_id)
         if not user.is_trashed:
             raise handle_conflict("Only trashed users can be permanently deleted. Trash the user first.")
+        if getattr(user, "is_protected", False):
+            raise handle_conflict("Protected users cannot be permanently deleted.")
+        self._prepare_user_for_hard_delete(user.id)
         self.db.delete(user)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise handle_conflict("Cannot permanently delete user because it is referenced by other records.")
 
     def bulk_delete_users(self, user_ids: list[str]) -> int:
         """Soft-delete multiple users. Returns count of deleted."""
@@ -275,9 +345,16 @@ class UserService:
         ).all()
         count = 0
         for user in users:
+            if getattr(user, "is_protected", False):
+                continue
+            self._prepare_user_for_hard_delete(user.id)
             self.db.delete(user)
             count += 1
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise handle_conflict("Cannot permanently delete one or more users because they are referenced by other records.")
         return count
 
     def sync_respond_user(self, user_id: str, respond_user_id: Optional[str] = None) -> dict:
@@ -915,48 +992,6 @@ class AccessAgentService:
         self.db.refresh(access)
         return access
     
-    def create_user_agent_access(
-        self, 
-        user_id: str, 
-        agent_id: str,
-        is_allowed: bool = True,
-        valid_from: Optional[datetime] = None,
-        valid_to: Optional[datetime] = None
-    ) -> UserAgentAccess:
-        """Create a user agent access with allowed, valid_from, valid_to."""
-        # Check if access already exists
-        existing = self.db.query(UserAgentAccess).filter(
-            UserAgentAccess.user_id == user_id,
-            UserAgentAccess.agent_id == agent_id
-        ).first()
-        if existing:
-            raise handle_conflict("User agent access already exists for this user and agent.")
-        
-        access = UserAgentAccess(
-            user_id=user_id,
-            agent_id=agent_id,
-            is_allowed=is_allowed,
-            valid_from=valid_from,
-            valid_to=valid_to
-        )
-        self.db.add(access)
-        self.db.commit()
-        self.db.refresh(access)
-        return access
-    
-    def update_user_agent_accesses(self, user_id: str, agent_ids: list[str]):
-        """Update user agent accesses by deleting existing and creating new ones."""
-        # Delete existing
-        self.db.query(UserAgentAccess).filter(UserAgentAccess.user_id == user_id).delete()
-        
-        # Create new ones
-        for agent_id in agent_ids:
-            access = UserAgentAccess(user_id=user_id, agent_id=agent_id, is_allowed=True)
-            self.db.add(access)
-        
-        self.db.commit()
-        return {"message": "User agent accesses updated successfully"}
-
     def get_next_assignee(self, agent_id: str, team_id: str) -> Optional[dict]:
         """
         Return the next assignee for (agent_id, team_id) using round-robin.

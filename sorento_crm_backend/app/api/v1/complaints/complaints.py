@@ -272,9 +272,9 @@ async def update_complaint(
     """Update a complaint."""
     try:
         service = ComplaintService(db)
-        complaint = service.update_complaint(complaint_id, complaint_data)
+        service.update_complaint(complaint_id, complaint_data)
         db.commit()
-        return complaint
+        return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -293,14 +293,14 @@ async def update_complaint_and_reply(
     try:
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = ComplaintService(db)
-        complaint = service.update_complaint_and_reply(
+        service.update_complaint_and_reply(
             complaint_id,
             complaint_data,
             respond_user_id=respond_user_id,
             request_url=str(request.url) if request else "",
         )
         db.commit()
-        return complaint
+        return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:
         raise
     except Exception as e:

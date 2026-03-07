@@ -39,6 +39,7 @@ import {
   type StockInquirySchemaType,
 } from '../forms/stock-inquiry-schema';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
+import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
 
 interface StockInquiryFormProps {
   inquiryId?: string;
@@ -410,6 +411,13 @@ export default function StockInquiryForm({
             </Card>
           </div>
         </div>
+
+        {isEditMode && inquiryId && (
+          <StockInquiryAttachmentsSection
+            inquiryId={inquiryId}
+            attachments={inquiry?.attachments ?? []}
+          />
+        )}
 
         <div className="flex justify-end gap-4">
           <Button

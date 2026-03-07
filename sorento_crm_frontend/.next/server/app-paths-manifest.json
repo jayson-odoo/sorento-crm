@@ -1,10 +1,11 @@
 {
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/api/auth/reset-password/route": "app/api/auth/reset-password/route.js",
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/(auth)/reset-password/page": "app/(auth)/reset-password/page.js",
-  "/(auth)/signin/page": "app/(auth)/signin/page.js",
-  "/(protected)/user-management/contact-access-agents/page": "app/(protected)/user-management/contact-access-agents/page.js",
-  "/(protected)/integration-management/integration-logs/page": "app/(protected)/integration-management/integration-logs/page.js",
-  "/(protected)/integration-management/integration-logs/[id]/page": "app/(protected)/integration-management/integration-logs/[id]/page.js"
+  "/(protected)/complaint-management/complaints/[id]/page": "app/(protected)/complaint-management/complaints/[id]/page.js",
+  "/(protected)/user-management/users/page": "app/(protected)/user-management/users/page.js",
+  "/(protected)/procurement-management/stock-inquiries/page": "app/(protected)/procurement-management/stock-inquiries/page.js",
+  "/(protected)/procurement-management/stock-inquiries/[id]/page": "app/(protected)/procurement-management/stock-inquiries/[id]/page.js",
+  "/(protected)/complaint-management/complaints/[id]/edit/page": "app/(protected)/complaint-management/complaints/[id]/edit/page.js",
+  "/(protected)/procurement-management/stock-inquiries/new/page": "app/(protected)/procurement-management/stock-inquiries/new/page.js",
+  "/(protected)/user-management/users/[id]/page": "app/(protected)/user-management/users/[id]/page.js"
 }

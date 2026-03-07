@@ -1360,6 +1360,8 @@ class StockInquiryService:
     
     def __init__(self, db: Session):
         self.db = db
+        from app.services.entity_attachment_service import EntityAttachmentService
+        self.entity_attachment_service = EntityAttachmentService(db)
     
     def list_inquiries(self, page: int = 1, limit: int = 50, query: Optional[str] = None, sort_field: str = "created_at", sort_dir: str = "desc"):
         """List stock inquiries."""
@@ -1443,6 +1445,15 @@ class StockInquiryService:
         data["last_responded_by_name"] = (
             self._resolve_user_display_name(inquiry.last_responded_by) if inquiry.last_responded_by else None
         )
+        links = self.entity_attachment_service.list_links("stock_inquiry", str(inquiry.id))
+        data["attachments"] = [
+            self.entity_attachment_service.serialize_link(
+                link,
+                entity_key="inquiry_id",
+                link_type="stock_inquiry_attachment",
+            )
+            for link in links
+        ]
         return data
 
     def get_neighbour_ids(self, inquiry_id: str) -> dict:
@@ -1496,6 +1507,7 @@ class StockInquiryService:
         if not view_token or not view_token.entity_id:
             raise handle_not_found("View link", "(invalid token)")
         inquiry = self.get_inquiry(str(view_token.entity_id))
+        links = self.entity_attachment_service.list_links("stock_inquiry", str(inquiry.id))
         return {
             "entity_type": "stock_inquiry",
             "entity_id": inquiry.id,
@@ -1513,6 +1525,14 @@ class StockInquiryService:
             "last_responded_at": getattr(inquiry, "last_responded_at", None),
             "created_at": getattr(inquiry, "created_at", None),
             "updated_at": getattr(inquiry, "updated_at", None),
+            "attachments": [
+                self.entity_attachment_service.serialize_link(
+                    link,
+                    entity_key="inquiry_id",
+                    link_type="stock_inquiry_attachment",
+                )
+                for link in links
+            ],
         }
 
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
@@ -1541,6 +1561,7 @@ class StockInquiryService:
     def delete_inquiry(self, inquiry_id: str) -> dict:
         """Delete a stock inquiry by ID."""
         inquiry = self.get_inquiry(inquiry_id)
+        self.entity_attachment_service.delete_links_for_entity("stock_inquiry", str(inquiry.id))
         self.db.delete(inquiry)
         self.db.commit()
         return {"message": "Stock inquiry deleted successfully"}
@@ -1553,10 +1574,30 @@ class StockInquiryService:
         for iid in inquiry_ids:
             inquiry = self.db.query(StockInquiry).filter(StockInquiry.id == iid).first()
             if inquiry:
+                self.entity_attachment_service.delete_links_for_entity("stock_inquiry", str(inquiry.id))
                 self.db.delete(inquiry)
                 deleted += 1
         self.db.commit()
         return {"message": f"{deleted} stock inquiry(ies) deleted", "deleted_count": deleted}
+
+    def link_attachment_to_inquiry(self, inquiry_id: str, attachment_id: str, created_by: Optional[str] = None):
+        """Link an existing attachment to a stock inquiry (generic entity_attachment_links table)."""
+        self.get_inquiry(inquiry_id)  # ensure inquiry exists
+        link = self.entity_attachment_service.link_existing_attachment(
+            entity_type="stock_inquiry",
+            entity_id=str(inquiry_id),
+            attachment_id=str(attachment_id),
+            created_by=created_by,
+        )
+        self.db.commit()
+        self.db.refresh(link)
+        return link
+
+    def delete_inquiry_attachment(self, link_id: str):
+        """Delete a stock-inquiry attachment link from generic entity_attachment_links table."""
+        link = self.entity_attachment_service.delete_link(link_id, entity_type="stock_inquiry")
+        self.db.commit()
+        return link
 
     def _identifier_from_respond_inbox_url(self, respond_inbox_url: Optional[str]) -> Optional[str]:
         """Extract contact identifier from respond_inbox_url (last path segment)."""

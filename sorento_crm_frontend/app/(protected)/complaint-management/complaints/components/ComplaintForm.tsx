@@ -85,16 +85,27 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
 
   const [formInitialized, setFormInitialized] = useState(false);
   const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
-  const [replyMessage, setReplyMessage] = useState('');
+  const [messageToSend, setMessageToSend] = useState('');
+  const [previewPreparing, setPreviewPreparing] = useState(false);
   const updateAndReplyMutation = useUpdateComplaintAndReply();
 
-  // Load complaint data when editing
+  // Load complaint data when editing (normalize dates so schema validation passes)
   useEffect(() => {
     if (complaint && isEditMode && !formInitialized) {
+      const attachments = (complaint.attachments || []).map((att) => ({
+        ...att,
+        uploaded_at: att.uploaded_at
+          ? att.uploaded_at instanceof Date
+            ? att.uploaded_at
+            : new Date(att.uploaded_at as unknown as string)
+          : undefined,
+      }));
       form.reset({
         delivery_order_number: complaint.delivery_order_number || null,
         complaint_date: complaint.complaint_date
-          ? new Date(complaint.complaint_date)
+          ? complaint.complaint_date instanceof Date
+            ? complaint.complaint_date
+            : new Date(complaint.complaint_date as unknown as string)
           : null,
         customer_type: complaint.customer_type || null,
         customer_type_others: complaint.customer_type_others || null,
@@ -113,7 +124,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         contact_id: complaint.contact_id ?? null,
         space_id: complaint.space_id ?? null,
         technical_team_response: complaint.technical_team_response ?? null,
-        attachments: complaint.attachments || [],
+        attachments,
       });
       setFormInitialized(true);
     }
@@ -186,10 +197,28 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
   };
 
   const handleUpdateAndReplyClick = async () => {
+    if (!complaintId) return;
     const valid = await form.trigger();
-    if (!valid || !complaintId) return;
-    setReplyMessage(form.getValues().technical_team_response ?? '');
-    setUpdateAndReplyDialogOpen(true);
+    if (!valid) {
+      const firstError = Object.values(form.formState.errors)[0];
+      toast.error(firstError?.message ?? 'Please fix the errors in the form before updating.');
+      return;
+    }
+    setPreviewPreparing(true);
+    try {
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+      const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+      const doNumber = (form.getValues().delivery_order_number ?? '').toString().trim();
+      const doPart = doNumber ? ` for delivery order ${doNumber}` : '';
+      const technicalResponse = (form.getValues().technical_team_response ?? '').trim();
+      const fullMessage = `There has been an update regarding your complaint${doPart} ${view_url}: ${technicalResponse}`;
+      setMessageToSend(fullMessage);
+      setUpdateAndReplyDialogOpen(true);
+    } catch {
+      toast.error('Failed to prepare message preview. Could not get complaint view link.');
+    } finally {
+      setPreviewPreparing(false);
+    }
   };
 
   const handleUpdateAndReplyConfirm = async () => {
@@ -222,13 +251,13 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       contact_number: data.contact_number || undefined,
       customer_address: data.customer_address || undefined,
       project_title: data.project_title || undefined,
-      technical_team_response: replyMessage.trim() || undefined,
+      technical_team_response: messageToSend.trim() || undefined,
       attachments: validAttachments.length > 0 ? validAttachments : undefined,
     };
     try {
       await updateAndReplyMutation.mutateAsync({ id: complaintId, data: formData });
       setUpdateAndReplyDialogOpen(false);
-      setReplyMessage('');
+      setMessageToSend('');
       onSuccess?.();
     } catch {
       // Error toast from mutation
@@ -245,9 +274,15 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
 
   const isLoading = createMutation.isPending || updateMutation.isPending || updateAndReplyMutation.isPending;
 
+  const onFormSubmit = form.handleSubmit(onSubmit, (errors) => {
+    const firstError = Object.values(errors)[0];
+    const message = firstError?.message ?? 'Please fix the errors in the form.';
+    toast.error(message);
+  });
+
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+      <form onSubmit={onFormSubmit} className="space-y-6">
         {isEditMode && complaintId && (
           <div className="flex justify-end">
             <ComplaintNavigation complaintId={complaintId} />
@@ -679,9 +714,14 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
               type="button"
               variant="secondary"
               onClick={handleUpdateAndReplyClick}
-              disabled={isLoading}
+              disabled={isLoading || previewPreparing}
             >
-              {updateAndReplyMutation.isPending ? (
+              {previewPreparing ? (
+                <>
+                  <LoaderCircleIcon className="size-4 animate-spin" />
+                  Preparing...
+                </>
+              ) : updateAndReplyMutation.isPending ? (
                 <>
                   <LoaderCircleIcon className="size-4 animate-spin" />
                   Sending...
@@ -711,23 +751,20 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       </form>
 
       <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Update & Reply</DialogTitle>
-            <DialogDescription>
-              Edit the message below. It will be saved as the technical team response and sent to the customer via Respond.io. The conversation will be marked as responded.
-            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="complaint-reply-message">Message to send</Label>
+              <Label htmlFor="complaint-reply-message">Message that will be sent to the contact</Label>
               <Textarea
                 id="complaint-reply-message"
-                value={replyMessage}
-                onChange={(e) => setReplyMessage(e.target.value)}
-                placeholder="Technical team response..."
-                rows={5}
-                className="resize-none"
+                value={messageToSend}
+                onChange={(e) => setMessageToSend(e.target.value)}
+                placeholder="Message to send..."
+                rows={6}
+                className="resize-none font-mono text-sm"
               />
             </div>
           </div>
@@ -740,7 +777,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
               Cancel
             </Button>
             <Button
-              disabled={updateAndReplyMutation.isPending || !replyMessage.trim()}
+              disabled={updateAndReplyMutation.isPending || !messageToSend.trim()}
               onClick={(e) => {
                 e.preventDefault();
                 handleUpdateAndReplyConfirm();

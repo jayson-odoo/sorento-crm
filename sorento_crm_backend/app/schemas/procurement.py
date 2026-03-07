@@ -483,6 +483,18 @@ class StockInquiryUpdate(BaseModel):
     last_responded_at: Optional[datetime] = None
 
 
+class StockInquiryAttachmentResponse(BaseModel):
+    id: str
+    inquiry_id: str
+    attachment_id: Optional[str] = None
+    file_name: Optional[str] = None
+    original_filename: Optional[str] = None
+    file_url: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    uploaded_at: Optional[datetime] = None
+    link_type: Optional[str] = None
+
+
 class StockInquiryResponse(StockInquiryBase):
     id: str
     respond_inbox_url: Optional[str] = None
@@ -492,6 +504,7 @@ class StockInquiryResponse(StockInquiryBase):
     last_responded_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    attachments: Optional[List[StockInquiryAttachmentResponse]] = []
 
     class Config:
         from_attributes = True

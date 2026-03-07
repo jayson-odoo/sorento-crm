@@ -20,6 +20,10 @@ class BulkDeleteStockInquiriesRequest(BaseModel):
     ids: list[str]
 
 
+class StockInquiryAttachmentLinkRequest(BaseModel):
+    attachment_id: str
+
+
 def _respond_user_id_from_current_user(current_user: dict) -> str:
     """Get respond_user_id for SLA/response tracking; fallback to user id."""
     rid = (current_user or {}).get("respond_user_id") or (current_user or {}).get("respondUserId")
@@ -84,6 +88,46 @@ async def get_stock_inquiry(
     try:
         service = StockInquiryService(db)
         return service.get_inquiry_for_response(inquiry_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/attachments/{link_id}", status_code=status.HTTP_200_OK)
+async def delete_stock_inquiry_attachment(
+    link_id: str,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db)
+):
+    """Unlink an attachment from a stock inquiry."""
+    try:
+        service = StockInquiryService(db)
+        service.delete_inquiry_attachment(link_id)
+        return {"message": "Attachment unlinked successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{inquiry_id}/attachments", status_code=status.HTTP_201_CREATED)
+async def link_attachment_to_stock_inquiry(
+    inquiry_id: str,
+    body: StockInquiryAttachmentLinkRequest,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db)
+):
+    """Link an existing attachment to a stock inquiry."""
+    try:
+        service = StockInquiryService(db)
+        created_by = (current_user.get("id") or None) if isinstance(current_user.get("id"), str) and len(str(current_user.get("id"))) == 36 else None
+        link = service.link_attachment_to_inquiry(
+            inquiry_id=inquiry_id,
+            attachment_id=body.attachment_id,
+            created_by=created_by,
+        )
+        return {"message": "Attachment linked successfully", "link_id": link.id}
     except HTTPException:
         raise
     except Exception as e:

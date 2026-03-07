@@ -39,7 +39,6 @@ class User(Base):
     role_assignments = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
     system_logs = relationship("SystemLog", back_populates="user")
     superior = relationship("User", remote_side=[id], backref="subordinates")
-    agent_accesses = relationship("UserAgentAccess", back_populates="user")
     quick_access = relationship("UserQuickAccess", back_populates="user", order_by="UserQuickAccess.sort_order")
 
     __table_args__ = (

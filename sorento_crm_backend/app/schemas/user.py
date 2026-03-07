@@ -158,9 +158,12 @@ class UserResponse(UserBase):
     created_at: datetime
     updated_at: datetime
     last_sign_in_at: Optional[datetime] = None
+    email_verified_at: Optional[datetime] = None
+    is_trashed: Optional[bool] = False
+    is_protected: Optional[bool] = False
     roles: Optional[List[UserRoleSimple]] = None  # Assigned roles from user_role_assignments
     superior_name: Optional[str] = None  # Superior's name for display
-    
+
     class Config:
         from_attributes = True
 

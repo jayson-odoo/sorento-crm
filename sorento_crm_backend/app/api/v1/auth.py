@@ -61,8 +61,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
             detail="Account not activated. Please verify your email.",
         )
 
-    # Update last sign-in timestamp
-    user.last_sign_in_at = datetime.now(timezone.utc)
+    # Store naive UTC (DB columns are timezone=False)
+    user.last_sign_in_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.add(user)
     db.commit()
 
@@ -279,6 +279,9 @@ async def change_password(
         # Update password and activate account so they can log in (invitation or password reset)
         user.password = hashed_password
         user.status = "ACTIVE"
+        # Accepting invite / reset link proves they received the email, so mark verified
+        # Store naive UTC (DB columns are timezone=False)
+        user.email_verified_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.add(user)
         
         # Delete used token
@@ -320,7 +323,8 @@ async def verify_email(
             )
         
         user.status = "ACTIVE"
-        user.email_verified_at = datetime.now(timezone.utc)
+        # Store naive UTC (DB columns are timezone=False)
+        user.email_verified_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.add(user)
         
         # Delete used token

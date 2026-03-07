@@ -1,43 +1,14 @@
 """Complaints service for business logic."""
 import secrets
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from sqlalchemy import or_, inspect
-from typing import Optional, Any
+from typing import Optional
 from app.config import settings
-from app.models.complaints import Complaint, ComplaintAttachment
-from app.models.resources import Attachment, AttachmentType
+from app.models.complaints import Complaint
 from app.models.procurement import ViewToken
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
-from app.services.error_handler import handle_not_found, handle_conflict
-from app.services.s3_service import S3Service
-
-
-def _attachment_response_from_link(link: ComplaintAttachment, resolve_url: Any) -> dict[str, Any]:
-    """Build response-shaped dict from ComplaintAttachment link (with .attachment loaded)."""
-    att = link.attachment
-    if not att:
-        return {
-            "id": link.id,
-            "attachment_id": link.attachment_id,
-            "complaint_id": link.complaint_id,
-            "file_name": None,
-            "original_filename": None,
-            "file_url": None,
-            "file_size_bytes": None,
-            "uploaded_at": link.created_at,
-            "link_type": "complaint_attachment",
-        }
-    return {
-        "id": link.id,
-        "attachment_id": link.attachment_id,
-        "complaint_id": link.complaint_id,
-        "file_name": att.original_filename,
-        "original_filename": att.original_filename,
-        "file_url": resolve_url(att.file_path),
-        "file_size_bytes": att.file_size_bytes,
-        "uploaded_at": att.uploaded_at or link.created_at,
-        "link_type": "complaint_attachment",
-    }
+from app.services.error_handler import handle_not_found
+from app.services.entity_attachment_service import EntityAttachmentService
 
 
 class ComplaintService:
@@ -45,21 +16,7 @@ class ComplaintService:
     
     def __init__(self, db: Session):
         self.db = db
-
-    def _resolve_attachment_url(self, file_path: Optional[str]) -> Optional[str]:
-        if not file_path:
-            return None
-        if file_path.startswith(("http://", "https://")):
-            return file_path
-        try:
-            return S3Service().get_file_url(file_path)
-        except Exception:
-            return file_path
-
-    def _get_complaint_document_type_id(self) -> Optional[str]:
-        """Return attachment_type id for code 'complaint_document'."""
-        row = self.db.query(AttachmentType.id).filter(AttachmentType.code == "complaint_document").first()
-        return row[0] if row else None
+        self.entity_attachment_service = EntityAttachmentService(db)
 
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
         """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""
@@ -86,15 +43,22 @@ class ComplaintService:
             return None
         return user.name or user.email or None
 
-    def _serialize_complaint(self, complaint: Complaint) -> dict:
-        """Serialize complaint with attachments from complaint_attachments table only."""
+    def _serialize_complaint(
+        self,
+        complaint: Complaint,
+        links_override: Optional[list] = None,
+    ) -> dict:
+        """Serialize complaint with attachments from generic entity_attachment_links table."""
         data = {attr.key: getattr(complaint, attr.key) for attr in inspect(complaint).mapper.column_attrs}
-        link_attachments = [
-            _attachment_response_from_link(link, self._resolve_attachment_url)
-            for link in (complaint.attachments or [])
-            if link.attachment is not None
+        links = links_override if links_override is not None else self.entity_attachment_service.list_links("complaint", str(complaint.id))
+        data["attachments"] = [
+            self.entity_attachment_service.serialize_link(
+                link,
+                entity_key="complaint_id",
+                link_type="complaint_attachment",
+            )
+            for link in links
         ]
-        data["attachments"] = link_attachments
         if data.get("last_responded_by"):
             data["last_responded_by_name"] = self._resolve_user_display_name(data["last_responded_by"])
         else:
@@ -116,9 +80,7 @@ class ComplaintService:
         sort_dir: str = "asc"
     ):
         """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status."""
-        q = self.db.query(Complaint).options(
-            joinedload(Complaint.attachments).joinedload(ComplaintAttachment.attachment)
-        )
+        q = self.db.query(Complaint)
         
         if query:
             q = q.filter(
@@ -158,7 +120,14 @@ class ComplaintService:
         total = q.count()
         offset = (page - 1) * limit
         complaints = q.offset(offset).limit(limit).all()
-        complaint_data = [self._serialize_complaint(complaint) for complaint in complaints]
+        links_map = self.entity_attachment_service.list_links_for_entities(
+            "complaint",
+            [str(c.id) for c in complaints],
+        )
+        complaint_data = [
+            self._serialize_complaint(complaint, links_override=links_map.get(str(complaint.id), []))
+            for complaint in complaints
+        ]
         
         return {
             "data": complaint_data,
@@ -170,7 +139,6 @@ class ComplaintService:
         """Get a complaint by ID."""
         complaint = (
             self.db.query(Complaint)
-            .options(joinedload(Complaint.attachments).joinedload(ComplaintAttachment.attachment))
             .filter(Complaint.id == complaint_id)
             .first()
         )
@@ -217,10 +185,14 @@ class ComplaintService:
             raise handle_not_found("View link", "(invalid token)")
         complaint = self.get_complaint(str(view_token.entity_id))
         # Build public summary (read-only; no internal IDs like contact_id/space_id if desired)
+        links = self.entity_attachment_service.list_links("complaint", str(complaint.id))
         link_attachments = [
-            _attachment_response_from_link(link, self._resolve_attachment_url)
-            for link in (complaint.attachments or [])
-            if link.attachment is not None
+            self.entity_attachment_service.serialize_link(
+                link,
+                entity_key="complaint_id",
+                link_type="complaint_attachment",
+            )
+            for link in links
         ]
         return {
             "entity_type": "complaint",
@@ -249,7 +221,7 @@ class ComplaintService:
         }
 
     def create_complaint(self, complaint_data: ComplaintCreate):
-        """Create a new complaint with attachments (each becomes Attachment + ComplaintAttachment link)."""
+        """Create a new complaint with attachments (generic entity_attachment_links)."""
         complaint_dict = complaint_data.model_dump(
             exclude={"attachments", "assigned_to_name", "last_responded_by_name"}
         )
@@ -262,30 +234,20 @@ class ComplaintService:
         self.db.add(complaint)
         self.db.flush()
 
-        type_id = self._get_complaint_document_type_id()
         if complaint_data.attachments:
-            for sort_order, att_data in enumerate(complaint_data.attachments):
-                file_name = (att_data.file_name or "document")[:255]
-                file_url = att_data.file_url or ""
-                stored = file_name[:255] if len(file_name) > 255 else file_name
-                file_path = (file_url[:500]) if file_url else "/"
-                size = int(att_data.file_size_bytes) if att_data.file_size_bytes is not None else None
-                resource_att = Attachment(
-                    attachment_type_id=type_id,
-                    original_filename=file_name,
-                    stored_filename=stored,
-                    file_path=file_path,
-                    file_size_bytes=size,
+            for att_data in complaint_data.attachments:
+                self.entity_attachment_service.create_attachment_and_link(
+                    entity_type="complaint",
+                    entity_id=str(complaint.id),
+                    file_url=att_data.file_url or "",
+                    file_name=att_data.file_name or "document",
+                    file_size_bytes=(
+                        int(att_data.file_size_bytes)
+                        if att_data.file_size_bytes is not None
+                        else None
+                    ),
+                    attachment_type_code="complaint_document",
                 )
-                self.db.add(resource_att)
-                self.db.flush()
-                link = ComplaintAttachment(
-                    complaint_id=complaint.id,
-                    attachment_id=resource_att.id,
-                    is_primary=(sort_order == 0),
-                    sort_order=sort_order,
-                )
-                self.db.add(link)
 
         self.db.commit()
         self.db.refresh(complaint)
@@ -362,49 +324,55 @@ class ComplaintService:
         self.db.flush()
 
         identifier = self._identifier_from_respond_inbox_url(getattr(complaint, "respond_inbox_url", None))
-        if not identifier:
-            from app.services.error_handler import handle_validation_error
-            raise handle_validation_error("respond_inbox_url is missing or invalid; cannot send message.")
-
         do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
-        do_spec = f" for delivery order {do_number}" if do_number else ""
-        technical_response = str(message_text).strip()
-        display_message = f"There has been an update regarding your complaint{do_spec}: {technical_response}"
+        technical_response = str(message_text).strip() if message_text else ""
+        # If frontend sent the full composed message (with view link), use as-is; else prepend intro
+        if technical_response.startswith("There has been an update"):
+            display_message = technical_response
+        else:
+            do_spec = f" for delivery order {do_number}" if do_number else ""
+            display_message = f"There has been an update regarding your complaint{do_spec}: {technical_response}"
 
-        try:
-            client = RespondClient()
-            response = client.send_message(identifier, display_message)
-            log_service.create_integration_log(
-                IntegrationLogCreate(
-                    integration_channel="respond_io",
-                    business_table="complaints",
-                    business_id=complaint_id,
-                    external_reference=identifier,
-                    direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
-                    http_method="POST",
-                    status="success",
-                    response_payload=str(response)[:50000] if response else None,
-                ),
-                request_payload_dict={"message": {"type": "text", "text": display_message}},
+        if identifier:
+            try:
+                client = RespondClient()
+                response = client.send_message(identifier, display_message)
+                log_service.create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="respond_io",
+                        business_table="complaints",
+                        business_id=complaint_id,
+                        external_reference=identifier,
+                        direction="outbound",
+                        endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                        http_method="POST",
+                        status="success",
+                        response_payload=str(response)[:50000] if response else None,
+                    ),
+                    request_payload_dict={"message": {"type": "text", "text": display_message}},
+                )
+            except Exception as e:
+                logger.exception("Respond.io send_message failed for complaint %s", complaint_id)
+                log_service.create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="respond_io",
+                        business_table="complaints",
+                        business_id=complaint_id,
+                        external_reference=identifier or "",
+                        direction="outbound",
+                        endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                        http_method="POST",
+                        status="failed",
+                        error_message=str(e),
+                    ),
+                    request_payload_dict={"message": {"type": "text", "text": display_message}},
+                )
+                raise
+        else:
+            logger.info(
+                "Complaint %s update-and-reply: no respond_inbox_url; complaint updated but message not sent to Respond.",
+                complaint_id,
             )
-        except Exception as e:
-            logger.exception("Respond.io send_message failed for complaint %s", complaint_id)
-            log_service.create_integration_log(
-                IntegrationLogCreate(
-                    integration_channel="respond_io",
-                    business_table="complaints",
-                    business_id=complaint_id,
-                    external_reference=identifier or "",
-                    direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
-                    http_method="POST",
-                    status="failed",
-                    error_message=str(e),
-                ),
-                request_payload_dict={"message": {"type": "text", "text": display_message}},
-            )
-            raise
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         sla_service = ConversationSLATrackingService(self.db)
@@ -563,6 +531,7 @@ class ComplaintService:
     def delete_complaint(self, complaint_id: str) -> None:
         """Delete a complaint and its related attachments."""
         complaint = self.get_complaint(complaint_id)
+        self.entity_attachment_service.delete_links_for_entity("complaint", str(complaint.id))
         self.db.delete(complaint)
         self.db.commit()
 
@@ -570,54 +539,27 @@ class ComplaintService:
         """Delete multiple complaints by ID. Returns deleted_count."""
         if not complaint_ids:
             return {"message": "No complaints to delete.", "deleted_count": 0}
+        for complaint_id in complaint_ids:
+            self.entity_attachment_service.delete_links_for_entity("complaint", str(complaint_id))
         deleted = self.db.query(Complaint).filter(Complaint.id.in_(complaint_ids)).delete(synchronize_session=False)
         self.db.commit()
         return {"message": f"Deleted {deleted} complaint(s).", "deleted_count": deleted}
 
     def link_attachment_to_complaint(self, complaint_id: str, attachment_id: str, created_by: Optional[str] = None):
-        """Link an existing attachment to a complaint (complaint_attachments table)."""
+        """Link an existing attachment to a complaint (generic entity_attachment_links table)."""
         self.get_complaint(complaint_id)  # ensure complaint exists
-        attachment = (
-            self.db.query(Attachment)
-            .filter(Attachment.id == attachment_id)
-            .first()
-        )
-        if not attachment:
-            raise handle_not_found("Attachment", attachment_id)
-
-        existing = (
-            self.db.query(ComplaintAttachment)
-            .filter(
-                ComplaintAttachment.complaint_id == complaint_id,
-                ComplaintAttachment.attachment_id == attachment_id,
-            )
-            .first()
-        )
-        if existing:
-            raise handle_conflict("Attachment is already linked to this complaint.")
-
-        count = self.db.query(ComplaintAttachment).filter(ComplaintAttachment.complaint_id == complaint_id).count()
-        link = ComplaintAttachment(
-            complaint_id=complaint_id,
-            attachment_id=attachment_id,
-            is_primary=(count == 0),
-            sort_order=count,
+        link = self.entity_attachment_service.link_existing_attachment(
+            entity_type="complaint",
+            entity_id=str(complaint_id),
+            attachment_id=str(attachment_id),
             created_by=created_by,
         )
-        self.db.add(link)
         self.db.commit()
         self.db.refresh(link)
         return link
 
     def delete_complaint_attachment(self, link_id: str):
-        """Delete a complaint-attachment link (from complaint_attachments table)."""
-        link = (
-            self.db.query(ComplaintAttachment)
-            .filter(ComplaintAttachment.id == link_id)
-            .first()
-        )
-        if not link:
-            raise handle_not_found("Complaint attachment link", link_id)
-        self.db.delete(link)
+        """Delete a complaint-attachment link (from generic entity_attachment_links table)."""
+        link = self.entity_attachment_service.delete_link(link_id, entity_type="complaint")
         self.db.commit()
         return link

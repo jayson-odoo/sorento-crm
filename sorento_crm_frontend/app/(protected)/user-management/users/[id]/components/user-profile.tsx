@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { formatDateTimeSafe } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot, BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -169,7 +169,7 @@ const UserProfile = ({
             <div className="grid grid-cols-subgrid col-span-2 items-baseline">
               <dt>Last Sign In:</dt>
               <dd>
-                {formatDateTimeSafe(user.lastSignInAt ?? null, 'Never')}
+                {user.lastSignInAt ? formatDateTimeInMalaysia(user.lastSignInAt) : 'Never'}
               </dd>
             </div>
             <div className="grid grid-cols-subgrid col-span-2 items-baseline">

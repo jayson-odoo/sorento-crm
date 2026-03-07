@@ -9,9 +9,9 @@ from app.config import settings
 from app.models.access import RespondContact
 from app.models.scheduled_task import ScheduledTask
 from app.schemas.integration import IntegrationLogCreate
-from app.schemas.user import ContactAgentAccessCreate
+from app.schemas.user import RespondContactCreate
+from app.services.contact_service import ContactService
 from app.services.integration_service import RespondClient, IntegrationLogService
-from app.services.user_service import AccessAgentService
 
 logger = logging.getLogger(__name__)
 
@@ -220,42 +220,16 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
                     db.commit()
                     db.refresh(existing)
             else:
-                new_contact = RespondContact(
-                    phone_number=phone,
-                    name=_name_from_contact(contact),
-                    user_type=_user_type_from_contact(contact),
+                contact_service = ContactService(db)
+                new_contact = contact_service.create_contact(
+                    RespondContactCreate(
+                        phone_number=phone,
+                        name=_name_from_contact(contact),
+                        user_type=_user_type_from_contact(contact),
+                    )
                 )
-                db.add(new_contact)
-                db.commit()
-                db.refresh(new_contact)
                 local_id = new_contact.id
                 created_local += 1
-
-                # Assign default access agents to this new internal contact
-                try:
-                    access_agent_service = AccessAgentService(db)
-                    default_agents = access_agent_service.list_agents_assign_to_new_internal_contacts()
-                    contact_name = (str(new_contact.name) if getattr(new_contact, "name", None) is not None else "") or ""
-                    for agent in default_agents:
-                        try:
-                            access_agent_service.create_contact_access(
-                                str(agent.id),
-                                ContactAgentAccessCreate(
-                                    respond_contact_phone=str(new_contact.phone_number),
-                                    respond_contact_name=contact_name,
-                                    agent_id=str(agent.id),
-                                    is_allowed=True,
-                                ),
-                            )
-                        except Exception as assign_err:
-                            logger.warning(
-                                "Assign default agent %s to new contact %s failed: %s",
-                                agent.code,
-                                new_contact.phone_number,
-                                assign_err,
-                            )
-                except Exception as e:
-                    logger.warning("Resolve default agents for new contact failed: %s", e)
 
             # PUT /v2/contact/{identifier} – Respond.io expects snake_case custom_fields, value = internal contact URL
             identifier = _contact_identifier(contact)

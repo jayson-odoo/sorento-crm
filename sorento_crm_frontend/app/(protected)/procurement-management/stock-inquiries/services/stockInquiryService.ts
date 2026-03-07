@@ -129,6 +129,40 @@ export async function bulkDeleteStockInquiries(
   return response.json();
 }
 
+export async function linkStockInquiryAttachment(
+  inquiryId: string,
+  attachmentId: string,
+): Promise<{ message: string; link_id: string }> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${inquiryId}/attachments`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ attachment_id: attachmentId }),
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to link attachment' }));
+    throw new Error(error.detail || error.message || 'Failed to link attachment');
+  }
+  return response.json();
+}
+
+export async function deleteStockInquiryAttachment(linkId: string): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/attachments/${linkId}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to unlink attachment' }));
+    throw new Error(error.detail || error.message || 'Failed to unlink attachment');
+  }
+}
+
 export interface ViewLinkResponse {
   view_token: string;
   view_url: string;

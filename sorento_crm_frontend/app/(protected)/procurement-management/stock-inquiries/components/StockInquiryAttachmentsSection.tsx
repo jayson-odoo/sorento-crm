@@ -13,40 +13,41 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { formatDate } from '@/lib/helpers';
-import { useDeleteComplaintAttachment } from '../hooks/useComplaints';
-import ComplaintLinkAttachmentBrowserDialog from './ComplaintLinkAttachmentBrowserDialog';
-import { linkComplaintAttachment } from '../services/complaintService';
-import type { ComplaintAttachment } from '../types/complaint.types';
+import {
+  useDeleteStockInquiryAttachment,
+} from '../hooks/useStockInquiries';
+import { linkStockInquiryAttachment } from '../services/stockInquiryService';
+import type { StockInquiryAttachment } from '../types/stockInquiry.types';
+import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-management/complaints/components/ComplaintLinkAttachmentBrowserDialog';
 
-interface ComplaintManualAttachmentsSectionProps {
-  complaintId: string;
-  /** Attachments from complaint detail (complaint_attachments table). Pass complaint.attachments. */
-  attachments?: ComplaintAttachment[];
+interface StockInquiryAttachmentsSectionProps {
+  inquiryId: string;
+  attachments?: StockInquiryAttachment[];
 }
 
-export default function ComplaintManualAttachmentsSection({
-  complaintId,
-  attachments: attachmentsFromComplaint = [],
-}: ComplaintManualAttachmentsSectionProps) {
+export default function StockInquiryAttachmentsSection({
+  inquiryId,
+  attachments: attachmentsFromInquiry = [],
+}: StockInquiryAttachmentsSectionProps) {
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
-  const deleteMutation = useDeleteComplaintAttachment();
+  const deleteMutation = useDeleteStockInquiryAttachment();
 
   const attachments = useMemo(
     () =>
-      attachmentsFromComplaint.filter(
+      attachmentsFromInquiry.filter(
         (link) => link.file_name != null || link.file_url != null,
       ),
-    [attachmentsFromComplaint],
+    [attachmentsFromInquiry],
   );
 
   const linkedAttachmentIds = useMemo(
     () =>
       new Set(
-        attachmentsFromComplaint
+        attachmentsFromInquiry
           .map((a) => a.attachment_id)
           .filter((id): id is string => !!id),
       ),
-    [attachmentsFromComplaint],
+    [attachmentsFromInquiry],
   );
 
   const formatFileSize = (bytes: number | null | undefined) => {
@@ -101,7 +102,7 @@ export default function ComplaintManualAttachmentsSection({
                       </TableCell>
                       <TableCell>{formatFileSize(link.file_size_bytes)}</TableCell>
                       <TableCell>
-                        {formatDate(new Date(link.uploaded_at))}
+                        {link.uploaded_at ? formatDate(new Date(link.uploaded_at)) : '-'}
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-2">
@@ -151,16 +152,17 @@ export default function ComplaintManualAttachmentsSection({
         <ComplaintLinkAttachmentBrowserDialog
           open={linkDialogOpen}
           onOpenChange={setLinkDialogOpen}
-          entityId={complaintId}
+          entityId={inquiryId}
           linkedAttachmentIds={linkedAttachmentIds}
-          linkAttachment={linkComplaintAttachment}
+          linkAttachment={linkStockInquiryAttachment}
           invalidateQueryKeys={[
-            ['complaint', complaintId],
-            ['complaints'],
+            ['stock-inquiry', inquiryId],
+            ['stock-inquiries'],
           ]}
-          successEntityLabel="complaint"
+          successEntityLabel="stock inquiry"
         />
       )}
     </Card>
   );
 }
+

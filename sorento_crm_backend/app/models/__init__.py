@@ -10,9 +10,10 @@ from app.models.procurement import Supplier, ProductSupplier, InboundShipment, I
 from app.models.marketing import Promotion, PromotionProduct, CampaignType, MarketingCampaign
 from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
 from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment
+from app.models.entity_attachment import EntityAttachmentLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog
 from app.models.resources import Attachment, AttachmentType
-from app.models.access import AccessAgent, ContactAgentAccess, UserAgentAccess
+from app.models.access import AccessAgent, ContactAgentAccess
 from app.models.integration import IntegrationLog
 from app.models.import_log import ImportLog
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
@@ -64,6 +65,7 @@ __all__ = [
     "Complaint",
     "ComplaintAttachment",
     "ComplaintManualAttachment",
+    "EntityAttachmentLink",
     "SLAPolicy",
     "SLAPolicyTier",
     "ConversationSLATracking",
@@ -72,7 +74,6 @@ __all__ = [
     "AttachmentType",
     "AccessAgent",
     "ContactAgentAccess",
-    "UserAgentAccess",
     "IntegrationLog",
     "ImportLog",
     "ImportJob",

@@ -284,6 +284,40 @@ class ComplaintAttachmentLinkResponse(BaseModel):
     message: str = "Attachment created and linked to complaint."
 
 
+class EntityAttachmentLinkRequest(BaseModel):
+    """Create attachment then link it to a target entity."""
+    entity_type: str
+    entity_id: str
+    file_url: str
+    file_name: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    attachment_type_code: Optional[str] = None
+
+
+class EntityAttachmentLinkResponse(BaseModel):
+    """Response after creating and linking an attachment to an entity."""
+    attachment_id: str
+    link_id: str
+    entity_type: str
+    entity_id: str
+    message: str = "Attachment created and linked successfully."
+
+
+class StockInquiryAttachmentLinkRequest(BaseModel):
+    """Link a stock inquiry to an attachment by creating the attachment."""
+    inquiry_id: str
+    file_url: str
+    file_name: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+
+
+class StockInquiryAttachmentLinkResponse(BaseModel):
+    """Response after linking stock inquiry to attachment."""
+    attachment_id: str
+    stock_inquiry_attachment_id: str
+    message: str = "Attachment created and linked to stock inquiry."
+
+
 def _parse_complaint_date(v: Optional[str | date]) -> Optional[date]:
     """Parse date from string; accept yyyy-MM-dd, dd/mm/yyyy, dd-mm-yyyy."""
     if v is None:
@@ -420,3 +454,22 @@ class PurchaseRequestExternalResponse(BaseModel):
     already_existed: bool = False
     message: Optional[str] = None
     respond_inbox_url: Optional[str] = None
+
+
+# --- Respond contact sync (n8n / Respond.io webhook) ---
+
+
+class RespondContactSyncRequest(BaseModel):
+    """Payload for external create/update of internal respond contact (e.g. from n8n when contact created/updated in Respond)."""
+    phone_number: str
+    name: Optional[str] = None
+    user_type: Optional[str] = None
+
+
+class RespondContactSyncResponse(BaseModel):
+    """Response after upserting a respond contact via external API."""
+    id: str
+    phone_number: str
+    name: Optional[str] = None
+    user_type: Optional[str] = None
+    action: str  # "created" | "updated"

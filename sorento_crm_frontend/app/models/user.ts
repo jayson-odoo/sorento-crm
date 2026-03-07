@@ -38,19 +38,6 @@ export interface User {
   role?: UserRole;
   sessions?: Session[];
   accounts?: Account[];
-  agentAccesses?: UserAgentAccess[];
-}
-
-export interface UserAgentAccess {
-  id: string;
-  userId: string;
-  agentId: string;
-  createdAt: Date;
-  agent?: {
-    id: string;
-    code: string;
-    name: string;
-  };
 }
 
 export interface UserRole {
