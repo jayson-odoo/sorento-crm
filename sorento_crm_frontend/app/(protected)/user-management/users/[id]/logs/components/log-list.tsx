@@ -14,7 +14,7 @@ import {
 import { format } from 'date-fns';
 import { CalendarIcon, Search, X } from 'lucide-react';
 import { DateRange } from 'react-day-picker';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -187,7 +187,7 @@ const LogList = () => {
         header: ({ column }) => (
           <DataGridColumnHeader title="Timestamp" column={column} />
         ),
-        cell: (info) => formatDateTime(new Date(info.getValue() as string)),
+        cell: (info) => formatDateTimeInMalaysia(info.getValue() as string),
         size: 125,
         meta: {
           headerTitle: 'Timestamp',

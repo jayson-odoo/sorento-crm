@@ -5,11 +5,11 @@ from typing import Optional
 import logging
 import json
 from app.models.access import RespondContact
-from app.schemas.user import RespondContactCreate, RespondContactUpdate, RespondContactResponse
+from app.schemas.user import RespondContactCreate, RespondContactUpdate, RespondContactResponse, ContactAgentAccessCreate
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.integration_service import RespondClient, IntegrationLogService
 from app.schemas.integration import IntegrationLogCreate
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, PaginationResponse
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,7 @@ class ContactService:
                     'id': str(contact.id),
                     'phone_number': contact.phone_number,
                     'name': contact.name,
+                    'user_type': contact.user_type,
                     'created_at': contact.created_at,
                     'updated_at': contact.updated_at,
                     'created_by': contact.created_by,
@@ -88,16 +89,42 @@ class ContactService:
         
         return ListResponse(
             data=contact_responses,
-            pagination={
-                "total": total,
-                "page": page,
-                "limit": limit
-            },
+            pagination=PaginationResponse(total=total, page=page, limit=limit),
             empty=total == 0
         )
     
+    def assign_default_agents_to_contact(self, contact: RespondContact) -> None:
+        """Assign all agents with assign_to_new_internal_contacts=True to this contact. Idempotent per agent (skips if access already exists)."""
+        from app.services.user_service import AccessAgentService
+
+        try:
+            access_agent_service = AccessAgentService(self.db)
+            default_agents = access_agent_service.list_agents_assign_to_new_internal_contacts()
+            contact_name = (str(getattr(contact, "name", None)) if getattr(contact, "name", None) is not None else "") or ""
+            for agent in default_agents:
+                try:
+                    access_agent_service.create_contact_access(
+                        str(agent.id),
+                        ContactAgentAccessCreate(
+                            respond_contact_phone=str(contact.phone_number),
+                            respond_contact_name=contact_name,
+                            agent_id=str(agent.id),
+                            is_allowed=True,
+                        ),
+                    )
+                except Exception as assign_err:
+                    # Already exists or other error - log and continue
+                    logger.warning(
+                        "Assign default agent %s to new contact %s failed: %s",
+                        getattr(agent, "code", agent.id),
+                        contact.phone_number,
+                        assign_err,
+                    )
+        except Exception as e:
+            logger.warning("Assign default agents to new contact failed: %s", e)
+
     def create_contact(self, contact_data: RespondContactCreate) -> RespondContact:
-        """Create a new contact."""
+        """Create a new contact and assign default access agents (assign_to_new_internal_contacts=True)."""
         # Check if contact with same phone number already exists
         existing = self.get_contact_by_phone(contact_data.phone_number)
         if existing:
@@ -107,6 +134,7 @@ class ContactService:
         self.db.add(contact)
         self.db.commit()
         self.db.refresh(contact)
+        self.assign_default_agents_to_contact(contact)
         return contact
     
     def update_contact(self, contact_id: str, contact_data: RespondContactUpdate) -> RespondContact:
@@ -118,7 +146,7 @@ class ContactService:
         # Check phone number uniqueness if being updated
         if 'phone_number' in update_data and update_data['phone_number'] != contact.phone_number:
             existing = self.get_contact_by_phone(update_data['phone_number'])
-            if existing and existing.id != contact_id:
+            if existing is not None and str(existing.id) != contact_id:
                 raise handle_conflict("Contact with this phone number already exists.")
         
         for key, value in update_data.items():
@@ -155,7 +183,7 @@ class ContactService:
         try:
             client = RespondClient()
             # Use phone: prefix format
-            payload = client.get_contact_by_phone(contact.phone_number)
+            payload = client.get_contact_by_phone(str(contact.phone_number))
             
             # Extract name from response - Respond.io returns firstName and lastName
             name = None
@@ -201,9 +229,9 @@ class ContactService:
             
             if name or user_type is not None:
                 if name:
-                    contact.name = name
+                    setattr(contact, "name", name)
                 if user_type is not None:
-                    contact.user_type = str(user_type).strip() if user_type is not None else None
+                    setattr(contact, "user_type", str(user_type).strip() if user_type is not None else None)
                 self.db.commit()
                 self.db.refresh(contact)
                 logger.info(
@@ -352,10 +380,11 @@ class ContactService:
     def get_or_create_contact(self, phone_number: str, name: Optional[str] = None) -> RespondContact:
         """Get existing contact or create a new one."""
         contact = self.get_contact_by_phone(phone_number)
-        if contact:
+        if contact is not None:
             # Update name if provided and different
-            if name and contact.name != name:
-                contact.name = name
+            current_name = getattr(contact, "name", None) or ""
+            if name and current_name != name:
+                setattr(contact, "name", name)
                 self.db.commit()
                 self.db.refresh(contact)
             return contact

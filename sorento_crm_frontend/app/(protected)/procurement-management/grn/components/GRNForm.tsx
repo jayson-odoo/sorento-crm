@@ -53,6 +53,17 @@ type RemoveConfirmState =
   | { type: 'single'; index: number }
   | { type: 'bulk'; indices: number[] };
 
+type PickingStatusForm = 'draft' | 'approved' | 'rejected';
+
+function normalizePickingStatus(g: { picking_status?: string; pickingStatus?: string; status?: string }): PickingStatusForm {
+  const raw =
+    g.picking_status ?? g.pickingStatus ?? g.status;
+  const normalized = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (normalized === 'approved') return 'approved';
+  if (normalized === 'rejected') return 'rejected';
+  return 'draft';
+}
+
 export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
   const router = useRouter();
   const isEditMode = !!grnId;
@@ -109,28 +120,18 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
   );
 
   const lastInitializedIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    lastInitializedIdRef.current = null;
-    return () => {
-      lastInitializedIdRef.current = null;
-    };
-  }, [grnId]);
 
   useLayoutEffect(() => {
-    if (!grn || !isEditMode || lastInitializedIdRef.current === grn.id) return;
+    if (!grn || !isEditMode) return;
     const g = grn as GRNDetail;
-    form.reset({
+    const pickingStatus = normalizePickingStatus(g);
+    const payload = {
       picking_number: g.picking_number ?? '',
       spo_number: g.spo_number ?? '',
       picking_date: g.picking_date
         ? new Date(g.picking_date).toISOString().slice(0, 10)
         : new Date().toISOString().slice(0, 10),
-      picking_status:
-        g.picking_status === 'draft' ||
-        g.picking_status === 'approved' ||
-        g.picking_status === 'rejected'
-          ? g.picking_status
-          : 'draft',
+      picking_status: pickingStatus,
       notes: g.notes ?? '',
       picking_lines:
         g.picking_lines && g.picking_lines.length > 0
@@ -143,8 +144,18 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
               picked_condition: l.picked_condition ?? undefined,
             }))
           : [{ product_id: '', quantity_expected: 0, quantity_picked: 0, source_warehouse_id: '' }],
-    });
+    };
+    form.reset(payload);
     lastInitializedIdRef.current = grn.id;
+  }, [grn, isEditMode, form]);
+
+  useEffect(() => {
+    if (!isEditMode || !grn) return;
+    const wanted = normalizePickingStatus(grn);
+    const current = form.getValues('picking_status');
+    if (current !== wanted && ['draft', 'approved', 'rejected'].includes(wanted)) {
+      form.setValue('picking_status', wanted);
+    }
   }, [grn, isEditMode, form]);
 
   const handleRemoveSingle = (index: number) => {
@@ -314,27 +325,34 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                 <FormField
                   control={form.control}
                   name="picking_status"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Status</FormLabel>
-                      <Select
-                        value={field.value}
-                        onValueChange={field.onChange}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Status" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="draft">Draft</SelectItem>
-                          <SelectItem value="approved">Approved</SelectItem>
-                          <SelectItem value="rejected">Rejected</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  render={({ field }) => {
+                    const fromForm = field.value as string | undefined;
+                    const validFormValue = fromForm && ['draft', 'approved', 'rejected'].includes(fromForm);
+                    const resolvedStatus: PickingStatusForm = validFormValue
+                      ? (fromForm as PickingStatusForm)
+                      : (isEditMode && grn ? normalizePickingStatus(grn) : 'draft');
+                    return (
+                      <FormItem>
+                        <FormLabel>Status</FormLabel>
+                        <Select
+                          value={resolvedStatus}
+                          onValueChange={(v) => field.onChange(v as PickingStatusForm)}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Status" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="draft">Draft</SelectItem>
+                            <SelectItem value="approved">Approved</SelectItem>
+                            <SelectItem value="rejected">Rejected</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    );
+                  }}
                 />
                 <FormField
                   control={form.control}

@@ -25,6 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { usePackingLists } from '../hooks/usePackingLists';
 import type { PackingList } from '../types/packingList.types';
 import { formatDate } from '@/lib/helpers';
+import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 
 export default function PackingListsList() {
@@ -50,25 +51,6 @@ export default function PackingListsList() {
   const handleRowClick = (row: PackingList) => {
     const packingListId = row.id;
     router.push(`/procurement-management/packing-lists/${packingListId}`);
-  };
-
-  const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case 'in_transit':
-        return 'secondary';
-      case 'arrived_at_port':
-        return 'primary';
-      case 'at_warehouse':
-        return 'primary';
-      case 'partially_received':
-        return 'primary';
-      case 'fully_received':
-        return 'primary';
-      case 'closed':
-        return 'secondary';
-      default:
-        return 'secondary';
-    }
   };
 
   const columns = useMemo<ColumnDef<PackingList>[]>(
@@ -119,12 +101,10 @@ export default function PackingListsList() {
         ),
         cell: ({ row }) => {
           const status = row.original.shipment_status;
-          const statusLabel = status
-            ?.split('_')
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(' ') || '-';
           return (
-            <Badge variant={getStatusBadgeVariant(status)}>{statusLabel}</Badge>
+            <Badge variant={getStatusBadgeVariant(status)}>
+              {formatStatusLabel(status) || '-'}
+            </Badge>
           );
         },
         size: 150,

@@ -1,13 +1,20 @@
 import { z } from 'zod';
 
+/** Accepts number or string (e.g. from API or input) so "Expected number, received string" is avoided. */
+const quantitySchema = z
+  .union([z.number(), z.string()])
+  .optional()
+  .nullable();
+
 const lineSchema = z.object({
   item_code: z.string().max(500).optional().nullable(),
-  quantity: z.number().optional().nullable(),
+  quantity: quantitySchema,
   remark: z.string().max(2000).optional().nullable(),
 });
 
 export const PurchaseRequestSchema = z.object({
   request_type: z.enum(['purchase_request', 'sponsorship_form']),
+  request_number: z.string().max(50).optional().nullable(),
   request_date: z.string().optional().nullable(),
   customer_name: z.string().max(500).optional().nullable(),
   project_title: z.string().max(500).optional().nullable(),

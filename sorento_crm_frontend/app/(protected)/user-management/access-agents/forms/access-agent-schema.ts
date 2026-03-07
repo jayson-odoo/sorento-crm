@@ -15,6 +15,7 @@ export const AccessAgentSchema = z.object({
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
   pic_respond_user_id: z.string().optional().nullable(),
   is_active: z.boolean(),
+  assign_to_new_internal_contacts: z.boolean(),
 });
 
 export type AccessAgentSchemaType = z.infer<typeof AccessAgentSchema>;

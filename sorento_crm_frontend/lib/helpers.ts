@@ -109,6 +109,41 @@ export function formatDate(input: Date | string | number): string {
 }
 
 /**
+ * Parse a value to a Date; returns null if invalid or missing.
+ * Use for API values that may be null, undefined, or malformed.
+ */
+export function parseDateSafe(
+  value: Date | string | number | null | undefined
+): Date | null {
+  if (value == null) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const date = new Date(value as string | number);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * Format a date for display; returns fallback for invalid/missing values.
+ */
+export function formatDateSafe(
+  value: Date | string | number | null | undefined,
+  fallback = '-'
+): string {
+  const date = parseDateSafe(value);
+  return date ? formatDate(date) : fallback;
+}
+
+/**
+ * Format a date-time for display; returns fallback for invalid/missing values.
+ */
+export function formatDateTimeSafe(
+  value: Date | string | number | null | undefined,
+  fallback = '-'
+): string {
+  const date = parseDateSafe(value);
+  return date ? formatDateTime(date) : fallback;
+}
+
+/**
  * Parse a naive UTC datetime string from the database and return a Date object.
  * 
  * CRITICAL RULE: 

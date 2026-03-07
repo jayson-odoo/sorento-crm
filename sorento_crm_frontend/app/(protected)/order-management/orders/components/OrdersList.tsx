@@ -11,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Download, Upload, AlertTriangle } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Download, Upload, AlertTriangle, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -19,12 +19,23 @@ import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import OrderBulkDeleteDialog from './OrderBulkDeleteDialog';
 import { useOrders } from '../hooks/useOrders';
+import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import type { Order } from '../types/order.types';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { formatDate } from '@/lib/helpers';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { TemplateDownloadDialog } from '@/components/template/TemplateDownloadDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { exportOrders, bulkImportOrders, importOrderTracking } from '../services/orderService';
@@ -44,12 +55,18 @@ export default function OrdersList() {
   const [trackingUploadOpen, setTrackingUploadOpen] = useState(false);
   const [exportData, setExportData] = useState<Order[]>([]);
   const [isLoadingExport, setIsLoadingExport] = useState(false);
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
 
   const { data, isLoading } = useOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
+    order_status_id: statusFilter === 'all' ? undefined : statusFilter,
   });
 
   // Define column options for export
@@ -107,11 +124,56 @@ export default function OrdersList() {
 
   const handleRowClick = (row: Order) => {
     const orderId = row.id;
-    router.push(`/order-management/orders/${orderId}`);
+    const params = new URLSearchParams({
+      page: String(pagination.pageIndex),
+      pageSize: String(pagination.pageSize),
+    });
+    router.push(`/order-management/orders/${orderId}?${params.toString()}`);
   };
+
+  const toggleOrderSelection = (orderId: string) => {
+    setSelectedOrderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) next.delete(orderId);
+      else next.add(orderId);
+      return next;
+    });
+  };
+
+  const selectAllOrders = () => {
+    const pageOrders = data?.data ?? [];
+    if (selectedOrderIds.size === pageOrders.length) {
+      setSelectedOrderIds(new Set());
+    } else {
+      setSelectedOrderIds(new Set(pageOrders.map((o) => o.id)));
+    }
+  };
+
+  const pageOrders = data?.data ?? [];
+  const isAllSelected = pageOrders.length > 0 && selectedOrderIds.size === pageOrders.length;
 
   const columns = useMemo<ColumnDef<Order>[]>(
     () => [
+      {
+        id: 'select',
+        header: () => (
+          <Checkbox
+            checked={isAllSelected}
+            onCheckedChange={selectAllOrders}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={selectedOrderIds.has(row.original.id)}
+            onCheckedChange={() => toggleOrderSelection(row.original.id)}
+            aria-label={`Select ${row.original.order_number}`}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        size: 44,
+        enableResizing: false,
+      },
       {
         accessorKey: 'order_number',
         header: ({ column }) => <DataGridColumnHeader title="Order Number" column={column} />,
@@ -205,7 +267,9 @@ export default function OrdersList() {
         cell: ({ row }) => {
           const status = row.original.order_status;
           return status ? (
-            <Badge variant="secondary">{status.status_name}</Badge>
+            <Badge variant={getStatusBadgeVariant(status.status_name)}>
+              {status.status_name}
+            </Badge>
           ) : (
             '-'
           );
@@ -214,23 +278,13 @@ export default function OrdersList() {
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
-        accessorKey: 'total_amount',
-        header: ({ column }) => <DataGridColumnHeader title="Total Amount" column={column} />,
-        cell: ({ row }) => {
-          const amount = row.original.total_amount || 0;
-          return new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(amount);
-        },
-        size: 130,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
-      },
-      {
         accessorKey: 'actions',
         header: '',
         cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
         size: 40,
       },
     ],
-    [],
+    [selectedOrderIds, isAllSelected],
   );
 
   const table = useReactTable({
@@ -261,34 +315,52 @@ export default function OrdersList() {
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search orders..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
-            />
-            {searchQuery && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
-              </Button>
-            )}
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+              <Input
+                placeholder="Search orders..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="ps-9 w-64"
+              />
+              {searchQuery && (
+                <Button
+                  mode="icon"
+                  variant="dim"
+                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                  onClick={() => setSearchQuery('')}
+                >
+                  <X />
+                </Button>
+              )}
+            </div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All statuses</SelectItem>
+                {orderStatuses.map((status) => (
+                  <SelectItem key={status.id} value={status.id}>
+                    {status.status_name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={handleDownloadTemplate} disabled={isLoadingExport}>
-              <Download className="size-4" />
-              Export
-            </Button>
-            <Button variant="outline" onClick={() => setUploadDialogOpen(true)}>
-              <Upload className="size-4" />
-              Import
-            </Button>
+            {selectedOrderIds.size > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setBulkDeleteDialogOpen(true)}
+                className="text-destructive hover:text-destructive"
+              >
+                <Trash2 className="size-4" />
+                Bulk Delete ({selectedOrderIds.size})
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setTrackingUploadOpen(true)}>
               <Upload className="size-4" />
               Import Tracking
@@ -325,6 +397,15 @@ export default function OrdersList() {
         open={trackingUploadOpen}
         onOpenChange={setTrackingUploadOpen}
         onUpload={handleUploadTracking}
+      />
+      <OrderBulkDeleteDialog
+        open={bulkDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setBulkDeleteDialogOpen(open);
+          if (!open) setSelectedOrderIds(new Set());
+        }}
+        orderIds={Array.from(selectedOrderIds)}
+        onSuccess={() => setSelectedOrderIds(new Set())}
       />
     </DataGrid>
   );

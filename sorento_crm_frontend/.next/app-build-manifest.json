@@ -26,50 +26,55 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/layout.js"
     ],
-    "/(protected)/page": [
+    "/(protected)/complaint-management/complaints/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/page.js"
+      "static/chunks/app/(protected)/complaint-management/complaints/[id]/page.js"
     ],
     "/api/auth/token/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/token/route.js"
     ],
-    "/(protected)/procurement-management/grn/page": [
+    "/(protected)/complaint-management/complaints/[id]/edit/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/grn/page.js"
+      "static/chunks/app/(protected)/complaint-management/complaints/[id]/edit/page.js"
     ],
-    "/(protected)/procurement-management/grn/[id]/page": [
+    "/(protected)/user-management/users/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/grn/[id]/page.js"
+      "static/chunks/app/(protected)/user-management/users/page.js"
     ],
-    "/(protected)/procurement-management/grn/[id]/edit/page": [
+    "/(protected)/user-management/users/[id]/layout": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/grn/[id]/edit/page.js"
+      "static/chunks/app/(protected)/user-management/users/[id]/layout.js"
     ],
-    "/(protected)/procurement-management/spo-allocations/page": [
+    "/(protected)/user-management/users/[id]/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/spo-allocations/page.js"
+      "static/chunks/app/(protected)/user-management/users/[id]/page.js"
     ],
-    "/(protected)/procurement-management/spo-allocations/[id]/page": [
+    "/(protected)/complaint-management/complaints/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/spo-allocations/[id]/page.js"
+      "static/chunks/app/(protected)/complaint-management/complaints/page.js"
     ],
-    "/(protected)/master-data-management/products/layout": [
+    "/(protected)/procurement-management/stock-inquiries/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/layout.js"
+      "static/chunks/app/(protected)/procurement-management/stock-inquiries/page.js"
     ],
-    "/(protected)/master-data-management/products/page": [
+    "/(protected)/procurement-management/stock-inquiries/new/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/page.js"
+      "static/chunks/app/(protected)/procurement-management/stock-inquiries/new/page.js"
+    ],
+    "/(protected)/procurement-management/stock-inquiries/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/stock-inquiries/[id]/page.js"
     ]
   }
 }

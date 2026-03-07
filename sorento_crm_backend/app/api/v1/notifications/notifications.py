@@ -134,7 +134,7 @@ async def mark_read(
         n = service.mark_read(notification_id, current_user["id"])
         if not n:
             raise HTTPException(status_code=404, detail="Notification not found")
-        log_audit(db, "notification", notification_id, "mark_read", user_id=current_user["id"])
+        log_audit(db, "notification", notification_id, "UPDATE", user_id=current_user["id"], new_values={"operation": "mark_read"})
         db.commit()
         return _to_response(n)
     except HTTPException:
@@ -156,7 +156,7 @@ async def mark_unread(
         n = service.mark_unread(notification_id, current_user["id"])
         if not n:
             raise HTTPException(status_code=404, detail="Notification not found")
-        log_audit(db, "notification", notification_id, "mark_unread", user_id=current_user["id"])
+        log_audit(db, "notification", notification_id, "UPDATE", user_id=current_user["id"], new_values={"operation": "mark_unread"})
         db.commit()
         return _to_response(n)
     except HTTPException:
@@ -176,7 +176,8 @@ async def mark_all_read(
     try:
         service = NotificationService(db)
         count = service.mark_all_read(current_user["id"], archived=archived)
-        log_audit(db, "notification", "*", "mark_all_read", user_id=current_user["id"], new_values={"count": count})
+        # Use sentinel UUID for bulk ops so entity_id is valid if column is UUID type
+        log_audit(db, "notification", "00000000-0000-0000-0000-000000000000", "UPDATE", user_id=current_user["id"], new_values={"operation": "mark_all_read", "count": count})
         db.commit()
         return {"message": "Marked as read", "count": count}
     except Exception as e:
@@ -196,7 +197,7 @@ async def archive_notification(
         n = service.archive(notification_id, current_user["id"])
         if not n:
             raise HTTPException(status_code=404, detail="Notification not found")
-        log_audit(db, "notification", notification_id, "archive", user_id=current_user["id"])
+        log_audit(db, "notification", notification_id, "UPDATE", user_id=current_user["id"], new_values={"operation": "archive"})
         db.commit()
         return _to_response(n)
     except HTTPException:
@@ -215,7 +216,7 @@ async def archive_all(
     try:
         service = NotificationService(db)
         count = service.archive_all(current_user["id"])
-        log_audit(db, "notification", "*", "archive_all", user_id=current_user["id"], new_values={"count": count})
+        log_audit(db, "notification", "00000000-0000-0000-0000-000000000000", "UPDATE", user_id=current_user["id"], new_values={"operation": "archive_all", "count": count})
         db.commit()
         return {"message": "Archived", "count": count}
     except Exception as e:
@@ -235,7 +236,7 @@ async def resolve_notification(
         n = service.resolve(notification_id, current_user["id"])
         if not n:
             raise HTTPException(status_code=404, detail="Notification not found")
-        log_audit(db, "notification", notification_id, "resolve", user_id=current_user["id"])
+        log_audit(db, "notification", notification_id, "UPDATE", user_id=current_user["id"], new_values={"operation": "resolve"})
         db.commit()
         return _to_response(n)
     except HTTPException:

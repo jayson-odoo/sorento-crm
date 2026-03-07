@@ -24,6 +24,7 @@ import {
   SheetBody,
   SheetContent,
   SheetHeader,
+  SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
 import { Container } from '@/components/common/container';
@@ -82,6 +83,7 @@ export function Header() {
                   side="left"
                   close={false}
                 >
+                  <SheetTitle className="sr-only">Navigation menu</SheetTitle>
                   <SheetHeader className="p-0 space-y-0" />
                   <SheetBody className="p-0 overflow-y-auto">
                     <SidebarMenu />
@@ -104,6 +106,7 @@ export function Header() {
                   side="left"
                   close={false}
                 >
+                  <SheetTitle className="sr-only">Menu</SheetTitle>
                   <SheetHeader className="p-0 space-y-0" />
                   <SheetBody className="p-0 overflow-y-auto">
                     <MegaMenuMobile />

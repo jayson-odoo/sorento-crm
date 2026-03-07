@@ -200,3 +200,8 @@ class BulkImportResponse(BaseModel):
     created: int = 0
     updated: int = 0
     errors: list[str] = []
+
+
+class BulkDeleteOrdersRequest(BaseModel):
+    """Request body for bulk delete: { ids: list[str] }."""
+    ids: list[str]

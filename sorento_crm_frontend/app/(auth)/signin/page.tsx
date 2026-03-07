@@ -2,9 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { RiErrorWarningFill } from '@remixicon/react';
 import { AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { signIn } from 'next-auth/react';
 import { useForm } from 'react-hook-form';
@@ -26,6 +25,7 @@ import { toAbsoluteUrl } from '@/lib/helpers';
 
 export default function Page() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,8 +33,8 @@ export default function Page() {
   const form = useForm<SigninSchemaType>({
     resolver: zodResolver(getSigninSchema()),
     defaultValues: {
-      email: 'demo@kt.com',
-      password: 'demo123',
+      email: '',
+      password: '',
       rememberMe: false,
     },
   });
@@ -60,7 +60,15 @@ export default function Page() {
           setError(response.error || 'An error occurred during sign in.');
         }
       } else {
-        router.push('/');
+        const callbackUrl = searchParams?.get('callbackUrl');
+        const safeUrl =
+          callbackUrl &&
+          typeof callbackUrl === 'string' &&
+          callbackUrl.startsWith('/') &&
+          !callbackUrl.startsWith('//')
+            ? callbackUrl
+            : '/';
+        router.push(safeUrl);
       }
     } catch (err) {
       setError(
@@ -94,18 +102,6 @@ export default function Page() {
             Sign in to Sorento
           </h1>
         </div>
-
-        <Alert size="sm" close={false}>
-          <AlertIcon>
-            <RiErrorWarningFill className="text-primary" />
-          </AlertIcon>
-          <AlertTitle className="text-accent-foreground">
-            Use <span className="text-mono font-semibold">demo@kt.com</span>{' '}
-            username and{' '}
-            <span className="text-mono font-semibold">demo123</span> for demo
-            access.
-          </AlertTitle>
-        </Alert>
 
         {error && (
           <Alert variant="destructive">

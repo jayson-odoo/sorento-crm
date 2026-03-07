@@ -25,6 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useCampaigns } from '../hooks/useCampaigns';
 import type { Campaign } from '../types/campaign.types';
 import { formatDate } from '@/lib/helpers';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 export default function CampaignsList() {
   const router = useRouter();
@@ -94,15 +95,9 @@ export default function CampaignsList() {
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => {
           const status = row.original.status;
-          const variants: Record<string, 'success' | 'secondary' | 'warning' | 'destructive'> = {
-            planning: 'secondary',
-            active: 'success',
-            completed: 'secondary',
-            cancelled: 'destructive',
-          };
           return (
-            <Badge variant={variants[status] || 'secondary'} appearance="ghost">
-              {status.charAt(0).toUpperCase() + status.slice(1)}
+            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
+              {status ? status.charAt(0).toUpperCase() + status.slice(1) : '—'}
             </Badge>
           );
         },

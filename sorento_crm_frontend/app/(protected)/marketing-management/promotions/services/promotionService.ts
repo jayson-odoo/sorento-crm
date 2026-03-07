@@ -64,6 +64,35 @@ export async function deletePromotion(id: string): Promise<void> {
   }
 }
 
+export async function bulkDeletePromotions(ids: string[]): Promise<{ message: string; deleted_count: number }> {
+  const response = await apiFetch('/api/v1/marketing/promotions/bulk', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to bulk delete promotions' }));
+    throw new Error(error.detail ?? error.message ?? 'Failed to bulk delete promotions');
+  }
+  return response.json();
+}
+
+export async function bulkUpdateAccessLevels(
+  ids: string[],
+  access_levels: string[],
+): Promise<{ message: string; updated_count: number }> {
+  const response = await apiFetch('/api/v1/marketing/promotions/bulk', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, access_levels }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to update access levels' }));
+    throw new Error(error.detail ?? error.message ?? 'Failed to update access levels');
+  }
+  return response.json();
+}
+
 export async function getPromotionProducts(promotionId: string): Promise<PromotionProduct[]> {
   const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products`);
   if (!response.ok) throw new Error('Failed to fetch promotion products');

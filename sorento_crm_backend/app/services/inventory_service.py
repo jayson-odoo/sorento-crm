@@ -176,43 +176,53 @@ class StockService:
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
+        sort: Optional[str] = None,
+        dir: Optional[str] = None,
         warehouse_id: Optional[str] = None,
         product_id: Optional[str] = None,
         quantity_operator: Optional[str] = None,
-        quantity_value: Optional[str] = None
+        quantity_value: Optional[str] = None,
+        status: Optional[str] = None,
     ):
         """List stock with product and warehouse info.
-        
+
         Args:
-            warehouse_id: Optional warehouse filter
-            product_id: Optional product filter
-            quantity_operator: One of 'gt', 'gte', 'lt', 'lte', 'eq' for available quantity filtering
-            quantity_value: Numeric value to compare against available quantity
+            sort: Column to sort by (e.g. product_code, product_name, available).
+            dir: 'asc' or 'desc'.
+            status: Filter by computed status: critical, low, normal, overstock.
         """
-        from sqlalchemy import case, or_
-        from app.models.product import Product
-        
-        q = self.db.query(Stock)
-        
+        from sqlalchemy import or_, func
+        from sqlalchemy.orm import selectinload
+        from app.models.product import Product, ProductCategory
+
+        q = self.db.query(Stock).options(
+            selectinload(Stock.product),
+            selectinload(Stock.warehouse),
+        )
+
         if warehouse_id:
             q = q.filter(Stock.warehouse_id == warehouse_id)
-        
+
         if product_id:
             q = q.filter(Stock.product_id == product_id)
 
+        # Join Product once when needed for search, status filter, or product-related sort
+        sort_key = (sort or '').replace('product.category.category_name', 'category_name').replace('product.reorder_level', 'reorder_level').replace('warehouse.warehouse_name', 'warehouse_name').replace('product.product_code', 'product_code').replace('product.product_name', 'product_name')
+        need_product_join = bool(query) or bool(status) or (sort and dir in ('asc', 'desc') and sort_key in ('product_code', 'product_name', 'category_name', 'reorder_level'))
+        if need_product_join:
+            q = q.join(Stock.product)
+
         if query:
-            q = q.join(Stock.product).filter(
+            q = q.filter(
                 or_(
                     Product.product_code.ilike(f"%{query}%"),
                     Product.product_name.ilike(f"%{query}%"),
                 )
             )
-        
-        # Filter by available quantity using the quantity_available column
+
         if quantity_operator and quantity_value:
             try:
-                value = int(float(quantity_value))  # Convert to int for quantity comparison
-                
+                value = int(float(quantity_value))
                 if quantity_operator == 'gt':
                     q = q.filter(Stock.quantity_available > value)
                 elif quantity_operator == 'gte':
@@ -224,17 +234,53 @@ class StockService:
                 elif quantity_operator == 'eq':
                     q = q.filter(Stock.quantity_available == value)
             except (ValueError, TypeError):
-                # Invalid quantity value, ignore filter
                 pass
-        
+
+        if status and status in ('critical', 'low', 'normal', 'overstock'):
+            reorder = func.coalesce(Product.reorder_level, 0)
+            if status == 'critical':
+                q = q.filter(Stock.quantity_available <= 0)
+            elif status == 'low':
+                q = q.filter(Stock.quantity_available > 0, Stock.quantity_available < reorder)
+            elif status == 'normal':
+                q = q.filter(Stock.quantity_available >= reorder)
+            elif status == 'overstock':
+                q = q.filter(Stock.quantity_available > reorder * 2)
+
+        sort_col = None
+        if sort and dir in ('asc', 'desc'):
+            if sort_key in ('product_code', 'product_name', 'category_name', 'reorder_level'):
+                if sort_key == 'category_name':
+                    q = q.outerjoin(Product.category)
+                    sort_col = ProductCategory.category_name
+                elif sort_key == 'product_code':
+                    sort_col = Product.product_code
+                elif sort_key == 'product_name':
+                    sort_col = Product.product_name
+                elif sort_key == 'reorder_level':
+                    sort_col = Product.reorder_level
+            elif sort_key == 'warehouse_name':
+                q = q.join(Stock.warehouse)
+                sort_col = Warehouse.warehouse_name
+            elif sort_key == 'available':
+                sort_col = Stock.quantity_available
+            elif sort_key == 'reserved_quantity':
+                sort_col = Stock.quantity_reserved
+            elif sort_key == 'quantity':
+                sort_col = Stock.quantity_on_hand
+            elif sort_key == 'status':
+                sort_col = Stock.quantity_available
+            if sort_col is not None:
+                q = q.order_by(sort_col.desc() if dir == 'desc' else sort_col.asc())
+
         total = q.count()
         offset = (page - 1) * limit
         stock_items = q.offset(offset).limit(limit).all()
-        
+
         return {
             "data": stock_items,
             "pagination": {"total": total, "page": page, "limit": limit},
-            "empty": total == 0
+            "empty": total == 0,
         }
 
     def list_stock_ledger(

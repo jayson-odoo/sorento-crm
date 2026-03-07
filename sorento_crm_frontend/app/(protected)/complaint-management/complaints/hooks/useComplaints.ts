@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import type { ComplaintsListParams } from '../services/complaintService';
 import {
   getComplaints,
   getComplaint,
@@ -8,12 +9,14 @@ import {
   updateComplaint,
   updateComplaintAndReply,
   deleteComplaint,
+  bulkDeleteComplaints,
   linkComplaintAttachment,
   deleteComplaintAttachment,
+  syncComplaintAssigneeFromRespond,
 } from '../services/complaintService';
 import type { ComplaintFormData } from '../types/complaint.types';
 
-export function useComplaints(params: DataGridApiFetchParams) {
+export function useComplaints(params: ComplaintsListParams) {
   return useQuery({
     queryKey: [
       'complaints',
@@ -21,6 +24,8 @@ export function useComplaints(params: DataGridApiFetchParams) {
       params.pageSize,
       params.sorting,
       params.searchQuery,
+      params.assigned_to,
+      params.status,
     ],
     queryFn: () => getComplaints(params),
     staleTime: Infinity,
@@ -108,6 +113,20 @@ export function useDeleteComplaint() {
   });
 }
 
+export function useBulkDeleteComplaints() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteComplaints(ids),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      toast.success(data?.message ?? 'Complaints deleted successfully');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to bulk delete complaints'),
+  });
+}
+
 export function useLinkComplaintAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -139,5 +158,20 @@ export function useDeleteComplaintAttachment() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to unlink attachment'),
+  });
+}
+
+export function useComplaintSyncAssignee() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (complaintId: string) => syncComplaintAssigneeFromRespond(complaintId),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+      const message = data?.message ?? (data?.updated ? 'Assignee synced from Respond.io.' : 'Sync successful.');
+      toast.success(message);
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to sync assignee from Respond.io.'),
   });
 }

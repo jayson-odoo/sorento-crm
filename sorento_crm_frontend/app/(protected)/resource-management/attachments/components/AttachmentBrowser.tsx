@@ -33,7 +33,7 @@ import {
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAttachments, useDeleteAttachment, useDownloadAttachment, useRestoreAttachment, useBulkRestoreAttachments, useDirectoryTree } from '../hooks/useAttachments';
-import { resubmitAttachmentWebhook } from '../services/attachmentService';
+import { getAttachmentPreviewUrl, resubmitAttachmentWebhook } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
 import type { AttachmentDirectoryTreeNode } from '../services/directoryService';
 
@@ -119,6 +119,17 @@ export default function AttachmentBrowser() {
       document.body.removeChild(a);
     } catch (error) {
       // Error is handled by the mutation hook (toast)
+    }
+  };
+
+  const handlePreview = async (attachmentId: string) => {
+    try {
+      const previewUrl = await getAttachmentPreviewUrl(attachmentId);
+      if (previewUrl) {
+        window.open(previewUrl, '_blank');
+      }
+    } catch {
+      toast.error('Failed to open attachment preview');
     }
   };
 
@@ -255,9 +266,7 @@ export default function AttachmentBrowser() {
               title="Preview"
               onClick={(e) => {
                 e.stopPropagation();
-                if (row.original.file_path) {
-                  window.open(row.original.file_path, '_blank');
-                }
+                handlePreview(row.original.id);
               }}
             >
               <Eye className="size-4" />

@@ -7,5 +7,6 @@ router = APIRouter()
 router.include_router(orders.router, prefix="/orders", tags=["orders"])
 router.include_router(customers.router, prefix="/customers", tags=["customers"])
 router.include_router(customers_select.router, prefix="/customers", tags=["customers"])
-router.include_router(order_statuses.router, prefix="/order-statuses", tags=["order-statuses"])
+# Include /select before /{status_id} so GET /order-statuses/select is not matched as id="select"
 router.include_router(order_statuses_select.router, prefix="/order-statuses", tags=["order-statuses"])
+router.include_router(order_statuses.router, prefix="/order-statuses", tags=["order-statuses"])

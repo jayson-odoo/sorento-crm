@@ -2,16 +2,24 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Download, Eye } from 'lucide-react';
+import { Edit, Download, Eye, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useForm } from '../../hooks/useForms';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { useForm, useDeleteForm } from '../../hooks/useForms';
 import { formatDate } from '@/lib/helpers';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { useQuery } from '@tanstack/react-query';
-import { getAttachmentMetadata } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
+import { getAttachmentMetadata, getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { toast } from 'sonner';
 
 interface FormDetailProps {
@@ -22,7 +30,9 @@ export default function FormDetail({ formId }: FormDetailProps) {
   const router = useRouter();
   const { data: form, isLoading } = useForm(formId);
   const downloadMutation = useDownloadAttachment();
+  const deleteMutation = useDeleteForm();
   const [isDownloading, setIsDownloading] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   // Fetch attachment metadata if attachment_id exists
   const { data: attachment } = useQuery({
@@ -57,6 +67,27 @@ export default function FormDetail({ formId }: FormDetailProps) {
     } finally {
       setIsDownloading(false);
     }
+  };
+
+  const handlePreview = async () => {
+    if (!attachment?.id) return;
+    try {
+      const previewUrl = await getAttachmentPreviewUrl(attachment.id);
+      if (previewUrl) {
+        window.open(previewUrl, '_blank');
+      }
+    } catch {
+      toast.error('Failed to open attachment preview');
+    }
+  };
+
+  const handleDelete = () => {
+    deleteMutation.mutate(formId, {
+      onSuccess: () => {
+        setDeleteDialogOpen(false);
+        router.push('/forms-management/forms');
+      },
+    });
   };
 
   if (isLoading) {
@@ -98,6 +129,14 @@ export default function FormDetail({ formId }: FormDetailProps) {
           <Button variant="outline" onClick={() => router.push(`/forms-management/forms/${formId}/edit`)}>
             <Edit className="size-4 mr-2" />
             Edit
+          </Button>
+          <Button
+            variant="outline"
+            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+            onClick={() => setDeleteDialogOpen(true)}
+          >
+            <Trash2 className="size-4 mr-2" />
+            Delete
           </Button>
         </div>
       </div>
@@ -178,11 +217,7 @@ export default function FormDetail({ formId }: FormDetailProps) {
                     variant="outline" 
                     size="sm" 
                     className="flex-1" 
-                    onClick={() => {
-                      if (attachment?.file_path) {
-                        window.open(attachment.file_path, '_blank');
-                      }
-                    }}
+                    onClick={handlePreview}
                   >
                     <Eye className="size-4 mr-2" />
                     Preview
@@ -205,6 +240,29 @@ export default function FormDetail({ formId }: FormDetailProps) {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete form</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <strong>{form?.name}</strong> ({form?.code})? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

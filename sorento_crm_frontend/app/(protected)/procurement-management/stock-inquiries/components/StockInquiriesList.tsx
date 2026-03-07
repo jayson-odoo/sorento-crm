@@ -11,8 +11,10 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, FileDown, Cog } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, FileDown, Cog, Trash2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,8 +30,10 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockInquiries } from '../hooks/useStockInquiries';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 import type { StockInquiry } from '../types/stockInquiry.types';
 import { exportStockInquiriesToExcel } from '../utils/exportStockInquiryToExcel';
+import StockInquiryBulkDeleteDialog from './StockInquiryBulkDeleteDialog';
 
 export default function StockInquiriesList() {
   const router = useRouter();
@@ -42,6 +46,8 @@ export default function StockInquiriesList() {
   ]);
   const [searchQuery, setSearchQuery] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [selectedInquiryIds, setSelectedInquiryIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
   const { data, isLoading } = useStockInquiries({
     pageIndex: pagination.pageIndex,
@@ -66,8 +72,49 @@ export default function StockInquiriesList() {
     }
   };
 
+  const toggleInquirySelection = (inquiryId: string) => {
+    setSelectedInquiryIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(inquiryId)) next.delete(inquiryId);
+      else next.add(inquiryId);
+      return next;
+    });
+  };
+
+  const selectAllInquiries = () => {
+    const pageInquiries = data?.data ?? [];
+    if (selectedInquiryIds.size === pageInquiries.length) {
+      setSelectedInquiryIds(new Set());
+    } else {
+      setSelectedInquiryIds(new Set(pageInquiries.map((i) => i.id)));
+    }
+  };
+
+  const pageInquiries = data?.data ?? [];
+  const isAllSelected = pageInquiries.length > 0 && selectedInquiryIds.size === pageInquiries.length;
+
   const columns = useMemo<ColumnDef<StockInquiry>[]>(
     () => [
+      {
+        id: 'select',
+        header: () => (
+          <Checkbox
+            checked={isAllSelected}
+            onCheckedChange={selectAllInquiries}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={selectedInquiryIds.has(row.original.id)}
+            onCheckedChange={() => toggleInquirySelection(row.original.id)}
+            aria-label={`Select ${row.original.product_code ?? row.original.id}`}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        size: 44,
+        enableResizing: false,
+      },
       {
         accessorKey: 'product_code',
         header: ({ column }) => (
@@ -154,8 +201,13 @@ export default function StockInquiriesList() {
         ),
         size: 110,
         cell: ({ row }) => {
-          const s = row.original.status;
-          return s ? <span className="capitalize">{s}</span> : '-';
+          const status = row.original.status;
+          if (!status) return '-';
+          return (
+            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
+              {status.charAt(0).toUpperCase() + status.slice(1)}
+            </Badge>
+          );
         },
         meta: { skeleton: <Skeleton className="h-4 w-16" /> },
       },
@@ -168,7 +220,7 @@ export default function StockInquiriesList() {
         size: 40,
       },
     ],
-    [],
+    [selectedInquiryIds, isAllSelected],
   );
 
   const table = useReactTable({
@@ -216,6 +268,17 @@ export default function StockInquiriesList() {
             )}
           </div>
           <div className="flex gap-2">
+            {selectedInquiryIds.size > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setBulkDeleteDialogOpen(true)}
+                className="text-destructive hover:text-destructive"
+              >
+                <Trash2 className="size-4" />
+                Bulk Delete ({selectedInquiryIds.size})
+              </Button>
+            )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="icon" aria-label="Options">
@@ -252,6 +315,15 @@ export default function StockInquiriesList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+      <StockInquiryBulkDeleteDialog
+        open={bulkDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setBulkDeleteDialogOpen(open);
+          if (!open) setSelectedInquiryIds(new Set());
+        }}
+        inquiryIds={Array.from(selectedInquiryIds)}
+        onSuccess={() => setSelectedInquiryIds(new Set())}
+      />
     </DataGrid>
   );
 }

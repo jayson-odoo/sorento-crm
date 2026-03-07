@@ -59,6 +59,19 @@ export async function deleteOrder(id: string): Promise<void> {
   }
 }
 
+export async function bulkDeleteOrders(ids: string[]): Promise<{ message: string; deleted_count: number }> {
+  const response = await apiFetch('/api/v1/order-management/orders/bulk', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to bulk delete orders' }));
+    throw new Error(error.message);
+  }
+  return response.json();
+}
+
 /**
  * Export all orders to Excel (fetches all data by paginating through all pages)
  */

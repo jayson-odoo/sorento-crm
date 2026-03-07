@@ -2,18 +2,31 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, FileDown } from 'lucide-react';
+import { Edit, Trash2, FileDown, Send, Link2, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { exportStockInquiryToExcel } from '../utils/exportStockInquiryToExcel';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useStockInquiry, useStockInquiryNeighbours } from '../hooks/useStockInquiries';
+import { useStockInquiry, useStockInquiryNeighbours, useUpdateStockInquiryAndReply } from '../hooks/useStockInquiries';
+import { getOrCreateStockInquiryViewLink } from '../services/stockInquiryService';
+import { toast } from 'sonner';
 import { formatDate } from '@/lib/helpers';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
 
 interface StockInquiryDetailProps {
   inquiryId: string;
@@ -28,7 +41,11 @@ export default function StockInquiryDetail({
     isValidId ? inquiryId : null,
   );
   const { data: neighbours } = useStockInquiryNeighbours(isValidId ? inquiryId : null);
+  const updateAndReplyMutation = useUpdateStockInquiryAndReply();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
+  const [replyMessage, setReplyMessage] = useState('');
+  const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const handleExportExcel = async () => {
@@ -111,11 +128,85 @@ export default function StockInquiryDetail({
         <div className="flex items-center gap-2">
           <DetailActionsMenu ariaLabel="Stock inquiry actions">
             <DropdownMenuItem
+              onClick={() =>
+                router.push(
+                  `/procurement-management/stock-inquiries/${inquiryId}/edit`,
+                )
+              }
+            >
+              <Edit className="size-4" />
+              Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={viewLinkCopying}
+              onClick={async () => {
+                try {
+                  setViewLinkCopying(true);
+                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                  const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+                  await navigator.clipboard.writeText(view_url);
+                  toast.success('View link copied to clipboard');
+                } catch {
+                  toast.error('Failed to copy view link');
+                } finally {
+                  setViewLinkCopying(false);
+                }
+              }}
+            >
+              <Link2 className="size-4" />
+              {viewLinkCopying ? 'Copying…' : 'Copy view link'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={async () => {
+                try {
+                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                  const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+                  window.open(view_url, '_blank');
+                } catch {
+                  toast.error('Failed to open view link');
+                }
+              }}
+            >
+              <ExternalLink className="size-4" />
+              View in system
+            </DropdownMenuItem>
+            {inquiry.respond_inbox_url && (
+              <DropdownMenuItem
+                disabled={updateAndReplyMutation.isPending}
+                onClick={async () => {
+                  let defaultMsg = inquiry.purchasing_response ?? '';
+                  try {
+                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                    const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+                    if (view_url) {
+                      defaultMsg = defaultMsg.trim()
+                        ? `${defaultMsg.trim()}\n\nView full details: ${view_url}`
+                        : `View full details: ${view_url}`;
+                    }
+                  } catch {
+                    // keep default without view link
+                  }
+                  setReplyMessage(defaultMsg);
+                  setUpdateAndReplyDialogOpen(true);
+                }}
+              >
+                <Send className="size-4" />
+                {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem
               onClick={handleExportExcel}
               disabled={exporting}
             >
               <FileDown className="size-4" />
               {exporting ? 'Exporting…' : 'Export to Excel'}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onClick={() => setDeleteDialogOpen(true)}
+            >
+              <Trash2 className="size-4" />
+              Delete
             </DropdownMenuItem>
           </DetailActionsMenu>
           <RecordNavigation
@@ -124,21 +215,6 @@ export default function StockInquiryDetail({
             nextId={neighbours?.next_id ?? null}
             ariaLabel="stock inquiry"
           />
-          <Button
-            variant="outline"
-            onClick={() =>
-              router.push(
-                `/procurement-management/stock-inquiries/${inquiryId}/edit`,
-              )
-            }
-          >
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
         </div>
       </div>
 
@@ -152,6 +228,56 @@ export default function StockInquiryDetail({
           }}
         />
       )}
+
+      <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Update & Reply</DialogTitle>
+            <DialogDescription>
+              Edit the message below. It will be saved as the purchasing response and sent to the customer via Respond.io. The conversation will be marked as responded.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="stock-inquiry-detail-reply-message">Message to send</Label>
+              <Textarea
+                id="stock-inquiry-detail-reply-message"
+                value={replyMessage}
+                onChange={(e) => setReplyMessage(e.target.value)}
+                placeholder="Purchasing response..."
+                rows={5}
+                className="resize-none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setUpdateAndReplyDialogOpen(false)}
+              disabled={updateAndReplyMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={updateAndReplyMutation.isPending || !replyMessage.trim()}
+              onClick={async () => {
+                try {
+                  await updateAndReplyMutation.mutateAsync({
+                    id: inquiryId,
+                    data: { purchasing_response: replyMessage.trim() },
+                  });
+                  setUpdateAndReplyDialogOpen(false);
+                  setReplyMessage('');
+                } catch {
+                  // toast from mutation
+                }
+              }}
+            >
+              {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Stock Inquiry Information */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -249,6 +375,11 @@ export default function StockInquiryDetail({
           </CardContent>
         </Card>
       </div>
+
+      <StockInquiryAttachmentsSection
+        inquiryId={inquiryId}
+        attachments={inquiry.attachments ?? []}
+      />
 
       <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
     </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Download, ExternalLink, Link2, Paperclip, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,28 +12,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
 import { formatDate } from '@/lib/helpers';
-import { useAttachments } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
-import {
-  useLinkComplaintAttachment,
-  useDeleteComplaintAttachment,
-} from '../hooks/useComplaints';
+import { useDeleteComplaintAttachment } from '../hooks/useComplaints';
+import ComplaintLinkAttachmentBrowserDialog from './ComplaintLinkAttachmentBrowserDialog';
+import { linkComplaintAttachment } from '../services/complaintService';
 import type { ComplaintAttachment } from '../types/complaint.types';
-import { toast } from 'sonner';
 
 interface ComplaintManualAttachmentsSectionProps {
   complaintId: string;
@@ -46,16 +29,7 @@ export default function ComplaintManualAttachmentsSection({
   attachments: attachmentsFromComplaint = [],
 }: ComplaintManualAttachmentsSectionProps) {
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
-  const linkMutation = useLinkComplaintAttachment();
   const deleteMutation = useDeleteComplaintAttachment();
-
-  const { data: attachmentsData, isLoading: isLoadingAttachments } = useAttachments({
-    pageIndex: 0,
-    pageSize: 100,
-    sorting: [],
-    searchQuery: '',
-  });
-  const allAttachments = attachmentsData?.data || [];
 
   const attachments = useMemo(
     () =>
@@ -73,10 +47,6 @@ export default function ComplaintManualAttachmentsSection({
           .filter((id): id is string => !!id),
       ),
     [attachmentsFromComplaint],
-  );
-  const availableAttachments = useMemo(
-    () => allAttachments.filter((attachment) => !linkedAttachmentIds.has(attachment.id)),
-    [allAttachments, linkedAttachmentIds],
   );
 
   const formatFileSize = (bytes: number | null | undefined) => {
@@ -114,6 +84,8 @@ export default function ComplaintManualAttachmentsSection({
               </TableHeader>
               <TableBody>
                 {attachments.map((link) => {
+                  const displayName =
+                    link.original_filename ?? link.file_name ?? 'Unnamed file';
                   const previewUrl =
                     link.file_url?.startsWith('http') === true
                       ? link.file_url
@@ -122,8 +94,10 @@ export default function ComplaintManualAttachmentsSection({
                         : link.file_url ?? '#';
                   return (
                     <TableRow key={link.id}>
-                      <TableCell className="font-medium">
-                        {link.file_name || 'Unnamed file'}
+                      <TableCell className="font-medium" title={displayName}>
+                        <span className="truncate block max-w-[280px]" title={displayName}>
+                          {displayName}
+                        </span>
                       </TableCell>
                       <TableCell>{formatFileSize(link.file_size_bytes)}</TableCell>
                       <TableCell>
@@ -148,7 +122,7 @@ export default function ComplaintManualAttachmentsSection({
                                   ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
                                   : previewUrl
                               }
-                              download={link.file_name || 'download'}
+                              download={displayName}
                             >
                               <Download className="size-4" />
                               Download
@@ -174,99 +148,19 @@ export default function ComplaintManualAttachmentsSection({
         )}
       </CardContent>
       {linkDialogOpen && (
-        <LinkAttachmentDialog
+        <ComplaintLinkAttachmentBrowserDialog
           open={linkDialogOpen}
           onOpenChange={setLinkDialogOpen}
-          complaintId={complaintId}
-          availableAttachments={availableAttachments}
-          isLoading={isLoadingAttachments}
+          entityId={complaintId}
+          linkedAttachmentIds={linkedAttachmentIds}
+          linkAttachment={linkComplaintAttachment}
+          invalidateQueryKeys={[
+            ['complaint', complaintId],
+            ['complaints'],
+          ]}
+          successEntityLabel="complaint"
         />
       )}
     </Card>
-  );
-}
-
-interface LinkAttachmentDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  complaintId: string;
-  availableAttachments: Array<{ id: string; original_filename: string }>;
-  isLoading: boolean;
-}
-
-function LinkAttachmentDialog({
-  open,
-  onOpenChange,
-  complaintId,
-  availableAttachments,
-  isLoading,
-}: LinkAttachmentDialogProps) {
-  const [selectedAttachmentId, setSelectedAttachmentId] = useState<string>('');
-  const linkMutation = useLinkComplaintAttachment();
-
-  useEffect(() => {
-    if (!open) {
-      setSelectedAttachmentId('');
-    }
-  }, [open]);
-
-  const handleLink = async () => {
-    if (!selectedAttachmentId) {
-      toast.error('Please select an attachment');
-      return;
-    }
-    await linkMutation.mutateAsync({
-      complaintId,
-      attachmentId: selectedAttachmentId,
-    });
-    setSelectedAttachmentId('');
-    onOpenChange(false);
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Link Existing Attachment</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label>Attachment</Label>
-            {isLoading ? (
-              <div className="text-sm text-muted-foreground">Loading attachments...</div>
-            ) : (
-              <Select value={selectedAttachmentId} onValueChange={setSelectedAttachmentId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select an attachment..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableAttachments.map((attachment) => (
-                    <SelectItem key={attachment.id} value={attachment.id}>
-                      {attachment.original_filename}
-                    </SelectItem>
-                  ))}
-                  {availableAttachments.length === 0 && (
-                    <SelectItem value="__no_attachments__" disabled>
-                      No available attachments
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleLink}
-              disabled={!selectedAttachmentId || linkMutation.isPending}
-            >
-              {linkMutation.isPending ? 'Linking...' : 'Link Attachment'}
-            </Button>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }

@@ -41,6 +41,8 @@ class Complaint(Base):
     status = Column(String(50), default="new", nullable=False)
     last_responded_by = Column(Text, nullable=True)
     last_responded_at = Column(DateTime(timezone=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    assigned_to = Column(Text, nullable=True)  # Respond.io assignee user id; display name resolved via User.respond_user_id
 
     attachments = relationship("ComplaintAttachment", back_populates="complaint")
     

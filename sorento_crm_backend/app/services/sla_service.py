@@ -552,6 +552,135 @@ class ConversationSLATrackingService:
             .first()
         )
 
+    def get_tracking_by_contact_phone(self, phone: str) -> Optional[ConversationSLATracking]:
+        """
+        Get the conversation SLA tracking for a contact by phone number.
+        Prefers an unresolved (open) tracking; otherwise returns the most recent by created_at.
+        """
+        from sqlalchemy.orm import joinedload
+        from app.models.sla import ConversationSLAEventLog
+
+        normalized = (phone or "").strip()
+        if not normalized:
+            return None
+        contact = self.db.query(RespondContact).filter(
+            RespondContact.phone_number == normalized
+        ).first()
+        if not contact:
+            return None
+        # Unresolved first, then by created_at desc
+        tracking = (
+            self.db.query(ConversationSLATracking)
+            .options(
+                joinedload(ConversationSLATracking.policy),
+                joinedload(ConversationSLATracking.contact),
+                joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user),
+            )
+            .filter(ConversationSLATracking.respond_contact_id == contact.id)
+            .order_by(
+                ConversationSLATracking.is_resolved.asc(),  # False first
+                ConversationSLATracking.created_at.desc(),
+            )
+            .first()
+        )
+        return tracking
+
+    def get_tracking_by_contact_and_policy(
+        self,
+        respond_contact_id: str,
+        policy_id: str,
+    ) -> Optional[ConversationSLATracking]:
+        """
+        Get the conversation SLA tracking for a contact and policy.
+        Prefers an unresolved (open) tracking; otherwise returns the most recent by created_at.
+        """
+        from sqlalchemy.orm import joinedload
+        from app.models.sla import ConversationSLAEventLog
+
+        tracking = (
+            self.db.query(ConversationSLATracking)
+            .options(
+                joinedload(ConversationSLATracking.policy),
+                joinedload(ConversationSLATracking.contact),
+                joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user),
+            )
+            .filter(
+                ConversationSLATracking.respond_contact_id == respond_contact_id,
+                ConversationSLATracking.policy_id == policy_id,
+            )
+            .order_by(
+                ConversationSLATracking.is_resolved.asc(),  # False first
+                ConversationSLATracking.created_at.desc(),
+            )
+            .first()
+        )
+        return tracking
+
+    def escalate_tracking(
+        self,
+        respond_contact_id: str,
+        policy_id: str,
+        current_tier: int,
+        escalation_reason: str,
+    ) -> ConversationSLATracking:
+        """
+        Escalate a conversation SLA tracking by respond_contact_id and policy_id: set new tier,
+        timestamps, and recalculate due_at (response) and due_at_resolution from policy tier KPIs.
+        Creates an escalation event log. Called by external system via integration API.
+        """
+        from datetime import timedelta
+
+        tracking = self.get_tracking_by_contact_and_policy(respond_contact_id, policy_id)
+        if not tracking:
+            raise handle_not_found(
+                "Conversation SLA tracking",
+                f"respond_contact_id={respond_contact_id}, policy_id={policy_id}",
+            )
+        if tracking.is_resolved:
+            raise handle_validation_error(
+                "Cannot escalate a resolved conversation SLA tracking."
+            )
+
+        tier = self.db.query(SLAPolicyTier).filter(
+            SLAPolicyTier.policy_id == tracking.policy_id,
+            SLAPolicyTier.tier_level == current_tier,
+        ).first()
+        if not tier:
+            raise handle_validation_error(
+                f"SLA policy tier {current_tier} not found for policy {tracking.policy_id}."
+            )
+
+        from_tier = tracking.current_tier
+        now_utc = _now_utc()
+        initiated_at_utc = _to_aware_utc(tracking.initiated_at)
+        response_hours = tier.response_hours if tier.response_hours is not None else 24
+        resolution_hours = getattr(tier, "resolution_hours", None) or 24
+
+        tracking.current_tier = current_tier
+        tracking.current_tier_started_at = now_utc
+        tracking.escalated_at = now_utc
+        tracking.escalation_reason = escalation_reason
+        tracking.due_at = now_utc + timedelta(hours=response_hours)
+        if initiated_at_utc:
+            tracking.due_at_resolution = initiated_at_utc + timedelta(hours=resolution_hours)
+        else:
+            tracking.due_at_resolution = None
+
+        self.create_event_log(
+            ConversationSLAEventLogCreate(
+                sla_tracking_id=tracking.id,
+                event_type="escalation",
+                from_tier=from_tier,
+                to_tier=current_tier,
+                event_at=now_utc,
+                reason=escalation_reason,
+                assigned_to_id=tracking.assigned_to_id,
+                due_at=tracking.due_at,
+            )
+        )
+        self.db.refresh(tracking)
+        return tracking
+
     def get_existing_assignee_for_contact_phone(self, contact_phone: str) -> Optional[dict]:
         """
         If there is a conversation SLA tracking for this contact phone that already has an assignee,
@@ -692,6 +821,37 @@ class ConversationSLATrackingService:
             "message": "Assignee synced from Respond.io.",
             "assigned_to_id": str(user.id),
             "assigned_to": user.name or user.email or assignee_respond_id,
+        }
+
+    def set_assignee_for_tracking(self, tracking_id: str, assignee_respond_user_id: str) -> dict:
+        """
+        Update the assignee on Conversation SLA Tracking in our system only (no Respond.io call).
+        Used by external API: look up tracking by contact phone, then update assigned_to/assigned_to_id.
+        assignee_respond_user_id: Respond.io user id (e.g. 1023495). Use empty string to unassign.
+        """
+        from app.models.user import User
+
+        tracking = self.get_tracking(tracking_id)
+        assignee_id = (assignee_respond_user_id or "").strip()
+        self.update_tracking(
+            tracking_id,
+            ConversationSLATrackingUpdate(assigned_to=assignee_id if assignee_id else None),
+        )
+        tracking = self.get_tracking(tracking_id)
+        phone = None
+        if tracking.contact:
+            phone = (getattr(tracking.contact, "phone_number", None) or "").strip()
+        user = None
+        if assignee_id:
+            user = self.db.query(User).filter(User.respond_user_id == assignee_id).first()
+        return {
+            "updated": True,
+            "message": "Conversation SLA tracking assignee updated.",
+            "tracking_id": tracking_id,
+            "contact_phone": phone,
+            "assigned_to": (user.name or user.email or assignee_id) if user else (assignee_id or None),
+            "assigned_to_id": str(user.id) if user else None,
+            "assignee_respond_user_id": assignee_id or None,
         }
 
     def create_tracking(self, tracking_data: ConversationSLATrackingCreate):

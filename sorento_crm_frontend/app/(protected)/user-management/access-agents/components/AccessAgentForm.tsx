@@ -76,6 +76,7 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
       description: '',
       pic_respond_user_id: '',
       is_active: true,
+      assign_to_new_internal_contacts: false,
     },
     mode: 'onSubmit',
   });
@@ -94,6 +95,7 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
           description: accessAgent.description || '',
           pic_respond_user_id: accessAgent.pic_respond_user_id || null,
           is_active: accessAgent.is_active,
+          assign_to_new_internal_contacts: accessAgent.assign_to_new_internal_contacts ?? false,
         });
         setFormInitialized(true);
       }, 0);
@@ -115,6 +117,7 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
         description: data.description || undefined,
         pic_respond_user_id: data.pic_respond_user_id && data.pic_respond_user_id !== '__none__' ? data.pic_respond_user_id : undefined,
         is_active: data.is_active,
+        assign_to_new_internal_contacts: data.assign_to_new_internal_contacts,
       };
 
       if (isEditMode && accessAgentId) {
@@ -283,6 +286,27 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                       <FormLabel className="text-base">Active Status</FormLabel>
                       <FormDescription>
                         Enable or disable this access agent
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="assign_to_new_internal_contacts"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base">Assign to new internal users</FormLabel>
+                      <FormDescription>
+                        When enabled, this agent is automatically assigned to new internal users created by the Respond.io contact sync
                       </FormDescription>
                     </div>
                     <FormControl>

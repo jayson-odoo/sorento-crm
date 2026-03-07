@@ -1,11 +1,12 @@
 'use client';
 
-import { JSX, useCallback } from 'react';
+import { JSX, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { MENU_SIDEBAR } from '@/config/menu.config';
 import { MenuConfig, MenuItem } from '@/config/types';
 import { cn } from '@/lib/utils';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   AccordionMenu,
   AccordionMenuClassNames,
@@ -17,9 +18,34 @@ import {
   AccordionMenuSubTrigger,
 } from '@/components/ui/accordion-menu';
 import { Badge } from '@/components/ui/badge';
+import { QuickAccessBlock } from './quick-access-block';
+import { MenuItemPinButton } from './menu-item-pin-button';
+
+/** Filter menu items by permission: hide items that require a permission the user doesn't have; recurse into children. */
+function filterMenuByPermission(items: MenuConfig, permissionSet: Set<string>): MenuConfig {
+  return items.filter((item: MenuItem) => {
+    if (item.heading) return true;
+    if (item.permission && !permissionSet.has(item.permission)) return false;
+    if (item.children?.length) {
+      const filtered = filterMenuByPermission(item.children, permissionSet);
+      return filtered.length > 0;
+    }
+    return true;
+  }).map((item: MenuItem) => {
+    if (item.children?.length) {
+      return { ...item, children: filterMenuByPermission(item.children, permissionSet) };
+    }
+    return item;
+  });
+}
 
 export function SidebarMenu() {
   const pathname = usePathname();
+  const { permissionSet, isLoading } = usePermissions();
+  const effectiveMenu = useMemo(
+    () => (isLoading ? MENU_SIDEBAR : filterMenuByPermission(MENU_SIDEBAR, permissionSet)),
+    [permissionSet, isLoading]
+  );
 
   // Memoize matchPath to prevent unnecessary re-renders
   const matchPath = useCallback(
@@ -80,14 +106,15 @@ export function SidebarMenu() {
         <AccordionMenuItem
           key={index}
           value={item.path || ''}
-          className="text-sm font-medium"
+          className="text-sm font-medium group"
         >
           <Link
             href={item.path || '#'}
-            className="flex items-center justify-between grow gap-2"
+            className="flex items-center justify-between grow gap-2 min-w-0"
           >
-            {item.icon && <item.icon data-slot="accordion-menu-icon" />}
-            <span data-slot="accordion-menu-title">{item.title}</span>
+            {item.icon && <item.icon data-slot="accordion-menu-icon" className="shrink-0" />}
+            <span data-slot="accordion-menu-title" className="truncate">{item.title}</span>
+            {item.path && <MenuItemPinButton path={item.path} title={item.title} />}
           </Link>
         </AccordionMenuItem>
       );
@@ -177,9 +204,16 @@ export function SidebarMenu() {
         <AccordionMenuItem
           key={index}
           value={item.path || ''}
-          className="text-[13px]"
+          className="text-[13px] group"
         >
-          <Link href={item.path || '#'}>{item.title}</Link>
+          <div className="flex items-center gap-1 min-w-0 w-full">
+            <Link href={item.path || '#'} className="flex-1 min-w-0 truncate">
+              {item.title}
+            </Link>
+            {item.path && (
+              <MenuItemPinButton path={item.path} title={item.title} size="sm" />
+            )}
+          </div>
         </AccordionMenuItem>
       );
     }
@@ -210,6 +244,14 @@ export function SidebarMenu() {
     return <AccordionMenuLabel key={index}>{item.heading}</AccordionMenuLabel>;
   };
 
+  const userManagementIndex = useMemo(
+    () => effectiveMenu.findIndex((item) => !item.heading && item.title === 'User Management'),
+    [effectiveMenu]
+  );
+  const indexToSplit = userManagementIndex >= 0 ? userManagementIndex : effectiveMenu.length;
+  const menuBefore = useMemo(() => effectiveMenu.slice(0, indexToSplit), [effectiveMenu, indexToSplit]);
+  const menuAfter = useMemo(() => effectiveMenu.slice(indexToSplit), [effectiveMenu, indexToSplit]);
+
   return (
     <div className="kt-scrollable-y-hover flex grow shrink-0 py-5 px-5 lg:max-h-[calc(100vh-5.5rem)]">
       <AccordionMenu
@@ -218,8 +260,11 @@ export function SidebarMenu() {
         type="single"
         collapsible
         classNames={classNames}
+        defaultExpandedValue="quick-access"
       >
-        {buildMenu(MENU_SIDEBAR)}
+        {buildMenu(menuBefore)}
+        <QuickAccessBlock />
+        {buildMenu(menuAfter)}
       </AccordionMenu>
     </div>
   );

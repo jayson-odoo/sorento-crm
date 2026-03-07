@@ -319,6 +319,12 @@ class AttachmentTypeService:
         if not attachment_type:
             raise handle_not_found("Attachment Type", type_id)
         return attachment_type
+
+    def get_type_by_code(self, code: str):
+        """Get an attachment type by code, or None if not found."""
+        if not (code or "").strip():
+            return None
+        return self.db.query(AttachmentType).filter(AttachmentType.code == code.strip()).first()
     
     def create_type(self, type_data: AttachmentTypeCreate):
         """Create a new attachment type."""

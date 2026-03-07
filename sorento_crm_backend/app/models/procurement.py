@@ -331,6 +331,7 @@ class PurchaseRequestHeader(Base):
     respond_inbox_url = Column(Text, nullable=True)
     approver_user_id = Column(String(100), nullable=True)
     approver_email = Column(String(255), nullable=True)
+    requested_approval_by_user_id = Column(String(100), nullable=True)  # user who set to pending / sent approval link
     approval_status = Column(String(50), nullable=True)  # pending | approved | rejected
     approved_at = Column(DateTime(timezone=False), nullable=True)
     approved_by = Column(Text, nullable=True)
@@ -388,4 +389,19 @@ class ApprovalToken(Base):
 
     __table_args__ = (
         Index("ix_approval_tokens_entity_type_entity_id", "entity_type", "entity_id"),
+    )
+
+
+class ViewToken(Base):
+    """Reusable token for public view links (no login, read-only). One per purchase request."""
+    __tablename__ = "view_tokens"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    entity_type = Column(String(50), nullable=False)
+    entity_id = Column(String(100), nullable=False)
+    token = Column(String(255), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_view_tokens_entity_type_entity_id", "entity_type", "entity_id", unique=True),
     )

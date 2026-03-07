@@ -8,9 +8,9 @@ import { getDirectoryTree, createDirectory, updateDirectory, deleteDirectory, re
 import { apiFetch } from '@/lib/api';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 
-export function useAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; upload_date_from?: string; upload_date_to?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null }) {
+export function useAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; upload_date_from?: string; upload_date_to?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null; resolve_signed_urls?: boolean }) {
   return useQuery({
-    queryKey: ['attachments', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.entity_type, params.file_type, params.upload_date_from, params.upload_date_to, params.is_deleted, params.virus_status, params.directory_id],
+    queryKey: ['attachments', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.entity_type, params.file_type, params.upload_date_from, params.upload_date_to, params.is_deleted, params.virus_status, params.directory_id, params.resolve_signed_urls],
     queryFn: () => getAttachments(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
@@ -22,8 +22,28 @@ export function useAttachments(params: DataGridApiFetchParams & { entity_type?: 
 export function useUploadAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ file, attachmentTypeId, entityType, entityId, accessLevels, directoryId }: { file: File; attachmentTypeId: string; entityType?: string; entityId?: string; accessLevels?: string[]; directoryId?: string | null }) =>
-      uploadAttachment(file, attachmentTypeId, entityType, entityId, accessLevels, directoryId),
+    mutationFn: ({
+      file,
+      attachmentTypeId,
+      entityType,
+      entityId,
+      accessLevels,
+      directoryId,
+    }: {
+      file: File;
+      attachmentTypeId?: string | null;
+      entityType?: string;
+      entityId?: string;
+      accessLevels?: string[];
+      directoryId?: string | null;
+    }) =>
+      uploadAttachment(file, {
+        attachmentTypeId: attachmentTypeId ?? undefined,
+        entityType,
+        entityId,
+        accessLevels,
+        directoryId,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
       // Toast will be shown by the dialog component for multiple files

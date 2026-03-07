@@ -23,9 +23,16 @@ class RespondClient:
         self.space_id = settings.respond_space_id
 
     def _headers(self) -> dict:
+        """Headers required by Respond.io; Accept and User-Agent help avoid CloudFront/WAF 403."""
+        base = {
+            "Accept": "application/json, application/xml, multipart/form-data",
+            "Content-Type": "application/json",
+            "User-Agent": "SorentoCRM/1.0 (Respond.io Integration)",
+        }
         if not self.api_key:
-            return {}
-        return {"Authorization": f"Bearer {self.api_key}"}
+            return base
+        base["Authorization"] = f"Bearer {self.api_key}"
+        return base
 
     def _contact_api_identifier(self, identifier: str) -> str:
         """Format contact identifier for API path: use id:xxxx for plain IDs, keep phone: etc. as-is."""
@@ -92,6 +99,63 @@ class RespondClient:
         payload = {"message": {"type": "text", "text": text}}
         with httpx.Client(timeout=15) as client:
             response = client.post(url, headers=self._headers(), json=payload)
+            response.raise_for_status()
+            return response.json() if response.content else {}
+
+    def set_conversation_assignee(self, identifier: str, assignee_id: str) -> dict:
+        """
+        Set the conversation assignee for a contact. POST /v2/contact/{identifier}/conversation/assignee.
+        identifier: contact identifier (e.g. "phone:+60166753328" or "id:contact-uuid").
+        assignee_id: Respond.io user id (space member). Use empty string to unassign.
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}/conversation/assignee"
+        payload = {"assigneeId": assignee_id} if assignee_id else {}
+        with httpx.Client(timeout=15) as client:
+            response = client.post(url, headers=self._headers(), json=payload)
+            response.raise_for_status()
+            return response.json() if response.content else {}
+
+    def list_contacts(
+        self,
+        *,
+        body: Optional[dict] = None,
+        search: str = "",
+        filter_body: Optional[dict] = None,
+        timezone: str = "Asia/Kuala_Lumpur",
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> dict:
+        """
+        List contacts via POST /v2/contact/list.
+        If body is provided, it is sent as-is. Otherwise builds payload from search, filter_body, timezone, limit, cursor.
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        url = f"{self.base_url}/v2/contact/list"
+        if body is not None:
+            payload = body
+        else:
+            payload = {"search": search, "filter": filter_body or {}, "timezone": timezone}
+            if limit is not None:
+                payload["limit"] = limit
+            if cursor:
+                payload["cursor"] = cursor
+        with httpx.Client(timeout=30) as client:
+            response = client.post(url, headers=self._headers(), json=payload)
+            response.raise_for_status()
+            return response.json() if response.content else {}
+
+    def update_contact(self, identifier: str, payload: dict) -> dict:
+        """Update contact via PUT /v2/contact/{identifier}. payload can include customFields."""
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}"
+        with httpx.Client(timeout=15) as client:
+            response = client.put(url, headers=self._headers(), json=payload)
             response.raise_for_status()
             return response.json() if response.content else {}
 

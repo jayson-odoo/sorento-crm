@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,7 +13,6 @@ import {
   AlertIcon,
   AlertTitle,
 } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -32,6 +31,19 @@ import {
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -39,7 +51,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Button, ButtonArrow } from '@/components/ui/button';
 import { LoaderCircleIcon } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { User, UserRole } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../../roles/hooks/use-role-select-query';
 import { UserStatusProps } from '../../constants/status';
@@ -61,15 +75,26 @@ const UserProfileEditDialog = ({
   fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'user-profile-edit-dialog.tsx:60',message:'UserProfileEditDialog component rendered',data:{open,userId:user?.id,hasUser:!!user},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
   // #endregion
   const queryClient = useQueryClient();
+  const [superiorOpen, setSuperiorOpen] = useState(false);
 
   // Fetch available roles
   const { data: roleList } = useRoleSelectQuery();
+
+  const { data: userRoles = [] } = useQuery({
+    queryKey: ['user-roles', user?.id],
+    queryFn: async () => {
+      const response = await apiFetch(`/api/user-management/users/${user!.id}/roles`);
+      if (!response.ok) throw new Error('Failed to fetch user roles');
+      return response.json() as Promise<{ id: string; name: string }[]>;
+    },
+    enabled: open && !!user?.id,
+  });
 
   const form = useForm<UserProfileSchemaType>({
     resolver: zodResolver(UserProfileSchema),
     defaultValues: {
       name: user?.name || '',
-      roleId: user?.roleId || '',
+      roleIds: user?.roles?.length ? user.roles.map((r) => r.id) : (user?.roleId ? [user.roleId] : []),
       status: user?.status || '',
       respond_user_id: user?.respondUserId || '',
       superior_id: user?.superiorId || '',
@@ -77,17 +102,25 @@ const UserProfileEditDialog = ({
     mode: 'onSubmit',
   });
 
+  const lastResetRef = useRef<{ userId: string } | null>(null);
   useEffect(() => {
-    if (open) {
-      form.reset({
-        name: user?.name || '',
-        roleId: user?.roleId || '',
-        status: user?.status || '',
-        respond_user_id: user?.respondUserId || '',
-        superior_id: user?.superiorId || '',
-      });
+    if (!open) {
+      lastResetRef.current = null;
+      return;
     }
-  }, [open, user, form]);
+    if (!user?.id) return;
+    if (lastResetRef.current?.userId === user.id) return;
+    lastResetRef.current = { userId: user.id };
+    const roleIds = userRoles.length ? userRoles.map((r: { id: string }) => r.id) : (user?.roles?.length ? user.roles.map((r) => r.id) : (user?.roleId ? [user.roleId] : []));
+    form.reset({
+      name: user.name || '',
+      roleIds,
+      status: user.status || '',
+      respond_user_id: user.respondUserId || '',
+      superior_id: user.superiorId || '',
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; omit to avoid reset loop
+  }, [open, user?.id, user?.name, user?.status, user?.roles, user?.respondUserId, user?.superiorId, userRoles.length]);
 
   const { data: superiorUsers } = useQuery({
     queryKey: ['users-select'],
@@ -116,34 +149,35 @@ const UserProfileEditDialog = ({
 
   const mutation = useMutation({
     mutationFn: async (values: UserProfileSchemaType) => {
-      // Build the payload explicitly with all required fields
-      const profileData: Record<string, any> = {
+      const roleIds = values.roleIds?.length ? values.roleIds : [];
+      const rolesResponse = await apiFetch(`/api/user-management/users/${user.id}/roles`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role_ids: roleIds }),
+      });
+      if (!rolesResponse.ok) {
+        const err = await rolesResponse.json().catch(() => ({}));
+        throw new Error((err as { detail?: string }).detail || 'Failed to update roles');
+      }
+
+      const profileData: Record<string, unknown> = {
         name: values.name,
         status: values.status,
-        role_id: values.roleId,
       };
-      
-      // Always include respond_user_id - convert empty string to null
-      profileData.respond_user_id = values.respond_user_id && values.respond_user_id.trim() !== '' 
-        ? values.respond_user_id.trim() 
+      profileData.respond_user_id = values.respond_user_id?.trim() || null;
+      profileData.superior_id = (values.superior_id && values.superior_id !== '__none__' && values.superior_id.trim() !== '')
+        ? values.superior_id
         : null;
-      
-      // Always include superior_id - convert __none__ or empty to null
-      profileData.superior_id = (values.superior_id && values.superior_id !== '__none__' && values.superior_id.trim() !== '') 
-        ? values.superior_id 
-        : null;
-      
+
       const response = await apiFetch(`/api/user-management/users/${user.id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(profileData),
       });
 
       if (!response.ok) {
-        const { message } = await response.json();
-        throw new Error(message);
+        const err = await response.json().catch(() => ({}));
+        throw new Error((err as { message?: string }).message || 'Failed to update user');
       }
 
       const updatedUser = await response.json();
@@ -169,6 +203,7 @@ const UserProfileEditDialog = ({
       // Invalidate and refetch user data to get updated values
       queryClient.invalidateQueries({ queryKey: ['user-users'] });
       queryClient.invalidateQueries({ queryKey: ['user-user', user.id] });
+      queryClient.invalidateQueries({ queryKey: ['user-roles', user.id] });
       queryClient.refetchQueries({ queryKey: ['user-user', user.id] });
       closeDialog();
     },
@@ -265,15 +300,16 @@ const UserProfileEditDialog = ({
   // #endregion
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent className="max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Edit User Details</DialogTitle>
         </DialogHeader>
         <Form {...form}>
           <form
             onSubmit={form.handleSubmit(handleSubmit)}
-            className="space-y-6"
+            className="flex flex-1 min-h-0 flex-col overflow-hidden"
           >
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 space-y-6">
             {mutation.status === 'error' && (
               <Alert variant="destructive">
                 <AlertDescription>{mutation.error.message}</AlertDescription>
@@ -294,28 +330,36 @@ const UserProfileEditDialog = ({
             />
             <FormField
               control={form.control}
-              name="roleId"
+              name="roleIds"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Role</FormLabel>
+                  <FormLabel>Roles</FormLabel>
                   <FormControl>
-                    <Select
-                      onValueChange={(value) => field.onChange(value)}
-                      value={field.value || ''}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a role" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          {roleList?.map((role: UserRole) => (
-                            <SelectItem key={role.id} value={role.id}>
-                              {role.name}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex flex-col gap-2 rounded-md border p-3">
+                      {(roleList ?? []).map((role: UserRole) => (
+                        <div
+                          key={role.id}
+                          className="flex flex-row items-center space-x-2"
+                        >
+                          <Checkbox
+                            id={`role-${role.id}`}
+                            checked={field.value?.includes(role.id)}
+                            onCheckedChange={(checked) => {
+                              const next = checked
+                                ? [...(field.value ?? []), role.id]
+                                : (field.value ?? []).filter((id) => id !== role.id);
+                              field.onChange(next);
+                            }}
+                          />
+                          <label
+                            htmlFor={`role-${role.id}`}
+                            className="font-normal cursor-pointer text-sm"
+                          >
+                            {role.name}
+                          </label>
+                        </div>
+                      ))}
+                    </div>
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -395,39 +439,72 @@ const UserProfileEditDialog = ({
             <FormField
               control={form.control}
               name="superior_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Superior</FormLabel>
-                  <FormControl>
-                    <Select
-                      onValueChange={(value) => {
-                        // Convert "__none__" to null/undefined for optional field
-                        field.onChange(value === '__none__' ? null : value);
-                      }}
-                      value={field.value || '__none__'}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a superior" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="__none__">None</SelectItem>
-                          {(superiorUsers || [])
-                            .filter((superior: { id: string }) => superior.id !== user.id)
-                            .map((superior: { id: string; name?: string | null; email: string }) => (
-                              <SelectItem key={superior.id} value={superior.id}>
-                                {superior.name || superior.email}
-                              </SelectItem>
-                            ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
+              render={({ field }) => {
+                const value = field.value || '__none__';
+                const selected = value === '__none__' ? null : (superiorUsers || []).find((u: { id: string }) => u.id === value);
+                const displayLabel = selected ? (selected.name || selected.email) : 'None';
+                const filteredSuperiors = (superiorUsers || []).filter((s: { id: string }) => s.id !== user.id);
+                return (
+                  <FormItem>
+                    <FormLabel>Superior</FormLabel>
+                    <FormControl>
+                      <Popover open={superiorOpen} onOpenChange={setSuperiorOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            role="combobox"
+                            mode="input"
+                            placeholder={!value || value === '__none__'}
+                            aria-expanded={superiorOpen}
+                            className={cn('w-full justify-between font-normal')}
+                          >
+                            <span className={cn('truncate', (!value || value === '__none__') && 'text-muted-foreground')}>
+                              {displayLabel}
+                            </span>
+                            <ButtonArrow />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-(--radix-popper-anchor-width) max-h-[min(320px,80vh)] flex flex-col p-0" align="start">
+                          <Command className="max-h-full min-h-0 flex flex-col">
+                            <CommandInput placeholder="Search by name or email..." />
+                            <CommandList className="max-h-[240px] min-h-0 overflow-y-auto overflow-x-hidden">
+                              <CommandEmpty>No user found.</CommandEmpty>
+                              <CommandGroup>
+                                <CommandItem
+                                  value="__none__"
+                                  onSelect={() => {
+                                    field.onChange(null);
+                                    setSuperiorOpen(false);
+                                  }}
+                                >
+                                  None
+                                </CommandItem>
+                                {filteredSuperiors.map((superior: { id: string; name?: string | null; email: string }) => (
+                                  <CommandItem
+                                    key={superior.id}
+                                    value={`${superior.name ?? ''} ${superior.email}`.trim() || superior.id}
+                                    onSelect={() => {
+                                      field.onChange(superior.id);
+                                      setSuperiorOpen(false);
+                                    }}
+                                  >
+                                    {superior.name || superior.email}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }}
             />
-            <DialogFooter>
+            </div>
+            <DialogFooter className="shrink-0">
               <Button type="button" variant="outline" onClick={closeDialog}>
                 Cancel
               </Button>

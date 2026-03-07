@@ -44,12 +44,16 @@ export interface SendApprovalLinkRequest {
   approver_email?: string | null;
   approver_user_id?: string | null;
   expires_hours?: number;
+  send_email?: boolean;
+  base_url?: string | null;
 }
 
 export interface SendApprovalLinkResponse {
   approval_url: string;
   expires_at: string;
   token_id: string;
+  email_sent?: boolean | null;
+  email_error?: string | null;
 }
 
 export interface PurchaseRequestLineFormData {
@@ -60,6 +64,7 @@ export interface PurchaseRequestLineFormData {
 
 export interface PurchaseRequestFormData {
   request_type: string;
+  request_number?: string | null;
   request_date?: string;
   customer_name?: string;
   project_title?: string;

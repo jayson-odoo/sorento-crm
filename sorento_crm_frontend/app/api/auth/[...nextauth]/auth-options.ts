@@ -68,12 +68,28 @@ const authOptions: NextAuthOptions = {
           data: { lastSignInAt: new Date() },
         });
 
+        const assignments = await (
+          prisma as unknown as {
+            userRoleAssignment: {
+              findMany: (args: {
+                where: { userId: string };
+                select: { roleId: true };
+              }) => Promise<{ roleId: string }[]>;
+            };
+          }
+        ).userRoleAssignment.findMany({
+          where: { userId: user.id },
+          select: { roleId: true },
+        });
+        const roleIds = assignments.map((a) => a.roleId);
+
         return {
           id: user.id,
           status: user.status,
           email: user.email,
           name: user.name || 'Anonymous',
-          roleId: user.roleId,
+          roleId: roleIds[0] ?? null,
+          roleIds,
           avatar: user.avatar,
         };
       },
@@ -85,14 +101,6 @@ const authOptions: NextAuthOptions = {
       async profile(profile) {
         const existingUser = await prisma.user.findUnique({
           where: { email: profile.email },
-          include: {
-            role: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
         });
 
         if (existingUser) {
@@ -106,13 +114,30 @@ const authOptions: NextAuthOptions = {
             },
           });
 
+          const assignments = await (
+            prisma as unknown as {
+              userRoleAssignment: {
+                findMany: (args: {
+                  where: { userId: string };
+                  select: { roleId: true };
+                }) => Promise<{ roleId: string }[]>;
+              };
+            }
+          ).userRoleAssignment.findMany({
+            where: { userId: existingUser.id },
+            select: { roleId: true },
+          });
+          const roleIds = assignments.map((a) => a.roleId);
+          const firstRoleId = roleIds[0] ?? null;
+
           return {
             id: existingUser.id,
             email: existingUser.email,
             name: existingUser.name || 'Anonymous',
             status: existingUser.status,
-            roleId: existingUser.roleId,
-            roleName: existingUser.role.name,
+            roleId: firstRoleId,
+            roleIds,
+            roleName: null,
             avatar: existingUser.avatar,
           };
         }
@@ -127,7 +152,7 @@ const authOptions: NextAuthOptions = {
           );
         }
 
-        // Create a new user and account
+        // Create a new user and account (no roleId on User; use roleAssignments)
         const newUser = await prisma.user.create({
           data: {
             email: profile.email,
@@ -135,9 +160,19 @@ const authOptions: NextAuthOptions = {
             password: '', // No password for OAuth users
             avatar: profile.picture || null,
             emailVerifiedAt: new Date(),
-            roleId: defaultRole.id,
             status: 'ACTIVE',
-          },
+          } as Parameters<typeof prisma.user.create>[0]['data'],
+        });
+
+        const prismaWithAssignment = prisma as unknown as {
+          userRoleAssignment: {
+            create: (args: {
+              data: { userId: string; roleId: string };
+            }) => Promise<unknown>;
+          };
+        };
+        await prismaWithAssignment.userRoleAssignment.create({
+          data: { userId: newUser.id, roleId: defaultRole.id },
         });
 
         return {
@@ -146,7 +181,8 @@ const authOptions: NextAuthOptions = {
           name: newUser.name || 'Anonymous',
           status: newUser.status,
           avatar: newUser.avatar,
-          roleId: newUser.roleId,
+          roleId: defaultRole.id,
+          roleIds: [defaultRole.id],
           roleName: defaultRole.name,
         };
       },
@@ -171,10 +207,12 @@ const authOptions: NextAuthOptions = {
       if (trigger === 'update' && session?.user) {
         token = session.user;
       } else {
-        if (user && user.roleId) {
-          const role = await prisma.userRole.findUnique({
-            where: { id: user.roleId },
-          });
+        if (user) {
+          const role = user.roleId
+            ? await prisma.userRole.findUnique({
+                where: { id: user.roleId },
+              })
+            : null;
 
           token.id = (user.id || token.sub) as string;
           token.email = user.email;
@@ -182,6 +220,7 @@ const authOptions: NextAuthOptions = {
           token.avatar = user.avatar;
           token.status = user.status;
           token.roleId = user.roleId;
+          token.roleIds = user.roleIds ?? (user.roleId ? [user.roleId] : []);
           token.roleName = role?.name;
         }
       }
@@ -196,6 +235,7 @@ const authOptions: NextAuthOptions = {
         session.user.avatar = token.avatar;
         session.user.status = token.status;
         session.user.roleId = token.roleId;
+        session.user.roleIds = token.roleIds ?? (token.roleId ? [token.roleId] : []);
         session.user.roleName = token.roleName;
       }
       return session;

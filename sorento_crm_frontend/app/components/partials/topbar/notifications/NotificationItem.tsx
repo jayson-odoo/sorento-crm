@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useRef, useLayoutEffect } from 'react';
 import Link from 'next/link';
 import {
   DropdownMenu,
@@ -8,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
-import { MoreHorizontal, Check, Archive, RotateCcw, ExternalLink } from 'lucide-react';
+import { MoreHorizontal, Check, Archive, RotateCcw, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import type { NotificationItem as NotificationItemType } from '@/services/notificationService';
 
 function formatTime(createdAt: string): string {
@@ -46,6 +47,27 @@ export default function NotificationItem({
   const isUnread = !item.read_at;
   const jobId = item.data?.job_id as string | undefined;
   const isImportJob = item.type?.startsWith('import_job_') && jobId;
+  const isPurchaseRequest =
+    (item.type === 'purchase_request_created' || item.type === 'purchase_request_approved') &&
+    item.source_entity_type === 'purchase_request' &&
+    item.source_entity_id;
+
+  const [expanded, setExpanded] = useState(false);
+  const [hasOverflow, setHasOverflow] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el || !item.body) {
+      setHasOverflow(false);
+      return;
+    }
+    if (expanded) {
+      setHasOverflow(true); // keep "Show less" visible when expanded
+      return;
+    }
+    setHasOverflow(el.scrollHeight > el.clientHeight);
+  }, [item.body, expanded]);
 
   const handleRowClick = () => {
     if (isUnread) {
@@ -75,8 +97,35 @@ export default function NotificationItem({
       <div className="flex flex-col gap-1 flex-1 min-w-0">
         <div className="text-sm font-medium break-words">{item.title}</div>
         {item.body && (
-          <div className="text-xs text-muted-foreground line-clamp-2 break-words">
-            {item.body}
+          <div className="text-xs text-muted-foreground break-words">
+            <div
+              ref={bodyRef}
+              className={expanded ? '' : 'line-clamp-2'}
+            >
+              {item.body}
+            </div>
+            {hasOverflow && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded((v) => !v);
+                }}
+                className="text-xs font-medium text-primary hover:underline mt-1 inline-flex items-center gap-0.5"
+              >
+                {expanded ? (
+                  <>
+                    <ChevronUp className="size-3" />
+                    Show less
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="size-3" />
+                    Show more
+                  </>
+                )}
+              </button>
+            )}
           </div>
         )}
         <span className="text-xs text-muted-foreground mt-0.5">
@@ -90,6 +139,16 @@ export default function NotificationItem({
           >
             <ExternalLink className="size-3" />
             View import job
+          </Link>
+        )}
+        {isPurchaseRequest && (
+          <Link
+            href={`/procurement-management/purchase-requests/${item.source_entity_id}`}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline mt-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ExternalLink className="size-3" />
+            View form
           </Link>
         )}
       </div>

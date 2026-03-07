@@ -7,15 +7,14 @@ import { useRouter } from 'next/navigation';
 import { LoaderCircleIcon, Save, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import {
   Form,
   FormControl,
@@ -33,11 +32,14 @@ import {
   useUpdateStockInquiryAndReply,
   useStockInquiry,
 } from '../hooks/useStockInquiries';
+import { getOrCreateStockInquiryViewLink } from '../services/stockInquiryService';
+import { toast } from 'sonner';
 import {
   StockInquirySchema,
   type StockInquirySchemaType,
 } from '../forms/stock-inquiry-schema';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
+import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
 
 interface StockInquiryFormProps {
   inquiryId?: string;
@@ -57,6 +59,7 @@ export default function StockInquiryForm({
   const updateMutation = useUpdateStockInquiry();
   const updateAndReplyMutation = useUpdateStockInquiryAndReply();
   const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
+  const [replyMessage, setReplyMessage] = useState('');
 
   const form = useForm<StockInquirySchemaType>({
     resolver: zodResolver(StockInquirySchema),
@@ -107,6 +110,7 @@ export default function StockInquiryForm({
   const handleUpdateAndReplyClick = async () => {
     const valid = await form.trigger();
     if (!valid || !inquiryId) return;
+    setReplyMessage(form.getValues().purchasing_response ?? '');
     setUpdateAndReplyDialogOpen(true);
   };
 
@@ -123,13 +127,14 @@ export default function StockInquiryForm({
       delivery_date: data.delivery_date ?? undefined,
       remark: data.remark ?? undefined,
       additional_remark: data.additional_remark || undefined,
-      purchasing_response: data.purchasing_response || undefined,
+      purchasing_response: replyMessage.trim() || undefined,
       contact_id: data.contact_id || undefined,
       space_id: data.space_id || undefined,
     };
     try {
       await updateAndReplyMutation.mutateAsync({ id: inquiryId, data: formData });
       setUpdateAndReplyDialogOpen(false);
+      setReplyMessage('');
       onSuccess?.();
     } catch {
       // Error toast from mutation
@@ -156,7 +161,17 @@ export default function StockInquiryForm({
       if (isEditMode && inquiryId) {
         await updateMutation.mutateAsync({ id: inquiryId, data: formData });
       } else {
-        await createMutation.mutateAsync(formData);
+        const created = await createMutation.mutateAsync(formData);
+        if (created?.id) {
+          try {
+            const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+            const { view_url } = await getOrCreateStockInquiryViewLink(created.id, baseUrl);
+            await navigator.clipboard.writeText(view_url);
+            toast.success('Stock inquiry created. View link copied to clipboard.');
+          } catch {
+            // view link optional
+          }
+        }
       }
 
       onSuccess?.();
@@ -397,6 +412,13 @@ export default function StockInquiryForm({
           </div>
         </div>
 
+        {isEditMode && inquiryId && (
+          <StockInquiryAttachmentsSection
+            inquiryId={inquiryId}
+            attachments={inquiry?.attachments ?? []}
+          />
+        )}
+
         <div className="flex justify-end gap-4">
           <Button
             type="button"
@@ -445,32 +467,47 @@ export default function StockInquiryForm({
         </div>
       </form>
 
-      <AlertDialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Update & Reply</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will save your changes and send the purchasing response to the
-              customer via Respond.io. The conversation will be marked as responded.
-              Continue?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={updateAndReplyMutation.isPending}>
+      <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Update & Reply</DialogTitle>
+            <DialogDescription>
+              Edit the message below. It will be saved as the purchasing response and sent to the customer via Respond.io. The conversation will be marked as responded.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="stock-inquiry-reply-message">Message to send</Label>
+              <Textarea
+                id="stock-inquiry-reply-message"
+                value={replyMessage}
+                onChange={(e) => setReplyMessage(e.target.value)}
+                placeholder="Purchasing response..."
+                rows={5}
+                className="resize-none"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setUpdateAndReplyDialogOpen(false)}
+              disabled={updateAndReplyMutation.isPending}
+            >
               Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
+            </Button>
+            <Button
+              disabled={updateAndReplyMutation.isPending || !replyMessage.trim()}
               onClick={(e) => {
                 e.preventDefault();
                 handleUpdateAndReplyConfirm();
               }}
-              disabled={updateAndReplyMutation.isPending}
             >
               {updateAndReplyMutation.isPending ? 'Sending...' : 'Update & Reply'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Form>
   );
 }

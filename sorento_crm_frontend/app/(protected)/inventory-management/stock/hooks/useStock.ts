@@ -11,9 +11,9 @@ export function useStockDashboard() {
   });
 }
 
-export function useStockBalance(params: DataGridApiFetchParams & { warehouse_id?: string; product_id?: string; category_id?: string; status?: string; quantity_operator?: string; quantity_value?: string }) {
+export function useStockBalance(params: DataGridApiFetchParams & { warehouse_id?: string; product_id?: string; category_id?: string; status?: string }) {
   return useQuery({
-    queryKey: ['stock-balance', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.warehouse_id, params.product_id, params.category_id, params.status, params.quantity_operator, params.quantity_value],
+    queryKey: ['stock-balance', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.warehouse_id, params.product_id, params.category_id, params.status],
     queryFn: () => getStockBalance(params),
     staleTime: 1000 * 60 * 5,
     refetchOnWindowFocus: false,

@@ -1,6 +1,6 @@
 """User management models."""
 import enum
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index, Integer
 from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -23,7 +23,6 @@ class User(Base):
     country = Column(String, nullable=True)
     timezone = Column(String, nullable=True)
     name = Column(String, nullable=True)
-    role_id = Column(String, ForeignKey("user_roles.id"), nullable=False)
     status = Column(String, default=UserStatus.INACTIVE.value, nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -37,14 +36,13 @@ class User(Base):
     respond_synced = Column(String, default="pending", nullable=False)
     superior_id = Column(String, ForeignKey("users.id"), nullable=True)
     
-    role = relationship("UserRole", back_populates="users")
+    role_assignments = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
     system_logs = relationship("SystemLog", back_populates="user")
     superior = relationship("User", remote_side=[id], backref="subordinates")
-    agent_accesses = relationship("UserAgentAccess", back_populates="user")
-    
+    quick_access = relationship("UserQuickAccess", back_populates="user", order_by="UserQuickAccess.sort_order")
+
     __table_args__ = (
         Index("users_invited_by_user_id_idx", "invited_by_user_id"),
-        Index("users_role_id_idx", "role_id"),
         Index("users_status_idx", "status"),
         Index("users_respond_synced_idx", "respond_synced"),
     )
@@ -63,8 +61,27 @@ class UserRole(Base):
     is_protected = Column(Boolean, default=False, nullable=False)
     is_default = Column(Boolean, default=False, nullable=False)
     
-    users = relationship("User", back_populates="role")
+    user_assignments = relationship("UserRoleAssignment", back_populates="role", cascade="all, delete-orphan")
     permissions = relationship("UserRolePermission", back_populates="role")
+
+
+class UserRoleAssignment(Base):
+    """Pivot: user can have multiple roles. Kept in sync with users.role_id for compatibility."""
+    __tablename__ = "user_role_assignments"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    role_id = Column(String, ForeignKey("user_roles.id", ondelete="CASCADE"), nullable=False)
+    assigned_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    user = relationship("User", back_populates="role_assignments")
+    role = relationship("UserRole", back_populates="user_assignments")
+
+    __table_args__ = (
+        Index("ix_user_role_assignments_user_id", "user_id"),
+        Index("ix_user_role_assignments_role_id", "role_id"),
+        Index("uq_user_role_assignments_user_id_role_id", "user_id", "role_id", unique=True),
+    )
 
 
 class UserPermission(Base):
@@ -118,8 +135,8 @@ class SystemLog(Base):
 
 class SystemSetting(Base):
     __tablename__ = "system_settings"
-    
-    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # id as String so UPDATE/WHERE work when DB column is TEXT (avoids "operator does not exist: text = uuid")
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, default="My Company", nullable=False)
     logo = Column(String, nullable=True)
     active = Column(Boolean, default=True, nullable=False)
@@ -163,3 +180,21 @@ class SystemSetting(Base):
     smtp_username = Column(String(255), nullable=True)
     smtp_password = Column(String(255), nullable=True)
     smtp_from = Column(String(255), nullable=True)  # sender address or "Name <email>"
+
+
+class UserQuickAccess(Base):
+    """Per-user quick access (pinned menu items and attachment folders) for sidebar."""
+    __tablename__ = "user_quick_access"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    path = Column(String(500), nullable=False)
+    label = Column(String(255), nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+
+    user = relationship("User", back_populates="quick_access")
+
+    __table_args__ = (
+        Index("ix_user_quick_access_user_id", "user_id"),
+        Index("ix_user_quick_access_user_id_path", "user_id", "path", unique=True),
+    )

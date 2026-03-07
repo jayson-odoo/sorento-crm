@@ -2,35 +2,63 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2 } from 'lucide-react';
+import { Edit, Trash2, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useOrder, useDeleteOrder, useOrders } from '../hooks/useOrders';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { useOrder, useDeleteOrder, useOrders, useUpdateOrder } from '../hooks/useOrders';
+import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import { formatDate } from '@/lib/helpers';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 import OrderDeleteDialog from './order-delete-dialog';
 import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface OrderDetailProps {
   orderId: string;
+  /** List page index (0-based) when navigating from list; used to show "1/50" style position. */
+  listPageIndex?: number;
+  /** List page size (e.g. 50); used as total in navigation "current / total". */
+  listPageSize?: number;
 }
 
-export default function OrderDetail({ orderId }: OrderDetailProps) {
+export default function OrderDetail({ orderId, listPageIndex = 0, listPageSize = 50 }: OrderDetailProps) {
   const router = useRouter();
   const { data: order, isLoading } = useOrder(orderId);
   const navigationParams = useMemo(
     () => ({
-      pageIndex: 0,
-      pageSize: 100,
+      pageIndex: listPageIndex,
+      pageSize: listPageSize,
       sorting: [{ id: 'created_at', desc: true }],
       searchQuery: '',
     }),
-    [],
+    [listPageIndex, listPageSize],
   );
   const { data: navigationData } = useOrders(navigationParams);
   const navigationItems = navigationData?.data ?? [];
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const updateMutation = useUpdateOrder();
+  const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
+  const statusList = orderStatuses ?? [];
+  const newOrDeliveredStatuses = statusList.filter((s) => {
+    const code = (s.status_code ?? '').toString().trim().toLowerCase();
+    return code === 'new' || code === 'delivered';
+  });
+  const gearStatuses = newOrDeliveredStatuses.length > 0 ? newOrDeliveredStatuses : statusList;
+
+  const handleStatusChange = async (statusId: string) => {
+    try {
+      await updateMutation.mutateAsync({ id: orderId, data: { order_status_id: statusId } });
+    } catch {
+      // Error toast is handled by the mutation
+    }
+  };
 
   if (isLoading) {
     return (
@@ -60,7 +88,7 @@ export default function OrderDetail({ orderId }: OrderDetailProps) {
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold">{order.order_number}</h1>
             {order.order_status && (
-              <Badge variant="secondary">
+              <Badge variant={getStatusBadgeVariant(order.order_status.status_name)}>
                 {order.order_status.status_name}
               </Badge>
             )}
@@ -74,7 +102,35 @@ export default function OrderDetail({ orderId }: OrderDetailProps) {
             currentId={orderId}
             items={navigationItems}
             basePath="/order-management/orders"
+            totalCount={listPageSize}
+            onSelect={(id) => {
+              const params = new URLSearchParams();
+              params.set('page', String(listPageIndex));
+              params.set('pageSize', String(listPageSize));
+              router.push(`/order-management/orders/${id}?${params.toString()}`);
+            }}
           />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="outline" size="icon" aria-label="Change order status">
+                <Settings className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {gearStatuses.map((status) => (
+                <DropdownMenuItem
+                  key={status.id}
+                  onClick={() => handleStatusChange(status.id)}
+                  disabled={updateMutation.isPending}
+                >
+                  {status.status_name}
+                </DropdownMenuItem>
+              ))}
+              {gearStatuses.length === 0 && (
+                <DropdownMenuItem disabled>No statuses available</DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="outline" onClick={() => router.push(`/order-management/orders/${orderId}/edit`)}>
             <Edit className="size-4" />
             Edit
@@ -140,7 +196,7 @@ export default function OrderDetail({ orderId }: OrderDetailProps) {
                 <p className="text-sm text-muted-foreground">Order Status</p>
                 <p className="font-medium">
                   {order.order_status ? (
-                    <Badge variant="secondary">{order.order_status.status_name}</Badge>
+                    <Badge variant={getStatusBadgeVariant(order.order_status.status_name)}>{order.order_status.status_name}</Badge>
                   ) : (
                     '-'
                   )}

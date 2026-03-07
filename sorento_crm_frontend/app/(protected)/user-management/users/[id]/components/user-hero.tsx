@@ -64,14 +64,6 @@ const UserHero = ({ user, isLoading }: UserProfileProps) => {
             <TooltipProvider>
               <Tooltip delayDuration={50}>
                 <TooltipTrigger className="cursor-pointer">
-                  <Badge
-                    variant="secondary"
-                    className="gap-1.5 px-2 py-0.5"
-                    onClick={handleUserIdCopy}
-                  >
-                    <span>User ID: {user.id}</span>
-                    {showCopied && <Check className="text-success size-3" />}
-                  </Badge>
                 </TooltipTrigger>
                 <TooltipContent className="text-xs">
                   Click to copy

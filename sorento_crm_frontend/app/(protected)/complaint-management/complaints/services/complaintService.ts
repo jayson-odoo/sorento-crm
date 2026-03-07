@@ -9,10 +9,15 @@ import type {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 
+export type ComplaintsListParams = DataGridApiFetchParams & {
+  assigned_to?: string;
+  status?: string;
+};
+
 export async function getComplaints(
-  params: DataGridApiFetchParams,
+  params: ComplaintsListParams,
 ): Promise<DataGridApiResponse<Complaint>> {
-  const { pageIndex, pageSize, sorting, searchQuery } = params;
+  const { pageIndex, pageSize, sorting, searchQuery, assigned_to, status } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -20,6 +25,8 @@ export async function getComplaints(
     limit: String(pageSize),
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
+    ...(assigned_to ? { assigned_to } : {}),
+    ...(status ? { status } : {}),
   });
   const response = await apiFetch(
     `/api/v1/complaints-management/complaints?${queryParams.toString()}`,
@@ -108,6 +115,30 @@ export async function deleteComplaint(id: string): Promise<void> {
   }
 }
 
+export async function bulkDeleteComplaints(
+  ids: string[],
+): Promise<{ message: string; deleted_count: number }> {
+  const response = await apiFetch(
+    '/api/v1/complaints-management/complaints/bulk',
+    {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to bulk delete complaints' }));
+    const msg =
+      typeof error.detail === 'object' && error.detail?.message
+        ? error.detail.message
+        : error.message || 'Failed to bulk delete complaints';
+    throw new Error(msg);
+  }
+  return response.json();
+}
+
 export async function linkComplaintAttachment(
   complaintId: string,
   attachmentId: string,
@@ -140,4 +171,54 @@ export async function deleteComplaintAttachment(linkId: string): Promise<void> {
       .catch(() => ({ message: 'Failed to unlink attachment' }));
     throw new Error(error.message);
   }
+}
+
+export interface SyncAssigneeResult {
+  updated: boolean;
+  message: string;
+  assigned_to?: string;
+  assigned_to_id?: string;
+}
+
+export async function syncComplaintAssigneeFromRespond(
+  complaintId: string,
+): Promise<SyncAssigneeResult> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/${complaintId}/sync-assignee`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Sync assignee failed' }));
+    const msg =
+      typeof err.detail === 'object' && err.detail?.message
+        ? err.detail.message
+        : err.detail || 'Sync assignee failed';
+    throw new Error(msg);
+  }
+  return response.json();
+}
+
+export interface ViewLinkResponse {
+  view_token: string;
+  view_url: string;
+}
+
+export async function getOrCreateComplaintViewLink(
+  complaintId: string,
+  baseUrl?: string,
+): Promise<ViewLinkResponse> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/${complaintId}/view-link`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(baseUrl != null ? { base_url: baseUrl } : {}),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Failed to get view link' }));
+    const msg = typeof err.detail === 'string' ? err.detail : err.message || 'Failed to get view link';
+    throw new Error(msg);
+  }
+  return response.json();
 }

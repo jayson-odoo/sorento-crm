@@ -40,7 +40,7 @@ export default async function AttachmentDetailPage({
           <BreadcrumbSeparator />
           <BreadcrumbItem>
             <BreadcrumbLink href={backUrl}>
-              {fromDirectories ? 'Attachment Directories' : 'Attachments'}
+              {fromDirectories ? 'Files' : 'Attachments'}
             </BreadcrumbLink>
           </BreadcrumbItem>
           <BreadcrumbSeparator />

@@ -39,6 +39,8 @@ import {
   useDeleteDirectory,
   useDirectoryTree,
 } from '../../attachments/hooks/useAttachments';
+import { useQuickAccess, useAddQuickAccess, useRemoveQuickAccess } from '@/hooks/useQuickAccess';
+import { Star, StarOff } from 'lucide-react';
 
 interface DirectoryTreeSidebarProps {
   selectedId: string | null;
@@ -124,6 +126,8 @@ function findPathToFolder(
   return null;
 }
 
+const ATTACHMENT_DIRECTORIES_PATH = '/resource-management/attachment-directories';
+
 function DirectoryRow({
   node,
   depth,
@@ -134,6 +138,9 @@ function DirectoryRow({
   onRename,
   onDelete,
   onToggleExpand,
+  quickAccessEntryIdByDirectoryId,
+  onPinToQuickAccess,
+  onUnpinFromQuickAccess,
 }: {
   node: AttachmentDirectoryTreeNode;
   depth: number;
@@ -144,6 +151,9 @@ function DirectoryRow({
   onRename: (id: string, currentName: string) => void;
   onDelete: (id: string, name: string) => void;
   onToggleExpand: (id: string) => void;
+  quickAccessEntryIdByDirectoryId: Record<string, string>;
+  onPinToQuickAccess: (directoryId: string, label: string) => void;
+  onUnpinFromQuickAccess: (entryId: string) => void;
 }) {
   const isExpanded = expandedIds.has(node.id);
   const hasChildren = node.children && node.children.length > 0;
@@ -218,6 +228,19 @@ function DirectoryRow({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {quickAccessEntryIdByDirectoryId[node.id] ? (
+              <DropdownMenuItem
+                onClick={() => onUnpinFromQuickAccess(quickAccessEntryIdByDirectoryId[node.id])}
+              >
+                <StarOff className="size-4 mr-2" />
+                Unpin from Quick Access
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem onClick={() => onPinToQuickAccess(node.id, node.name)}>
+                <Star className="size-4 mr-2" />
+                Pin to Quick Access
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onClick={() => onCreateSubfolder(node.id)}>
               <Plus className="size-4 mr-2" />
               Add subfolder
@@ -250,6 +273,9 @@ function DirectoryRow({
               onRename={onRename}
               onDelete={onDelete}
               onToggleExpand={onToggleExpand}
+              quickAccessEntryIdByDirectoryId={quickAccessEntryIdByDirectoryId}
+              onPinToQuickAccess={onPinToQuickAccess}
+              onUnpinFromQuickAccess={onUnpinFromQuickAccess}
             />
           ))}
         </div>
@@ -258,11 +284,44 @@ function DirectoryRow({
   );
 }
 
+function buildFolderQuickAccessPath(directoryId: string): string {
+  return `${ATTACHMENT_DIRECTORIES_PATH}?directoryId=${directoryId}`;
+}
+
 export default function DirectoryTreeSidebar({ selectedId, onSelect }: DirectoryTreeSidebarProps) {
   const { data: tree = [], isLoading } = useDirectoryTree();
   const createMutation = useCreateDirectory();
   const updateMutation = useUpdateDirectory();
   const deleteMutation = useDeleteDirectory();
+  const { data: quickAccessList = [] } = useQuickAccess();
+  const addQuickAccessMutation = useAddQuickAccess();
+  const removeQuickAccessMutation = useRemoveQuickAccess();
+
+  const quickAccessEntryIdByDirectoryId = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const item of quickAccessList) {
+      const match = item.path.match(/\?directoryId=([^&]+)/);
+      if (match) map[match[1]] = item.id;
+    }
+    return map;
+  }, [quickAccessList]);
+
+  const onPinToQuickAccess = useCallback(
+    (directoryId: string, label: string) => {
+      addQuickAccessMutation.mutate({
+        path: buildFolderQuickAccessPath(directoryId),
+        label,
+      });
+    },
+    [addQuickAccessMutation]
+  );
+
+  const onUnpinFromQuickAccess = useCallback(
+    (entryId: string) => {
+      removeQuickAccessMutation.mutate(entryId);
+    },
+    [removeQuickAccessMutation]
+  );
 
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [addParentId, setAddParentId] = useState<string | null>(null);
@@ -425,6 +484,9 @@ export default function DirectoryTreeSidebar({ selectedId, onSelect }: Directory
                   onRename={openRenameDialog}
                   onDelete={openDeleteDialog}
                   onToggleExpand={handleToggleExpand}
+                  quickAccessEntryIdByDirectoryId={quickAccessEntryIdByDirectoryId}
+                  onPinToQuickAccess={onPinToQuickAccess}
+                  onUnpinFromQuickAccess={onUnpinFromQuickAccess}
                 />
               ))
             )}

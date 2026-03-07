@@ -16,7 +16,7 @@ import {
 import AttachmentDirectoriesView from './components/AttachmentDirectoriesView';
 
 export const metadata: Metadata = {
-  title: 'Attachment Directories',
+  title: 'Files',
   description: 'Manage folders and attachments.',
 };
 
@@ -33,7 +33,7 @@ export default async function AttachmentDirectoriesPage({
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Attachment Directories</ToolbarTitle>
+            <ToolbarTitle>Files</ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -45,7 +45,7 @@ export default async function AttachmentDirectoriesPage({
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Attachment Directories</BreadcrumbPage>
+                  <BreadcrumbPage>Files</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>

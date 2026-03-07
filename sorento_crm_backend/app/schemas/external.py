@@ -205,13 +205,16 @@ class PromotionProductItem(BaseModel):
 class PromotionRequest(BaseModel):
     promotions: PromotionHeader
     promotion_products: List[PromotionProductItem]
+    access_levels: Optional[List[str]] = None  # e.g. ["end_user"], ["dealer", "end_user"]; if omitted, DB default applies
+    attachment_id: Optional[str] = None  # single attachment UUID to link to the promotion (alternative to promotions.attachment_id list)
 
 
 class PromotionCreateResponse(BaseModel):
-    """Response for external promotion create; includes conflict detail when promo_code already exists."""
+    """Response for external promotion create; includes conflict detail when promo_code already exists, and warnings (e.g. missing product codes)."""
     promotion: PromotionResponse
     already_existed: bool = False
     message: Optional[str] = None  # e.g. "Promo code already exists." when already_existed
+    warnings: List[dict] = []  # e.g. [{"message": "Missing product codes (exact match)", "product_codes": ["ABC", "DEF"]}]
 
 
 class FormRequest(BaseModel):
@@ -281,6 +284,120 @@ class ComplaintAttachmentLinkResponse(BaseModel):
     message: str = "Attachment created and linked to complaint."
 
 
+class EntityAttachmentLinkRequest(BaseModel):
+    """Create attachment then link it to a target entity."""
+    entity_type: str
+    entity_id: str
+    file_url: str
+    file_name: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    attachment_type_code: Optional[str] = None
+
+
+class EntityAttachmentLinkResponse(BaseModel):
+    """Response after creating and linking an attachment to an entity."""
+    attachment_id: str
+    link_id: str
+    entity_type: str
+    entity_id: str
+    message: str = "Attachment created and linked successfully."
+
+
+class StockInquiryAttachmentLinkRequest(BaseModel):
+    """Link a stock inquiry to an attachment by creating the attachment."""
+    inquiry_id: str
+    file_url: str
+    file_name: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+
+
+class StockInquiryAttachmentLinkResponse(BaseModel):
+    """Response after linking stock inquiry to attachment."""
+    attachment_id: str
+    stock_inquiry_attachment_id: str
+    message: str = "Attachment created and linked to stock inquiry."
+
+
+def _parse_complaint_date(v: Optional[str | date]) -> Optional[date]:
+    """Parse date from string; accept yyyy-MM-dd, dd/mm/yyyy, dd-mm-yyyy."""
+    if v is None:
+        return None
+    if isinstance(v, date):
+        return v
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    if not s:
+        return None
+    from datetime import datetime as dt
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return dt.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+class ComplaintIntegrationCreate(BaseModel):
+    """Integration payload: uses date_of_complaint, defect_discovered_when, delivery_order_numbers, sales_person, address.
+    Maps to internal ComplaintCreate when posting to POST /complaints-management/complaints/integration.
+    """
+    # Integration field names (snake_case as in payload)
+    delivery_order_numbers: Optional[str] = None
+    date_of_complaint: Optional[str] = None
+    defect_discovered_when: Optional[str] = None
+    sales_person: Optional[str] = None
+    address: Optional[str] = None
+    customer_type: Optional[str] = None
+    within_warranty: Optional[str] = None
+    product_type: Optional[str] = None
+    product_code: Optional[str] = None
+    quantity: Optional[str] = None
+    complaint_type: Optional[str] = None
+    defect_description: Optional[str] = None
+    customer_name: Optional[str] = None
+    contact_person: Optional[str] = None
+    contact_number: Optional[str] = None
+    project_title: Optional[str] = None
+    contact_id: Optional[str] = None
+    space_id: Optional[str] = None
+    # Ignored by create (conversation/validation metadata)
+    response: Optional[str] = None
+    attachments: Optional[List[Any]] = None
+    complete: Optional[bool] = None
+    end: Optional[bool] = None
+    validation_errors: Optional[List[Any]] = None
+    missing_mandatory_fields: Optional[List[Any]] = None
+    human_intervention: Optional[bool] = None
+    team: Optional[str] = None
+
+    def to_complaint_create(self):
+        """Convert to ComplaintCreate for the service."""
+        from app.schemas.complaints import ComplaintCreate
+        complaint_date = _parse_complaint_date(self.date_of_complaint)
+        # defect_discovered_when -> defects_discovered (store as text, e.g. date or description)
+        defects_discovered = self.defect_discovered_when
+        return ComplaintCreate(
+            delivery_order_number=self.delivery_order_numbers,
+            complaint_date=complaint_date,
+            defects_discovered=defects_discovered,
+            salesperson=self.sales_person,
+            customer_address=self.address,
+            customer_type=self.customer_type,
+            within_warranty=self.within_warranty,
+            product_type=self.product_type,
+            product_code=self.product_code,
+            complaint_type=self.complaint_type,
+            defect_description=self.defect_description,
+            customer_name=self.customer_name,
+            contact_person=self.contact_person,
+            contact_number=self.contact_number,
+            project_title=self.project_title,
+            contact_id=self.contact_id,
+            space_id=self.space_id,
+        )
+
+
 class PurchaseRequestExternalLine(BaseModel):
     item_code: Optional[str] = None
     quantity: Optional[Decimal] = None
@@ -311,6 +428,7 @@ class PurchaseRequestExternalCreate(BaseModel):
     external_reference: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
+    base_url: Optional[str] = None  # Frontend app origin for notification email link (e.g. https://fe-sorento.foundryx.my or http://localhost:3000)
 
     @field_validator("request_type")
     @classmethod
@@ -335,3 +453,23 @@ class PurchaseRequestExternalResponse(BaseModel):
     requested_at: Optional[DateType] = None
     already_existed: bool = False
     message: Optional[str] = None
+    respond_inbox_url: Optional[str] = None
+
+
+# --- Respond contact sync (n8n / Respond.io webhook) ---
+
+
+class RespondContactSyncRequest(BaseModel):
+    """Payload for external create/update of internal respond contact (e.g. from n8n when contact created/updated in Respond)."""
+    phone_number: str
+    name: Optional[str] = None
+    user_type: Optional[str] = None
+
+
+class RespondContactSyncResponse(BaseModel):
+    """Response after upserting a respond contact via external API."""
+    id: str
+    phone_number: str
+    name: Optional[str] = None
+    user_type: Optional[str] = None
+    action: str  # "created" | "updated"

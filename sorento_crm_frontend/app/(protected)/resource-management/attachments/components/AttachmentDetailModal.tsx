@@ -765,6 +765,22 @@ export default function AttachmentDetailModal({
                     <CardTitle className="text-base">Attachment Details</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4 pt-0">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Directory</p>
+                      <p className="font-medium text-sm break-words">
+                        {attachment.full_directory_path?.trim() || '—'}
+                      </p>
+                      {attachment.directory_id ? (
+                        <a
+                          href={`/resource-management/attachment-directories?directoryId=${attachment.directory_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline text-xs mt-1 inline-block"
+                        >
+                          Open folder →
+                        </a>
+                      ) : null}
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <p className="text-sm text-muted-foreground">File Type</p>

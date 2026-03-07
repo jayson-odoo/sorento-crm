@@ -11,9 +11,10 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -25,12 +26,15 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useForms } from '../hooks/useForms';
 import type { Form } from '../types/form.types';
 import { formatDate } from '@/lib/helpers';
+import FormBulkDeleteDialog from './FormBulkDeleteDialog';
 
 export default function FormsList() {
   const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'updated_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedFormIds, setSelectedFormIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
   const { data, isLoading } = useForms({
     pageIndex: pagination.pageIndex,
@@ -44,8 +48,49 @@ export default function FormsList() {
     router.push(`/forms-management/forms/${formId}`);
   };
 
+  const toggleFormSelection = (formId: string) => {
+    setSelectedFormIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(formId)) next.delete(formId);
+      else next.add(formId);
+      return next;
+    });
+  };
+
+  const selectAllForms = () => {
+    const pageForms = data?.data ?? [];
+    if (selectedFormIds.size === pageForms.length) {
+      setSelectedFormIds(new Set());
+    } else {
+      setSelectedFormIds(new Set(pageForms.map((f) => f.id)));
+    }
+  };
+
+  const pageForms = data?.data ?? [];
+  const isAllSelected = pageForms.length > 0 && selectedFormIds.size === pageForms.length;
+
   const columns = useMemo<ColumnDef<Form>[]>(
     () => [
+      {
+        id: 'select',
+        header: () => (
+          <Checkbox
+            checked={isAllSelected}
+            onCheckedChange={selectAllForms}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={selectedFormIds.has(row.original.id)}
+            onCheckedChange={() => toggleFormSelection(row.original.id)}
+            aria-label={`Select ${row.original.code}`}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        size: 44,
+        enableResizing: false,
+      },
       {
         accessorKey: 'code',
         header: ({ column }) => <DataGridColumnHeader title="Form Code" column={column} />,
@@ -121,7 +166,7 @@ export default function FormsList() {
         size: 40,
       },
     ],
-    [],
+    [selectedFormIds, isAllSelected],
   );
 
   const table = useReactTable({
@@ -173,10 +218,23 @@ export default function FormsList() {
               </Button>
             )}
           </div>
-          <Button onClick={() => router.push('/forms-management/forms/new')}>
-            <Plus />
-            Create Form
-          </Button>
+          <div className="flex items-center gap-2">
+            {selectedFormIds.size > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setBulkDeleteDialogOpen(true)}
+                className="text-destructive hover:text-destructive"
+              >
+                <Trash2 className="size-4" />
+                Bulk Delete ({selectedFormIds.size})
+              </Button>
+            )}
+            <Button onClick={() => router.push('/forms-management/forms/new')}>
+              <Plus />
+              Create Form
+            </Button>
+          </div>
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -188,6 +246,15 @@ export default function FormsList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+      <FormBulkDeleteDialog
+        open={bulkDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setBulkDeleteDialogOpen(open);
+          if (!open) setSelectedFormIds(new Set());
+        }}
+        formIds={Array.from(selectedFormIds)}
+        onSuccess={() => setSelectedFormIds(new Set())}
+      />
     </DataGrid>
   );
 }

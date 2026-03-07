@@ -120,6 +120,26 @@ class FormService:
         self.db.refresh(form)
         return form
 
+    def delete_form(self, form_id: str) -> dict:
+        """Delete a form by ID. Cascades to sections, fields, versions, submissions."""
+        form = self.get_form(form_id)
+        self.db.delete(form)
+        self.db.commit()
+        return {"message": "Form deleted successfully"}
+
+    def bulk_delete_forms(self, form_ids: list[str]) -> dict:
+        """Delete multiple forms by ID. Returns deleted_count and any not_found ids."""
+        if not form_ids:
+            return {"message": "No forms to delete", "deleted_count": 0}
+        deleted = 0
+        for fid in form_ids:
+            form = self.db.query(Form).filter(Form.id == fid).first()
+            if form:
+                self.db.delete(form)
+                deleted += 1
+        self.db.commit()
+        return {"message": f"{deleted} form(s) deleted", "deleted_count": deleted}
+
     def create_submission(self, submission_data: FormSubmissionCreate, created_by: Optional[str] = None):
         """Create a form submission."""
         submission_dict = submission_data.model_dump()

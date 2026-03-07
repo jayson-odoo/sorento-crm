@@ -55,27 +55,55 @@ export async function getUnreadCount(includeArchived = false): Promise<number> {
 
 export async function markRead(notificationId: string): Promise<NotificationItem> {
   const res = await apiFetch(`${base}/${notificationId}/read`, { method: 'PATCH' });
-  if (!res.ok) throw new Error('Failed to mark as read');
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message =
+      (typeof data.detail === 'string' && data.detail) ||
+      data.message ||
+      'Failed to mark as read';
+    throw new Error(message);
+  }
+  return data as NotificationItem;
 }
 
 export async function markUnread(notificationId: string): Promise<NotificationItem> {
   const res = await apiFetch(`${base}/${notificationId}/unread`, { method: 'PATCH' });
-  if (!res.ok) throw new Error('Failed to mark as unread');
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message =
+      (typeof data.detail === 'string' && data.detail) ||
+      data.message ||
+      'Failed to mark as unread';
+    throw new Error(message);
+  }
+  return data as NotificationItem;
 }
 
 export async function markAllRead(archived?: boolean): Promise<{ count: number }> {
   const url = archived !== undefined ? `${base}/mark-all-read?archived=${archived}` : `${base}/mark-all-read`;
   const res = await apiFetch(url, { method: 'POST' });
-  if (!res.ok) throw new Error('Failed to mark all as read');
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message =
+      (typeof data.detail === 'string' && data.detail) ||
+      data.message ||
+      'Failed to mark all as read';
+    throw new Error(message);
+  }
+  return data as { count: number };
 }
 
 export async function archive(notificationId: string): Promise<NotificationItem> {
   const res = await apiFetch(`${base}/${notificationId}/archive`, { method: 'PATCH' });
-  if (!res.ok) throw new Error('Failed to archive');
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message =
+      (typeof data.detail === 'string' && data.detail) ||
+      data.message ||
+      'Failed to archive';
+    throw new Error(message);
+  }
+  return data as NotificationItem;
 }
 
 export async function archiveAll(): Promise<{ count: number }> {
@@ -84,12 +112,26 @@ export async function archiveAll(): Promise<{ count: number }> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
   });
-  if (!res.ok) throw new Error('Failed to clear all');
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message =
+      (typeof data.detail === 'string' && data.detail) ||
+      data.message ||
+      'Failed to clear all';
+    throw new Error(message);
+  }
+  return data as { count: number };
 }
 
 export async function resolve(notificationId: string): Promise<NotificationItem> {
   const res = await apiFetch(`${base}/${notificationId}/resolve`, { method: 'PATCH' });
-  if (!res.ok) throw new Error('Failed to resolve');
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message =
+      (typeof data.detail === 'string' && data.detail) ||
+      data.message ||
+      'Failed to resolve';
+    throw new Error(message);
+  }
+  return data as NotificationItem;
 }

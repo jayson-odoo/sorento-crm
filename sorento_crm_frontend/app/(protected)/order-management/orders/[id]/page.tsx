@@ -1,8 +1,8 @@
 'use client';
 
 import { use } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { MoveLeft } from 'lucide-react';
 import {
   Breadcrumb,
@@ -19,7 +19,9 @@ import OrderDetail from '../components/OrderDetail';
 
 export default function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const router = useRouter();
+  const searchParams = useSearchParams();
+  const listPageIndex = searchParams.get('page') != null ? parseInt(searchParams.get('page')!, 10) : 0;
+  const listPageSize = searchParams.get('pageSize') != null ? parseInt(searchParams.get('pageSize')!, 10) : 50;
 
   return (
     <>
@@ -53,7 +55,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
         </Toolbar>
       </Container>
       <Container>
-        <OrderDetail orderId={id} />
+        <OrderDetail orderId={id} listPageIndex={listPageIndex} listPageSize={listPageSize} />
       </Container>
     </>
   );

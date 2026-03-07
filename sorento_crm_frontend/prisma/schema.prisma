@@ -21,7 +21,6 @@ model User {
   country         String?
   timezone        String?
   name            String?
-  roleId          String     @map("role_id")
   status          UserStatus @default(INACTIVE)
   createdAt       DateTime   @default(now()) @map("created_at")
   updatedAt       DateTime   @updatedAt @map("updated_at")
@@ -35,16 +34,15 @@ model User {
   respondSynced   String     @default("pending") @map("respond_synced")
   superiorId      String?    @map("superior_id")
 
-  role      UserRole    @relation(fields: [roleId], references: [id])
-  systemLog SystemLog[]
-  accounts  Account[]
-  Session   Session[]
-  superior  User?       @relation("UserSuperior", fields: [superiorId], references: [id])
-  subordinates User[]   @relation("UserSuperior")
-  agentAccesses UserAgentAccess[]
+  roleAssignments UserRoleAssignment[]
+  systemLog       SystemLog[]
+  accounts        Account[]
+  Session         Session[]
+  superior        User?       @relation("UserSuperior", fields: [superiorId], references: [id])
+  subordinates    User[]      @relation("UserSuperior")
+  agentAccesses   UserAgentAccess[]
 
   @@index([invitedByUserId], map: "users_invited_by_user_id_idx")
-  @@index([roleId], map: "users_role_id_idx")
   @@index([status], map: "users_status_idx")
   @@index([respondSynced], map: "users_respond_synced_idx")
   @@map("users")
@@ -61,10 +59,25 @@ model UserRole {
   isProtected     Boolean  @default(false) @map("is_protected")
   isDefault       Boolean  @default(false) @map("is_default")
 
-  users       User[]
-  permissions UserRolePermission[]
+  userAssignments UserRoleAssignment[]
+  permissions     UserRolePermission[]
 
   @@map("user_roles")
+}
+
+model UserRoleAssignment {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  roleId     String   @map("role_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role UserRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId], map: "uq_user_role_assignments_user_id_role_id")
+  @@index([userId], map: "ix_user_role_assignments_user_id")
+  @@index([roleId], map: "ix_user_role_assignments_role_id")
+  @@map("user_role_assignments")
 }
 
 model UserPermission {

@@ -9,9 +9,8 @@ export async function getStockDashboard(): Promise<StockDashboard> {
   return response.json();
 }
 
-export async function getStockBalance(params: DataGridApiFetchParams & { warehouse_id?: string; product_id?: string; category_id?: string; status?: string; quantity_operator?: string; quantity_value?: string }): Promise<DataGridApiResponse<Stock>> {
-  const { pageIndex, pageSize, sorting, searchQuery, warehouse_id, product_id, category_id, status, quantity_operator, quantity_value } = params;
-  // Cap pageSize at 100 (API limit)
+export async function getStockBalance(params: DataGridApiFetchParams & { warehouse_id?: string; product_id?: string; category_id?: string; status?: string }): Promise<DataGridApiResponse<Stock>> {
+  const { pageIndex, pageSize, sorting, searchQuery, warehouse_id, product_id, category_id, status } = params;
   const cappedPageSize = Math.min(pageSize, 100);
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
@@ -24,8 +23,6 @@ export async function getStockBalance(params: DataGridApiFetchParams & { warehou
     ...(product_id ? { product_id } : {}),
     ...(category_id ? { category_id } : {}),
     ...(status ? { status } : {}),
-    ...(quantity_operator ? { quantity_operator } : {}),
-    ...(quantity_value ? { quantity_value } : {}),
   });
   const response = await apiFetch(`/api/v1/inventory/stock/balance?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch stock balance');

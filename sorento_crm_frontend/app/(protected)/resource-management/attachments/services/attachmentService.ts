@@ -2,8 +2,8 @@ import { apiFetch } from '@/lib/api';
 import type { Attachment, AttachmentType } from '../types/attachment.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-export async function getAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; upload_date_from?: string; upload_date_to?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null }): Promise<DataGridApiResponse<Attachment>> {
-  const { pageIndex, pageSize, sorting, searchQuery, entity_type, file_type, upload_date_from, upload_date_to, is_deleted, virus_status, directory_id } = params;
+export async function getAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; upload_date_from?: string; upload_date_to?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null; resolve_signed_urls?: boolean }): Promise<DataGridApiResponse<Attachment>> {
+  const { pageIndex, pageSize, sorting, searchQuery, entity_type, file_type, upload_date_from, upload_date_to, is_deleted, virus_status, directory_id, resolve_signed_urls } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -18,6 +18,7 @@ export async function getAttachments(params: DataGridApiFetchParams & { entity_t
     ...(is_deleted !== undefined ? { is_deleted: String(is_deleted) } : {}),
     ...(virus_status ? { virus_status } : {}),
     ...(directory_id != null && directory_id !== '' ? { directory_id } : {}),
+    ...(resolve_signed_urls !== undefined ? { resolve_signed_urls: String(resolve_signed_urls) } : {}),
   });
   const response = await apiFetch(`/api/v1/resource-management/attachments?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch attachments');
@@ -26,15 +27,18 @@ export async function getAttachments(params: DataGridApiFetchParams & { entity_t
 
 export async function uploadAttachment(
   file: File,
-  attachmentTypeId: string,
-  entityType?: string,
-  entityId?: string,
-  accessLevels?: string[],
-  directoryId?: string | null
+  options: {
+    attachmentTypeId?: string | null;
+    entityType?: string;
+    entityId?: string;
+    accessLevels?: string[];
+    directoryId?: string | null;
+  }
 ): Promise<Attachment> {
+  const { attachmentTypeId, entityType, entityId, accessLevels, directoryId } = options;
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('attachment_type_id', attachmentTypeId);
+  if (attachmentTypeId) formData.append('attachment_type_id', attachmentTypeId);
   if (entityType) formData.append('entity_type', entityType);
   if (entityId) formData.append('entity_id', entityId);
   if (directoryId) formData.append('directory_id', directoryId);
@@ -77,6 +81,45 @@ export async function uploadAttachment(
         'File too large. The server limits upload size (often 1MB by default). Try a smaller file or ask your admin to increase nginx client_max_body_size.';
     } else if (response.status >= 500) {
       message = message || 'Server error. Try again or contact support.';
+    }
+    throw new Error(message);
+  }
+  return response.json();
+}
+
+/**
+ * Get the current Stock_List attachment (the one non-archived with type Stock_List). Returns null if none.
+ */
+export async function getCurrentStockListAttachment(): Promise<Attachment | null> {
+  const response = await apiFetch('/api/v1/resource-management/attachments/current-stock-list');
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error('Failed to fetch Stock List attachment');
+  return response.json();
+}
+
+/**
+ * Replace the Stock_List attachment. Archives any existing one with type Stock_List, then uploads the new file (for n8n AI agent).
+ */
+export async function replaceLatestStockList(file: File): Promise<Attachment> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await apiFetch('/api/v1/resource-management/attachments/replace-latest-stock-list', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') || '';
+    let message = 'Failed to save Stock List attachment';
+    try {
+      if (contentType.includes('application/json')) {
+        const error = await response.json();
+        const detail = error.detail;
+        message = typeof detail === 'string' ? detail : message;
+      }
+    } catch {
+      // ignore
     }
     throw new Error(message);
   }
@@ -257,6 +300,13 @@ export async function getAttachmentMetadata(id: string): Promise<Attachment> {
   const response = await apiFetch(`/api/v1/resource-management/attachments/${id}/metadata`);
   if (!response.ok) throw new Error('Failed to fetch attachment metadata');
   return response.json();
+}
+
+export async function getAttachmentPreviewUrl(id: string): Promise<string> {
+  const response = await apiFetch(`/api/v1/resource-management/attachments/${id}/preview-url`);
+  if (!response.ok) throw new Error('Failed to fetch attachment preview URL');
+  const data = await response.json();
+  return data.preview_url;
 }
 
 export async function checkDuplicateByHash(hash: string): Promise<Attachment | null> {

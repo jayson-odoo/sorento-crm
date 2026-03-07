@@ -2,7 +2,9 @@ export interface ComplaintAttachment {
   id: string;
   complaint_id: string;
   attachment_id?: string | null;
+  /** Original filename (from attachment). Prefer this for display. */
   file_name?: string | null;
+  original_filename?: string | null;
   file_url?: string | null;
   file_size_bytes?: number | null;
   uploaded_at: Date;
@@ -36,6 +38,9 @@ export interface Complaint {
   last_responded_by?: string | null;
   last_responded_by_name?: string | null;
   last_responded_at?: string | null;
+  created_at?: string | null;
+  assigned_to?: string | null;
+  assigned_to_name?: string | null;
   attachments: ComplaintAttachment[];
 }
 

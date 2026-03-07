@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { getImportJob, getImportJobStatus, getImportJobs } from '../services/importJobService';
 import { useCancelImportJob, useImportJobStatus } from '../hooks/useImportJobs';
 import type { ImportJob } from '../types/importJob.types';
@@ -80,19 +81,6 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   // Poll for status updates if job is still processing
   const { data: statusData } = useImportJobStatus(id, !isLoading && !!job);
   const cancelJobMutation = useCancelImportJob();
-
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, { variant: 'primary' | 'secondary' | 'destructive' | 'outline'; appearance?: 'ghost' }> = {
-      pending: { variant: 'outline' },
-      queued: { variant: 'secondary' },
-      started: { variant: 'secondary', appearance: 'ghost' },
-      finished: { variant: 'primary' },
-      failed: { variant: 'destructive' },
-      cancelled: { variant: 'outline' },
-    };
-    const config = variants[status] || { variant: 'secondary' };
-    return <Badge {...config}>{status.toUpperCase()}</Badge>;
-  };
 
   if (isLoading) {
     return (
@@ -285,7 +273,9 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle>Job Summary</CardTitle>
-                {getStatusBadge(statusData?.status || job.status)}
+                <Badge variant={getStatusBadgeVariant(statusData?.status || job.status)}>
+                  {(statusData?.status || job.status || '').toUpperCase()}
+                </Badge>
               </div>
             </CardHeader>
             <CardContent>
@@ -296,7 +286,11 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                 </div>
                 <div>
                   <p className="text-muted-foreground">Status</p>
-                  <p className="font-medium">{getStatusBadge(statusData?.status || job.status)}</p>
+                  <p className="font-medium">
+                    <Badge variant={getStatusBadgeVariant(statusData?.status || job.status)}>
+                      {(statusData?.status || job.status || '').toUpperCase()}
+                    </Badge>
+                  </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Total Rows</p>
@@ -402,6 +396,38 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                 <CardTitle>Result Details</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {Array.isArray(job.result.successful_rows_detail) && job.result.successful_rows_detail.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400 mb-2">
+                      Successful lines ({job.result.successful_rows_detail.length})
+                    </p>
+                    <ul className="text-sm space-y-1 max-h-60 overflow-y-auto bg-emerald-50 dark:bg-emerald-950/30 p-3 rounded">
+                      {job.result.successful_rows_detail.map(
+                        (
+                          entry: {
+                            grn_number?: string;
+                            product_code?: string;
+                            warehouse?: string;
+                            quantity?: number;
+                          },
+                          i: number
+                        ) => (
+                          <li key={i} className="flex gap-2 flex-wrap">
+                            <span className="font-mono shrink-0">
+                              {entry.grn_number ?? '—'}
+                            </span>
+                            <span className="text-muted-foreground">·</span>
+                            <span>{entry.product_code ?? '—'}</span>
+                            <span className="text-muted-foreground">·</span>
+                            <span>{entry.warehouse ?? '—'}</span>
+                            <span className="text-muted-foreground">·</span>
+                            <span>Qty {entry.quantity ?? '—'}</span>
+                          </li>
+                        )
+                      )}
+                    </ul>
+                  </div>
+                )}
                 {Array.isArray(job.result.skipped_rows_detail) && job.result.skipped_rows_detail.length > 0 && (
                   <div>
                     <p className="text-sm font-medium text-muted-foreground mb-2">

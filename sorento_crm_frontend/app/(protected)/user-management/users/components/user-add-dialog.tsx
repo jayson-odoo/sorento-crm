@@ -9,7 +9,6 @@ import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
 import { formatDate } from '@/lib/helpers';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogBody,
@@ -36,27 +35,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { Button, ButtonArrow } from '@/components/ui/button';
 import { LoaderCircleIcon, Plus, X } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { UserRole } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import { UserAddSchema, UserAddSchemaType } from '../forms/user-add-schema';
-import UserAgentAccessDialog from '../[id]/components/UserAgentAccessDialog';
-
-interface AccessAgent {
-  id: string;
-  code: string;
-  name: string;
-  description?: string | null;
-  is_active: boolean;
-}
-
-interface UserAgentAccess {
-  agent_id: string;
-  agent_name: string;
-  is_allowed: boolean;
-  valid_from?: Date | null;
-  valid_to?: Date | null;
-}
 
 const UserAddDialog = ({
   open,
@@ -66,23 +63,11 @@ const UserAddDialog = ({
   closeDialog: () => void;
 }) => {
   const queryClient = useQueryClient();
-  const [selectedAgent, setSelectedAgent] = useState<{ id: string; name: string } | null>(null);
-  const [accessDialogOpen, setAccessDialogOpen] = useState(false);
-  const [userAgentAccesses, setUserAgentAccesses] = useState<UserAgentAccess[]>([]);
+  const [sendInvitationEmail, setSendInvitationEmail] = useState(true);
+  const [superiorOpen, setSuperiorOpen] = useState(false);
 
   // Fetch available roles
   const { data: roleList } = useRoleSelectQuery();
-
-  // Fetch available access agents
-  const { data: agentsData } = useQuery({
-    queryKey: ['access-agents', 'all'],
-    queryFn: async () => {
-      const response = await apiFetch('/api/user-management/access-agents?page=1&limit=1000');
-      if (!response.ok) throw new Error('Failed to fetch access agents');
-      return response.json();
-    },
-    enabled: open,
-  });
 
   const form = useForm<UserAddSchemaType>({
     resolver: zodResolver(UserAddSchema),
@@ -98,69 +83,34 @@ const UserAddDialog = ({
   useEffect(() => {
     if (open) {
       form.reset();
-      setUserAgentAccesses([]);
-      setSelectedAgent(null);
-      setAccessDialogOpen(false);
+      setSendInvitationEmail(true);
     }
   }, [open, form]);
 
-  const handleAddAgentClick = (agent: AccessAgent) => {
-    setSelectedAgent({ id: agent.id, name: agent.name });
-    setAccessDialogOpen(true);
-  };
-
-  const handleAccessAgentSubmit = (data: {
-    agent_id: string;
-    is_allowed: boolean;
-    valid_from?: Date | null;
-    valid_to?: Date | null;
-  }) => {
-    if (selectedAgent) {
-      setUserAgentAccesses([
-        ...userAgentAccesses,
-        {
-          agent_id: data.agent_id,
-          agent_name: selectedAgent.name,
-          is_allowed: data.is_allowed,
-          valid_from: data.valid_from,
-          valid_to: data.valid_to,
-        },
-      ]);
-      setAccessDialogOpen(false);
-      setSelectedAgent(null);
-    }
-  };
-
-  const handleRemoveAgent = (agentId: string) => {
-    setUserAgentAccesses(userAgentAccesses.filter((ua) => ua.agent_id !== agentId));
-  };
-
-  const agents = agentsData?.data || [];
-  const assignedAgentIds = userAgentAccesses.map((ua) => ua.agent_id);
-  const availableAgents = agents.filter((agent: AccessAgent) => !assignedAgentIds.includes(agent.id));
-
   const { data: superiorUsers } = useQuery({
-    queryKey: ['users-select'],
+    queryKey: ['users-select', 'active'],
     queryFn: async () => {
-      const response = await apiFetch('/api/user-management/users/select');
+      const response = await apiFetch('/api/user-management/users/select?status=ACTIVE');
       if (!response.ok) {
         throw new Error('Failed to fetch users.');
       }
       return response.json();
     },
+    enabled: open,
     staleTime: 1000 * 60 * 5,
   });
 
   const mutation = useMutation({
     mutationFn: async (values: UserAddSchemaType) => {
       const { agent_ids, roleId, superior_id, ...rest } = values;
-      // Convert camelCase to snake_case for backend
       const payload = {
         ...rest,
-        role_id: roleId,
+        role_ids: roleId ? [roleId] : undefined,
         superior_id: superior_id === '__none__' || superior_id === '' ? null : superior_id,
       };
-      const response = await apiFetch('/api/user-management/users', {
+      const inviteUrl = '/api/user-management/users/invite';
+      const createUrl = '/api/user-management/users';
+      const response = await apiFetch(sendInvitationEmail ? inviteUrl : createUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -169,35 +119,19 @@ const UserAddDialog = ({
       });
 
       if (!response.ok) {
-        const { message } = await response.json();
-        throw new Error(message);
+        const data = await response.json();
+        throw new Error(data.detail ?? data.message ?? 'Request failed');
       }
 
       const userData = await response.json();
       const userId = userData.id;
 
-      // Create user agent accesses
-      if (userAgentAccesses.length > 0) {
-        for (const access of userAgentAccesses) {
-          await apiFetch(`/api/user-management/users/${userId}/agents`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              agent_id: access.agent_id,
-              is_allowed: access.is_allowed,
-              valid_from: access.valid_from ? access.valid_from.toISOString() : null,
-              valid_to: access.valid_to ? access.valid_to.toISOString() : null,
-            }),
-          });
-        }
-      }
-
-      return userData;
+      return { ...userData, _invited: sendInvitationEmail };
     },
-    onSuccess: () => {
-      const message = 'User added successfully';
+    onSuccess: (data) => {
+      const message = data._invited
+        ? `Invitation sent to ${data.email}. They can set their password using the link in the email.`
+        : 'User added successfully';
       toast.custom(
         () => (
           <Alert variant="mono" icon="success" close={false}>
@@ -305,93 +239,84 @@ const UserAddDialog = ({
               <FormField
                 control={form.control}
                 name="superior_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Superior</FormLabel>
-                    <FormControl>
-                      <Select
-                        onValueChange={(value) => {
-                          // Convert "__none__" to null/undefined for optional field
-                          field.onChange(value === '__none__' ? null : value);
-                        }}
-                        value={field.value || '__none__'}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a superior" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            <SelectItem value="__none__">None</SelectItem>
-                            {(superiorUsers || []).map((superior: { id: string; name?: string | null; email: string }) => (
-                              <SelectItem key={superior.id} value={superior.id}>
-                                {superior.name || superior.email}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                render={({ field }) => {
+                  const value = field.value || '__none__';
+                  const selected = value === '__none__' ? null : (superiorUsers || []).find((u: { id: string }) => u.id === value);
+                  const displayLabel = selected ? (selected.name || selected.email) : 'None';
+                  return (
+                    <FormItem>
+                      <FormLabel>Superior</FormLabel>
+                      <FormControl>
+                        <Popover open={superiorOpen} onOpenChange={setSuperiorOpen}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              role="combobox"
+                              mode="input"
+                              placeholder={!value || value === '__none__'}
+                              aria-expanded={superiorOpen}
+                              className="w-full justify-between"
+                            >
+                              <span className={cn('truncate', (!value || value === '__none__') && 'text-muted-foreground')}>
+                                {displayLabel}
+                              </span>
+                              <ButtonArrow />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
+                            <Command>
+                              <CommandInput placeholder="Search by name or email..." />
+                              <CommandList>
+                                <CommandEmpty>No active user found.</CommandEmpty>
+                                <CommandGroup>
+                                  <CommandItem
+                                    value="__none__"
+                                    onSelect={() => {
+                                      field.onChange(null);
+                                      setSuperiorOpen(false);
+                                    }}
+                                  >
+                                    None
+                                  </CommandItem>
+                                  {(superiorUsers || []).map((superior: { id: string; name?: string | null; email: string }) => (
+                                    <CommandItem
+                                      key={superior.id}
+                                      value={`${superior.name ?? ''} ${superior.email}`.trim() || superior.id}
+                                      onSelect={() => {
+                                        field.onChange(superior.id);
+                                        setSuperiorOpen(false);
+                                      }}
+                                    >
+                                      {superior.name || superior.email}
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
               />
 
-              {/* Access Agents Section */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <FormLabel>Access Agents</FormLabel>
-                  {availableAgents.length > 0 && (
-                    <Select
-                      onValueChange={(agentId) => {
-                        const agent = agents.find((a: AccessAgent) => a.id === agentId);
-                        if (agent) {
-                          handleAddAgentClick(agent);
-                        }
-                      }}
-                      value=""
-                    >
-                      <SelectTrigger className="w-auto">
-                        <SelectValue placeholder="Add access agent" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {availableAgents.map((agent: AccessAgent) => (
-                          <SelectItem key={agent.id} value={agent.id}>
-                            {agent.name} ({agent.code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                </div>
-
-                {userAgentAccesses.length > 0 && (
-                  <div className="space-y-2 border rounded-lg p-3">
-                    {userAgentAccesses.map((access) => (
-                      <div
-                        key={access.agent_id}
-                        className="flex items-center justify-between p-2 bg-muted rounded"
-                      >
-                        <div className="flex-1">
-                          <div className="font-medium text-sm">{access.agent_name}</div>
-                          <div className="text-xs text-muted-foreground">
-                            Allowed: {access.is_allowed ? 'Yes' : 'No'}
-                            {access.valid_from && ` • From: ${formatDate(new Date(access.valid_from))}`}
-                            {access.valid_to && ` • To: ${formatDate(new Date(access.valid_to))}`}
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleRemoveAgent(access.agent_id)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="send-invitation"
+                  checked={sendInvitationEmail}
+                  onCheckedChange={(checked) => setSendInvitationEmail(checked === true)}
+                />
+                <label
+                  htmlFor="send-invitation"
+                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                >
+                  Send invitation email (they will set their password via the link)
+                </label>
               </div>
+
             </DialogBody>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={closeDialog}>
@@ -409,22 +334,6 @@ const UserAddDialog = ({
         </Form>
       </DialogContent>
 
-      {/* Access Agent Configuration Dialog */}
-      {selectedAgent && (
-        <UserAgentAccessDialog
-          open={accessDialogOpen}
-          onOpenChange={(open) => {
-            setAccessDialogOpen(open);
-            if (!open) {
-              setSelectedAgent(null);
-            }
-          }}
-          userId="" // Will be set after user creation
-          agentId={selectedAgent.id}
-          agentName={selectedAgent.name}
-          onSubmit={handleAccessAgentSubmit}
-        />
-      )}
     </Dialog>
   );
 };

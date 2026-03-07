@@ -1,9 +1,11 @@
 """GRN (Goods Receipt Note) API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, File, UploadFile
+from fastapi import APIRouter, Depends, Query, HTTPException, status, File, UploadFile, Body
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
+
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.services.procurement_service import PickingHeaderService
 from app.services.job_service import JobService
 from app.services.queue_service import enqueue_job
@@ -14,10 +16,14 @@ from app.services.error_handler import handle_internal_error
 router = APIRouter()
 
 
+class BulkDeleteGRNsRequest(BaseModel):
+    ids: list[str]
+
+
 @router.get("/", response_model=ListResponse[PickingHeaderResponse])
 async def get_grns(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
     picking_status: Optional[str] = Query(None),
     inspection_status: Optional[str] = Query(None),
@@ -46,7 +52,7 @@ async def get_grns(
 @router.post("/import-listing", status_code=status.HTTP_202_ACCEPTED)
 async def import_grn_listing(
     file: UploadFile = File(..., description="Excel file: GRN listing (doc number, transfer from, date)"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("procurement.grn.import")),
     db: Session = Depends(get_db),
 ):
     """Queue GRN listing import. Creates/updates picking headers. Processed in background; track via Import Jobs."""
@@ -78,7 +84,7 @@ async def import_grn_listing(
 @router.post("/import-lines", status_code=status.HTTP_202_ACCEPTED)
 async def import_grn_lines(
     file: UploadFile = File(..., description="Excel file: GRN lines (doc no, item code, location, quantity)"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("procurement.grn.import")),
     db: Session = Depends(get_db),
 ):
     """Queue GRN lines import. Creates/updates picking lines; links to headers by doc no. Processed in background."""
@@ -153,6 +159,22 @@ async def update_grn(
         service = PickingHeaderService(db)
         grn = service.update_grn(grn_id, grn_data)
         return grn
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_grns(
+    body: BulkDeleteGRNsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk delete GRNs by ID."""
+    try:
+        service = PickingHeaderService(db)
+        return service.bulk_delete_grns(body.ids)
     except HTTPException:
         raise
     except Exception as e:

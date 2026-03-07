@@ -3,8 +3,9 @@
 import React, { use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
-import { Activity, MoveLeft, UserPen } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Activity, Mail, MoveLeft, Settings, UserPen } from 'lucide-react';
+import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
 import {
   Breadcrumb,
@@ -17,6 +18,12 @@ import {
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Toolbar,
   ToolbarActions,
@@ -47,6 +54,8 @@ export default function UserLayout({
   const { id } = use(params);
   const pathname = usePathname();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const [resendInvitePending, setResendInvitePending] = useState(false);
 
   // Use local state to control active tab
   const [activeTab, setActiveTab] = useState<string>('');
@@ -95,10 +104,12 @@ export default function UserLayout({
       }
 
       const data = await response.json();
+      const roles = Array.isArray(data.roles) ? data.roles : [];
       // Transform snake_case from backend to camelCase for frontend
       return {
         ...data,
-        roleId: data.role_id || data.roleId,
+        roles,
+        roleId: roles[0]?.id ?? data.role_id ?? data.roleId,
         respondUserId: data.respond_user_id || data.respondUserId,
         respondSynced: data.respond_synced || data.respondSynced,
         superiorId: data.superior_id || data.superiorId,
@@ -166,11 +177,29 @@ export default function UserLayout({
   });
   const navigationItems = navigationData?.data ?? [];
 
-  // Handler for tab click: instantly update active tab then navigate.
   const handleTabClick = (key: string, path: string) => {
     setActiveTab(key);
-    // Optionally, you can prefetch or delay navigation slightly if needed
     router.push(path);
+  };
+
+  const handleResendInvite = async () => {
+    setResendInvitePending(true);
+    try {
+      const res = await apiFetch(`/api/user-management/users/${id}/resend-invite`, {
+        method: 'POST',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.detail ?? data.message ?? 'Failed to send invitation link.');
+        return;
+      }
+      toast.success(data.message ?? 'Invitation link sent.');
+      queryClient.invalidateQueries({ queryKey: ['user-user', id] });
+    } catch {
+      toast.error('Failed to send invitation link.');
+    } finally {
+      setResendInvitePending(false);
+    }
   };
 
   return (
@@ -190,7 +219,7 @@ export default function UserLayout({
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href="/user/users">Users</BreadcrumbLink>
+                  <BreadcrumbLink href="/user-management/users">Users</BreadcrumbLink>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -201,6 +230,21 @@ export default function UserLayout({
               items={navigationItems}
               basePath="/user-management/users"
             />
+            {user && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" disabled={resendInvitePending} aria-label="User options">
+                    <Settings className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={handleResendInvite} disabled={resendInvitePending}>
+                    <Mail className="size-4" />
+                    Send invitation link
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             <Button asChild variant="outline">
               <Link href="/user-management/users">
                 <MoveLeft /> Back to users

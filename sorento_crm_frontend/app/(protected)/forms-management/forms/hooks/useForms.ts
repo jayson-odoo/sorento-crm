@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getForms, getForm, createForm, updateForm, deleteForm, duplicateForm, publishForm, getFormVersions } from '../services/formService';
+import { getForms, getForm, createForm, updateForm, deleteForm, bulkDeleteForms, duplicateForm, publishForm, getFormVersions } from '../services/formService';
 import type { FormFormData } from '../types/form.types';
 
 export function useForms(params: DataGridApiFetchParams & { language?: string; status?: string; purpose?: string }) {
@@ -73,6 +73,18 @@ export function useDeleteForm() {
       toast.success('Form deleted successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete form'),
+  });
+}
+
+export function useBulkDeleteForms() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteForms(ids),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['forms'] });
+      toast.success(result?.message ?? `${result?.deleted_count ?? 0} form(s) deleted`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to bulk delete forms'),
   });
 }
 

@@ -9,6 +9,9 @@ import {
   updateStockInquiry,
   updateStockInquiryAndReply,
   deleteStockInquiry,
+  bulkDeleteStockInquiries,
+  linkStockInquiryAttachment,
+  deleteStockInquiryAttachment,
 } from '../services/stockInquiryService';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
 
@@ -116,5 +119,54 @@ export function useDeleteStockInquiry() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to delete stock inquiry'),
+  });
+}
+
+export function useBulkDeleteStockInquiries() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteStockInquiries(ids),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
+      toast.success(
+        result?.message ?? `${result?.deleted_count ?? 0} stock inquiry(ies) deleted`,
+      );
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to bulk delete stock inquiries'),
+  });
+}
+
+export function useLinkStockInquiryAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      inquiryId,
+      attachmentId,
+    }: {
+      inquiryId: string;
+      attachmentId: string;
+    }) => linkStockInquiryAttachment(inquiryId, attachmentId),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiry', variables.inquiryId] });
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
+      toast.success('Attachment linked successfully');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to link attachment'),
+  });
+}
+
+export function useDeleteStockInquiryAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (linkId: string) => deleteStockInquiryAttachment(linkId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
+      toast.success('Attachment unlinked successfully');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to unlink attachment'),
   });
 }

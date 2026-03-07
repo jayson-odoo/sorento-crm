@@ -1,6 +1,7 @@
 """Promotions API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Path, Body
 from typing import Optional
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -12,18 +13,37 @@ from app.services.error_handler import handle_internal_error
 router = APIRouter()
 
 
+class BulkDeletePromotionsRequest(BaseModel):
+    ids: list[str]
+
+
+class BulkUpdateAccessLevelsRequest(BaseModel):
+    ids: list[str]
+    access_levels: list[str]
+
+
 @router.get("/", response_model=ListResponse[PromotionResponse])
 async def get_promotions(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
-    user_type: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=1000),
+    query: Optional[str] = Query(None),
+    user_type: Optional[str] = Query(None, description="Filter by access level: dealer, end_user"),
+    status: Optional[str] = Query(None, description="Filter by status: active, inactive, all"),
+    promo_type: Optional[str] = Query(None, description="Filter by promotion type e.g. price_override"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get promotions with pagination."""
+    """Get promotions with pagination. Search and filter by status, access level, type."""
     try:
         service = PromotionService(db)
-        result = service.list_promotions(page=page, limit=limit, user_type=user_type)
+        result = service.list_promotions(
+            page=page,
+            limit=limit,
+            user_type=user_type,
+            query=query,
+            status=status,
+            promo_type=promo_type,
+        )
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -92,6 +112,38 @@ async def update_promotion(
         raise handle_internal_error(str(e))
 
 
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_promotions(
+    body: BulkDeletePromotionsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk delete promotions by ID."""
+    try:
+        service = PromotionService(db)
+        return service.bulk_delete_promotions(body.ids)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.patch("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_update_access_levels(
+    body: BulkUpdateAccessLevelsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Bulk set access levels for selected promotions."""
+    try:
+        service = PromotionService(db)
+        return service.bulk_update_access_levels(body.ids, body.access_levels)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.delete("/{promotion_id}", status_code=status.HTTP_200_OK)
 async def delete_promotion(
     promotion_id: str,
@@ -101,7 +153,7 @@ async def delete_promotion(
     """Delete a promotion."""
     try:
         service = PromotionService(db)
-        # Implement delete logic
+        service.delete_promotion(promotion_id)
         return {"message": "Promotion deleted successfully"}
     except HTTPException:
         raise

@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Save } from 'lucide-react';
+import { LoaderCircleIcon, Save, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Form,
@@ -26,11 +26,43 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useCreateOrder, useUpdateOrder, useOrder, useOrders } from '../hooks/useOrders';
+import { useCreateOrder, useUpdateOrder, useOrder } from '../hooks/useOrders';
 import { OrderSchema, type OrderSchemaType } from '../forms/order-schema';
 import type { OrderFormData } from '../types/order.types';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+
+/**
+ * Normalize an API date to UTC midnight on the same calendar day (as shown by formatDate in view).
+ * So edit input value (toISOString().slice(0,10)) matches the view and DB day.
+ */
+function dateOnlyUTC(value: string | Date | undefined | null): Date | undefined {
+  if (value == null) return undefined;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+}
+
+/** Count weekdays (Mon–Fri) strictly between start and end, matching backend logic. */
+function businessDaysBetween(start: Date, end: Date): number {
+  const s = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const e = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  if (e.getTime() <= s.getTime()) return 0;
+  let count = 0;
+  const cur = new Date(s);
+  cur.setDate(cur.getDate() + 1);
+  while (cur.getTime() < e.getTime()) {
+    const d = cur.getDay();
+    if (d >= 1 && d <= 5) count += 1;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
 
 interface OrderFormProps {
   orderId?: string;
@@ -44,17 +76,6 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
   const { data: orderStatuses } = useOrderStatusSelectQuery();
   const createMutation = useCreateOrder();
   const updateMutation = useUpdateOrder();
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 100,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-    }),
-    [],
-  );
-  const { data: navigationData } = useOrders(navigationParams);
-  const navigationItems = navigationData?.data ?? [];
 
   const defaultOrderDate = new Date();
   const defaultPromisedDate = (() => {
@@ -111,17 +132,6 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
   const discount = form.watch('discount_amount') || 0;
   const tax = form.watch('tax_amount') || 0;
 
-  // Keep promised_delivery_date 2 days after order date when order date changes
-  const orderDate = form.watch('order_date');
-  const orderDateTime = orderDate instanceof Date && !isNaN(orderDate.getTime()) ? orderDate.getTime() : null;
-  useEffect(() => {
-    if (orderDateTime !== null && orderDate instanceof Date) {
-      const promised = new Date(orderDate);
-      promised.setDate(promised.getDate() + 2);
-      form.setValue('promised_delivery_date', promised);
-    }
-  }, [orderDateTime, orderDate, form]);
-
   // Auto-calculate total when financial fields change
   useEffect(() => {
     const calculatedTotal = subtotal - discount + tax;
@@ -130,62 +140,70 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
     }
   }, [subtotal, discount, tax, form]);
 
+  // Recalculate Delivery Days and Over 2 days when order date or actual delivery date changes
+  const orderDate = form.watch('order_date');
+  const actualDeliveryDate = form.watch('actual_delivery_date');
+  useEffect(() => {
+    const orderDateVal = form.getValues('order_date');
+    const actualDateVal = form.getValues('actual_delivery_date');
+    if (!orderDateVal || !actualDateVal) {
+      form.setValue('delivery_days', undefined);
+      form.setValue('kpi_warning', false);
+      return;
+    }
+    const start = orderDateVal instanceof Date ? orderDateVal : new Date(orderDateVal);
+    const end = actualDateVal instanceof Date ? actualDateVal : new Date(actualDateVal);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+    const days = businessDaysBetween(start, end);
+    form.setValue('delivery_days', days);
+    form.setValue('kpi_warning', days > 2);
+  }, [orderDate, actualDeliveryDate, form]);
+
   // Load order data when editing
   useEffect(() => {
-    if (
-      order &&
-      isEditMode &&
-      orderStatuses &&
-      orderStatuses.length > 0 &&
-      !formInitialized
-    ) {
+    if (order && isEditMode && !formInitialized) {
       const orderStatusId = order.order_status_id ? String(order.order_status_id) : '';
-      const orderStatusExists = orderStatuses.some((os) => os.id === orderStatusId) || order.order_status;
-
-      if (orderStatusExists) {
-        const timeoutId = setTimeout(() => {
-          form.reset({
-            order_number: order.order_number,
-            order_date: order.order_date ? new Date(order.order_date) : new Date(),
-            promised_delivery_date: order.promised_delivery_date ? new Date(order.promised_delivery_date) : undefined,
-            actual_delivery_date: order.actual_delivery_date ? new Date(order.actual_delivery_date) : undefined,
-            customer_id: order.customer_id ? String(order.customer_id) : '',
-            order_status_id: orderStatusId,
-            billing_address_id: order.billing_address_id || undefined,
-            shipping_address_id: order.shipping_address_id || undefined,
-            created_time: order.created_time ? new Date(order.created_time) : undefined,
-            debtor_code: order.debtor_code || '',
-            debtor_name: order.debtor_name || '',
-            agent: order.agent || '',
-            is_cancelled: order.is_cancelled ?? false,
-            remarks_cs: order.remarks_cs || '',
-            order_type: order.order_type || '',
-            delivery_time: order.delivery_time || '',
-            checker: order.checker || '',
-            transporter: order.transporter || '',
-            driver_name: order.driver_name || '',
-            lorry_plate: order.lorry_plate || '',
-            customer_ref: order.customer_ref || '',
-            delivery_remarks_cs: order.delivery_remarks_cs || '',
-            delivery_remarks: order.delivery_remarks || '',
-            salesman: order.salesman || '',
-            trips: order.trips ?? undefined,
-            warehouse: order.warehouse || '',
-            delivery_days: order.delivery_days ?? 2,
-            kpi_warning: order.kpi_warning ?? false,
-            subtotal_amount: order.subtotal_amount,
-            discount_amount: order.discount_amount || 0,
-            tax_amount: order.tax_amount || 0,
-            total_amount: order.total_amount,
-            remarks: order.remarks || '',
-          });
-          setFormInitialized(true);
-        }, 0);
-
-        return () => clearTimeout(timeoutId);
-      }
+      const timeoutId = setTimeout(() => {
+        form.reset({
+          order_number: order.order_number ?? '',
+          order_date: order.order_date ? dateOnlyUTC(order.order_date) ?? new Date() : new Date(),
+          promised_delivery_date: dateOnlyUTC(order.promised_delivery_date),
+          actual_delivery_date: dateOnlyUTC(order.actual_delivery_date),
+          customer_id: order.customer_id ? String(order.customer_id) : '',
+          order_status_id: orderStatusId,
+          billing_address_id: order.billing_address_id || undefined,
+          shipping_address_id: order.shipping_address_id || undefined,
+          created_time: order.created_time ? new Date(order.created_time) : undefined,
+          debtor_code: order.debtor_code ?? '',
+          debtor_name: order.debtor_name ?? '',
+          agent: order.agent ?? '',
+          is_cancelled: order.is_cancelled ?? false,
+          remarks_cs: order.remarks_cs ?? '',
+          order_type: order.order_type ?? '',
+          delivery_time: order.delivery_time ?? '',
+          checker: order.checker ?? '',
+          transporter: order.transporter ?? '',
+          driver_name: order.driver_name ?? '',
+          lorry_plate: order.lorry_plate ?? '',
+          customer_ref: order.customer_ref ?? '',
+          delivery_remarks_cs: order.delivery_remarks_cs ?? '',
+          delivery_remarks: order.delivery_remarks ?? '',
+          salesman: order.salesman ?? '',
+          trips: order.trips ?? undefined,
+          warehouse: order.warehouse ?? '',
+          delivery_days: order.delivery_days ?? 2,
+          kpi_warning: order.kpi_warning ?? false,
+          subtotal_amount: typeof order.subtotal_amount === 'number' ? order.subtotal_amount : Number(order.subtotal_amount) || 0,
+          discount_amount: typeof order.discount_amount === 'number' ? order.discount_amount : Number(order.discount_amount) || 0,
+          tax_amount: typeof order.tax_amount === 'number' ? order.tax_amount : Number(order.tax_amount) || 0,
+          total_amount: typeof order.total_amount === 'number' ? order.total_amount : Number(order.total_amount) || 0,
+          remarks: order.remarks ?? '',
+        });
+        setFormInitialized(true);
+      }, 0);
+      return () => clearTimeout(timeoutId);
     }
-  }, [order, isEditMode, orderStatuses, form, formInitialized]);
+  }, [order, isEditMode, form, formInitialized]);
 
   // Reset formInitialized when orderId changes
   useEffect(() => {
@@ -265,18 +283,44 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
         {isEditMode && orderId && (
-          <div className="flex justify-end">
-            <RecordNavigation
-              currentId={orderId}
-              items={navigationItems}
-              basePath="/order-management/orders"
-            />
+          <div className="flex justify-end items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" size="icon" aria-label="Order status">
+                  <Settings className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {(() => {
+                  const list = orderStatuses ?? [];
+                  const newOrDelivered = list.filter((s) => {
+                    const code = (s.status_code ?? '').toString().trim().toLowerCase();
+                    return code === 'new' || code === 'delivered';
+                  });
+                  const options = newOrDelivered.length > 0 ? newOrDelivered : list;
+                  return (
+                    <>
+                      {options.map((status) => (
+                        <DropdownMenuItem
+                          key={status.id}
+                          onClick={() => form.setValue('order_status_id', status.id)}
+                        >
+                          {status.status_name}
+                        </DropdownMenuItem>
+                      ))}
+                      {options.length === 0 && (
+                        <DropdownMenuItem disabled>No statuses available</DropdownMenuItem>
+                      )}
+                    </>
+                  );
+                })()}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         )}
         <Tabs defaultValue="basic" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="basic">Basic Information</TabsTrigger>
-            <TabsTrigger value="financial">Financial Details</TabsTrigger>
             <TabsTrigger value="remarks">Remarks</TabsTrigger>
             <TabsTrigger value="tracking">Delivery & Tracking</TabsTrigger>
           </TabsList>
@@ -319,9 +363,10 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                         <FormControl>
                           <Input
                             type="date"
-                            {...field}
-                            value={field.value ? field.value.toISOString().split('T')[0] : ''}
-                            onChange={(e) => field.onChange(new Date(e.target.value))}
+                            value={field.value ? field.value.toISOString().slice(0, 10) : ''}
+                            onChange={(e) =>
+                              field.onChange(e.target.value ? new Date(e.target.value) : undefined)
+                            }
                           />
                         </FormControl>
                         <FormMessage />
@@ -338,9 +383,10 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                         <FormControl>
                           <Input
                             type="date"
-                            {...field}
-                            value={field.value ? field.value.toISOString().split('T')[0] : ''}
-                            onChange={(e) => field.onChange(e.target.value ? new Date(e.target.value) : undefined)}
+                            value={field.value ? field.value.toISOString().slice(0, 10) : ''}
+                            onChange={(e) =>
+                              field.onChange(e.target.value ? new Date(e.target.value) : undefined)
+                            }
                           />
                         </FormControl>
                         <FormMessage />
@@ -359,9 +405,10 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                         <FormControl>
                           <Input
                             type="date"
-                            {...field}
-                            value={field.value ? field.value.toISOString().split('T')[0] : ''}
-                            onChange={(e) => field.onChange(e.target.value ? new Date(e.target.value) : undefined)}
+                            value={field.value ? field.value.toISOString().slice(0, 10) : ''}
+                            onChange={(e) =>
+                              field.onChange(e.target.value ? new Date(e.target.value) : undefined)
+                            }
                           />
                         </FormControl>
                         <FormMessage />
@@ -494,140 +541,6 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
             </Card>
           </TabsContent>
 
-          {/* Tab 2: Financial Details */}
-          <TabsContent value="financial">
-            <Card>
-              <CardHeader>
-                <CardTitle>Financial Details</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <FormField
-                    control={form.control}
-                    name="subtotal_amount"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Subtotal Amount *</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            placeholder="0.00"
-                            {...field}
-                            value={field.value ?? ''}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              if (value === '') {
-                                field.onChange(0);
-                              } else {
-                                const numValue = parseFloat(value);
-                                field.onChange(isNaN(numValue) ? 0 : numValue);
-                              }
-                            }}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="discount_amount"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Discount Amount</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            placeholder="0.00"
-                            {...field}
-                            value={field.value ?? ''}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              if (value === '') {
-                                field.onChange(0);
-                              } else {
-                                const numValue = parseFloat(value);
-                                field.onChange(isNaN(numValue) ? 0 : numValue);
-                              }
-                            }}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <FormField
-                    control={form.control}
-                    name="tax_amount"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Tax Amount</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            placeholder="0.00"
-                            {...field}
-                            value={field.value ?? ''}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              if (value === '') {
-                                field.onChange(0);
-                              } else {
-                                const numValue = parseFloat(value);
-                                field.onChange(isNaN(numValue) ? 0 : numValue);
-                              }
-                            }}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="total_amount"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Total Amount *</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            placeholder="0.00"
-                            {...field}
-                            value={field.value ?? ''}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              if (value === '') {
-                                field.onChange(0);
-                              } else {
-                                const numValue = parseFloat(value);
-                                field.onChange(isNaN(numValue) ? 0 : numValue);
-                              }
-                            }}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          Auto-calculated: Subtotal - Discount + Tax
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Tab 3: Remarks */}
           <TabsContent value="remarks">
             <Card>
               <CardHeader>
@@ -656,7 +569,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
             </Card>
           </TabsContent>
 
-          {/* Tab 4: Delivery & Tracking */}
+          {/* Tab 3: Delivery & Tracking */}
           <TabsContent value="tracking">
             <Card>
               <CardHeader>
@@ -666,23 +579,6 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                 <div className="space-y-4">
                   <h4 className="text-sm font-semibold text-muted-foreground">Master Information</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <FormField
-                      control={form.control}
-                      name="created_time"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Created Time</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="datetime-local"
-                              value={field.value ? new Date(field.value).toISOString().slice(0, 16) : ''}
-                              onChange={(e) => field.onChange(e.target.value ? new Date(e.target.value) : undefined)}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
                     <FormField
                       control={form.control}
                       name="order_type"

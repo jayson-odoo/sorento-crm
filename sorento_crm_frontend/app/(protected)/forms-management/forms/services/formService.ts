@@ -56,8 +56,21 @@ export async function deleteForm(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/forms-management/forms/${id}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to delete form' }));
-    throw new Error(error.message);
+    throw new Error(error.detail || error.message);
   }
+}
+
+export async function bulkDeleteForms(ids: string[]): Promise<{ message: string; deleted_count: number }> {
+  const response = await apiFetch('/api/v1/forms-management/forms/bulk', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to bulk delete forms' }));
+    throw new Error(error.detail || error.message);
+  }
+  return response.json();
 }
 
 export async function duplicateForm(id: string, newCode: string): Promise<Form> {

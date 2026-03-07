@@ -1,0 +1,65 @@
+name: Build and Deploy Sorento
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # FRONTEND IMAGE
+      - name: Build and Push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./sorento_crm_frontend
+          platforms: linux/amd64
+          push: true
+          tags: |
+            jayson1004/sorento-crm:frontend-1.0.1
+            jayson1004/sorento-crm:frontend-${{ github.sha }}
+
+      # BACKEND IMAGE
+      - name: Build and Push Backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./sorento_crm_backend
+          platforms: linux/amd64
+          push: true
+          tags: |
+            jayson1004/sorento-crm:backend-1.0.1
+            jayson1004/sorento-crm:backend-${{ github.sha }}
+
+      # DEPLOY USING DOCKER COMPOSE
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /opt/sorento-crm2
+
+            # pull latest git code if compose file is in repo
+            git pull || true
+
+            # pull latest images used by docker-compose.yml
+            docker pull jayson1004/sorento-crm:frontend-1.0.1
+            docker pull jayson1004/sorento-crm:backend-1.0.1
+
+            # recreate containers with new images
+            docker compose down
+            docker compose up -d
+
+            docker system prune -f

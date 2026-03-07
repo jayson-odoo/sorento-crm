@@ -1,4 +1,4 @@
-"""Attachment directories (folders) API."""
+"""Files (folders) API."""
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.database import get_db

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   type Column,
@@ -13,15 +13,22 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Filter, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -33,12 +40,23 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
-import { formatDate } from '@/lib/helpers';
+import { formatDate, formatDateTime } from '@/lib/helpers';
+import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
   sponsorship_form: 'Sponsorship Form',
 };
+
+/** API value -> display label for status filter */
+const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'draft', label: 'Draft' },
+  { value: 'pending', label: 'Pending approval' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'rejected', label: 'Rejected' },
+];
 
 /** Display status: draft → pending_approval → approved (or rejected). Resend sets back to pending_approval. */
 function getDisplayStatus(row: PurchaseRequest): string {
@@ -48,12 +66,6 @@ function getDisplayStatus(row: PurchaseRequest): string {
   if (a === 'approved') return 'Approved';
   if (a === 'rejected') return 'Rejected';
   return a;
-}
-
-function getStatusVariant(status: string): 'secondary' | 'primary' | 'destructive' {
-  if (status === 'Approved') return 'primary';
-  if (status === 'Rejected') return 'destructive';
-  return 'secondary';
 }
 
 const DEFAULT_BASE_PATH = '/procurement-management/purchase-requests';
@@ -81,9 +93,14 @@ export default function PurchaseRequestsList({
   const [requestTypeFilter, setRequestTypeFilter] = useState<string>(
     requestType ?? 'all',
   );
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const effectiveRequestType =
     requestType ?? (requestTypeFilter && requestTypeFilter !== 'all' ? requestTypeFilter : undefined);
+  const effectiveStatusFilter =
+    statusFilter && statusFilter !== 'all' ? statusFilter : undefined;
 
   const { data, isLoading } = usePurchaseRequests({
     pageIndex: pagination.pageIndex,
@@ -91,14 +108,68 @@ export default function PurchaseRequestsList({
     sorting,
     searchQuery,
     requestType: effectiveRequestType,
+    approvalStatus: effectiveStatusFilter,
   });
+
+  const statusFilterLabel =
+    STATUS_FILTER_OPTIONS.find((o) => o.value === statusFilter)?.label ?? 'Status';
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [statusFilter]);
 
   const handleRowClick = (row: PurchaseRequest) => {
     router.push(`${basePath}/${row.id}`);
   };
 
+  const toggleSelection = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const pageData = data?.data ?? [];
+  const selectAllOnPage = () => {
+    if (selectedIds.size === pageData.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(pageData.map((r) => r.id)));
+    }
+  };
+  const isAllSelected = pageData.length > 0 && selectedIds.size === pageData.length;
+
+  const bulkDeleteEntityLabel =
+    requestType === 'purchase_request'
+      ? 'Purchase Request'
+      : requestType === 'sponsorship_form'
+        ? 'Sponsorship Form'
+        : 'record';
+
   const columns = useMemo<ColumnDef<PurchaseRequest>[]>(
     () => [
+      {
+        id: 'select',
+        header: () => (
+          <Checkbox
+            checked={isAllSelected}
+            onCheckedChange={selectAllOnPage}
+            aria-label="Select all on page"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={selectedIds.has(row.original.id)}
+            onCheckedChange={() => toggleSelection(row.original.id)}
+            aria-label={`Select ${row.original.request_number || row.original.id}`}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        size: 44,
+        enableResizing: false,
+      },
       ...(!requestType
         ? [
             {
@@ -133,6 +204,18 @@ export default function PurchaseRequestsList({
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        accessorKey: 'created_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Created At" column={column} />
+        ),
+        cell: ({ row }) =>
+          row.original.created_at
+            ? formatDateTime(new Date(row.original.created_at))
+            : '-',
+        size: 160,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         accessorKey: 'approval_status',
         id: 'status',
         header: ({ column }) => (
@@ -142,7 +225,7 @@ export default function PurchaseRequestsList({
         cell: ({ row }) => {
           const status = getDisplayStatus(row.original);
           return (
-            <Badge variant={getStatusVariant(status)} className="capitalize">
+            <Badge variant={getStatusBadgeVariant(status)} className="capitalize">
               {status}
             </Badge>
           );
@@ -194,7 +277,7 @@ export default function PurchaseRequestsList({
         size: 40,
       },
     ],
-    [requestType],
+    [requestType, selectedIds, isAllSelected],
   );
 
   const table = useReactTable({
@@ -257,13 +340,42 @@ export default function PurchaseRequestsList({
                 </SelectContent>
               </Select>
             )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2">
+                  <Filter className="size-4" />
+                  {statusFilter !== 'all' ? statusFilterLabel : 'Filter by status'}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-48">
+                {STATUS_FILTER_OPTIONS.map((opt) => (
+                  <DropdownMenuItem
+                    key={opt.value}
+                    onClick={() => setStatusFilter(opt.value)}
+                  >
+                    {opt.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-          <Button
-            onClick={() => router.push(`${basePath}/new`)}
-          >
-            <Plus />
-            Create
-          </Button>
+          <div className="flex items-center gap-2">
+            {selectedIds.size > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setBulkDeleteOpen(true)}
+                className="text-destructive hover:text-destructive"
+              >
+                <Trash2 className="size-4" />
+                Delete ({selectedIds.size})
+              </Button>
+            )}
+            <Button onClick={() => router.push(`${basePath}/new`)}>
+              <Plus />
+              Create
+            </Button>
+          </div>
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -275,6 +387,16 @@ export default function PurchaseRequestsList({
           <DataGridPagination />
         </CardFooter>
       </Card>
+      <PurchaseRequestBulkDeleteDialog
+        open={bulkDeleteOpen}
+        onOpenChange={(open) => {
+          setBulkDeleteOpen(open);
+          if (!open) setSelectedIds(new Set());
+        }}
+        ids={Array.from(selectedIds)}
+        entityLabel={bulkDeleteEntityLabel}
+        onSuccess={() => setSelectedIds(new Set())}
+      />
     </DataGrid>
   );
 }

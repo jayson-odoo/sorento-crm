@@ -130,7 +130,8 @@ Create `.env` or `.env.local` in `sorento_crm_frontend/`. Use `.env.local` for l
 | `EXTERNAL_API_KEY` | Expected key for external API routes |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SENDER`, `SMTP_FROM` | Email (e.g. nodemailer) |
 | `STORAGE_*` | S3-compatible storage (bucket, region, keys, endpoint, CDN URL) |
-| `RECAPTCHA_SECRET_KEY` / `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` | reCAPTCHA |
+| `RECAPTCHA_SECRET_KEY` / `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` | reCAPTCHA (e.g. signup; reset password does not use it) |
+| `FRONTEND_BASE_URL` | Backend: base URL of the frontend app (e.g. `https://fe-sorento.foundryx.my`) for password reset emails |
 
 ### 3. Prisma (database and client)
 

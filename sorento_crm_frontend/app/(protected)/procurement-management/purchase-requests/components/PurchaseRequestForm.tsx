@@ -4,8 +4,17 @@ import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Save, Plus, Trash2 } from 'lucide-react';
+import { LoaderCircleIcon, Save, Send, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import {
   Form,
   FormControl,
@@ -35,8 +44,11 @@ import {
 import {
   useCreatePurchaseRequest,
   useUpdatePurchaseRequest,
+  useUpdatePurchaseRequestAndReply,
   usePurchaseRequest,
 } from '../hooks/usePurchaseRequests';
+import { getOrCreateViewLink } from '../services/purchaseRequestService';
+import { toast } from 'sonner';
 import {
   PurchaseRequestSchema,
   type PurchaseRequestSchemaType,
@@ -69,6 +81,9 @@ export default function PurchaseRequestForm({
   );
   const createMutation = useCreatePurchaseRequest();
   const updateMutation = useUpdatePurchaseRequest();
+  const updateAndReplyMutation = useUpdatePurchaseRequestAndReply();
+  const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
+  const [replyMessage, setReplyMessage] = useState('');
 
   // Redirect to the correct edit page if record type doesn't match (e.g. opened purchase-request edit but record is sponsorship_form)
   useEffect(() => {
@@ -91,6 +106,7 @@ export default function PurchaseRequestForm({
     resolver: zodResolver(PurchaseRequestSchema),
     defaultValues: {
       request_type: defaultRequestType,
+      request_number: null,
       request_date: null,
       customer_name: null,
       project_title: null,
@@ -100,8 +116,6 @@ export default function PurchaseRequestForm({
       expected_po_date_text: null,
       requested_by: null,
       requested_at: null,
-      contact_id: null,
-      space_id: null,
       products: [{ item_code: null, quantity: null, remark: null }],
     },
     mode: 'onSubmit',
@@ -120,7 +134,8 @@ export default function PurchaseRequestForm({
         (request.lines?.length ?? 0) > 0
           ? request.lines!.map((l) => ({
               item_code: l.item_code ?? null,
-              quantity: l.quantity ?? null,
+              quantity:
+                l.quantity != null ? Number(l.quantity) : null,
               remark: l.remark ?? null,
             }))
           : [{ item_code: null, quantity: null, remark: null }];
@@ -128,6 +143,7 @@ export default function PurchaseRequestForm({
         request_type: (request.request_type ?? 'purchase_request') as
           | 'purchase_request'
           | 'sponsorship_form',
+        request_number: request.request_number ?? null,
         request_date: request.request_date
           ? new Date(request.request_date).toISOString().split('T')[0]
           : null,
@@ -145,8 +161,6 @@ export default function PurchaseRequestForm({
         requested_at: request.requested_at
           ? new Date(request.requested_at).toISOString().split('T')[0]
           : null,
-        contact_id: request.contact_id ?? null,
-        space_id: request.space_id ?? null,
         products,
       });
       setFormInitialized(true);
@@ -161,6 +175,7 @@ export default function PurchaseRequestForm({
     try {
       const formData: PurchaseRequestFormData = {
         request_type: data.request_type,
+        request_number: data.request_number ?? undefined,
         request_date: data.request_date || undefined,
         customer_name: data.customer_name || undefined,
         project_title: data.project_title || undefined,
@@ -170,13 +185,14 @@ export default function PurchaseRequestForm({
         expected_po_date_text: data.expected_po_date_text || undefined,
         requested_by: data.requested_by || undefined,
         requested_at: data.requested_at || undefined,
-        contact_id: data.contact_id || undefined,
-        space_id: data.space_id || undefined,
         products: data.products
           .filter((p) => p.item_code != null || p.quantity != null)
           .map((p) => ({
             item_code: p.item_code ?? undefined,
-            quantity: p.quantity ?? undefined,
+            quantity:
+              p.quantity != null && p.quantity !== ''
+                ? Number(p.quantity)
+                : undefined,
             remark: p.remark ?? undefined,
           })),
       };
@@ -214,6 +230,24 @@ export default function PurchaseRequestForm({
                 <CardTitle>Header</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                <FormField
+                  control={form.control}
+                  name="request_number"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Form number</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g. PR-2026-001"
+                          {...field}
+                          value={field.value ?? ''}
+                          onChange={(e) => field.onChange(e.target.value || null)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 {defaultRequestType !== 'sponsorship_form' && (
                   <FormField
                     control={form.control}
@@ -383,64 +417,6 @@ export default function PurchaseRequestForm({
                 />
               </CardContent>
             </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Respond conversation</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Optional: set Contact ID and Space ID (from respond.io) to build the conversation inbox URL.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {request?.respond_inbox_url && (
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">Respond Inbox</p>
-                    <a
-                      href={request.respond_inbox_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline text-sm break-all"
-                    >
-                      {request.respond_inbox_url}
-                    </a>
-                  </div>
-                )}
-                <FormField
-                  control={form.control}
-                  name="contact_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Contact ID</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Respond.io contact ID"
-                          {...field}
-                          value={field.value ?? ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="space_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Space ID</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Respond.io space ID"
-                          {...field}
-                          value={field.value ?? ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </CardContent>
-            </Card>
           </div>
 
           <div className="space-y-6">
@@ -567,6 +543,38 @@ export default function PurchaseRequestForm({
           >
             Cancel
           </Button>
+          {isEditMode && (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={async () => {
+                const valid = await form.trigger();
+                if (!valid || !requestId) return;
+                setReplyMessage('');
+                try {
+                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                  const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
+                  if (view_url) setReplyMessage(view_url);
+                } catch {
+                  // leave empty, user can type
+                }
+                setUpdateAndReplyDialogOpen(true);
+              }}
+              disabled={isLoading || updateAndReplyMutation.isPending}
+            >
+              {updateAndReplyMutation.isPending ? (
+                <>
+                  <LoaderCircleIcon className="size-4 animate-spin" />
+                  Sending…
+                </>
+              ) : (
+                <>
+                  <Send className="size-4" />
+                  Update & Reply
+                </>
+              )}
+            </Button>
+          )}
           <Button type="submit" disabled={isLoading}>
             {isLoading ? (
               <>
@@ -582,6 +590,87 @@ export default function PurchaseRequestForm({
           </Button>
         </div>
       </form>
+
+      {isEditMode && (
+        <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Update & Reply</DialogTitle>
+              <DialogDescription>
+                This message will be sent to the conversation in Respond. You can edit it below. The view link is included by default for the recipient to open the form.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="pr-reply_message">Message to send</Label>
+                <Textarea
+                  id="pr-reply_message"
+                  value={replyMessage}
+                  onChange={(e) => setReplyMessage(e.target.value)}
+                  placeholder="Add a message (view link will be appended if added above)"
+                  rows={4}
+                  className="resize-none"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setUpdateAndReplyDialogOpen(false)}
+                disabled={updateAndReplyMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={updateAndReplyMutation.isPending || !replyMessage.trim()}
+                onClick={async () => {
+                  if (!requestId) return;
+                  try {
+                    const values = form.getValues();
+                    await updateAndReplyMutation.mutateAsync({
+                      id: requestId,
+                      data: {
+                        formData: {
+                          request_type: values.request_type,
+                          request_number: values.request_number ?? undefined,
+                          request_date: values.request_date ?? undefined,
+                          customer_name: values.customer_name ?? undefined,
+                          project_title: values.project_title ?? undefined,
+                          purpose: values.purpose ?? undefined,
+                          expected_delivery_date: values.expected_delivery_date ?? undefined,
+                          expected_po_date: values.expected_po_date ?? undefined,
+                          expected_po_date_text: values.expected_po_date_text ?? undefined,
+                          requested_by: values.requested_by ?? undefined,
+                          requested_at: values.requested_at ?? undefined,
+                          products: (values.products ?? []).map((p) => ({
+                            item_code: p.item_code ?? undefined,
+                            quantity:
+                              typeof p.quantity === 'number'
+                                ? p.quantity
+                                : p.quantity != null && p.quantity !== ''
+                                  ? Number(p.quantity)
+                                  : undefined,
+                            remark: p.remark ?? undefined,
+                          })),
+                        },
+                        reply_message: replyMessage.trim(),
+                      },
+                    });
+                    setUpdateAndReplyDialogOpen(false);
+                    setReplyMessage('');
+                    toast.success('Updated and reply sent');
+                    if (successRedirectUrl) router.push(successRedirectUrl);
+                  } catch {
+                    // toast from mutation
+                  }
+                }}
+              >
+                {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </Form>
   );
 }

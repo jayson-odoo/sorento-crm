@@ -1,10 +1,11 @@
 {
   "/api/auth/token/route": "app/api/auth/token/route.js",
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/(protected)/procurement-management/spo-allocations/[id]/page": "app/(protected)/procurement-management/spo-allocations/[id]/page.js",
-  "/(protected)/procurement-management/spo-allocations/page": "app/(protected)/procurement-management/spo-allocations/page.js",
-  "/(protected)/procurement-management/grn/[id]/page": "app/(protected)/procurement-management/grn/[id]/page.js",
-  "/(protected)/procurement-management/grn/page": "app/(protected)/procurement-management/grn/page.js",
-  "/(protected)/procurement-management/grn/[id]/edit/page": "app/(protected)/procurement-management/grn/[id]/edit/page.js",
-  "/(protected)/master-data-management/products/page": "app/(protected)/master-data-management/products/page.js"
+  "/(protected)/complaint-management/complaints/[id]/page": "app/(protected)/complaint-management/complaints/[id]/page.js",
+  "/(protected)/user-management/users/page": "app/(protected)/user-management/users/page.js",
+  "/(protected)/procurement-management/stock-inquiries/page": "app/(protected)/procurement-management/stock-inquiries/page.js",
+  "/(protected)/procurement-management/stock-inquiries/[id]/page": "app/(protected)/procurement-management/stock-inquiries/[id]/page.js",
+  "/(protected)/complaint-management/complaints/[id]/edit/page": "app/(protected)/complaint-management/complaints/[id]/edit/page.js",
+  "/(protected)/procurement-management/stock-inquiries/new/page": "app/(protected)/procurement-management/stock-inquiries/new/page.js",
+  "/(protected)/user-management/users/[id]/page": "app/(protected)/user-management/users/[id]/page.js"
 }

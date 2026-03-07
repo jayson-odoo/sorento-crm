@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
 from app.services.user_service import UserPermissionService
 from app.schemas.user import UserPermissionCreate, UserPermissionUpdate, UserPermissionResponse
 from app.schemas.common import ListResponse
@@ -15,7 +15,7 @@ router = APIRouter()
 @router.get("/select", response_model=List[UserPermissionResponse])
 async def get_permissions_select(
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.permissions.view")),
     db: Session = Depends(get_db)
 ):
     """Get user permissions for select dropdowns."""
@@ -31,7 +31,7 @@ async def get_permissions_select(
 async def get_permissions(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.permissions.view")),
     db: Session = Depends(get_db)
 ):
     """Get user permissions with pagination."""
@@ -46,7 +46,7 @@ async def get_permissions(
 @router.get("/{permission_id}", response_model=UserPermissionResponse)
 async def get_permission(
     permission_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.permissions.view")),
     db: Session = Depends(get_db)
 ):
     """Get a single permission by ID."""
@@ -63,7 +63,7 @@ async def get_permission(
 @router.post("/", response_model=UserPermissionResponse, status_code=status.HTTP_201_CREATED)
 async def create_permission(
     permission_data: UserPermissionCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.permissions.add")),
     db: Session = Depends(get_db)
 ):
     """Create a new permission."""
@@ -81,7 +81,7 @@ async def create_permission(
 async def update_permission(
     permission_id: str,
     permission_data: UserPermissionUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.permissions.edit")),
     db: Session = Depends(get_db)
 ):
     """Update a permission."""
@@ -98,7 +98,7 @@ async def update_permission(
 @router.delete("/{permission_id}", status_code=status.HTTP_200_OK)
 async def delete_permission(
     permission_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.permissions.delete")),
     db: Session = Depends(get_db)
 ):
     """Delete a permission."""
@@ -115,7 +115,7 @@ async def delete_permission(
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
 async def bulk_delete_permissions(
     permission_ids: list[str],
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.permissions.delete")),
     db: Session = Depends(get_db)
 ):
     """Bulk delete permissions."""

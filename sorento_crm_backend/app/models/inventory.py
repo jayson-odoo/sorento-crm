@@ -88,7 +88,21 @@ class Stock(Base):
     
     product = relationship("Product", back_populates="stock")
     warehouse = relationship("Warehouse", back_populates="stock")
-    
+
+    @property
+    def status(self) -> str:
+        """Computed status: critical, low, normal, overstock (for API/frontend)."""
+        avail = self.quantity_available or 0
+        reorder = getattr(self.product, "reorder_level", None) if self.product else None
+        reorder = (reorder if reorder is not None else 0) or 0
+        if avail <= 0:
+            return "critical"
+        if reorder and avail < reorder:
+            return "low"
+        if reorder and avail > reorder * 2:
+            return "overstock"
+        return "normal"
+
     __table_args__ = (
         Index("ix_stock_product_id", "product_id"),
         Index("ix_stock_warehouse_id", "warehouse_id"),

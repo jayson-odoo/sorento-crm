@@ -118,7 +118,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <div className="space-y-px">
                 <div className="font-semibold text-sm">{user.name}</div>
                 <div className="text-muted-foreground text-2sm">
-                  {user.role.name}
+                  {user.roles?.length ? user.roles.map((r: { name: string }) => r.name).join(', ') : (user.role?.name ?? '—')}
                 </div>
               </div>
             </div>

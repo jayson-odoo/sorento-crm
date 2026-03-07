@@ -39,6 +39,7 @@ import type {
 } from '../types/spoAllocation.types';
 import Link from 'next/link';
 import React from 'react';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 type ViewMode = 'none' | 'spo_number';
 
@@ -161,21 +162,6 @@ export default function SPOAllocationsList() {
 
   const handleAllocationClick = (allocation: SPOAllocationWithShipped | SPOAllocation) => {
     router.push(`/procurement-management/spo-allocations/${allocation.id}`);
-  };
-
-  const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'secondary';
-      case 'partial_received':
-        return 'primary';
-      case 'fully_received':
-        return 'primary';
-      case 'rejected':
-        return 'destructive';
-      default:
-        return 'secondary';
-    }
   };
 
   const groupColumns = useMemo<ColumnDef<SPOWithAllocationsGroup>[]>(

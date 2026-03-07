@@ -1,9 +1,29 @@
 """Complaint management schemas."""
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, field_validator
+from typing import Optional, Any
 from datetime import datetime, date
 from decimal import Decimal
 from app.schemas.resources import AttachmentResponse
+
+
+def _parse_date_string(v: Any) -> Optional[date]:
+    """Parse date from string; accept yyyy-MM-dd, dd/mm/yyyy, dd-mm-yyyy."""
+    if v is None:
+        return None
+    if isinstance(v, date):
+        return v
+    if not isinstance(v, str):
+        return None
+    s = v.strip()
+    if not s:
+        return None
+    from datetime import datetime as dt
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return dt.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 class ComplaintAttachmentBase(BaseModel):
@@ -20,6 +40,7 @@ class ComplaintAttachmentCreate(ComplaintAttachmentBase):
 class ComplaintAttachmentResponse(ComplaintAttachmentBase):
     id: str
     attachment_id: Optional[str] = None
+    original_filename: Optional[str] = None  # Human-readable name for display
     uploaded_at: datetime
     link_type: Optional[str] = None  # "complaint_attachment"
 
@@ -32,10 +53,20 @@ class ComplaintAttachmentLinkRequest(BaseModel):
     attachment_id: str
 
 
+class BulkDeleteComplaintsRequest(BaseModel):
+    """Request body for bulk delete: { ids: list[str] }."""
+    ids: list[str]
+
+
 class ComplaintBase(BaseModel):
     delivery_order_number: Optional[str] = None
     complaint_date: Optional[date] = None
     customer_type: Optional[str] = None
+
+    @field_validator("complaint_date", mode="before")
+    @classmethod
+    def parse_complaint_date(cls, v: Any) -> Optional[date]:
+        return _parse_date_string(v)
     customer_type_others: Optional[str] = None
     within_warranty: Optional[str] = None
     product_type: Optional[str] = None
@@ -55,6 +86,9 @@ class ComplaintBase(BaseModel):
     status: Optional[str] = None
     last_responded_by: Optional[str] = None
     last_responded_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    assigned_to: Optional[str] = None
+    assigned_to_name: Optional[str] = None
 
 
 class ComplaintCreate(ComplaintBase):
@@ -65,6 +99,11 @@ class ComplaintUpdate(BaseModel):
     delivery_order_number: Optional[str] = None
     complaint_date: Optional[date] = None
     customer_type: Optional[str] = None
+
+    @field_validator("complaint_date", mode="before")
+    @classmethod
+    def parse_complaint_date(cls, v: Any) -> Optional[date]:
+        return _parse_date_string(v)
     customer_type_others: Optional[str] = None
     within_warranty: Optional[str] = None
     product_type: Optional[str] = None
@@ -93,6 +132,7 @@ class ComplaintResponse(ComplaintBase):
     last_responded_by: Optional[str] = None
     last_responded_by_name: Optional[str] = None
     last_responded_at: Optional[datetime] = None
+    assigned_to_name: Optional[str] = None
     attachments: Optional[list[ComplaintAttachmentResponse]] = []
 
     class Config:

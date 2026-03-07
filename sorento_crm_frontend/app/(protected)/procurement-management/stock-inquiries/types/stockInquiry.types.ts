@@ -17,8 +17,21 @@ export interface StockInquiry {
   last_responded_by?: string | null;
   last_responded_by_name?: string | null;
   last_responded_at?: string | null;
+  attachments?: StockInquiryAttachment[];
   created_at: Date;
   updated_at: Date;
+}
+
+export interface StockInquiryAttachment {
+  id: string;
+  inquiry_id: string;
+  attachment_id?: string | null;
+  file_name?: string | null;
+  original_filename?: string | null;
+  file_url?: string | null;
+  file_size_bytes?: number | null;
+  uploaded_at?: string | Date | null;
+  link_type?: string | null;
 }
 
 export interface StockInquiryFormData {

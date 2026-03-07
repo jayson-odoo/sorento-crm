@@ -1,12 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getPromotions, getPromotion, createPromotion, updatePromotion, deletePromotion, getPromotionProducts, addPromotionProduct, removePromotionProduct, updatePromotionProductPrice } from '../services/promotionService';
+import { getPromotions, getPromotion, createPromotion, updatePromotion, deletePromotion, bulkDeletePromotions, bulkUpdateAccessLevels, getPromotionProducts, addPromotionProduct, removePromotionProduct, updatePromotionProductPrice } from '../services/promotionService';
 import type { PromotionFormData } from '../types/promotion.types';
 
-export function usePromotions(params: DataGridApiFetchParams & { promo_type?: string; status?: string; date_from?: string; date_to?: string }) {
+export function usePromotions(params: DataGridApiFetchParams & { promo_type?: string; status?: string; date_from?: string; date_to?: string; user_type?: string }) {
   return useQuery({
-    queryKey: ['promotions', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.promo_type, params.status, params.date_from, params.date_to],
+    queryKey: ['promotions', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.promo_type, params.status, params.date_from, params.date_to, params.user_type],
     queryFn: () => getPromotions(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
@@ -73,6 +73,31 @@ export function useDeletePromotion() {
       toast.success('Promotion deleted successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete promotion'),
+  });
+}
+
+export function useBulkDeletePromotions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeletePromotions(ids),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['promotions'] });
+      toast.success(result?.message ?? `${result?.deleted_count ?? 0} promotion(s) deleted`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to bulk delete promotions'),
+  });
+}
+
+export function useBulkUpdatePromotionAccessLevels() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ids, access_levels }: { ids: string[]; access_levels: string[] }) =>
+      bulkUpdateAccessLevels(ids, access_levels),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['promotions'] });
+      toast.success(result?.message ?? `Access levels set for ${result?.updated_count ?? 0} promotion(s).`);
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to update access levels'),
   });
 }
 

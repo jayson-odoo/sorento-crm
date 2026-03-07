@@ -1,4 +1,5 @@
 """Procurement service for business logic."""
+import logging
 import secrets
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
@@ -9,6 +10,7 @@ from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
     PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine,
     ApprovalToken,
+    ViewToken,
 )
 from app.models.product import Product
 from app.models.resources import Attachment
@@ -17,10 +19,12 @@ from app.schemas.procurement import (
     InboundShipmentCreate, InboundShipmentUpdate,
     SPOAllocationCreate, SPOAllocationUpdate, PickingHeaderCreate, PickingHeaderUpdate,
     StockInquiryCreate, StockInquiryUpdate,
-    PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate,
+    PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate, PurchaseRequestUpdateAndReply,
 )
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_spo_number(spo_number: Optional[str]) -> str:
@@ -503,7 +507,7 @@ class SPOAllocationService:
         sort_field: str = "spo_number",
         sort_dir: str = "asc",
     ):
-        """List SPO allocations grouped by spo_number (for list view by SPO)."""
+        """List SPO allocations grouped by spo_number (for list view by SPO). Paginates at DB level."""
         from sqlalchemy.orm import joinedload
         from sqlalchemy import func
         from app.schemas.procurement import (
@@ -512,13 +516,8 @@ class SPOAllocationService:
             SPOWithAllocationsGroup,
         )
 
-        q = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None))
-        q = q.options(
-            joinedload(SPOAllocation.product),
-            joinedload(SPOAllocation.warehouse),
-            joinedload(SPOAllocation.inbound_shipment),
-        )
-
+        # Base filter query (no eager load) – reuse for count and for page of spo_numbers
+        q_base = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None))
         filters = []
         if warehouse_id and warehouse_id != "all":
             filters.append(SPOAllocation.warehouse_id == warehouse_id)
@@ -530,7 +529,7 @@ class SPOAllocationService:
             )
         if query:
             q_str = query.strip()
-            q = q.outerjoin(InboundShipment, SPOAllocation.inbound_shipment_id == InboundShipment.id)
+            q_base = q_base.outerjoin(InboundShipment, SPOAllocation.inbound_shipment_id == InboundShipment.id)
             filters.append(
                 or_(
                     SPOAllocation.spo_number.ilike(f"%{q_str}%"),
@@ -541,26 +540,34 @@ class SPOAllocationService:
                 )
             )
         if filters:
-            q = q.filter(and_(*filters))
+            q_base = q_base.filter(and_(*filters))
 
         sort_map = {
             "spo_number": SPOAllocation.spo_number,
             "created_at": SPOAllocation.created_at,
         }
         sort_col = sort_map.get(sort_field, SPOAllocation.spo_number)
-        q = q.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
+        order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
 
-        all_allocations = q.all()
-        spo_numbers_ordered = []
-        seen = set()
-        for a in all_allocations:
-            if a.spo_number and a.spo_number not in seen:
-                seen.add(a.spo_number)
-                spo_numbers_ordered.append(a.spo_number)
-
-        total = len(spo_numbers_ordered)
+        # Total count of distinct SPO numbers
+        total = q_base.with_entities(func.count(func.distinct(SPOAllocation.spo_number))).scalar() or 0
         offset = (page - 1) * limit
-        spo_page = spo_numbers_ordered[offset : offset + limit]
+        if total == 0:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+
+        # Page of distinct spo_numbers at DB level (same filters and order)
+        q_spo_page = (
+            q_base.with_entities(SPOAllocation.spo_number)
+            .distinct()
+            .order_by(order)
+            .offset(offset)
+            .limit(limit)
+        )
+        spo_page = [r[0] for r in q_spo_page.all() if r[0]]
 
         if not spo_page:
             return {
@@ -568,6 +575,23 @@ class SPOAllocationService:
                 "pagination": {"total": total, "page": page, "limit": limit},
                 "empty": True,
             }
+
+        # Load only allocations for this page of spo_numbers, with relations
+        q_alloc = (
+            self.db.query(SPOAllocation)
+            .filter(SPOAllocation.spo_number.in_(spo_page))
+            .options(
+                joinedload(SPOAllocation.product),
+                joinedload(SPOAllocation.warehouse),
+                joinedload(SPOAllocation.inbound_shipment),
+            )
+            .order_by(SPOAllocation.spo_number, SPOAllocation.id)
+        )
+        if query:
+            q_alloc = q_alloc.outerjoin(InboundShipment, SPOAllocation.inbound_shipment_id == InboundShipment.id)
+        if filters:
+            q_alloc = q_alloc.filter(and_(*filters))
+        all_allocations = q_alloc.all()
 
         by_spo: dict[str, list] = {}
         for a in all_allocations:
@@ -714,23 +738,28 @@ class SPOAllocationService:
 
     def get_linked_grns_for_spo(self, spo_number: Optional[str]):
         """Return list of GRN headers (id, picking_number, picking_status, picking_date) for this SPO number.
-        Matches by normalized SPO number."""
+        Matches by normalized SPO number. Filter at DB level to avoid loading all GRNs."""
         if not spo_number or not spo_number.strip():
             return []
         target_norm = _normalize_spo_number(spo_number)
         if not target_norm:
             return []
+        # Normalize in DB: trim and replace / and \ with . (PostgreSQL)
+        norm_expr = func.replace(
+            func.replace(func.trim(PickingHeader.spo_number), "/", "."),
+            "\\", ".",
+        )
         rows = (
             self.db.query(
                 PickingHeader.id,
                 PickingHeader.picking_number,
                 PickingHeader.picking_status,
                 PickingHeader.picking_date,
-                PickingHeader.spo_number,
             )
             .filter(
                 PickingHeader.picking_type == "goods_received",
                 PickingHeader.spo_number.isnot(None),
+                norm_expr == target_norm,
             )
             .order_by(PickingHeader.picking_date.desc().nulls_last(), PickingHeader.picking_number)
             .all()
@@ -738,7 +767,6 @@ class SPOAllocationService:
         return [
             {"id": str(r[0]), "picking_number": r[1], "picking_status": r[2], "picking_date": r[3]}
             for r in rows
-            if _normalize_spo_number(r[4]) == target_norm
         ]
 
 
@@ -758,10 +786,10 @@ class PickingHeaderService:
         sort_field: str = "created_at",
         sort_dir: str = "asc"
     ):
-        """List GRNs (picking headers with type 'goods_received')."""
-        from sqlalchemy.orm import selectinload
+        """List GRNs (picking headers with type 'goods_received'). Does not load picking_lines; adds lines_count only."""
+        from sqlalchemy.orm import noload
         q = self.db.query(PickingHeader).options(
-            selectinload(PickingHeader.picking_lines).joinedload(PickingLine.product)
+            noload(PickingHeader.picking_lines)
         ).filter(PickingHeader.picking_type == "goods_received")
         
         filters = []
@@ -784,15 +812,56 @@ class PickingHeaderService:
             "created_at": PickingHeader.created_at,
             "updated_at": PickingHeader.updated_at,
         }
-        sort_column = sort_map.get(sort_field, PickingHeader.created_at)
-        if sort_dir == "desc":
-            q = q.order_by(sort_column.desc())
+        use_lines_count_sort = sort_field == "lines_count"
+        if use_lines_count_sort:
+            line_count_subq = (
+                self.db.query(
+                    PickingLine.picking_header_id,
+                    func.count(PickingLine.id).label("cnt"),
+                )
+                .group_by(PickingLine.picking_header_id)
+            ).subquery()
+            q = q.outerjoin(line_count_subq, PickingHeader.id == line_count_subq.c.picking_header_id)
+            sort_column = line_count_subq.c.cnt
+            if sort_dir == "desc":
+                q = q.order_by(sort_column.desc().nulls_last())
+            else:
+                q = q.order_by(sort_column.asc().nulls_last())
+            total = q.count()
+            offset = (page - 1) * limit
+            q = q.add_columns(line_count_subq.c.cnt)
+            rows = q.offset(offset).limit(limit).all()
+            grns = []
+            for row in rows:
+                header, cnt = row[0], row[1]
+                setattr(header, "lines_count", int(cnt) if cnt is not None else 0)
+                setattr(header, "picking_lines", [])
+                grns.append(header)
         else:
-            q = q.order_by(sort_column.asc())
-        
-        total = q.count()
-        offset = (page - 1) * limit
-        grns = q.offset(offset).limit(limit).all()
+            sort_column = sort_map.get(sort_field, PickingHeader.created_at)
+            if sort_dir == "desc":
+                q = q.order_by(sort_column.desc().nulls_last())
+            else:
+                q = q.order_by(sort_column.asc().nulls_last())
+            total = q.count()
+            offset = (page - 1) * limit
+            grns = q.offset(offset).limit(limit).all()
+            header_ids = [g.id for g in grns]
+            if header_ids:
+                count_rows = (
+                    self.db.query(PickingLine.picking_header_id, func.count(PickingLine.id))
+                    .filter(PickingLine.picking_header_id.in_(header_ids))
+                    .group_by(PickingLine.picking_header_id)
+                    .all()
+                )
+                counts_by_header = {str(r[0]): r[1] for r in count_rows}
+                for g in grns:
+                    setattr(g, "lines_count", counts_by_header.get(str(g.id), 0))
+                    setattr(g, "picking_lines", [])
+            else:
+                for g in grns:
+                    setattr(g, "lines_count", 0)
+                    setattr(g, "picking_lines", [])
         
         return {
             "data": grns,
@@ -882,10 +951,11 @@ class PickingHeaderService:
         self.db.add(grn)
         self.db.flush()
         
-        # Create lines if provided (exclude quantity_discrepancy - DB generated column)
+        # Create lines if provided. Do not link to SPO on create (only link when status becomes approved).
         if grn_data.picking_lines:
             for line_data in grn_data.picking_lines:
                 line_dict = line_data.model_dump(exclude={"quantity_discrepancy"}, exclude_none=False)
+                line_dict.pop("spo_allocation_id", None)  # Never link on create
                 line = PickingLine(**line_dict, picking_header_id=grn.id)
                 self.db.add(line)
         
@@ -894,7 +964,7 @@ class PickingHeaderService:
         return grn
     
     def update_grn(self, grn_id: str, grn_data: PickingHeaderUpdate):
-        """Update a GRN. If picking_lines is provided, replace all lines. If status becomes approved, sync to SPO."""
+        """Update a GRN. Link to SPO only when status changes to approved; unlink and release quantity when status changes to draft or rejected."""
         grn = self.get_grn(grn_id)
         prev_status = grn.picking_status
 
@@ -905,17 +975,24 @@ class PickingHeaderService:
             setattr(grn, key, value)
         self.db.flush()
 
+        # When status changes from approved to draft/rejected: unlink and release SPO allocation quantity
+        if prev_status == "approved" and grn.picking_status in ("draft", "rejected"):
+            self._unlink_grn_from_spo(grn_id)
+            self.db.flush()
+
         if picking_lines_payload is not None:
             self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).delete()
-            if grn.spo_number and str(grn.spo_number).strip():
+            # Only link to SPO when status is approved; otherwise create lines without spo_allocation_id
+            if grn.picking_status == "approved" and grn.spo_number and str(grn.spo_number).strip():
                 self._create_grn_lines_with_spo_fifo(grn_id, grn.spo_number, picking_lines_payload)
             else:
                 for line_data in picking_lines_payload:
                     line_dict = {k: v for k, v in line_data.items() if k != "quantity_discrepancy"}
+                    line_dict.pop("spo_allocation_id", None)  # Do not link when not approved
                     line = PickingLine(**line_dict, picking_header_id=grn_id)
                     self.db.add(line)
         elif grn.picking_status == "approved" and prev_status != "approved" and grn.spo_number and str(grn.spo_number).strip():
-            # Status just changed to approved without sending lines: link existing lines to SPO via FIFO (same as manual import)
+            # Status just changed to approved without sending lines: link existing lines to SPO via FIFO
             existing_lines = (
                 self.db.query(PickingLine)
                 .filter(PickingLine.picking_header_id == grn_id)
@@ -941,6 +1018,20 @@ class PickingHeaderService:
             self.sync_grn_received_to_spo(grn_id)
 
         return grn
+
+    def _unlink_grn_from_spo(self, grn_id: str) -> None:
+        """Clear spo_allocation_id from all picking lines of this GRN and re-sync SPO allocations to release quantity."""
+        grn = self.db.query(PickingHeader).filter(
+            PickingHeader.id == grn_id,
+            PickingHeader.picking_type == "goods_received",
+        ).first()
+        if not grn or not grn.spo_number or not str(grn.spo_number).strip():
+            return
+        lines = self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).all()
+        for line in lines:
+            line.spo_allocation_id = None
+        self.db.flush()
+        self.sync_received_for_spo_number(grn.spo_number)
     
     def delete_grn(self, grn_id: str):
         """Delete a GRN and its lines."""
@@ -953,6 +1044,27 @@ class PickingHeaderService:
         self.db.delete(grn)
         self.db.commit()
         return {"message": "GRN deleted successfully"}
+
+    def bulk_delete_grns(self, grn_ids: list[str]) -> dict:
+        """Delete multiple GRNs (and their lines) by ID. Only goods_received type."""
+        if not grn_ids:
+            return {"message": "No GRNs to delete", "deleted_count": 0}
+        deleted = 0
+        for gid in grn_ids:
+            grn = (
+                self.db.query(PickingHeader)
+                .filter(
+                    PickingHeader.id == gid,
+                    PickingHeader.picking_type == "goods_received",
+                )
+                .first()
+            )
+            if grn:
+                self.db.query(PickingLine).filter(PickingLine.picking_header_id == gid).delete()
+                self.db.delete(grn)
+                deleted += 1
+        self.db.commit()
+        return {"message": f"{deleted} GRN(s) deleted", "deleted_count": deleted}
 
     def get_grn_by_picking_number(self, picking_number: str):
         """Get GRN (picking header) by picking_number. Returns None if not found."""
@@ -1212,23 +1324,27 @@ class PickingHeaderService:
 
     def get_linked_grns_for_spo(self, spo_number: Optional[str]):
         """Return list of GRN headers (id, picking_number, picking_status, picking_date) for this SPO number.
-        Matches by normalized SPO number."""
+        Matches by normalized SPO number. Filter at DB level to avoid loading all GRNs."""
         if not spo_number or not spo_number.strip():
             return []
         target_norm = _normalize_spo_number(spo_number)
         if not target_norm:
             return []
+        norm_expr = func.replace(
+            func.replace(func.trim(PickingHeader.spo_number), "/", "."),
+            "\\", ".",
+        )
         rows = (
             self.db.query(
                 PickingHeader.id,
                 PickingHeader.picking_number,
                 PickingHeader.picking_status,
                 PickingHeader.picking_date,
-                PickingHeader.spo_number,
             )
             .filter(
                 PickingHeader.picking_type == "goods_received",
                 PickingHeader.spo_number.isnot(None),
+                norm_expr == target_norm,
             )
             .order_by(PickingHeader.picking_date.desc().nulls_last(), PickingHeader.picking_number)
             .all()
@@ -1236,7 +1352,6 @@ class PickingHeaderService:
         return [
             {"id": str(r[0]), "picking_number": r[1], "picking_status": r[2], "picking_date": r[3]}
             for r in rows
-            if _normalize_spo_number(r[4]) == target_norm
         ]
 
 
@@ -1245,6 +1360,8 @@ class StockInquiryService:
     
     def __init__(self, db: Session):
         self.db = db
+        from app.services.entity_attachment_service import EntityAttachmentService
+        self.entity_attachment_service = EntityAttachmentService(db)
     
     def list_inquiries(self, page: int = 1, limit: int = 50, query: Optional[str] = None, sort_field: str = "created_at", sort_dir: str = "desc"):
         """List stock inquiries."""
@@ -1328,6 +1445,15 @@ class StockInquiryService:
         data["last_responded_by_name"] = (
             self._resolve_user_display_name(inquiry.last_responded_by) if inquiry.last_responded_by else None
         )
+        links = self.entity_attachment_service.list_links("stock_inquiry", str(inquiry.id))
+        data["attachments"] = [
+            self.entity_attachment_service.serialize_link(
+                link,
+                entity_key="inquiry_id",
+                link_type="stock_inquiry_attachment",
+            )
+            for link in links
+        ]
         return data
 
     def get_neighbour_ids(self, inquiry_id: str) -> dict:
@@ -1347,7 +1473,68 @@ class StockInquiryService:
         prev_id = ids[idx - 1] if idx > 0 else None
         next_id = ids[idx + 1] if idx < len(ids) - 1 else None
         return {"prev_id": prev_id, "next_id": next_id}
-    
+
+    def get_or_create_view_token(self, inquiry_id: str) -> str:
+        """Get or create a reusable view token for this stock inquiry. Returns the token string."""
+        self.get_inquiry(inquiry_id)  # ensure exists
+        row = (
+            self.db.query(ViewToken)
+            .filter(
+                ViewToken.entity_type == "stock_inquiry",
+                ViewToken.entity_id == inquiry_id,
+            )
+            .first()
+        )
+        if row:
+            return row.token
+        token_value = secrets.token_urlsafe(32)
+        view_token = ViewToken(
+            entity_type="stock_inquiry",
+            entity_id=inquiry_id,
+            token=token_value,
+        )
+        self.db.add(view_token)
+        self.db.flush()
+        return token_value
+
+    def get_inquiry_summary_by_token(self, token_value: str) -> dict:
+        """Return read-only stock inquiry summary for the given view token. No auth required."""
+        view_token = (
+            self.db.query(ViewToken)
+            .filter(ViewToken.token == token_value, ViewToken.entity_type == "stock_inquiry")
+            .first()
+        )
+        if not view_token or not view_token.entity_id:
+            raise handle_not_found("View link", "(invalid token)")
+        inquiry = self.get_inquiry(str(view_token.entity_id))
+        links = self.entity_attachment_service.list_links("stock_inquiry", str(inquiry.id))
+        return {
+            "entity_type": "stock_inquiry",
+            "entity_id": inquiry.id,
+            "salesperson": getattr(inquiry, "salesperson", None),
+            "product_code": getattr(inquiry, "product_code", None),
+            "item_description": getattr(inquiry, "item_description", None),
+            "project_customer": getattr(inquiry, "project_customer", None),
+            "project_name": getattr(inquiry, "project_name", None),
+            "quantity": getattr(inquiry, "quantity", None),
+            "delivery_date": getattr(inquiry, "delivery_date", None),
+            "remark": getattr(inquiry, "remark", None),
+            "additional_remark": getattr(inquiry, "additional_remark", None),
+            "purchasing_response": getattr(inquiry, "purchasing_response", None),
+            "status": getattr(inquiry, "status", None),
+            "last_responded_at": getattr(inquiry, "last_responded_at", None),
+            "created_at": getattr(inquiry, "created_at", None),
+            "updated_at": getattr(inquiry, "updated_at", None),
+            "attachments": [
+                self.entity_attachment_service.serialize_link(
+                    link,
+                    entity_key="inquiry_id",
+                    link_type="stock_inquiry_attachment",
+                )
+                for link in links
+            ],
+        }
+
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
         """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""
         if not contact_id or not space_id:
@@ -1370,6 +1557,47 @@ class StockInquiryService:
         self.db.commit()
         self.db.refresh(inquiry)
         return inquiry
+
+    def delete_inquiry(self, inquiry_id: str) -> dict:
+        """Delete a stock inquiry by ID."""
+        inquiry = self.get_inquiry(inquiry_id)
+        self.entity_attachment_service.delete_links_for_entity("stock_inquiry", str(inquiry.id))
+        self.db.delete(inquiry)
+        self.db.commit()
+        return {"message": "Stock inquiry deleted successfully"}
+
+    def bulk_delete_inquiries(self, inquiry_ids: list[str]) -> dict:
+        """Delete multiple stock inquiries by ID."""
+        if not inquiry_ids:
+            return {"message": "No inquiries to delete", "deleted_count": 0}
+        deleted = 0
+        for iid in inquiry_ids:
+            inquiry = self.db.query(StockInquiry).filter(StockInquiry.id == iid).first()
+            if inquiry:
+                self.entity_attachment_service.delete_links_for_entity("stock_inquiry", str(inquiry.id))
+                self.db.delete(inquiry)
+                deleted += 1
+        self.db.commit()
+        return {"message": f"{deleted} stock inquiry(ies) deleted", "deleted_count": deleted}
+
+    def link_attachment_to_inquiry(self, inquiry_id: str, attachment_id: str, created_by: Optional[str] = None):
+        """Link an existing attachment to a stock inquiry (generic entity_attachment_links table)."""
+        self.get_inquiry(inquiry_id)  # ensure inquiry exists
+        link = self.entity_attachment_service.link_existing_attachment(
+            entity_type="stock_inquiry",
+            entity_id=str(inquiry_id),
+            attachment_id=str(attachment_id),
+            created_by=created_by,
+        )
+        self.db.commit()
+        self.db.refresh(link)
+        return link
+
+    def delete_inquiry_attachment(self, link_id: str):
+        """Delete a stock-inquiry attachment link from generic entity_attachment_links table."""
+        link = self.entity_attachment_service.delete_link(link_id, entity_type="stock_inquiry")
+        self.db.commit()
+        return link
 
     def _identifier_from_respond_inbox_url(self, respond_inbox_url: Optional[str]) -> Optional[str]:
         """Extract contact identifier from respond_inbox_url (last path segment)."""
@@ -1659,6 +1887,13 @@ class PurchaseRequestService:
             return None
         return f"{base}/space/{space_id.strip()}/inbox/{contact_id.strip()}"
 
+    def _identifier_from_respond_inbox_url(self, respond_inbox_url: Optional[str]) -> Optional[str]:
+        """Extract contact identifier from respond_inbox_url (last path segment)."""
+        if not respond_inbox_url or not respond_inbox_url.strip():
+            return None
+        parts = [p for p in respond_inbox_url.rstrip("/").split("/") if p]
+        return parts[-1] if parts else None
+
     def _parse_date(self, value: Optional[str | date | datetime]) -> Optional[date]:
         if value is None:
             return None
@@ -1721,7 +1956,168 @@ class PurchaseRequestService:
 
         self.db.commit()
         self.db.refresh(header)
+        # Capture header fields before any further commits (session may expire objects)
+        header_id = str(header.id)
+        header_request_type = getattr(header, "request_type", None)
+        header_request_number = getattr(header, "request_number", None) or "N/A"
+        header_project_title = getattr(header, "project_title", None) or "N/A"
+        try:
+            self.get_or_create_view_token(header_id)
+            self.db.commit()
+        except Exception:
+            pass
+        try:
+            base_url_override = getattr(payload, "base_url", None) if payload else None
+            self._notify_team_on_external_pr_created(
+                header_id=header_id,
+                request_type=header_request_type,
+                request_number=header_request_number,
+                project_title=header_project_title,
+                base_url_override=base_url_override,
+            )
+        except Exception as e:
+            logger.warning("Failed to notify team for external purchase request %s: %s", header_id, e)
         return header
+
+    def _get_team_user_ids_for_agent_code(self, agent_code: str) -> List[str]:
+        """Return user IDs of all teams assigned to the access agent with the given code.
+
+        Note: AgentTeam.code is an assignment code (e.g. customer_service), not necessarily the access agent code.
+        So we resolve the access agent by code, then include all team assignments for that agent.
+        """
+        from app.services.user_service import AccessAgentService
+        from app.models.access import AgentTeam, TeamMember
+
+        agent_id = AccessAgentService(self.db).get_agent_id_by_code(agent_code)
+        if not agent_id:
+            logger.debug("No access agent found for code=%s", agent_code)
+            return []
+
+        rows = (
+            self.db.query(TeamMember.user_id)
+            .join(AgentTeam, AgentTeam.team_id == TeamMember.team_id)
+            .filter(AgentTeam.agent_id == agent_id)
+            .distinct()
+            .all()
+        )
+        return [str(r[0]) for r in rows if r and r[0]]
+
+    def _notify_team_on_external_pr_created(
+        self,
+        header_id: str,
+        request_type: Optional[str] = None,
+        request_number: str = "N/A",
+        project_title: str = "N/A",
+        base_url_override: Optional[str] = None,
+    ) -> None:
+        """Notify the team assigned to agent code purchase_request: one email to all, plus in-app for each."""
+        from app.models.user import User, SystemSetting
+        from app.models.notification import Notification, NotificationDelivery
+        from app.services.notification_service import NotificationService
+        from datetime import datetime
+
+        user_ids = self._get_team_user_ids_for_agent_code("purchase_request")
+        if not user_ids:
+            logger.warning(
+                "No team members found for agent code 'purchase_request' (access agent may be missing or have no team assignments). "
+                "Create an Access Agent with code 'purchase_request' and assign a team under Team Assignments."
+            )
+            return
+        users = self.db.query(User).filter(User.id.in_(user_ids)).all()
+        emails = [u.email for u in users if getattr(u, "email", None) and str(u.email).strip()]
+        if not emails:
+            logger.warning("Team members for purchase_request have no email addresses; skipping email.")
+        type_label = "Purchase Request" if request_type == "purchase_request" else "Sponsorship Form"
+        title = f"New {type_label} created"
+        view_token = self.get_or_create_view_token(header_id)
+        # App domain for email link: payload base_url (external API) > FRONTEND_BASE_URL env > System settings Website URL
+        base_url = (base_url_override or "").strip().rstrip("/")
+        if not base_url:
+            base_url = (settings.frontend_base_url or "").strip().rstrip("/")
+        if not base_url:
+            sys_settings = self.db.query(SystemSetting).first()
+            if sys_settings and getattr(sys_settings, "website_url", None):
+                base_url = (sys_settings.website_url or "").strip().rstrip("/")
+        if not base_url:
+            logger.warning(
+                "No app domain for notification email link. Set Website URL in User Management > Settings (General), "
+                "or FRONTEND_BASE_URL in backend .env, or pass base_url in the external create payload."
+            )
+        view_url = f"{base_url}/view/request?token={view_token}" if base_url else f"/view/request?token={view_token}"
+        body_plain = (
+            "Hey Sorento,\n\n"
+            f"A new {type_label.lower()} has been created.\n\n"
+            f"View the form here: {view_url}\n\n"
+            "This is a system generated message, please do not reply."
+        )
+        body_html = (
+            "<p>Hey Sorento,</p>\n<p>"
+            f"A new {type_label.lower()} has been created.</p>\n<p>"
+            f'<a href="{view_url}">View the form here</a>.</p>\n<p>'
+            "This is a system generated message, please do not reply.</p>"
+        )
+        notif_svc = NotificationService(self.db)
+        first_uid = user_ids[0]
+        if emails:
+            notification = Notification(
+                user_id=first_uid,
+                type="purchase_request_created",
+                title=title,
+                body=body_plain,
+                data={"recipient_emails": emails, "single_email_to_all": True, "body_html": body_html},
+                source_entity_type="purchase_request",
+                source_entity_id=header_id,
+                event_type="external_created",
+            )
+            self.db.add(notification)
+            self.db.flush()
+            self.db.add(NotificationDelivery(notification_id=notification.id, channel="in_app", status="sent", sent_at=datetime.utcnow()))
+            self.db.add(NotificationDelivery(notification_id=notification.id, channel="email", status="pending"))
+            self.db.commit()
+            self.db.refresh(notification)
+            try:
+                from app.services.queue_service import enqueue_job
+                from app.tasks import notification_tasks
+                enqueue_job(notification_tasks.send_notification_deliveries, str(notification.id), queue_name="imports")
+            except Exception as e:
+                logger.warning("Failed to enqueue notification deliveries: %s", e)
+        for uid in user_ids:
+            if uid == first_uid and emails:
+                continue
+            try:
+                notif_svc.create_in_app_only(
+                    user_id=uid,
+                    type="purchase_request_created",
+                    title=title,
+                    body=body_plain,
+                    source_entity_type="purchase_request",
+                    source_entity_id=header_id,
+                    event_type="external_created",
+                )
+            except Exception as e:
+                logger.warning("Failed to create in-app notification for user %s: %s", uid, e)
+        logger.info("Notifying %s team member(s) for external PR/sponsorship created: %s (1 email to all)", len(user_ids), header_id)
+
+    def _notify_requester_on_approved(self, header: PurchaseRequestHeader) -> None:
+        """Notify the user who requested approval when the purchase request / sponsorship form is approved."""
+        requested_by_uid = getattr(header, "requested_approval_by_user_id", None)
+        if not requested_by_uid:
+            return
+        type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
+        form_number = getattr(header, "request_number", None) or "N/A"
+        project = getattr(header, "project_title", None) or "N/A"
+        title = f"{type_label} approved"
+        body = f"{type_label} {form_number} (Project: {project}) has been approved."
+        from app.services.notification_service import NotificationService
+        NotificationService(self.db).create(
+            user_id=str(requested_by_uid),
+            type="purchase_request_approved",
+            title=title,
+            body=body,
+            source_entity_type="purchase_request",
+            source_entity_id=str(header.id),
+            event_type="approved",
+        )
 
     def list_requests(
         self,
@@ -1729,6 +2125,7 @@ class PurchaseRequestService:
         limit: int = 50,
         query: Optional[str] = None,
         request_type: Optional[str] = None,
+        approval_status: Optional[str] = None,
         sort_field: str = "request_date",
         sort_dir: str = "desc",
     ):
@@ -1748,6 +2145,17 @@ class PurchaseRequestService:
             )
         if request_type and request_type.strip() in ("purchase_request", "sponsorship_form"):
             q = q.filter(PurchaseRequestHeader.request_type == request_type.strip())
+        if approval_status and approval_status.strip():
+            status_val = approval_status.strip().lower()
+            if status_val == "draft":
+                q = q.filter(
+                    or_(
+                        PurchaseRequestHeader.approval_status.is_(None),
+                        PurchaseRequestHeader.approval_status == "",
+                    )
+                )
+            elif status_val in ("pending", "approved", "rejected"):
+                q = q.filter(PurchaseRequestHeader.approval_status == status_val)
 
         sort_map = {
             "request_date": PurchaseRequestHeader.request_date,
@@ -1799,10 +2207,15 @@ class PurchaseRequestService:
         try:
             idx = ids.index(header.id)
         except ValueError:
-            return {"prev_id": None, "next_id": None}
+            return {"prev_id": None, "next_id": None, "total_count": 0, "current_index": 0}
         prev_id = ids[idx - 1] if idx > 0 else None
         next_id = ids[idx + 1] if idx < len(ids) - 1 else None
-        return {"prev_id": prev_id, "next_id": next_id}
+        return {
+            "prev_id": prev_id,
+            "next_id": next_id,
+            "total_count": len(ids),
+            "current_index": idx + 1,
+        }
 
     def create_request(self, data: PurchaseRequestHeaderCreate):
         """Create purchase request header + lines (internal API)."""
@@ -1830,6 +2243,11 @@ class PurchaseRequestService:
 
         self.db.commit()
         self.db.refresh(header)
+        try:
+            self.get_or_create_view_token(str(header.id))
+            self.db.commit()
+        except Exception:
+            pass
         return header
 
     def update_request(self, request_id: str, data: PurchaseRequestHeaderUpdate):
@@ -1865,13 +2283,134 @@ class PurchaseRequestService:
         self.db.refresh(header)
         return header
 
+    def update_request_and_reply(
+        self,
+        request_id: str,
+        data: PurchaseRequestUpdateAndReply,
+        respond_user_id: str,
+        request_url: str = "",
+    ):
+        """
+        Update purchase request (e.g. request_number), then send a reply to the conversation via Respond.io.
+        Message is reply_message if provided, otherwise built from request_number.
+        """
+        import logging
+        from app.services.integration_service import RespondClient, IntegrationLogService
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.error_handler import handle_validation_error
+
+        logger = logging.getLogger(__name__)
+        log_service = IntegrationLogService(self.db)
+
+        header = self.get_request(request_id)
+        payload = data.model_dump(exclude_unset=True, exclude={"products", "reply_message"})
+        contact_id = payload.get("contact_id") if "contact_id" in payload else header.contact_id
+        space_id = payload.get("space_id") if "space_id" in payload else header.space_id
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+        if respond_inbox_url is not None:
+            payload["respond_inbox_url"] = respond_inbox_url
+        elif contact_id is None and space_id is None:
+            payload["respond_inbox_url"] = None
+
+        for key, value in payload.items():
+            if hasattr(header, key):
+                setattr(header, key, value)
+
+        if data.products is not None:
+            for line in list(header.lines or []):
+                self.db.delete(line)
+            self.db.flush()
+            for index, line_data in enumerate(data.products):
+                line = PurchaseRequestLine(
+                    purchase_request_id=header.id,
+                    item_code=line_data.item_code,
+                    quantity=line_data.quantity,
+                    remark=line_data.remark,
+                    sort_order=index,
+                )
+                self.db.add(line)
+
+        self.db.flush()
+        self.db.refresh(header)
+
+        reply_message = (getattr(data, "reply_message", None) or "").strip()
+        request_number = getattr(header, "request_number", None) or payload.get("request_number")
+        if request_number is not None and isinstance(request_number, str):
+            request_number = request_number.strip() or None
+        if not reply_message and request_number:
+            reply_message = f"Your request has been assigned form number: {request_number}."
+        if not reply_message:
+            raise handle_validation_error(
+                "Provide reply_message or request_number so we can reply to the conversation."
+            )
+
+        identifier = self._identifier_from_respond_inbox_url(getattr(header, "respond_inbox_url", None))
+        if not identifier:
+            raise handle_validation_error(
+                "respond_inbox_url is missing or invalid; cannot send message. Set contact_id and space_id."
+            )
+
+        display_message = reply_message
+        try:
+            client = RespondClient()
+            response = client.send_message(identifier, display_message)
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="purchase_requests",
+                    business_id=request_id,
+                    external_reference=identifier,
+                    direction="outbound",
+                    endpoint="https://api.respond.io/v2/contact/id:{}/message".format(identifier),
+                    http_method="POST",
+                    status="success",
+                    response_payload=str(response)[:50000] if response else None,
+                ),
+                request_payload_dict={"message": {"type": "text", "text": display_message}},
+            )
+        except Exception as e:
+            logger.exception("Respond.io send_message failed for purchase_request %s", request_id)
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="purchase_requests",
+                    business_id=request_id,
+                    external_reference=identifier or "",
+                    direction="outbound",
+                    endpoint="https://api.respond.io/v2/contact/id:{}/message".format(identifier or ""),
+                    http_method="POST",
+                    status="failed",
+                    error_message=str(e),
+                ),
+                request_payload_dict={"message": {"type": "text", "text": display_message}},
+            )
+            raise
+
+        self.db.commit()
+        self.db.refresh(header)
+        return header
+
     def delete_request(self, request_id: str) -> None:
         """Delete a purchase request and its lines."""
         header = self.get_request(request_id)
         self.db.delete(header)
         self.db.commit()
 
-    def set_pending_approval(self, request_id: str):
+    def bulk_delete_requests(self, request_ids: List[str]) -> dict:
+        """Delete multiple purchase requests / sponsorship forms by ID. Returns deleted_count."""
+        if not request_ids:
+            return {"message": "No records to delete", "deleted_count": 0}
+        headers = (
+            self.db.query(PurchaseRequestHeader)
+            .filter(PurchaseRequestHeader.id.in_(request_ids))
+            .all()
+        )
+        for header in headers:
+            self.db.delete(header)
+        self.db.commit()
+        return {"message": f"Deleted {len(headers)} record(s)", "deleted_count": len(headers)}
+
+    def set_pending_approval(self, request_id: str, requested_by_user_id: Optional[str] = None):
         """Set request to pending approval (clears approval fields if previously approved/rejected). Returns updated header."""
         header = self.get_request(request_id)
         header.approval_status = "pending"
@@ -1879,6 +2418,8 @@ class PurchaseRequestService:
         header.approved_by = None
         header.approval_signature_ref = None
         header.approval_comments = None
+        if requested_by_user_id is not None:
+            header.requested_approval_by_user_id = requested_by_user_id
         try:
             self.db.commit()
         except Exception as e:
@@ -1892,6 +2433,7 @@ class PurchaseRequestService:
         request_id: str,
         approver_email: Optional[str] = None,
         approver_user_id: Optional[str] = None,
+        requested_by_user_id: Optional[str] = None,
         expires_hours: int = 24,
         base_url: str = "",
     ) -> tuple[ApprovalToken, str]:
@@ -1910,6 +2452,8 @@ class PurchaseRequestService:
             header.approver_user_id = None
             if approver_email:
                 header.approver_email = approver_email
+        if requested_by_user_id is not None:
+            header.requested_approval_by_user_id = requested_by_user_id
         # When resending after approved/rejected, clear previous approval so request is back in "pending approval"
         if header.approval_status in ("approved", "rejected"):
             header.approved_at = None
@@ -1949,6 +2493,21 @@ class PurchaseRequestService:
         if approval_token.expires <= now:
             raise handle_conflict("This approval link has expired.")
         header = self.get_request(approval_token.entity_id)
+        lines = []
+        if getattr(header, "lines", None):
+            for line in sorted(header.lines, key=lambda l: (l.sort_order if l.sort_order is not None else 999, getattr(l, "id", 0))):
+                qty = line.quantity
+                if qty is not None and hasattr(qty, "__float__"):
+                    try:
+                        qty = float(qty)
+                    except (TypeError, ValueError):
+                        pass
+                lines.append({
+                    "item_code": line.item_code,
+                    "quantity": qty,
+                    "remark": line.remark,
+                    "sort_order": line.sort_order,
+                })
         return {
             "entity_type": approval_token.entity_type,
             "entity_id": approval_token.entity_id,
@@ -1958,7 +2517,91 @@ class PurchaseRequestService:
             "project_title": header.project_title,
             "purpose": header.purpose,
             "requested_by": header.requested_by,
+            "request_date": getattr(header, "request_date", None),
+            "created_at": getattr(header, "created_at", None),
+            "expected_delivery_date": getattr(header, "expected_delivery_date", None),
+            "expected_po_date": getattr(header, "expected_po_date", None),
+            "expected_po_date_text": getattr(header, "expected_po_date_text", None),
             "expires_at": approval_token.expires,
+            "lines": lines,
+        }
+
+    def get_or_create_view_token(self, entity_id: str) -> str:
+        """Get or create a reusable view token for this purchase request. Returns the token string."""
+        row = (
+            self.db.query(ViewToken)
+            .filter(
+                ViewToken.entity_type == "purchase_request",
+                ViewToken.entity_id == entity_id,
+            )
+            .first()
+        )
+        if row:
+            return row.token
+        token_value = secrets.token_urlsafe(32)
+        view_token = ViewToken(
+            entity_type="purchase_request",
+            entity_id=entity_id,
+            token=token_value,
+        )
+        self.db.add(view_token)
+        self.db.flush()
+        return token_value
+
+    def get_view_summary_by_token(self, token_value: str) -> dict:
+        """Return read-only request summary for the given view token. No auth required.
+        If the token is not a view token, also try approval token so approval links can be used to view."""
+        view_token = (
+            self.db.query(ViewToken)
+            .filter(ViewToken.token == token_value)
+            .first()
+        )
+        entity_id = None
+        if view_token:
+            entity_id = str(view_token.entity_id) if view_token.entity_id else None
+        if not entity_id:
+            approval_token = (
+                self.db.query(ApprovalToken)
+                .filter(ApprovalToken.token == token_value)
+                .first()
+            )
+            if approval_token:
+                entity_id = str(approval_token.entity_id) if approval_token.entity_id else None
+        if not entity_id:
+            raise handle_not_found("View link", "(invalid token)")
+        header = self.get_request(entity_id)
+        lines = []
+        if getattr(header, "lines", None):
+            for line in sorted(header.lines, key=lambda l: (l.sort_order if l.sort_order is not None else 999, getattr(l, "id", 0))):
+                qty = line.quantity
+                if qty is not None and hasattr(qty, "__float__"):
+                    try:
+                        qty = float(qty)
+                    except (TypeError, ValueError):
+                        pass
+                lines.append({
+                    "item_code": line.item_code,
+                    "quantity": qty,
+                    "remark": line.remark,
+                    "sort_order": line.sort_order,
+                })
+        entity_type = view_token.entity_type if view_token else "purchase_request"
+        return {
+            "entity_type": entity_type,
+            "entity_id": header.id,
+            "request_number": header.request_number,
+            "request_type": header.request_type,
+            "customer_name": header.customer_name,
+            "project_title": header.project_title,
+            "purpose": header.purpose,
+            "requested_by": header.requested_by,
+            "request_date": getattr(header, "request_date", None),
+            "created_at": getattr(header, "created_at", None),
+            "expected_delivery_date": getattr(header, "expected_delivery_date", None),
+            "expected_po_date": getattr(header, "expected_po_date", None),
+            "expected_po_date_text": getattr(header, "expected_po_date_text", None),
+            "expires_at": None,
+            "lines": lines,
         }
 
     def submit_approval(
@@ -1996,4 +2639,11 @@ class PurchaseRequestService:
         header.approval_comments = approval_comments
         self.db.commit()
         self.db.refresh(header)
+        if action == "approved":
+            requested_by_uid = getattr(header, "requested_approval_by_user_id", None)
+            if requested_by_uid:
+                try:
+                    self._notify_requester_on_approved(header)
+                except Exception as e:
+                    logger.warning("Failed to notify requester for approved purchase request %s: %s", header.id, e)
         return header

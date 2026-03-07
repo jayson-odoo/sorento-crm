@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockBatches } from '../hooks/useStockBatches';
+import { getStatusBadgeVariant } from '@/lib/status-badge';
 import type { StockBatch } from '../types/batch.types';
 import { formatDate } from '@/lib/helpers';
 
@@ -95,16 +96,9 @@ export default function BatchesList() {
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => {
           const status = row.original.status;
-          const variants: Record<string, 'success' | 'secondary' | 'destructive' | 'warning'> = {
-            available: 'success',
-            reserved: 'secondary',
-            damaged: 'destructive',
-            expired: 'destructive',
-            returned: 'warning',
-          };
           return (
-            <Badge variant={variants[status] || 'secondary'} appearance="ghost">
-              {status.charAt(0).toUpperCase() + status.slice(1)}
+            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
+              {status ? status.charAt(0).toUpperCase() + status.slice(1) : '—'}
             </Badge>
           );
         },

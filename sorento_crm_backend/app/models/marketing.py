@@ -36,8 +36,16 @@ class Promotion(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
-    promotion_products = relationship("PromotionProduct", back_populates="promotion")
-    promotion_attachments = relationship("PromotionAttachment", back_populates="promotion")
+    promotion_products = relationship(
+        "PromotionProduct",
+        back_populates="promotion",
+        cascade="all, delete-orphan",
+    )
+    promotion_attachments = relationship(
+        "PromotionAttachment",
+        back_populates="promotion",
+        cascade="all, delete-orphan",
+    )
     
     __table_args__ = (
         Index("ix_promotions_is_active", "is_active"),

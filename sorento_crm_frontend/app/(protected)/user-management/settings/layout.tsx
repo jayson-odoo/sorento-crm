@@ -13,6 +13,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import { SystemSetting } from '@/app/models/system';
 import { SettingsProvider } from './components/settings-context';
 
 type NavRoutes = Record<
@@ -23,13 +24,72 @@ type NavRoutes = Record<
   }
 >;
 
+/** Map API snake_case settings to frontend camelCase SystemSetting */
+function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting | null {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    ...raw,
+    id: raw.id as string,
+    name: (raw.name as string) ?? '',
+    logo: (raw.logo as string | null) ?? null,
+    active: Boolean(raw.active),
+    address: (raw.address as string | null) ?? null,
+    websiteURL: (raw.website_url as string | null) ?? null,
+    supportEmail: (raw.support_email as string | null) ?? null,
+    supportPhone: (raw.support_phone as string | null) ?? null,
+    language: (raw.language as string) ?? 'en',
+    timezone: (raw.timezone as string) ?? 'Europe/London',
+    currency: (raw.currency as string) ?? 'MYR',
+    currencyFormat: (raw.currency_format as string) ?? 'RM {value}',
+    smtp: raw.smtp as SystemSetting['smtp'] ?? null,
+  } as SystemSetting;
+}
+
 const fetchSettings = async () => {
   const response = await apiFetch('/api/user-management/settings');
   if (!response.ok) {
     throw new Error('Failed to fetch settings');
   }
-  return response.json();
+  const data = await response.json();
+  return {
+    settings: mapSettingsFromApi(data.settings ?? null),
+    roles: data.roles ?? [],
+  };
 };
+
+function createDefaultSettings(): SystemSetting {
+  return {
+    id: '',
+    name: '',
+    logo: null,
+    active: true,
+    address: null,
+    websiteURL: null,
+    supportEmail: null,
+    supportPhone: null,
+    language: 'en',
+    timezone: 'Europe/London',
+    currency: 'MYR',
+    currencyFormat: 'RM {value}',
+    notifyStockEmail: false,
+    notifyStockWeb: false,
+    notifyStockThreshold: 0,
+    notifyStockRoleIds: [],
+    notifyNewOrderEmail: false,
+    notifyNewOrderWeb: false,
+    notifyNewOrderRoleIds: [],
+    notifyOrderStatusUpdateEmail: false,
+    notifyOrderStatusUpdateWeb: false,
+    notifyOrderStatusUpdateRoleIds: [],
+    notifyPaymentFailureEmail: false,
+    notifyPaymentFailureWeb: false,
+    notifyPaymentFailureRoleIds: [],
+    notifySystemErrorFailureEmail: false,
+    notifySystemErrorWeb: false,
+    notifySystemErrorRoleIds: [],
+    smtp: null,
+  };
+}
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -45,7 +105,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     retry: 1,
   });
 
-  const { settings, roles } = data;
+  const roles = data.roles ?? [];
+  const settings = data.settings ?? createDefaultSettings();
 
   const navRoutes = useMemo<NavRoutes>(
     () => ({
