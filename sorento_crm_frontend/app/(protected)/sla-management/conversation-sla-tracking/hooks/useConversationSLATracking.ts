@@ -2,7 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ConversationSLATrackingDetail } from '../types/conversationSLATracking.types';
-import { getConversationSLATracking, getConversationSLATrackingDetail, getSLATrackingDashboardMetrics, deleteConversationSLATracking, deleteConversationSLAEventLog, syncAssigneeFromRespond } from '../services/conversationSLATrackingService';
+import { getConversationSLATracking, getConversationSLATrackingDetail, getSLATrackingDashboardMetrics, deleteConversationSLATracking, deleteConversationSLAEventLog, getConversationSLAEventLogs, syncAssigneeFromRespond } from '../services/conversationSLATrackingService';
+import type { ConversationSLAEventLogsParams } from '../services/conversationSLATrackingService';
 
 export function useConversationSLATracking(params: DataGridApiFetchParams & { policy_id?: string; status?: string; assigned_to?: string }) {
   return useQuery({
@@ -23,6 +24,15 @@ export function useConversationSLATrackingDetail(id: string | null) {
       return getConversationSLATrackingDetail(id);
     },
     enabled: !!id,
+    retry: 1,
+  });
+}
+
+export function useConversationSLAEventLogs(trackingId: string | null, params: Omit<ConversationSLAEventLogsParams, 'tracking_id'>) {
+  return useQuery({
+    queryKey: ['conversation-sla-event-logs', trackingId, params.page, params.limit, params.event_type, params.date_from, params.date_to, params.assigned_to_id],
+    queryFn: () => getConversationSLAEventLogs({ ...params, tracking_id: trackingId! }),
+    enabled: !!trackingId,
     retry: 1,
   });
 }
@@ -53,9 +63,9 @@ export function useDeleteConversationSLAEventLog() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: deleteConversationSLAEventLog,
-    onSuccess: (_, logId) => {
-      // Invalidate the detail query to refresh event logs
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking-detail'] });
+      queryClient.invalidateQueries({ queryKey: ['conversation-sla-event-logs'] });
     },
   });
 }

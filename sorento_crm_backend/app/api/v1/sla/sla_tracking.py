@@ -664,6 +664,9 @@ async def get_event_logs(
     tracking_id: Optional[str] = Query(None),
     event_type: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
+    assigned_to_id: Optional[str] = Query(None, description="Filter by user id (assigned_to_id)"),
+    date_from: Optional[str] = Query(None, description="Filter event_at >= date (ISO date or datetime)"),
+    date_to: Optional[str] = Query(None, description="Filter event_at <= date (ISO date or datetime, end of day)"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -675,7 +678,10 @@ async def get_event_logs(
             limit=limit,
             tracking_id=tracking_id,
             event_type=event_type,
-            assigned_to=assigned_to
+            assigned_to=assigned_to,
+            assigned_to_id=assigned_to_id,
+            date_from=date_from,
+            date_to=date_to,
         )
         return result
     except Exception as e:

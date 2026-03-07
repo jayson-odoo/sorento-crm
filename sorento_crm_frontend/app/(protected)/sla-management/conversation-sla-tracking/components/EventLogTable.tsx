@@ -1,20 +1,23 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ColumnDef,
+  PaginationState,
   Row,
   useReactTable,
   getCoreRowModel,
+  getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Filter } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,24 +28,80 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { DatePicker } from '@/components/ui/date-picker';
+import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { useConversationSLATrackingDetail, useDeleteConversationSLAEventLog } from '../hooks/useConversationSLATracking';
+import { useConversationSLAEventLogs, useDeleteConversationSLAEventLog } from '../hooks/useConversationSLATracking';
 import { formatDateTime, formatDateTimeInMalaysia, formatDuration, parseDateTimeAsUTC, parseNaiveDateTimeAsLocal } from '@/lib/helpers';
 import type { ConversationSLAEventLog } from '../types/conversationSLATracking.types';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
+
+function toYYYYMMDD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+const EVENT_TYPE_OPTIONS = [
+  { value: '__all__', label: 'All' },
+  { value: 'assign', label: 'Assign' },
+  { value: 'escalation', label: 'Escalation' },
+  { value: 'response', label: 'Response' },
+  { value: 'resolution', label: 'Resolution' },
+];
 
 interface EventLogTableProps {
   trackingId: string;
 }
 
 export default function EventLogTable({ trackingId }: EventLogTableProps) {
-  const { data: tracking, isLoading } = useConversationSLATrackingDetail(trackingId);
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
+  const [eventTypeFilter, setEventTypeFilter] = useState('__all__');
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
+  const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
+  const [assignedToFilter, setAssignedToFilter] = useState('__all__');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [logToDelete, setLogToDelete] = useState<ConversationSLAEventLog | null>(null);
   const deleteMutation = useDeleteConversationSLAEventLog();
 
-  // Get current user to check if admin
+  const { data: eventLogsResponse, isLoading } = useConversationSLAEventLogs(trackingId, {
+    page: pagination.pageIndex + 1,
+    limit: pagination.pageSize,
+    event_type: eventTypeFilter && eventTypeFilter !== '__all__' ? eventTypeFilter : undefined,
+    date_from: dateFrom ? toYYYYMMDD(dateFrom) : undefined,
+    date_to: dateTo ? toYYYYMMDD(dateTo) : undefined,
+    assigned_to_id: assignedToFilter && assignedToFilter !== '__all__' ? assignedToFilter : undefined,
+  });
+
+  const eventLogs = eventLogsResponse?.data ?? [];
+  const totalCount = eventLogsResponse?.pagination?.total ?? 0;
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [eventTypeFilter, dateFrom, dateTo, assignedToFilter]);
+
+  const { data: respondUsers } = useQuery({
+    queryKey: ['respond-synced-users'],
+    queryFn: async () => {
+      const response = await apiFetch('/api/user-management/users/select?respond_synced=successful');
+      if (!response.ok) throw new Error('Failed to fetch users');
+      return response.json();
+    },
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const users = Array.isArray(respondUsers) ? respondUsers : respondUsers?.data ?? [];
+
   const { data: currentUser } = useQuery({
     queryKey: ['account-profile'],
     queryFn: async () => {
@@ -56,6 +115,20 @@ export default function EventLogTable({ trackingId }: EventLogTableProps) {
   });
 
   const isAdmin = currentUser?.role === 'admin';
+
+  const hasActiveFilters =
+    (eventTypeFilter && eventTypeFilter !== '__all__') ||
+    dateFrom != null ||
+    dateTo != null ||
+    (assignedToFilter && assignedToFilter !== '__all__');
+
+  const handleClearFilters = () => {
+    setEventTypeFilter('__all__');
+    setDateFrom(undefined);
+    setDateTo(undefined);
+    setAssignedToFilter('__all__');
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  };
 
   const handleDeleteClick = (log: ConversationSLAEventLog) => {
     setLogToDelete(log);
@@ -197,24 +270,18 @@ export default function EventLogTable({ trackingId }: EventLogTableProps) {
     [isAdmin],
   );
 
-  // Event logs are already sorted by backend (latest first), but ensure they're sorted here too
-  const eventLogs = useMemo(() => {
-    const logs = tracking?.event_logs || [];
-    // Sort by event_at descending (latest first) - backend should already do this, but ensure it here
-    return [...logs].sort((a, b) => {
-      const dateA = new Date(a.event_at).getTime();
-      const dateB = new Date(b.event_at).getTime();
-      return dateB - dateA; // Descending order (latest first)
-    });
-  }, [tracking?.event_logs]);
-
   const table = useReactTable({
     columns,
     data: eventLogs,
     getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    manualPagination: true,
+    pageCount: Math.ceil(totalCount / pagination.pageSize) || 0,
+    state: { pagination },
+    onPaginationChange: setPagination,
   });
 
-  if (isLoading) {
+  if (isLoading && eventLogs.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -230,19 +297,116 @@ export default function EventLogTable({ trackingId }: EventLogTableProps) {
   return (
     <>
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 py-5">
           <CardTitle>Event Log</CardTitle>
+          <div className="flex items-center gap-2">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="icon" disabled={isLoading} title="Filters" className="relative">
+                  <Filter className="size-4" />
+                  {hasActiveFilters && (
+                    <span className="absolute -top-1 -end-1 size-2.5 rounded-full bg-primary" />
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80" align="end">
+                <div className="space-y-4">
+                  <h4 className="font-medium text-sm">Filters</h4>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Event Type</Label>
+                    <Select
+                      value={eventTypeFilter}
+                      onValueChange={(v) => {
+                        setEventTypeFilter(v);
+                        setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                      }}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="All" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {EVENT_TYPE_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Date range (Event At)</Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <Label className="text-muted-foreground text-xs">From</Label>
+                        <DatePicker
+                          value={dateFrom}
+                          onChange={(d) => {
+                            setDateFrom(d ?? undefined);
+                            setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                          }}
+                          placeholder="From"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-muted-foreground text-xs">To</Label>
+                        <DatePicker
+                          value={dateTo}
+                          onChange={(d) => {
+                            setDateTo(d ?? undefined);
+                            setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                          }}
+                          placeholder="To"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">Assigned To</Label>
+                    <Select
+                      value={assignedToFilter}
+                      onValueChange={(v) => {
+                        setAssignedToFilter(v);
+                        setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                      }}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="All" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">All</SelectItem>
+                        {users.map((u: { id: string; name?: string; email?: string }) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.name || u.email || u.id}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {hasActiveFilters && (
+                    <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
+                      Clear Filters
+                    </Button>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
         </CardHeader>
         <CardContent>
           {eventLogs.length > 0 ? (
-            <DataGrid table={table} recordCount={eventLogs.length} isLoading={isLoading}>
-              <ScrollArea>
-                <DataGridTable />
-                <ScrollBar orientation="horizontal" />
-              </ScrollArea>
+            <DataGrid table={table} recordCount={totalCount} isLoading={isLoading}>
+              <div className="flex flex-col gap-2">
+                <DataGridPagination />
+                <ScrollArea>
+                  <DataGridTable />
+                  <ScrollBar orientation="horizontal" />
+                </ScrollArea>
+              </div>
             </DataGrid>
           ) : (
-            <div className="text-center py-8 text-muted-foreground">No event logs found</div>
+            <div className="text-center py-8 text-muted-foreground">
+              {hasActiveFilters ? 'No event logs match the filters.' : 'No event logs found'}
+            </div>
           )}
         </CardContent>
       </Card>

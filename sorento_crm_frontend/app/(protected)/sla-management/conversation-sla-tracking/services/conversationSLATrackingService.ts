@@ -1,6 +1,37 @@
 import { apiFetch } from '@/lib/api';
-import type { ConversationSLATracking, ConversationSLATrackingDetail, SLATrackingDashboardMetrics } from '../types/conversationSLATracking.types';
+import type { ConversationSLATracking, ConversationSLATrackingDetail, ConversationSLAEventLog, SLATrackingDashboardMetrics } from '../types/conversationSLATracking.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+
+export interface ConversationSLAEventLogsParams {
+  tracking_id: string;
+  page?: number;
+  limit?: number;
+  event_type?: string;
+  date_from?: string; // YYYY-MM-DD
+  date_to?: string;   // YYYY-MM-DD
+  assigned_to_id?: string;
+}
+
+export interface ConversationSLAEventLogsResponse {
+  data: ConversationSLAEventLog[];
+  pagination: { total: number; page: number; limit: number };
+}
+
+export async function getConversationSLAEventLogs(params: ConversationSLAEventLogsParams): Promise<ConversationSLAEventLogsResponse> {
+  const { tracking_id, page = 1, limit = 50, event_type, date_from, date_to, assigned_to_id } = params;
+  const queryParams = new URLSearchParams({
+    tracking_id,
+    page: String(page),
+    limit: String(limit),
+    ...(event_type ? { event_type } : {}),
+    ...(date_from ? { date_from: date_from } : {}),
+    ...(date_to ? { date_to: date_to } : {}),
+    ...(assigned_to_id ? { assigned_to_id } : {}),
+  });
+  const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking/event-logs?${queryParams.toString()}`);
+  if (!response.ok) throw new Error('Failed to fetch event logs');
+  return response.json();
+}
 
 export async function getConversationSLATracking(params: DataGridApiFetchParams & { policy_id?: string; status?: string; assigned_to?: string }): Promise<DataGridApiResponse<ConversationSLATracking>> {
   const { pageIndex, pageSize, sorting, searchQuery, policy_id, status, assigned_to } = params;

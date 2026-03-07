@@ -1239,26 +1239,50 @@ class ConversationSLATrackingService:
         limit: int = 50,
         tracking_id: Optional[str] = None,
         event_type: Optional[str] = None,
-        assigned_to: Optional[str] = None
+        assigned_to: Optional[str] = None,
+        assigned_to_id: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
     ):
-        """List SLA event logs with filtering."""
+        """List SLA event logs with filtering. date_from/date_to filter on event_at (inclusive, UTC)."""
+        from datetime import datetime, timezone
         from sqlalchemy.orm import joinedload
         from app.schemas.common import ListResponse
         from app.schemas.sla import ConversationSLAEventLogResponse
-        
+
         q = self.db.query(ConversationSLAEventLog).options(
             joinedload(ConversationSLAEventLog.assigned_user)
         )
-        
+
         if tracking_id:
             q = q.filter(ConversationSLAEventLog.sla_tracking_id == tracking_id)
         if event_type:
             q = q.filter(ConversationSLAEventLog.event_type == event_type)
         if assigned_to:
             q = q.filter(ConversationSLAEventLog.assigned_to == assigned_to)
-        
+        if assigned_to_id:
+            q = q.filter(ConversationSLAEventLog.assigned_to_id == assigned_to_id)
+        if date_from:
+            try:
+                dt = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                q = q.filter(ConversationSLAEventLog.event_at >= dt)
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                dt = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                # Include full day: end of day in UTC
+                end = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+                q = q.filter(ConversationSLAEventLog.event_at <= end)
+            except ValueError:
+                pass
+
         total = q.count()
-        
+
         logs = q.order_by(ConversationSLAEventLog.event_at.desc()).offset((page - 1) * limit).limit(limit).all()
         
         return ListResponse(
