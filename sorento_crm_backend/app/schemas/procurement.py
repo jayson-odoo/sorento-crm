@@ -693,10 +693,12 @@ class ViewLinkResponse(BaseModel):
 
 
 class PublicApprovalLineSummary(BaseModel):
-    """Single line (product, quantity, remark) for public approval/view."""
+    """Single line for public approval/view. Remark for purchase_request; unit_price/total for sponsorship_form."""
     item_code: Optional[str] = None
     quantity: Optional[float] = None  # from Numeric in DB
     remark: Optional[str] = None
+    unit_price: Optional[Decimal] = None  # sponsorship form
+    total: Optional[Decimal] = None  # sponsorship form
     sort_order: Optional[int] = None
 
     class Config:
@@ -712,6 +714,10 @@ class PublicApprovalSummaryResponse(BaseModel):
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
+    delivery_address: Optional[str] = None  # sponsorship form
+    total_project_value: Optional[Decimal] = None  # sponsorship form (numeric)
+    total_project_value_text: Optional[str] = None  # sponsorship form (descriptive)
+    sponsor_subject: Optional[str] = None  # sponsorship form
     requested_by: Optional[str] = None
     request_date: Optional[date] = None
     created_at: Optional[datetime] = None
@@ -720,6 +726,7 @@ class PublicApprovalSummaryResponse(BaseModel):
     expected_po_date_text: Optional[str] = None
     expires_at: Optional[datetime] = None  # None when used for view (no expiry)
     lines: Optional[List[PublicApprovalLineSummary]] = []
+    grand_total: Optional[Decimal] = None  # sponsorship form: sum of line totals
 
 
 class PublicApprovalSubmitRequest(BaseModel):

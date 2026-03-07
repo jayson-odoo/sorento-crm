@@ -21,7 +21,7 @@ from app.schemas.sla import (
 )
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
-from app.services.error_handler import handle_internal_error, handle_validation_error
+from app.services.error_handler import handle_internal_error, handle_validation_error, handle_not_found
 from app.models.sla import ConversationSLATracking, SLAPolicyTier
 from app.models.user import User
 
@@ -144,19 +144,59 @@ async def escalate_sla_tracking_integration(
     """
     Escalate a conversation SLA tracking by respond_contact_id and policy_id (for external systems).
 
-    Finds the tracking by respond_contact_id and policy_id, sets current_tier, current_tier_started_at,
-    escalated_at, escalation_reason, and recalculates due_at (response) and due_at_resolution
-    from the policy tier KPIs. Creates an escalation event log.
+    Finds the tracking by respond_contact_id and policy_id, resolves the superior of the current
+    assignee, and returns the superior's Respond user ID. If no superior is configured for the
+    current assignee, returns 400. Updates tracking tier, timestamps, and assigns to the superior.
     """
     log_service = IntegrationLogService(db)
     try:
         service = ConversationSLATrackingService(db)
+        tracking = service.get_tracking_by_contact_and_policy(
+            body.respond_contact_id,
+            body.policy_id,
+        )
+        if not tracking:
+            raise handle_not_found(
+                "Conversation SLA tracking",
+                f"respond_contact_id={body.respond_contact_id}, policy_id={body.policy_id}",
+            )
+        if tracking.is_resolved:
+            raise handle_validation_error(
+                "Cannot escalate a resolved conversation SLA tracking."
+            )
+        if not tracking.assigned_to_id:
+            raise handle_validation_error(
+                "No assignee set on this conversation; cannot determine superior for escalation."
+            )
+        assignee = db.query(User).filter(User.id == tracking.assigned_to_id).first()
+        if not assignee:
+            raise handle_validation_error(
+                "Current assignee user not found; cannot determine superior for escalation."
+            )
+        if not assignee.superior_id:
+            raise handle_validation_error(
+                "No superior configured for the current assignee. Set a superior on the assignee's profile to allow escalation."
+            )
+        superior = db.query(User).filter(User.id == assignee.superior_id).first()
+        if not superior:
+            raise handle_validation_error(
+                "Superior user not found; cannot escalate."
+            )
+        if not superior.respond_user_id:
+            raise handle_validation_error(
+                "Superior has no Respond user ID configured. Set Respond User ID on the superior's profile to allow escalation."
+            )
+
         tracking = service.escalate_tracking(
             respond_contact_id=body.respond_contact_id,
             policy_id=body.policy_id,
             current_tier=body.current_tier,
             escalation_reason=body.escalation_reason,
         )
+        tracking.assigned_to_id = superior.id
+        db.commit()
+        db.refresh(tracking)
+
         log_service.create_integration_log(
             IntegrationLogCreate(
                 integration_channel="sla_escalation",
@@ -170,11 +210,7 @@ async def escalate_sla_tracking_integration(
             ),
             request_payload_dict=body.model_dump(),
         )
-        assigned_to_respond_user_id = None
-        if tracking.assigned_to_id:
-            assigned_user = db.query(User).filter(User.id == tracking.assigned_to_id).first()
-            if assigned_user:
-                assigned_to_respond_user_id = assigned_user.respond_user_id
+        assigned_to_respond_user_id = str(superior.respond_user_id)
         return {
             "status": "success",
             "message": "SLA tracking escalated successfully.",

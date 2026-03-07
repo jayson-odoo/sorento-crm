@@ -2137,12 +2137,28 @@ class PurchaseRequestService:
         project = getattr(header, "project_title", None) or "N/A"
         title = f"{type_label} approved"
         body = f"{type_label} {form_number} (Project: {project}) has been approved."
+
+        view_token = self.get_or_create_view_token(str(header.id))
+        base_url = (settings.frontend_base_url or "").strip().rstrip("/")
+        if not base_url:
+            from app.models.user import SystemSetting
+            sys_settings = self.db.query(SystemSetting).first()
+            if sys_settings and getattr(sys_settings, "website_url", None):
+                base_url = (sys_settings.website_url or "").strip().rstrip("/")
+        view_url = f"{base_url}/view/request?token={view_token}" if base_url else f"/view/request?token={view_token}"
+        body += f"\n\nView form: {view_url}"
+        body_html = (
+            f"<p>{type_label} {form_number} (Project: {project}) has been approved.</p>\n"
+            f'<p><a href="{view_url}">View form</a><br />{view_url}</p>'
+        )
+
         from app.services.notification_service import NotificationService
         NotificationService(self.db).create(
             user_id=str(requested_by_uid),
             type="purchase_request_approved",
             title=title,
             body=body,
+            data={"body_html": body_html},
             source_entity_type="purchase_request",
             source_entity_id=str(header.id),
             event_type="approved",
@@ -2551,6 +2567,7 @@ class PurchaseRequestService:
             raise handle_conflict("This approval link has expired.")
         header = self.get_request(approval_token.entity_id)
         lines = []
+        grand_total = None
         if getattr(header, "lines", None):
             for line in sorted(header.lines, key=lambda l: (l.sort_order if l.sort_order is not None else 999, getattr(l, "id", 0))):
                 qty = line.quantity
@@ -2559,12 +2576,40 @@ class PurchaseRequestService:
                         qty = float(qty)
                     except (TypeError, ValueError):
                         pass
+                up = getattr(line, "unit_price", None)
+                tot = getattr(line, "total", None)
+                if up is not None and hasattr(up, "__float__"):
+                    try:
+                        up = float(up)
+                    except (TypeError, ValueError):
+                        up = None
+                if tot is not None and hasattr(tot, "__float__"):
+                    try:
+                        tot = float(tot)
+                    except (TypeError, ValueError):
+                        tot = None
                 lines.append({
                     "item_code": line.item_code,
                     "quantity": qty,
                     "remark": line.remark,
+                    "unit_price": up,
+                    "total": tot,
                     "sort_order": line.sort_order,
                 })
+            if getattr(header, "request_type", None) == "sponsorship_form" and lines:
+                try:
+                    total_sum = Decimal("0")
+                    for l in lines:
+                        t = l.get("total")
+                        if t is not None:
+                            total_sum += Decimal(str(t))
+                        else:
+                            q, u = l.get("quantity"), l.get("unit_price")
+                            if q is not None and u is not None:
+                                total_sum += Decimal(str(q)) * Decimal(str(u))
+                    grand_total = total_sum
+                except (InvalidOperation, ValueError, TypeError):
+                    grand_total = None
         return {
             "entity_type": approval_token.entity_type,
             "entity_id": approval_token.entity_id,
@@ -2573,6 +2618,10 @@ class PurchaseRequestService:
             "customer_name": header.customer_name,
             "project_title": header.project_title,
             "purpose": header.purpose,
+            "delivery_address": getattr(header, "delivery_address", None),
+            "total_project_value": getattr(header, "total_project_value", None),
+            "total_project_value_text": getattr(header, "total_project_value_text", None),
+            "sponsor_subject": getattr(header, "sponsor_subject", None),
             "requested_by": header.requested_by,
             "request_date": getattr(header, "request_date", None),
             "created_at": getattr(header, "created_at", None),
@@ -2581,6 +2630,7 @@ class PurchaseRequestService:
             "expected_po_date_text": getattr(header, "expected_po_date_text", None),
             "expires_at": approval_token.expires,
             "lines": lines,
+            "grand_total": grand_total,
         }
 
     def get_or_create_view_token(self, entity_id: str) -> str:
@@ -2628,6 +2678,7 @@ class PurchaseRequestService:
             raise handle_not_found("View link", "(invalid token)")
         header = self.get_request(entity_id)
         lines = []
+        grand_total = None
         if getattr(header, "lines", None):
             for line in sorted(header.lines, key=lambda l: (l.sort_order if l.sort_order is not None else 999, getattr(l, "id", 0))):
                 qty = line.quantity
@@ -2636,12 +2687,40 @@ class PurchaseRequestService:
                         qty = float(qty)
                     except (TypeError, ValueError):
                         pass
+                up = getattr(line, "unit_price", None)
+                tot = getattr(line, "total", None)
+                if up is not None and hasattr(up, "__float__"):
+                    try:
+                        up = float(up)
+                    except (TypeError, ValueError):
+                        up = None
+                if tot is not None and hasattr(tot, "__float__"):
+                    try:
+                        tot = float(tot)
+                    except (TypeError, ValueError):
+                        tot = None
                 lines.append({
                     "item_code": line.item_code,
                     "quantity": qty,
                     "remark": line.remark,
+                    "unit_price": up,
+                    "total": tot,
                     "sort_order": line.sort_order,
                 })
+            if getattr(header, "request_type", None) == "sponsorship_form" and lines:
+                try:
+                    total_sum = Decimal("0")
+                    for l in lines:
+                        t = l.get("total")
+                        if t is not None:
+                            total_sum += Decimal(str(t))
+                        else:
+                            q, u = l.get("quantity"), l.get("unit_price")
+                            if q is not None and u is not None:
+                                total_sum += Decimal(str(q)) * Decimal(str(u))
+                    grand_total = total_sum
+                except (InvalidOperation, ValueError, TypeError):
+                    grand_total = None
         entity_type = view_token.entity_type if view_token else "purchase_request"
         return {
             "entity_type": entity_type,
@@ -2651,6 +2730,10 @@ class PurchaseRequestService:
             "customer_name": header.customer_name,
             "project_title": header.project_title,
             "purpose": header.purpose,
+            "delivery_address": getattr(header, "delivery_address", None),
+            "total_project_value": getattr(header, "total_project_value", None),
+            "total_project_value_text": getattr(header, "total_project_value_text", None),
+            "sponsor_subject": getattr(header, "sponsor_subject", None),
             "requested_by": header.requested_by,
             "request_date": getattr(header, "request_date", None),
             "created_at": getattr(header, "created_at", None),
@@ -2659,6 +2742,7 @@ class PurchaseRequestService:
             "expected_po_date_text": getattr(header, "expected_po_date_text", None),
             "expires_at": None,
             "lines": lines,
+            "grand_total": grand_total,
         }
 
     def submit_approval(

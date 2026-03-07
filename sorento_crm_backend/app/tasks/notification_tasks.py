@@ -56,10 +56,12 @@ def send_notification_deliveries(notification_id: str) -> None:
                         smtp_config=smtp_config,
                     )
                 else:
+                    body_html = (notification.data or {}).get("body_html") if notification.data else None
                     err = send_notification_email(
                         to=user.email,
                         subject=notification.title,
                         body_text=notification.body or notification.title,
+                        body_html=body_html,
                         smtp_config=smtp_config,
                     )
                 delivery.status = "failed" if err else "sent"

@@ -1,9 +1,9 @@
 {
   "/api/auth/token/route": "app/api/auth/token/route.js",
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/(protected)/procurement-management/stock-inquiries/new/page": "app/(protected)/procurement-management/stock-inquiries/new/page.js",
   "/(protected)/procurement-management/stock-inquiries/[id]/page": "app/(protected)/procurement-management/stock-inquiries/[id]/page.js",
-  "/(protected)/procurement-management/stock-inquiries/[id]/edit/page": "app/(protected)/procurement-management/stock-inquiries/[id]/edit/page.js",
+  "/(protected)/procurement-management/stock-inquiries/new/page": "app/(protected)/procurement-management/stock-inquiries/new/page.js",
   "/(protected)/procurement-management/purchase-requests/page": "app/(protected)/procurement-management/purchase-requests/page.js",
+  "/(protected)/procurement-management/stock-inquiries/[id]/edit/page": "app/(protected)/procurement-management/stock-inquiries/[id]/edit/page.js",
   "/(protected)/procurement-management/purchase-requests/[id]/page": "app/(protected)/procurement-management/purchase-requests/[id]/page.js"
 }

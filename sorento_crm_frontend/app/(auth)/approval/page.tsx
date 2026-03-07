@@ -17,6 +17,8 @@ interface ApprovalLineSummary {
   item_code?: string | null;
   quantity?: number | null;
   remark?: string | null;
+  unit_price?: number | null;
+  total?: number | null;
   sort_order?: number | null;
 }
 
@@ -28,6 +30,10 @@ interface ApprovalSummary {
   customer_name: string | null;
   project_title: string | null;
   purpose: string | null;
+  delivery_address?: string | null;
+  total_project_value?: number | null;
+  total_project_value_text?: string | null;
+  sponsor_subject?: string | null;
   requested_by: string | null;
   request_date: string | null;
   created_at: string | null;
@@ -36,6 +42,7 @@ interface ApprovalSummary {
   expected_po_date_text: string | null;
   expires_at: string;
   lines?: ApprovalLineSummary[] | null;
+  grand_total?: number | null;
 }
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
@@ -226,12 +233,32 @@ function ApprovalContent() {
           <DetailRow label="Form number" value={summary?.request_number ?? undefined} />
           <DetailRow label="Customer" value={summary?.customer_name ?? undefined} />
           <DetailRow label="Project" value={summary?.project_title ?? undefined} />
-          <DetailRow label="Purpose" value={summary?.purpose ?? undefined} />
+          {summary?.request_type === 'purchase_request' && (
+            <DetailRow label="Purpose" value={summary?.purpose ?? undefined} />
+          )}
+          {summary?.request_type === 'sponsorship_form' && (
+            <>
+              <DetailRow label="Delivery address" value={summary?.delivery_address ?? undefined} />
+              <DetailRow
+                label="Total project value"
+                value={
+                  summary?.total_project_value_text?.trim()
+                    ? summary.total_project_value_text
+                    : summary?.total_project_value != null
+                      ? String(summary.total_project_value)
+                      : undefined
+                }
+              />
+              <DetailRow label="Sponsor subject" value={summary?.sponsor_subject ?? undefined} />
+            </>
+          )}
           <DetailRow label="Requested by" value={summary?.requested_by ?? undefined} />
           <DetailRow label="Request date" value={summary?.request_date ? formatDateStr(summary.request_date) : undefined} />
           <DetailRow label="Created at" value={summary?.created_at ? formatDateTimeStr(summary.created_at) : undefined} />
           <DetailRow label="Expected delivery" value={summary?.expected_delivery_date ? formatDateStr(summary.expected_delivery_date) : undefined} />
-          <DetailRow label="Expected PO date" value={poDisplay ?? undefined} />
+          {summary?.request_type === 'purchase_request' && (
+            <DetailRow label="Expected PO date" value={poDisplay ?? undefined} />
+          )}
           <div className="py-2.5 border-b border-border/60 last:border-0">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Link expires</p>
             <p className="text-sm font-medium">
@@ -251,7 +278,19 @@ function ApprovalContent() {
                     <p className="text-sm font-medium break-words">{line.item_code ?? '—'}</p>
                     <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Quantity</p>
                     <p className="text-sm font-medium">{line.quantity != null ? String(line.quantity) : '—'}</p>
-                    {(line.remark != null && String(line.remark).trim() !== '') && (
+                    {summary?.request_type === 'sponsorship_form' && (
+                      <>
+                        {(line.unit_price != null || line.total != null) && (
+                          <>
+                            <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Unit price</p>
+                            <p className="text-sm font-medium">{line.unit_price != null ? String(line.unit_price) : '—'}</p>
+                            <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Total</p>
+                            <p className="text-sm font-medium">{line.total != null ? String(line.total) : '—'}</p>
+                          </>
+                        )}
+                      </>
+                    )}
+                    {summary?.request_type === 'purchase_request' && (line.remark != null && String(line.remark).trim() !== '') && (
                       <>
                         <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Remarks</p>
                         <p className="text-sm font-medium break-words">{line.remark}</p>
@@ -260,6 +299,12 @@ function ApprovalContent() {
                   </div>
                 ))}
               </div>
+              {summary?.request_type === 'sponsorship_form' && summary?.grand_total != null && (
+                <div className="mt-3 pt-3 border-t border-border">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Grand total</p>
+                  <p className="text-sm font-semibold">{String(summary.grand_total)}</p>
+                </div>
+              )}
             </div>
           )}
         </CardContent>

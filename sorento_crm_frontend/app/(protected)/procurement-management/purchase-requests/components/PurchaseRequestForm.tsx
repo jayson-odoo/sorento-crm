@@ -59,6 +59,11 @@ import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSecti
 const PURCHASE_REQUESTS_EDIT = '/procurement-management/purchase-requests';
 const SPONSORSHIP_FORMS_EDIT = '/procurement-management/sponsorship-forms';
 
+const REQUEST_TYPE_LABELS: Record<string, string> = {
+  purchase_request: 'Purchase Request',
+  sponsorship_form: 'Sponsorship Form',
+};
+
 interface PurchaseRequestFormProps {
   requestId?: string;
   /** When set (e.g. on sponsorship-forms/new), form defaults to this type and type field is hidden. */
@@ -236,13 +241,12 @@ export default function PurchaseRequestForm({
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Header</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Header</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
                 <FormField
                   control={form.control}
                   name="request_number"
@@ -495,12 +499,10 @@ export default function PurchaseRequestForm({
                 />
               </CardContent>
             </Card>
-          </div>
 
-          <div className="space-y-6">
-            <Card>
-              <CardHeader className="flex-row items-center justify-between">
-                <CardTitle>Line Items</CardTitle>
+          <Card>
+            <CardHeader className="flex-row items-center justify-between">
+              <CardTitle>Line Items</CardTitle>
                 <Button
                   type="button"
                   variant="outline"
@@ -514,11 +516,11 @@ export default function PurchaseRequestForm({
                 </Button>
               </CardHeader>
               <CardContent>
-                <Table>
+                <Table className="w-full">
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Item Code</TableHead>
-                      <TableHead>Qty</TableHead>
+                      <TableHead className="min-w-[140px]">Item Code</TableHead>
+                      <TableHead className="min-w-[80px]">Qty</TableHead>
                       {isSponsorship && <TableHead>Unit Price</TableHead>}
                       {isSponsorship && <TableHead>Total</TableHead>}
                       {!isSponsorship && <TableHead>Remark</TableHead>}
@@ -675,7 +677,6 @@ export default function PurchaseRequestForm({
                 </Table>
               </CardContent>
             </Card>
-          </div>
 
           {isEditMode && requestId && (
             <PurchaseRequestAttachmentsSection
@@ -701,14 +702,18 @@ export default function PurchaseRequestForm({
               onClick={async () => {
                 const valid = await form.trigger();
                 if (!valid || !requestId) return;
-                setReplyMessage('');
+                const values = form.getValues();
+                const typeLabel =
+                  REQUEST_TYPE_LABELS[values.request_type ?? ''] ?? values.request_type ?? 'Request';
+                let defaultReply = `This is the form number ${values.request_number ?? ''} for ${typeLabel} for project title ${values.project_title ?? ''}.`;
                 try {
                   const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
                   const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
-                  if (view_url) setReplyMessage(view_url);
+                  if (view_url) defaultReply += `\n\nView full details: ${view_url}`;
                 } catch {
-                  // leave empty, user can type
+                  // leave message as-is, user can add link
                 }
+                setReplyMessage(defaultReply);
                 setUpdateAndReplyDialogOpen(true);
               }}
               disabled={isLoading || updateAndReplyMutation.isPending}
@@ -748,7 +753,7 @@ export default function PurchaseRequestForm({
             <DialogHeader>
               <DialogTitle>Update & Reply</DialogTitle>
               <DialogDescription>
-                This message will be sent to the conversation in Respond. You can edit it below. The view link is included by default for the recipient to open the form.
+                This message will be sent to the conversation in Respond. It is pre-filled for this {form.watch('request_type') === 'sponsorship_form' ? 'Sponsorship Form' : 'Purchase Request'}. You can edit it below; the view link is included by default.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
@@ -758,7 +763,7 @@ export default function PurchaseRequestForm({
                   id="pr-reply_message"
                   value={replyMessage}
                   onChange={(e) => setReplyMessage(e.target.value)}
-                  placeholder="Add a message (view link will be appended if added above)"
+                  placeholder="This is the form number ... for Purchase Request / Sponsorship Form for project title ..."
                   rows={4}
                   className="resize-none"
                 />

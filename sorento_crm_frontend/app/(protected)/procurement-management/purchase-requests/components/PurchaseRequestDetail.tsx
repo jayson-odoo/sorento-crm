@@ -515,8 +515,7 @@ export default function PurchaseRequestDetail({
           <DialogHeader>
             <DialogTitle>Update & Reply</DialogTitle>
             <DialogDescription>
-              This message will be sent to the conversation in Respond. You can edit it below before
-              sending.
+              This message will be sent to the conversation in Respond. It is pre-filled for this {request.request_type === 'sponsorship_form' ? 'Sponsorship Form' : 'Purchase Request'}. You can edit it below before sending.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
