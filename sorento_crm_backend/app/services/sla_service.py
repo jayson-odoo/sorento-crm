@@ -873,6 +873,9 @@ class ConversationSLATrackingService:
         phone = None
         if tracking.contact:
             phone = (getattr(tracking.contact, "phone_number", None) or "").strip()
+        changed_at_utc = _now_utc()
+        changed_at_malaysia = changed_at_utc.astimezone(MALAYSIA_TZ)
+        assignee_changed_at = f"{changed_at_malaysia.strftime('%Y-%m-%d %H:%M:%S')} +08"
         return {
             "updated": True,
             "message": "Conversation SLA tracking assignee updated.",
@@ -884,6 +887,7 @@ class ConversationSLATrackingService:
             "assigned_to": (user.name or user.email or assignee_id) if user else (assignee_id or None),
             "assigned_to_id": str(user.id) if user else None,
             "assignee_respond_user_id": assignee_id or None,
+            "assignee_changed_at": assignee_changed_at,
         }
 
     def create_tracking(self, tracking_data: ConversationSLATrackingCreate):
