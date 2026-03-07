@@ -77,6 +77,7 @@ def create_purchase_request(
             purpose=header.purpose,
             delivery_address=getattr(header, "delivery_address", None),
             total_project_value=getattr(header, "total_project_value", None),
+            total_project_value_text=getattr(header, "total_project_value_text", None),
             sponsor_subject=getattr(header, "sponsor_subject", None),
             expected_delivery_date=header.expected_delivery_date,
             expected_po_date=expected_po_value,

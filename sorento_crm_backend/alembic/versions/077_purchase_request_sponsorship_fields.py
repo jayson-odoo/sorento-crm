@@ -1,6 +1,6 @@
 """Add sponsorship form and line pricing fields to purchase_requests.
 
-Revision ID: 077_purchase_request_sponsorship_fields
+Revision ID: 077_pr_sponsorship_fields
 Revises: 076_entity_attachment_links
 Create Date: 2026-02-21
 
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "077_purchase_request_sponsorship_fields"
+revision = "077_pr_sponsorship_fields"
 down_revision = "076_entity_attachment_links"
 branch_labels = None
 depends_on = None

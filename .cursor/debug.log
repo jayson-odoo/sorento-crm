@@ -1477,3 +1477,10 @@
 {"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772881488806,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
 {"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772881711943,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
 {"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772881717839,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
+{"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772882006301,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
+{"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772882007486,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
+{"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772882541147,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
+{"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772882635480,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
+{"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772882714551,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
+{"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772882729930,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
+{"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772882739226,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}

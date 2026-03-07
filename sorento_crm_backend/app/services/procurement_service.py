@@ -4,6 +4,7 @@ import secrets
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
 from sqlalchemy import inspect
+from decimal import Decimal, InvalidOperation
 from typing import Optional, List, Dict, Any
 from datetime import date, datetime, timedelta, timezone
 from app.models.procurement import (
@@ -1920,6 +1921,26 @@ class PurchaseRequestService:
         if isinstance(payload.expected_po_date, str):
             expected_po_date_text = payload.expected_po_date.strip() or None
 
+        # Resolve expected_delivery_date: use date_of_delivery when expected_delivery_date is empty
+        expected_delivery_date = self._parse_date(getattr(payload, "expected_delivery_date", None))
+        if expected_delivery_date is None:
+            expected_delivery_date = self._parse_date(getattr(payload, "date_of_delivery", None))
+
+        # total_project_value: numeric -> column; descriptive text -> total_project_value_text
+        raw_tpv = getattr(payload, "total_project_value", None)
+        total_project_value = None
+        total_project_value_text = None
+        if raw_tpv is not None:
+            if isinstance(raw_tpv, Decimal):
+                total_project_value = raw_tpv
+            elif isinstance(raw_tpv, str):
+                s = raw_tpv.strip()
+                if s:
+                    try:
+                        total_project_value = Decimal(s)
+                    except (InvalidOperation, ValueError):
+                        total_project_value_text = s
+
         contact_id = getattr(payload, "contact_id", None) or None
         space_id = getattr(payload, "space_id", None) or None
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -1931,9 +1952,10 @@ class PurchaseRequestService:
             project_title=payload.project_title,
             purpose=payload.purpose,
             delivery_address=getattr(payload, "delivery_address", None),
-            total_project_value=getattr(payload, "total_project_value", None),
+            total_project_value=total_project_value,
+            total_project_value_text=total_project_value_text,
             sponsor_subject=getattr(payload, "sponsor_subject", None),
-            expected_delivery_date=self._parse_date(payload.expected_delivery_date),
+            expected_delivery_date=expected_delivery_date,
             expected_po_date=self._parse_date(payload.expected_po_date),
             expected_po_date_text=expected_po_date_text,
             requested_by=payload.requested_by,

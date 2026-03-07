@@ -1,8 +1,8 @@
 """External API request and response schemas."""
 from __future__ import annotations
 
-from pydantic import BaseModel, field_validator, model_validator
-from typing import Optional, List, Any
+from pydantic import BaseModel, field_validator, model_validator, ConfigDict
+from typing import Optional, List, Any, Union
 from datetime import date
 from decimal import Decimal
 
@@ -433,20 +433,24 @@ class PurchaseRequestExternalCreate(BaseModel):
     expected_delivery_date, expected_po_date, products (item_code, quantity, remark per line),
     requested_by, requested_at.
 
-    Sponsorship form fields: date, customer_name, delivery_address, project_title, total_project_value,
-    sponsor_subject (showroom/mockup/others:__), expected_delivery_date (date of delivery), products
-    (item_code, quantity, unit_price, total per line), requested_by, requested_at.
+    Sponsorship form fields: date, customer_name, delivery_address, project_title, total_project_value
+    (numeric or descriptive text e.g. "BULK ORDER EST RM1.6MIL"), sponsor_subject (showroom/mockup/others:__),
+    expected_delivery_date or date_of_delivery, products (item_code, quantity, unit_price, total per line),
+    requested_by, requested_at.
     """
+    model_config = ConfigDict(extra="ignore")  # allow response, complete, team, etc. from Respond/n8n
+
     request_type: str
     date: Optional[str | DateType] = None
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form
-    total_project_value: Optional[Decimal] = None  # sponsorship form
+    total_project_value: Optional[Union[Decimal, str]] = None  # numeric or descriptive text
     sponsor_subject: Optional[str] = None  # sponsorship: showroom/mockup/others
     expected_delivery_date: Optional[str | DateType] = None
     expected_po_date: Optional[str | DateType] = None
+    date_of_delivery: Optional[str | DateType] = None  # alias for expected_delivery_date (sponsorship)
     products: List[PurchaseRequestExternalLine] = []
     requested_by: Optional[str] = None
     requested_at: Optional[str | DateType] = None
@@ -473,6 +477,7 @@ class PurchaseRequestExternalResponse(BaseModel):
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None
     total_project_value: Optional[Decimal] = None
+    total_project_value_text: Optional[str] = None  # descriptive e.g. "BULK ORDER EST RM1.6MIL"
     sponsor_subject: Optional[str] = None
     expected_delivery_date: Optional[DateType] = None
     expected_po_date: Optional[str | DateType] = None

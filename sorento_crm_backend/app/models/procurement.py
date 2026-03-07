@@ -319,7 +319,8 @@ class PurchaseRequestHeader(Base):
     project_title = Column(Text, nullable=True)
     purpose = Column(Text, nullable=True)
     delivery_address = Column(Text, nullable=True)  # sponsorship form
-    total_project_value = Column(Numeric(15, 2), nullable=True)  # sponsorship form
+    total_project_value = Column(Numeric(15, 2), nullable=True)  # sponsorship form (numeric)
+    total_project_value_text = Column(Text, nullable=True)  # descriptive e.g. "BULK ORDER EST RM1.6MIL"
     sponsor_subject = Column(Text, nullable=True)  # sponsorship: showroom/mockup/others
     expected_delivery_date = Column(Date, nullable=True)
     expected_po_date = Column(Date, nullable=True)
