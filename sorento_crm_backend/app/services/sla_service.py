@@ -990,32 +990,14 @@ class ConversationSLATrackingService:
         ).first()
         
         if existing:
-            # Update existing tracking record
-            # Fields to preserve (don't update these)
-            preserve_fields = {"id", "created_at", "respond_contact_id"}  # respond_contact_id should stay the same
-            
-            # Update all fields from tracking_dict (except preserved fields)
-            # This includes the auto-populated and reset fields
+            # Update existing tracking record. Do not recalculate due_at/due_at_resolution here;
+            # they are only set when creating a new tracking or when escalating (integration/escalate).
+            preserve_fields = {"id", "created_at", "respond_contact_id", "due_at", "due_at_resolution"}
+
             for key, value in tracking_dict.items():
                 if key not in preserve_fields:
                     setattr(existing, key, value)
-            
-            # Always recalculate due_at and due_at_resolution based on tier (UTC)
-            # Resolution due must always be >= response due
-            tier = self.db.query(SLAPolicyTier).filter(
-                SLAPolicyTier.policy_id == tracking_dict["policy_id"],
-                SLAPolicyTier.tier_level == tracking_dict["current_tier"]
-            ).first()
-            if tier:
-                current_tier_started_at = _to_aware_utc(tracking_dict["current_tier_started_at"])
-                initiated_at_utc = _to_aware_utc(tracking_dict["initiated_at"])
-                res_hours = getattr(tier, "resolution_hours", None) or 24
-                if current_tier_started_at:
-                    existing.due_at = current_tier_started_at + timedelta(hours=(tier.response_hours or 24))
-                if initiated_at_utc:
-                    resolution_from_initiated = initiated_at_utc + timedelta(hours=res_hours)
-                    existing.due_at_resolution = max(resolution_from_initiated, existing.due_at) if existing.due_at else resolution_from_initiated
-            
+
             self.db.commit()
             self.db.refresh(existing)
             return existing
@@ -1192,7 +1174,7 @@ class ConversationSLATrackingService:
         return {"message": "Event log deleted successfully"}
 
     def create_event_log(self, event_data: ConversationSLAEventLogCreate):
-        """Create an SLA event log entry."""
+        """Create an SLA event log entry. Must not update the tracking record or recalculate due_at/due_at_resolution."""
         from app.models.user import User
         from decimal import Decimal, ROUND_HALF_UP
         
