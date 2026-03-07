@@ -523,11 +523,12 @@ class ConversationSLATrackingService:
         """Get a tracking record by ID."""
         from sqlalchemy.orm import joinedload
         from app.models.sla import ConversationSLAEventLog
-        # Load tracking with all relationships, including user relationship for event logs
+        from app.models.user import User
+        # Load tracking with all relationships, including assigned_user.superior for tooltip
         tracking = self.db.query(ConversationSLATracking).options(
             joinedload(ConversationSLATracking.policy),
             joinedload(ConversationSLATracking.contact),
-            joinedload(ConversationSLATracking.assigned_user),
+            joinedload(ConversationSLATracking.assigned_user).joinedload(User.superior),
             joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user)
         ).filter(
             ConversationSLATracking.id == tracking_id

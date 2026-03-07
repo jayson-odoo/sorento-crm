@@ -830,12 +830,18 @@ async def get_sla_tracking_record(
             "assigned_user": {
                 "id": tracking.assigned_user.id,
                 "email": tracking.assigned_user.email,
-                "name": tracking.assigned_user.name
+                "name": tracking.assigned_user.name,
+                "superior": {
+                    "name": tracking.assigned_user.superior.name if tracking.assigned_user.superior else None,
+                    "email": tracking.assigned_user.superior.email if tracking.assigned_user.superior else None,
+                } if getattr(tracking.assigned_user, "superior", None) else None,
             } if tracking.assigned_user else None,
             "contact_phone": contact_phone,
             "contact_name": contact_name,
             "assigned_user_name": assigned_user_name,
             "assigned_user_email": assigned_user_email,
+            "assigned_user_superior_name": tracking.assigned_user.superior.name if (tracking.assigned_user and getattr(tracking.assigned_user, "superior", None)) else None,
+            "assigned_user_superior_email": tracking.assigned_user.superior.email if (tracking.assigned_user and getattr(tracking.assigned_user, "superior", None)) else None,
             "responded_by_user_name": responded_by_user_name,
             "resolved_by_user_name": resolved_by_user_name,
             "average_response_time": average_response_time,

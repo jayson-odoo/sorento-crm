@@ -1523,3 +1523,7 @@
 {"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772884395241,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
 {"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772884403289,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
 {"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772884909792,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
+{"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"authenticated","hasSession":true},"timestamp":1772884912234,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
+{"location":"layout.tsx:17","message":"ProtectedLayout auth check","data":{"status":"unauthenticated","hasSession":false},"timestamp":1772884975255,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
+{"location":"layout.tsx:21","message":"useEffect exec - checking redirect","data":{"status":"unauthenticated","isUnauthenticated":true},"timestamp":1772884975269,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}
+{"location":"layout.tsx:23","message":"Redirecting to signin","data":{"status":"unauthenticated"},"timestamp":1772884975270,"sessionId":"debug-session","runId":"run1","hypothesisId":"H5"}

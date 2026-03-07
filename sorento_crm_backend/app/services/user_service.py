@@ -1,6 +1,6 @@
 """User management service for business logic."""
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import IntegrityError
 from typing import Optional
@@ -30,6 +30,14 @@ from app.schemas.user import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.integration_service import RespondClient
+
+
+def _normalize_respond_user_id(value: Optional[str]) -> Optional[str]:
+    """Return stripped string or None if empty."""
+    if value is None:
+        return None
+    s = (str(value)).strip()
+    return s if s else None
 
 
 class UserService:
@@ -196,6 +204,40 @@ class UserService:
             raise handle_not_found("User", user_id)
         return user
 
+    def _users_with_respond_user_id(
+        self, respond_user_id: str, exclude_user_id: Optional[str] = None
+    ) -> list:
+        """
+        Return list of users (other than exclude_user_id) that have this respond_user_id.
+        Compares using trimmed value so "971724" matches " 971724 " in DB.
+        Each item is a dict with keys: id, name, email.
+        """
+        q = self.db.query(User).filter(
+            User.respond_user_id.isnot(None),
+            func.trim(User.respond_user_id) == respond_user_id,
+        )
+        if exclude_user_id:
+            q = q.filter(User.id != exclude_user_id)
+        users = q.all()
+        return [
+            {"id": u.id, "name": getattr(u, "name", None) or "", "email": getattr(u, "email", None) or ""}
+            for u in users
+        ]
+
+    def _check_respond_user_id_unique(
+        self, respond_user_id: str, exclude_user_id: Optional[str] = None
+    ) -> None:
+        """
+        Raise handle_conflict if respond_user_id is already used by another user.
+        Message includes which users have it (name and email).
+        """
+        existing = self._users_with_respond_user_id(respond_user_id, exclude_user_id=exclude_user_id)
+        if not existing:
+            return
+        parts = [f"{u['name']} ({u['email']})".strip() or u["email"] or u["id"] for u in existing]
+        msg = "Respond User ID is already used by: " + "; ".join(parts)
+        raise handle_conflict(msg)
+
     def _user_create_data(self, user_data: UserCreate) -> dict:
         """Build User model dict from UserCreate, excluding role_ids."""
         d = user_data.model_dump(exclude={"role_ids"})
@@ -207,6 +249,10 @@ class UserService:
         if existing:
             raise handle_conflict("Email is already registered.")
         data = self._user_create_data(user_data)
+        rid = _normalize_respond_user_id(data.get("respond_user_id"))
+        if rid:
+            self._check_respond_user_id_unique(rid, exclude_user_id=None)
+            data["respond_user_id"] = rid
         user = User(**data)
         self.db.add(user)
         self.db.flush()
@@ -259,6 +305,12 @@ class UserService:
         update_data = user_data.model_dump(exclude_unset=True)
         logger.info(f"Updating user {user_id} with data: {update_data}")
         
+        # Enforce Respond User ID uniqueness before applying any updates
+        if "respond_user_id" in update_data:
+            rid = _normalize_respond_user_id(update_data["respond_user_id"])
+            if rid:
+                self._check_respond_user_id_unique(rid, exclude_user_id=user_id)
+        
         # Convert empty strings to None for optional fields to avoid foreign key violations
         optional_fields = ['superior_id', 'respond_user_id', 'country', 'timezone', 'avatar']
         
@@ -276,6 +328,9 @@ class UserService:
                 logger.info(f"✓ Set {key} = None (explicit None)")
             elif value is None:
                 logger.warning(f"⚠ Skipping {key} (None value for non-optional field)")
+            elif key == "respond_user_id":
+                setattr(user, key, _normalize_respond_user_id(value))
+                logger.info(f"✓ Set {key} = {repr(_normalize_respond_user_id(value))} (normalized)")
             else:
                 setattr(user, key, value)
                 logger.info(f"✓ Set {key} = {repr(value)}")
@@ -366,9 +421,12 @@ class UserService:
         if not respond_id or (isinstance(respond_id, str) and respond_id.strip() == ''):
             raise handle_conflict("Respond user ID is required for sync.")
         
-        # If respond_user_id was provided and different from database, save it first
+        # If respond_user_id was provided and different from database, check uniqueness then save
         if respond_user_id and respond_user_id != user.respond_user_id:
-            user.respond_user_id = respond_user_id
+            rid = _normalize_respond_user_id(respond_user_id)
+            if rid:
+                self._check_respond_user_id_unique(rid, exclude_user_id=user_id)
+            user.respond_user_id = rid or respond_user_id
             self.db.commit()
             self.db.refresh(user)
 

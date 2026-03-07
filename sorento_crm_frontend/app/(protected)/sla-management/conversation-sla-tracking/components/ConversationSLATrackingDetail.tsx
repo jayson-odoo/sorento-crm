@@ -298,11 +298,28 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                                 <Info className="size-4" />
                               </button>
                             </PopoverTrigger>
-                            <PopoverContent className="w-auto p-3" align="start">
-                              <div className="text-sm font-medium text-muted-foreground">Email</div>
-                              <div className="text-sm font-medium break-all">
-                                {tracking.assigned_user_email ?? tracking.assigned_user?.email ?? 'No email available'}
+                            <PopoverContent className="w-auto p-3 space-y-3" align="start">
+                              <div>
+                                <div className="text-sm font-medium text-muted-foreground">Email</div>
+                                <div className="text-sm font-medium break-all">
+                                  {tracking.assigned_user_email ?? tracking.assigned_user?.email ?? 'No email available'}
+                                </div>
                               </div>
+                              {(tracking.assigned_user_superior_name ?? tracking.assigned_user_superior_email ?? tracking.assigned_user?.superior?.name ?? tracking.assigned_user?.superior?.email) && (
+                                <div>
+                                  <div className="text-sm font-medium text-muted-foreground">Superior</div>
+                                  <div className="text-sm font-medium break-all">
+                                    {[
+                                      tracking.assigned_user_superior_name ?? tracking.assigned_user?.superior?.name,
+                                      (tracking.assigned_user_superior_email ?? tracking.assigned_user?.superior?.email)
+                                        ? `(${tracking.assigned_user_superior_email ?? tracking.assigned_user?.superior?.email})`
+                                        : null,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' ')}
+                                  </div>
+                                </div>
+                              )}
                             </PopoverContent>
                           </Popover>
                         )}
