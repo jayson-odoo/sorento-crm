@@ -325,3 +325,43 @@ export async function resubmitAttachmentWebhook(id: string): Promise<{ message: 
   }
   return response.json();
 }
+
+export async function linkAttachmentToPackingList(attachmentId: string, packingListId: string): Promise<{ message: string; link_id: string }> {
+  const response = await apiFetch(`/api/v1/resource-management/attachments/${attachmentId}/link-packing-list`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ packing_list_id: packingListId }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to link' }));
+    throw new Error(typeof error.detail === 'string' ? error.detail : error.message ?? 'Failed to link to packing list');
+  }
+  return response.json();
+}
+
+export async function deleteAttachmentLink(linkId: string, entityType: string): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/resource-management/attachments/links/${linkId}?entity_type=${encodeURIComponent(entityType)}`,
+    { method: 'DELETE' }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to unlink' }));
+    throw new Error(typeof error.detail === 'string' ? error.detail : error.message ?? 'Failed to unlink');
+  }
+}
+
+/** Unlink a packing list from an attachment when the link is only via the packing list's attachment_id (no link_id). */
+export async function unlinkPackingListFromAttachment(attachmentId: string, packingListId: string): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/resource-management/attachments/${attachmentId}/unlink-packing-list`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ packing_list_id: packingListId }),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to unlink' }));
+    throw new Error(typeof error.detail === 'string' ? error.detail : error.message ?? 'Failed to unlink packing list');
+  }
+}

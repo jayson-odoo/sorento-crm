@@ -24,6 +24,7 @@ export interface Attachment {
   linked_products?: LinkedEntityRef[];
   linked_promotions?: LinkedEntityRef[];
   linked_form?: LinkedEntityRef | null;
+  linked_packing_lists?: LinkedEntityRef[];
   uploaded_by?: string | null;
   uploaded_at: Date;
   is_deleted: boolean;
@@ -87,6 +88,7 @@ export interface AttachmentResponse {
   linked_products?: LinkedEntityRef[];
   linked_promotions?: LinkedEntityRef[];
   linked_form?: LinkedEntityRef | null;
+  linked_packing_lists?: LinkedEntityRef[];
   uploaded_by?: string | null;
   uploaded_at: Date | string;
   is_deleted: boolean;

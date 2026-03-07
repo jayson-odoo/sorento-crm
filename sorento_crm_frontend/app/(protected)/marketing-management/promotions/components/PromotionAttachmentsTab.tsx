@@ -111,7 +111,7 @@ export default function PromotionAttachmentsTab({
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Attachments</CardTitle>
+          <CardTitle>Attachments</CardTitle>
             </div>
             <div className="flex gap-2">
               <Button
@@ -254,7 +254,7 @@ export default function PromotionAttachmentsTab({
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle>Attachments</CardTitle>
+          <CardTitle>Attachments</CardTitle>
           </div>
           <div className="flex gap-2">
             <Button
@@ -267,15 +267,15 @@ export default function PromotionAttachmentsTab({
               <Upload className="size-4" />
               Add attachment
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setLinkDialogOpen(true)}
-            >
-              <Plus className="size-4" />
-              Link Existing
-            </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setLinkDialogOpen(true)}
+          >
+            <Plus className="size-4" />
+            Link Existing
+          </Button>
           </div>
         </div>
       </CardHeader>
@@ -743,18 +743,18 @@ function LinkAttachmentDialog({ open, onOpenChange, promotionId }: LinkAttachmen
     try {
       for (const attachmentId of ids) {
         await createPromotionAttachmentApi({
-          promotion_id: promotionId,
+      promotion_id: promotionId,
           attachment_id: attachmentId,
         });
       }
-      queryClient.invalidateQueries({ queryKey: ['promotion-attachments-by-promotion', promotionId] });
+        queryClient.invalidateQueries({ queryKey: ['promotion-attachments-by-promotion', promotionId] });
       toast.success(`${ids.length} attachment(s) linked to promotion`);
       setSelectedAttachmentIds(new Set());
       setSearchQuery('');
       setSelectedDirectoryId(null);
       setPageIndex(0);
       setExpandedIds(new Set());
-      onOpenChange(false);
+        onOpenChange(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to link attachment(s)');
     } finally {
@@ -768,8 +768,8 @@ function LinkAttachmentDialog({ open, onOpenChange, promotionId }: LinkAttachmen
         <DialogHeader>
           <DialogTitle>Link Existing Attachment</DialogTitle>
         </DialogHeader>
-        <div className="space-y-2">
-          <Label>Attachment</Label>
+          <div className="space-y-2">
+            <Label>Attachment</Label>
           {promotionAccessLevels?.length > 0 && (
             <p className="text-xs text-muted-foreground">
               Only attachments with access type matching this promotion ({formatAccessLevels(promotionAccessLevels)}) are shown.
@@ -912,8 +912,8 @@ function LinkAttachmentDialog({ open, onOpenChange, promotionId }: LinkAttachmen
                         </li>
                       ))}
                     </ul>
-                  )}
-                </div>
+            )}
+          </div>
               </ScrollArea>
               <div className="px-3 py-2 border-t bg-muted/30 flex items-center justify-between text-xs text-muted-foreground">
                 <span>
@@ -940,7 +940,7 @@ function LinkAttachmentDialog({ open, onOpenChange, promotionId }: LinkAttachmen
                   </Button>
                 </div>
               </div>
-            </div>
+          </div>
           </ResizablePanel>
         </ResizablePanelGroup>
 
@@ -951,19 +951,19 @@ function LinkAttachmentDialog({ open, onOpenChange, promotionId }: LinkAttachmen
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleLink}
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleLink}
             disabled={selectedCount === 0 || isLinking}
-          >
+            >
             {isLinking ? (
-              <LoaderCircleIcon className="size-4 animate-spin" />
-            ) : (
+                <LoaderCircleIcon className="size-4 animate-spin" />
+              ) : (
               `Link ${selectedCount > 0 ? selectedCount : ''} attachment(s)`
-            )}
-          </Button>
+              )}
+            </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

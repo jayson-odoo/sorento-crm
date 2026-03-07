@@ -662,8 +662,10 @@ class ConversationSLATrackingService:
         tracking.escalated_at = now_utc
         tracking.escalation_reason = escalation_reason
         tracking.due_at = now_utc + timedelta(hours=response_hours)
+        # Recalculate resolution due from new tier; ensure it is never earlier than response due
         if initiated_at_utc:
-            tracking.due_at_resolution = initiated_at_utc + timedelta(hours=resolution_hours)
+            resolution_from_initiated = initiated_at_utc + timedelta(hours=resolution_hours)
+            tracking.due_at_resolution = max(resolution_from_initiated, tracking.due_at)
         else:
             tracking.due_at_resolution = None
 
@@ -933,6 +935,7 @@ class ConversationSLATrackingService:
             )
 
         # Calculate due_at (response) and due_at_resolution from tier (UTC)
+        # Resolution due must always be >= response due
         current_tier_started_at = _to_aware_utc(tracking_dict["current_tier_started_at"])
         initiated_at_utc = _to_aware_utc(tracking_dict["initiated_at"])
         response_hours = tier.response_hours if tier.response_hours is not None else 24
@@ -942,7 +945,9 @@ class ConversationSLATrackingService:
         else:
             tracking_dict["due_at"] = None
         if initiated_at_utc:
-            tracking_dict["due_at_resolution"] = initiated_at_utc + timedelta(hours=resolution_hours)
+            resolution_from_initiated = initiated_at_utc + timedelta(hours=resolution_hours)
+            due_at = tracking_dict.get("due_at")
+            tracking_dict["due_at_resolution"] = max(resolution_from_initiated, due_at) if due_at else resolution_from_initiated
         else:
             tracking_dict["due_at_resolution"] = None
 
@@ -963,6 +968,7 @@ class ConversationSLATrackingService:
                     setattr(existing, key, value)
             
             # Always recalculate due_at and due_at_resolution based on tier (UTC)
+            # Resolution due must always be >= response due
             tier = self.db.query(SLAPolicyTier).filter(
                 SLAPolicyTier.policy_id == tracking_dict["policy_id"],
                 SLAPolicyTier.tier_level == tracking_dict["current_tier"]
@@ -974,7 +980,8 @@ class ConversationSLATrackingService:
                 if current_tier_started_at:
                     existing.due_at = current_tier_started_at + timedelta(hours=(tier.response_hours or 24))
                 if initiated_at_utc:
-                    existing.due_at_resolution = initiated_at_utc + timedelta(hours=res_hours)
+                    resolution_from_initiated = initiated_at_utc + timedelta(hours=res_hours)
+                    existing.due_at_resolution = max(resolution_from_initiated, existing.due_at) if existing.due_at else resolution_from_initiated
             
             self.db.commit()
             self.db.refresh(existing)

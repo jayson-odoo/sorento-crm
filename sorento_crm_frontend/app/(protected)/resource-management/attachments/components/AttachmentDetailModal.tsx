@@ -52,11 +52,14 @@ import { useForms } from '@/app/(protected)/forms-management/forms/hooks/useForm
 import { useUpdateForm } from '@/app/(protected)/forms-management/forms/hooks/useForms';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import { getPromotions } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
+import { getPackingLists } from '@/app/(protected)/procurement-management/packing-lists/services/packingListService';
+import { linkAttachmentToPackingList, deleteAttachmentLink, unlinkPackingListFromAttachment } from '../services/attachmentService';
 
 const ENTITY_ROUTES = {
   product: { label: 'Product', path: '/master-data-management/products' },
   promotion: { label: 'Promotion', path: '/marketing-management/promotions' },
   form: { label: 'Form', path: '/forms-management/forms' },
+  packing_list: { label: 'Packing List', path: '/procurement-management/packing-lists' },
 } as const;
 
 const ACCESS_LEVEL_OPTIONS = [
@@ -83,6 +86,7 @@ function LinkagesTable({
 }) {
   const hasLinkId = type === 'product' || type === 'promotion';
   const canUnlink = hasLinkId ? (item: LinkedEntityRef) => !!item.link_id : (item: LinkedEntityRef) => true;
+  const canUnlinkPackingList = true;
 
   return (
     <div className="space-y-3">
@@ -122,7 +126,7 @@ function LinkagesTable({
                       View
                       <ExternalLink className="size-3.5 shrink-0" />
                     </Link>
-                    {onUnlink && canUnlink(item) && (
+                    {onUnlink && (type === 'packing_list' ? canUnlinkPackingList : canUnlink(item)) && (
                       <Button
                         variant="ghost"
                         size="sm"
@@ -156,10 +160,12 @@ function LinkagesTabs({
   const [linkProductId, setLinkProductId] = useState('');
   const [linkPromotionId, setLinkPromotionId] = useState('');
   const [linkFormId, setLinkFormId] = useState('');
+  const [linkPackingListId, setLinkPackingListId] = useState('');
 
   const products = attachment.linked_products ?? [];
   const promotions = attachment.linked_promotions ?? [];
   const form = attachment.linked_form ?? null;
+  const packingLists = attachment.linked_packing_lists ?? [];
 
   const createProductLink = useCreateProductAttachment();
   const deleteProductLink = useDeleteProductAttachment();
@@ -174,6 +180,30 @@ function LinkagesTabs({
     queryClient.invalidateQueries({ queryKey: ['promotion-attachments'] });
     queryClient.invalidateQueries({ queryKey: ['forms'] });
     onRefetch();
+  };
+
+  const [unlinkPackingListPending, setUnlinkPackingListPending] = useState(false);
+  const handleUnlinkPackingList = (item: LinkedEntityRef) => {
+    setUnlinkPackingListPending(true);
+    const promise = item.link_id
+      ? deleteAttachmentLink(item.link_id, 'inbound_shipment')
+      : unlinkPackingListFromAttachment(attachment.id, item.id);
+    promise
+      .then(() => invalidate())
+      .finally(() => setUnlinkPackingListPending(false));
+  };
+
+  const [linkPackingListPending, setLinkPackingListPending] = useState(false);
+  const handleLinkPackingList = () => {
+    if (!linkPackingListId || !attachment.id) return;
+    setLinkPackingListPending(true);
+    linkAttachmentToPackingList(attachment.id, linkPackingListId)
+      .then(() => {
+        invalidate();
+        setLinkDialogTab(null);
+        setLinkPackingListId('');
+      })
+      .finally(() => setLinkPackingListPending(false));
   };
 
   const handleUnlinkProduct = (item: LinkedEntityRef) => {
@@ -242,7 +272,7 @@ function LinkagesTabs({
   return (
     <>
       <Tabs defaultValue="products" className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="products">
             Products {products.length > 0 && `(${products.length})`}
           </TabsTrigger>
@@ -251,6 +281,9 @@ function LinkagesTabs({
           </TabsTrigger>
           <TabsTrigger value="forms">
             Forms {form ? '(1)' : ''}
+          </TabsTrigger>
+          <TabsTrigger value="packing_lists">
+            Packing Lists {packingLists.length > 0 && `(${packingLists.length})`}
           </TabsTrigger>
         </TabsList>
         <TabsContent value="products" className="mt-4">
@@ -282,6 +315,17 @@ function LinkagesTabs({
             emptyMessage="No form linked to this attachment."
             onUnlink={form ? handleUnlinkForm : undefined}
             onLink={!form ? () => setLinkDialogTab('form') : undefined}
+            attachmentId={attachment.id}
+            refetch={onRefetch}
+          />
+        </TabsContent>
+        <TabsContent value="packing_lists" className="mt-4">
+          <LinkagesTable
+            type="packing_list"
+            items={packingLists}
+            emptyMessage="No packing lists linked to this attachment."
+            onUnlink={handleUnlinkPackingList}
+            onLink={() => setLinkDialogTab('packing_list')}
             attachmentId={attachment.id}
             refetch={onRefetch}
           />
@@ -333,6 +377,22 @@ function LinkagesTabs({
             onSubmit={handleLinkForm}
             onCancel={() => setLinkDialogTab(null)}
             isPending={updateFormMutation.isPending}
+          />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={linkDialogTab === 'packing_list'} onOpenChange={(o) => !o && setLinkDialogTab(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Link Packing List</DialogTitle>
+          </DialogHeader>
+          <LinkPackingListForm
+            attachmentId={attachment.id}
+            linkedPackingListIds={packingLists.map((p) => p.id)}
+            selectedId={linkPackingListId}
+            onSelect={setLinkPackingListId}
+            onSubmit={handleLinkPackingList}
+            onCancel={() => setLinkDialogTab(null)}
+            isPending={linkPackingListPending}
           />
         </DialogContent>
       </Dialog>
@@ -581,6 +641,95 @@ function LinkFormForm({
                     >
                       {f.name || f.code || f.id}
                       {selectedId === f.id && <CommandCheck />}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button onClick={onSubmit} disabled={!selectedId || isPending}>
+          {isPending ? <LoaderCircleIcon className="size-4 animate-spin" /> : <Link2 className="size-4" />}
+          Link
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function LinkPackingListForm({
+  attachmentId,
+  linkedPackingListIds,
+  selectedId,
+  onSelect,
+  onSubmit,
+  onCancel,
+  isPending,
+}: {
+  attachmentId: string;
+  linkedPackingListIds: string[];
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  isPending: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const { data } = useQuery({
+    queryKey: ['packing-lists-for-link', attachmentId],
+    queryFn: () => getPackingLists({ pageIndex: 0, pageSize: 200, sorting: [], searchQuery: '' }),
+  });
+  const packingLists = (data?.data ?? []).filter((p) => !linkedPackingListIds.includes(p.id));
+  const selected = packingLists.find((p) => p.id === selectedId);
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <Label>Packing List</Label>
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              role="combobox"
+              mode="input"
+              placeholder={!selected}
+              aria-expanded={open}
+              className="w-full justify-between"
+            >
+              {selected ? (selected.shipment_number || selected.id) : 'Select a packing list...'}
+              <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
+            <Command
+              filter={(value, search) => {
+                if (!search.trim()) return 1;
+                const item = packingLists.find((p) => p.id === value);
+                if (!item) return 0;
+                const text = (item.shipment_number || item.id || '').toLowerCase();
+                return text.includes(search.toLowerCase()) ? 1 : 0;
+              }}
+            >
+              <CommandInput placeholder="Search packing list..." />
+              <CommandList>
+                <CommandEmpty>No packing list found.</CommandEmpty>
+                <CommandGroup>
+                  {packingLists.map((p) => (
+                    <CommandItem
+                      key={p.id}
+                      value={p.id}
+                      onSelect={() => {
+                        onSelect(p.id);
+                        setOpen(false);
+                      }}
+                    >
+                      {p.shipment_number || p.id}
+                      {selectedId === p.id && <CommandCheck />}
                     </CommandItem>
                   ))}
                 </CommandGroup>

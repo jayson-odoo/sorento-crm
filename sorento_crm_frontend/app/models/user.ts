@@ -34,6 +34,8 @@ export interface User {
   respondSynced?: string | null;
   superiorId?: string | null;
   superiorName?: string | null;
+  /** Conversation SLA policy tier (1, 2, ...) */
+  tier?: number | null;
   roles?: UserRoleSimple[];
   role?: UserRole;
   sessions?: Session[];

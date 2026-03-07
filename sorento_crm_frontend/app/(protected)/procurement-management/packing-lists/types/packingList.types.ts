@@ -80,7 +80,7 @@ export interface PackingListFormData {
   total_items_shipped?: number;
   total_cartons?: number;
   notes?: string;
-  attachment_id?: string;
+  attachment_id?: string | null;
   shipment_lines?: Array<{
     product_id: string;
     quantity_shipped: number;

@@ -9,6 +9,7 @@ class RespondContactBase(BaseModel):
     phone_number: str
     name: Optional[str] = None
     user_type: Optional[str] = None
+    respond_io_id: Optional[str] = None  # Respond.io contact id for inbox URL
 
 
 class RespondContactCreate(RespondContactBase):
@@ -19,6 +20,7 @@ class RespondContactUpdate(BaseModel):
     phone_number: Optional[str] = None
     name: Optional[str] = None
     user_type: Optional[str] = None
+    respond_io_id: Optional[str] = None
 
 
 class RespondContactResponse(RespondContactBase):
@@ -26,6 +28,7 @@ class RespondContactResponse(RespondContactBase):
     created_at: datetime
     updated_at: datetime
     created_by: Optional[str] = None
+    respond_io_id: Optional[str] = None
     
     class Config:
         from_attributes = True
@@ -135,6 +138,7 @@ class UserBase(BaseModel):
     respond_user_id: Optional[str] = None
     respond_synced: Optional[str] = "pending"
     superior_id: Optional[str] = None
+    tier: Optional[int] = None  # Conversation SLA policy tier (1, 2, ...)
 
 
 class UserCreate(UserBase):
@@ -150,6 +154,7 @@ class UserUpdate(BaseModel):
     respond_user_id: Optional[str] = None
     respond_synced: Optional[str] = None
     superior_id: Optional[str] = None
+    tier: Optional[int] = None
 
 
 class UserResponse(UserBase):

@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.services.user_service import AccessAgentService
-from app.services.sla_service import ConversationSLATrackingService
 
 router = APIRouter()
 
@@ -26,18 +25,20 @@ async def post_next_assignee(
 ):
     """
     Return the next eligible assignee for the given agent and team (round-robin).
-    contact_phone_number is required. If a conversation SLA tracking already exists for
-    that phone with an assignee, that assignee is returned so the conversation is not
-    reassigned. Only when there is no existing assignee for that contact does round-robin run.
-    Auth: X-API-Key header.
+    contact_phone_number is required. Each call advances the round-robin and returns
+    the next assignee (Demo, then Jayson, then Demo, ...).
 
-    Body (required): contact_phone_number or contact_phone (contact phone number, e.g. "+60123456789").
-    Body (for round-robin when no existing assignee): agent_id/agent_code and team_id/team_code or code.
+    - If current_assignee (respond_user_id) is provided: returns the *next* assignee
+      after that person in round-robin order, without advancing the stored cursor.
+    - If current_assignee is not provided: advances the round-robin cursor and returns
+      that next assignee.
 
-    Example (by codes, for n8n):
-      { "contact_phone_number": "+60123456789", "agent_code": "<access-agent-code>", "team_code": "<agent-team-code>" }
-    Example (by UUIDs):
-      { "contact_phone_number": "+60123456789", "agent_id": "<uuid>", "team_id": "<uuid>" }
+    Body (required): contact_phone_number or contact_phone.
+    Body (agent/team): agent_id/agent_code/agent and team_id/team_code/team or code.
+    Body (optional): current_assignee (respond_user_id) to get the next in line after that user.
+
+    Example:
+      { "contact_phone_number": "+60123456789", "agent_code": "general_enquiries", "team_code": "marketing" }
     """
     contact_phone = (body.get("contact_phone_number") or body.get("contact_phone") or "").strip()
     if not contact_phone:
@@ -45,16 +46,13 @@ async def post_next_assignee(
             status_code=400,
             detail="contact_phone_number (or contact_phone) is required.",
         )
-    sla_service = ConversationSLATrackingService(db)
-    existing = sla_service.get_existing_assignee_for_contact_phone(contact_phone)
-    if existing:
-        return _format_assignee_response(existing)
 
+    # Accept client-friendly names: agent -> agent_code, team -> team_code
     agent_id = body.get("agent_id")
     team_id = body.get("team_id")
     code = body.get("code")
-    agent_code = body.get("agent_code")
-    team_code = body.get("team_code")
+    agent_code = body.get("agent_code") or body.get("agent")
+    team_code = body.get("team_code") or body.get("team")
 
     service = AccessAgentService(db)
 
@@ -77,6 +75,17 @@ async def post_next_assignee(
             raise HTTPException(status_code=404, detail=f"No team found for agent and code={code!r}")
     if not team_id:
         raise HTTPException(status_code=400, detail="team_id, team_code, or code is required")
+
+    # When current_assignee (respond_user_id) is sent, return the *next* in round-robin after them.
+    # Otherwise always advance round-robin and return the next assignee (no reuse by contact phone).
+    current_assignee_raw = body.get("current_assignee")
+    if current_assignee_raw is not None and str(current_assignee_raw).strip():
+        result = service.get_next_assignee_after(
+            agent_id, team_id, str(current_assignee_raw).strip()
+        )
+        if result is not None:
+            return _format_assignee_response(result)
+        # current_assignee not in team or other failure: fall through to normal round-robin
 
     result = service.get_next_assignee(agent_id, team_id)
     if result is None:

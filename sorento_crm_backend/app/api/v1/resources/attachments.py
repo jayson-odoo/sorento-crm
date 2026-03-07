@@ -1,7 +1,8 @@
 """Attachments API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Form, Response, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Form, Response, Request, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 from typing import Optional, List
+from pydantic import BaseModel
 import hashlib
 import logging
 import os
@@ -12,6 +13,7 @@ import mimetypes
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
+from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.integration_service import IntegrationLogService
 from app.schemas.resources import AttachmentCreate, AttachmentUpdate, AttachmentResponse, AttachmentBulkDeleteRequest, AttachmentReorderRequest
 from app.schemas.common import ListResponse
@@ -20,6 +22,10 @@ from app.services.error_handler import handle_internal_error
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class LinkPackingListRequest(BaseModel):
+    packing_list_id: str
 
 
 def _create_and_send_webhook(
@@ -176,12 +182,15 @@ def _attachment_response_with_linked_entities(service: AttachmentService, attach
     data["linked_products"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_products"]]
     data["linked_promotions"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_promotions"]]
     data["linked_form"] = LinkedEntityRef.model_validate(linked["linked_form"]).model_dump() if linked["linked_form"] else None
+    data["linked_packing_lists"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_packing_lists"]]
     if linked["linked_products"]:
         data["entity_display_name"] = linked["linked_products"][0]["name"]
     elif linked["linked_promotions"]:
         data["entity_display_name"] = linked["linked_promotions"][0]["name"]
     elif linked["linked_form"]:
         data["entity_display_name"] = linked["linked_form"]["name"]
+    elif linked["linked_packing_lists"]:
+        data["entity_display_name"] = linked["linked_packing_lists"][0]["name"]
     else:
         data["entity_display_name"] = service.get_entity_display_name(
             attachment.entity_type, attachment.entity_id
@@ -190,6 +199,25 @@ def _attachment_response_with_linked_entities(service: AttachmentService, attach
     if user_info:
         data["uploaded_by_user"] = user_info
     return data
+
+
+@router.delete("/links/{link_id}", status_code=status.HTTP_200_OK)
+async def delete_attachment_link(
+    link_id: str,
+    entity_type: str = Query(..., description="Entity type of the link, e.g. inbound_shipment"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete an entity-attachment link (e.g. unlink a packing list from an attachment)."""
+    try:
+        service = EntityAttachmentService(db)
+        service.delete_link(link_id, entity_type=entity_type)
+        db.commit()
+        return {"message": "Link removed."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
 
 
 @router.get("/{attachment_id}", response_model=AttachmentResponse)
@@ -207,6 +235,64 @@ async def get_attachment(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.post("/{attachment_id}/link-packing-list", status_code=status.HTTP_200_OK)
+async def link_attachment_to_packing_list(
+    attachment_id: str,
+    body: LinkPackingListRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Link an existing attachment to a packing list (inbound shipment)."""
+    from app.models.procurement import InboundShipment
+    packing_list_id = (body.packing_list_id or "").strip()
+    if not packing_list_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="packing_list_id is required")
+    shipment = db.query(InboundShipment).filter(InboundShipment.id == packing_list_id).first()
+    if not shipment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Packing list not found")
+    try:
+        service = EntityAttachmentService(db)
+        link = service.link_existing_attachment(
+            entity_type="inbound_shipment",
+            entity_id=packing_list_id,
+            attachment_id=attachment_id,
+            created_by=current_user.get("id"),
+        )
+        db.commit()
+        db.refresh(link)
+        return {"message": "Attachment linked to packing list.", "link_id": str(link.id)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{attachment_id}/unlink-packing-list", status_code=status.HTTP_200_OK)
+async def unlink_packing_list_from_attachment(
+    attachment_id: str,
+    body: LinkPackingListRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Unlink a packing list from an attachment by clearing the packing list's attachment_id (for links created via direct FK, e.g. external API)."""
+    from app.models.procurement import InboundShipment
+    packing_list_id = (body.packing_list_id or "").strip()
+    if not packing_list_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="packing_list_id is required")
+    shipment = db.query(InboundShipment).filter(
+        InboundShipment.id == packing_list_id,
+        InboundShipment.attachment_id == attachment_id,
+    ).first()
+    if not shipment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Packing list not found or not linked to this attachment.",
+        )
+    shipment.attachment_id = None
+    db.commit()
+    return {"message": "Packing list unlinked from attachment."}
 
 
 @router.post("/", response_model=AttachmentResponse, status_code=status.HTTP_201_CREATED)

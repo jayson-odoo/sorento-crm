@@ -9,11 +9,12 @@ import uuid
 
 class RespondContact(Base):
     __tablename__ = "respond_contacts"
-    
+
     id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
     phone_number = Column(Text, unique=True, nullable=False)
     name = Column(Text, nullable=True)
     user_type = Column(Text, nullable=True)
+    respond_io_id = Column(Text, nullable=True)  # Respond.io contact id for inbox URL
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)
@@ -27,6 +28,7 @@ class RespondContact(Base):
     __table_args__ = (
         Index("ix_respond_contacts_phone_number", "phone_number"),
         Index("ix_respond_contacts_user_type", "user_type"),
+        Index("ix_respond_contacts_respond_io_id", "respond_io_id"),
     )
 
 

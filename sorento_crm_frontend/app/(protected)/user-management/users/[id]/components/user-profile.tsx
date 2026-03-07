@@ -205,6 +205,16 @@ const UserProfile = ({
                 )}
               </dd>
             </div>
+            <div className="grid grid-cols-subgrid col-span-2 items-baseline">
+              <dt>Tier:</dt>
+              <dd>
+                {user.tier != null ? (
+                  <span className="font-mono">{user.tier}</span>
+                ) : (
+                  <span className="text-muted-foreground">Not set</span>
+                )}
+              </dd>
+            </div>
             {user.superiorId && (
               <div className="grid grid-cols-subgrid col-span-2 items-baseline">
                 <dt>Superior:</dt>

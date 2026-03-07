@@ -114,6 +114,7 @@ export default function UserLayout({
         respondSynced: data.respond_synced || data.respondSynced,
         superiorId: data.superior_id || data.superiorId,
         superiorName: data.superior_name || data.superiorName,
+        tier: data.tier != null ? data.tier : undefined,
         createdAt: data.created_at || data.createdAt,
         updatedAt: data.updated_at || data.updatedAt,
         lastSignInAt: data.last_sign_in_at || data.lastSignInAt,

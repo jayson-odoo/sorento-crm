@@ -36,11 +36,12 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[UserResponse])
 async def get_users(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=500),
     query: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     roleId: Optional[str] = Query(None),
     respond_synced: Optional[str] = Query(None),
+    tier: Optional[str] = Query(None, description="Filter by tier (comma-separated, e.g. 1,2,3)"),
     trashed: Optional[str] = Query(None, description="exclude (default), only, or all"),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
@@ -57,6 +58,7 @@ async def get_users(
             status=status,
             role_id=roleId,
             respond_synced=respond_synced,
+            tier=tier,
             trashed=trashed,
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
@@ -77,6 +79,7 @@ async def get_users(
                 "respond_user_id": user.respond_user_id,
                 "respond_synced": user.respond_synced,
                 "superior_id": user.superior_id,
+                "tier": getattr(user, "tier", None),
                 "avatar": user.avatar,
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
@@ -312,6 +315,7 @@ async def get_user(
             "respond_user_id": user.respond_user_id,
             "respond_synced": user.respond_synced,
             "superior_id": user.superior_id,
+            "tier": getattr(user, "tier", None),
             "avatar": user.avatar,
             "created_at": user.created_at,
             "updated_at": user.updated_at,

@@ -1,10 +1,11 @@
 {
   "/api/auth/token/route": "app/api/auth/token/route.js",
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/(protected)/sla-management/conversation-sla-tracking/page": "app/(protected)/sla-management/conversation-sla-tracking/page.js",
-  "/(protected)/procurement-management/purchase-requests/[id]/page": "app/(protected)/procurement-management/purchase-requests/[id]/page.js",
   "/(protected)/user-management/users/page": "app/(protected)/user-management/users/page.js",
-  "/(protected)/sla-management/conversation-sla-tracking/[id]/page": "app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js",
-  "/(auth)/signin/page": "app/(auth)/signin/page.js",
+  "/(protected)/sla-management/sla-policies/page": "app/(protected)/sla-management/sla-policies/page.js",
+  "/(protected)/resource-management/attachment-directories/page": "app/(protected)/resource-management/attachment-directories/page.js",
+  "/(protected)/procurement-management/packing-lists/page": "app/(protected)/procurement-management/packing-lists/page.js",
+  "/(protected)/sla-management/sla-policies/[id]/page": "app/(protected)/sla-management/sla-policies/[id]/page.js",
+  "/(protected)/procurement-management/packing-lists/[id]/page": "app/(protected)/procurement-management/packing-lists/[id]/page.js",
   "/(protected)/user-management/users/[id]/page": "app/(protected)/user-management/users/[id]/page.js"
 }

@@ -494,10 +494,21 @@ class PurchaseRequestExternalResponse(BaseModel):
 
 
 class RespondContactSyncRequest(BaseModel):
-    """Payload for external create/update of internal respond contact (e.g. from n8n when contact created/updated in Respond)."""
-    phone_number: str
+    """Payload for external create/update of internal respond contact (e.g. from n8n when contact created/updated in Respond).
+    Accepts Respond.io-style payload: id (respond.io contact id), phone/firstName/lastName, custom_fields, etc.
+    """
+    id: Optional[int] = None  # Respond.io contact id - stored as respond_io_id
+    phone_number: Optional[str] = None  # E.164; also accept "phone" from payload
+    phone: Optional[str] = None
     name: Optional[str] = None
+    firstName: Optional[str] = None
+    lastName: Optional[str] = None
     user_type: Optional[str] = None
+    email: Optional[str] = None
+    language: Optional[str] = None
+    countryCode: Optional[str] = None
+    status: Optional[str] = None
+    # custom_fields, tags, assignee, lifecycle, created_at can be sent but are not stored on respond_contacts
 
 
 class RespondContactSyncResponse(BaseModel):
@@ -506,4 +517,5 @@ class RespondContactSyncResponse(BaseModel):
     phone_number: str
     name: Optional[str] = None
     user_type: Optional[str] = None
+    respond_io_id: Optional[str] = None
     action: str  # "created" | "updated"

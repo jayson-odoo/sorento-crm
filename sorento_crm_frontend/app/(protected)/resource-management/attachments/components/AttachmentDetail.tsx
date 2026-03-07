@@ -33,6 +33,7 @@ const ENTITY_ROUTES = {
   product: { label: 'Product', path: '/master-data-management/products' },
   promotion: { label: 'Promotion', path: '/marketing-management/promotions' },
   form: { label: 'Form', path: '/forms-management/forms' },
+  packing_list: { label: 'Packing List', path: '/procurement-management/packing-lists' },
 } as const;
 
 const ACCESS_LEVEL_OPTIONS = [
@@ -112,10 +113,11 @@ function LinkagesTabs({ attachment }: { attachment: Attachment }) {
   const products = attachment.linked_products ?? [];
   const promotions = attachment.linked_promotions ?? [];
   const form = attachment.linked_form ?? null;
+  const packingLists = attachment.linked_packing_lists ?? [];
 
   return (
     <Tabs defaultValue="products" className="w-full">
-      <TabsList className="grid w-full grid-cols-3">
+      <TabsList className="grid w-full grid-cols-4">
         <TabsTrigger value="products">
           Products {products.length > 0 && `(${products.length})`}
         </TabsTrigger>
@@ -124,6 +126,9 @@ function LinkagesTabs({ attachment }: { attachment: Attachment }) {
         </TabsTrigger>
         <TabsTrigger value="forms">
           Forms {form ? '(1)' : ''}
+        </TabsTrigger>
+        <TabsTrigger value="packing_lists">
+          Packing Lists {packingLists.length > 0 && `(${packingLists.length})`}
         </TabsTrigger>
       </TabsList>
       <TabsContent value="products" className="mt-4">
@@ -150,6 +155,13 @@ function LinkagesTabs({ attachment }: { attachment: Attachment }) {
         ) : (
           <p className="text-sm text-muted-foreground">No form linked to this attachment.</p>
         )}
+      </TabsContent>
+      <TabsContent value="packing_lists" className="mt-4">
+        <LinkagesTable
+          type="packing_list"
+          items={packingLists}
+          emptyMessage="No packing lists linked to this attachment."
+        />
       </TabsContent>
     </Tabs>
   );

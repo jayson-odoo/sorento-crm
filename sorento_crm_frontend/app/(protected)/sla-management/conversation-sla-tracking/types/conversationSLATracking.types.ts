@@ -2,6 +2,8 @@ export interface ContactSimple {
   id: string;
   phone_number: string;
   name?: string | null;
+  /** Respond.io contact id for inbox URL (e.g. https://app.respond.io/space/364817/inbox/{respond_io_id}) */
+  respond_io_id?: string | null;
 }
 
 export interface UserSimple {

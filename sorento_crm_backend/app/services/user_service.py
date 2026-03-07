@@ -102,10 +102,11 @@ class UserService:
         role_id: Optional[str] = None,
         respond_synced: Optional[str] = None,
         trashed: Optional[str] = None,
+        tier: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "asc"
     ):
-        """List users. trashed: 'exclude' (default), 'only', or 'all'."""
+        """List users. trashed: 'exclude' (default), 'only', or 'all'. tier: comma-separated tier levels, e.g. '1,2,3'."""
         q = self.db.query(User)
         if trashed == "only":
             q = q.filter(User.is_trashed == True)
@@ -118,9 +119,21 @@ class UserService:
             q = q.join(UserRoleAssignment, UserRoleAssignment.user_id == User.id)
             q = q.filter(UserRoleAssignment.role_id == role_id)
             q = q.distinct()
-        
+
         if respond_synced:
             filters.append(User.respond_synced == respond_synced)
+
+        if tier and tier.strip():
+            tier_values = []
+            for s in tier.strip().split(","):
+                s = s.strip()
+                if s:
+                    try:
+                        tier_values.append(int(s))
+                    except ValueError:
+                        pass
+            if tier_values:
+                filters.append(User.tier.in_(tier_values))
 
         if query:
             filters.append(
@@ -312,7 +325,7 @@ class UserService:
                 self._check_respond_user_id_unique(rid, exclude_user_id=user_id)
         
         # Convert empty strings to None for optional fields to avoid foreign key violations
-        optional_fields = ['superior_id', 'respond_user_id', 'country', 'timezone', 'avatar']
+        optional_fields = ['superior_id', 'respond_user_id', 'country', 'timezone', 'avatar', 'tier']
         
         # Log what we received
         logger.info(f"Received update_data keys: {list(update_data.keys())}")
@@ -1113,6 +1126,84 @@ class AccessAgentService:
         user = self.db.query(User).filter(User.id == next_user_id).first()
         if not user:
             return {"id": next_user_id, "email": None, "name": None}
+        return {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name or user.email,
+            "respond_user_id": user.respond_user_id,
+        }
+
+    def get_next_assignee_after(
+        self, agent_id: str, team_id: str, current_respond_user_id: str
+    ) -> Optional[dict]:
+        """
+        Return the next assignee after the given current assignee (by respond_user_id) in
+        round-robin order. Updates the cursor to that next user so "next in line" stays consistent.
+        Returns None if the agent/team link or team members are missing, or if
+        current_respond_user_id is not in the team.
+        """
+        from sqlalchemy import and_
+
+        link = (
+            self.db.query(AgentTeam)
+            .filter(
+                and_(
+                    AgentTeam.agent_id == agent_id,
+                    AgentTeam.team_id == team_id,
+                )
+            )
+            .first()
+        )
+        if not link:
+            return None
+        members = (
+            self.db.query(TeamMember)
+            .filter(TeamMember.team_id == team_id)
+            .order_by(TeamMember.sort_order.asc().nullslast(), TeamMember.user_id.asc())
+            .all()
+        )
+        if not members:
+            return None
+        user_ids = [m.user_id for m in members]
+        users = self.db.query(User).filter(User.id.in_(user_ids)).all()
+        user_by_id = {str(u.id): u for u in users}
+        # Preserve member order and get respond_user_id
+        ordered_respond_ids = []
+        for uid in user_ids:
+            u = user_by_id.get(str(uid))
+            ordered_respond_ids.append(_normalize_respond_user_id(u.respond_user_id) if u else None)
+        current_norm = _normalize_respond_user_id(str(current_respond_user_id))
+        try:
+            idx = ordered_respond_ids.index(current_norm)
+        except ValueError:
+            return None
+        next_idx = (idx + 1) % len(user_ids)
+        next_user_id = user_ids[next_idx]
+        # Update cursor so "next in line" stays consistent
+        cursor = (
+            self.db.query(AgentTeamRoundRobinCursor)
+            .filter(
+                and_(
+                    AgentTeamRoundRobinCursor.agent_id == agent_id,
+                    AgentTeamRoundRobinCursor.team_id == team_id,
+                )
+            )
+            .with_for_update()
+            .first()
+        )
+        if not cursor:
+            cursor = AgentTeamRoundRobinCursor(
+                agent_id=agent_id,
+                team_id=team_id,
+                last_assigned_user_id=next_user_id,
+            )
+            self.db.add(cursor)
+        else:
+            cursor.last_assigned_user_id = next_user_id
+        self.db.commit()
+        user = user_by_id.get(str(next_user_id))
+        if not user:
+            return {"id": next_user_id, "email": None, "name": None, "respond_user_id": None}
         return {
             "id": user.id,
             "email": user.email,

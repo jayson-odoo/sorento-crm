@@ -515,10 +515,63 @@ class AttachmentService:
                 "description": (form_row.purpose or "").strip() or None,
             }
 
+        linked_packing_lists = []
+        from sqlalchemy import cast, String
+        from app.models.entity_attachment import EntityAttachmentLink
+        from app.models.procurement import InboundShipment
+        # 1) Packing lists linked via entity_attachment_links (e.g. from "Link" in attachment modal)
+        q = (
+            self.db.query(
+                InboundShipment.id,
+                InboundShipment.shipment_number,
+                InboundShipment.notes,
+                EntityAttachmentLink.id.label("link_id"),
+            )
+            .join(
+                InboundShipment,
+                EntityAttachmentLink.entity_id == cast(InboundShipment.id, String),
+            )
+            .filter(
+                EntityAttachmentLink.attachment_id == attachment_id,
+                EntityAttachmentLink.entity_type == "inbound_shipment",
+            )
+        )
+        seen_pl_ids = set()
+        for row in q.all():
+            seen_pl_ids.add(str(row.id))
+            linked_packing_lists.append({
+                "id": str(row.id),
+                "name": (row.shipment_number or str(row.id)).strip(),
+                "description": (row.notes or "").strip() or None,
+                "link_id": str(row.link_id),
+            })
+        # 2) Packing lists that reference this attachment via InboundShipment.attachment_id (e.g. from external API)
+        #    so attachment detail shows the same linkage the packing list detail shows
+        direct = (
+            self.db.query(
+                InboundShipment.id,
+                InboundShipment.shipment_number,
+                InboundShipment.notes,
+            )
+            .filter(InboundShipment.attachment_id == attachment_id)
+        )
+        for row in direct.all():
+            pl_id = str(row.id)
+            if pl_id in seen_pl_ids:
+                continue
+            seen_pl_ids.add(pl_id)
+            linked_packing_lists.append({
+                "id": pl_id,
+                "name": (row.shipment_number or pl_id).strip(),
+                "description": (row.notes or "").strip() or None,
+                "link_id": None,
+            })
+
         return {
             "linked_products": linked_products,
             "linked_promotions": linked_promotions,
             "linked_form": linked_form,
+            "linked_packing_lists": linked_packing_lists,
         }
 
     def get_entity_display_name(self, entity_type: Optional[str], entity_id: Optional[str]) -> Optional[str]:
@@ -539,6 +592,10 @@ class AttachmentService:
                 from app.models.forms import Form
                 row = self.db.query(Form).filter(Form.id == entity_id).first()
                 return row.name if row else None
+            if kind == "inbound_shipment":
+                from app.models.procurement import InboundShipment
+                row = self.db.query(InboundShipment).filter(InboundShipment.id == entity_id).first()
+                return row.shipment_number if row else None
         except Exception:
             return None
         return None

@@ -21,14 +21,22 @@ import {
 import { useConversationSLATrackingDetail, useConversationSLATracking, useDeleteConversationSLATracking, useSyncAssigneeFromRespond } from '../hooks/useConversationSLATracking';
 import { formatDate, formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info, Settings, ExternalLink } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import RecordNavigation from '@/components/common/RecordNavigation';
+
+const RESPOND_IO_INBOX_BASE_URL = 'https://app.respond.io/space/364817/inbox';
 
 interface ConversationSLATrackingDetailProps {
   trackingId: string;
@@ -214,15 +222,30 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
             <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => syncAssigneeMutation.mutate(trackingId)}
-            disabled={syncAssigneeMutation.isPending}
-            title="Sync assignee from Respond.io"
-          >
-            <UserRound className={`size-4 mr-2 ${syncAssigneeMutation.isPending ? 'animate-pulse' : ''}`} />
-            Sync assignee
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" title="Actions">
+                <Settings className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => syncAssigneeMutation.mutate(trackingId)}
+                disabled={syncAssigneeMutation.isPending}
+              >
+                <UserRound className={`size-4 mr-2 ${syncAssigneeMutation.isPending ? 'animate-pulse' : ''}`} />
+                Sync assignee
+              </DropdownMenuItem>
+              {tracking.contact?.respond_io_id && (
+                <DropdownMenuItem
+                  onSelect={() => window.open(`${RESPOND_IO_INBOX_BASE_URL}/${tracking.contact!.respond_io_id}`, '_blank', 'noopener,noreferrer')}
+                >
+                  <ExternalLink className="size-4 mr-2" />
+                  Open in Respond.io
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="destructive"
             onClick={() => setDeleteDialogOpen(true)}

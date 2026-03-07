@@ -6,15 +6,31 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { Plus, Edit, Trash2 } from 'lucide-react';
+import { Plus, Edit, Trash2, Users } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { apiFetch } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { CardContent } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useSLAPolicyTiers, useDeleteSLAPolicyTier } from '../hooks/useSLAPolicies';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { useSLAPolicyTiers } from '../hooks/useSLAPolicies';
 import SLAPolicyTierDialog from './SLAPolicyTierDialog';
 import SLAPolicyTierDeleteDialog from './sla-policy-tier-delete-dialog';
 import type { SLAPolicyTier } from '../types/slaPolicy.types';
@@ -23,12 +39,90 @@ interface SLAPolicyTiersTableProps {
   policyId: string;
 }
 
+/** Group users by tier for display in the tiers table */
+function useUsersByTier(tierLevels: number[]) {
+  const tierParam = tierLevels.length ? tierLevels.join(',') : '';
+  const { data } = useQuery({
+    queryKey: ['users-by-tier', tierParam],
+    queryFn: async () => {
+      if (!tierParam) return { data: [] };
+      const params = new URLSearchParams({ tier: tierParam, limit: '500' });
+      const res = await apiFetch(`/api/user-management/users?${params.toString()}`);
+      if (!res.ok) throw new Error('Failed to fetch users');
+      return res.json() as Promise<{ data: Array<{ id: string; name?: string | null; email: string; tier?: number | null }> }>;
+    },
+    enabled: tierParam.length > 0,
+  });
+  return useMemo(() => {
+    const byTier: Record<number, Array<{ id: string; name?: string | null; email: string }>> = {};
+    for (const level of tierLevels) {
+      byTier[level] = [];
+    }
+    for (const u of data?.data ?? []) {
+      const t = u.tier;
+      if (t != null && byTier[t] !== undefined) {
+        byTier[t].push({ id: u.id, name: u.name ?? null, email: u.email });
+      }
+    }
+    return byTier;
+  }, [data?.data, tierLevels]);
+}
+
+/** Fetches and lists users for a single tier in the sheet */
+function TierUsersSheetContent({ tierLevel }: { tierLevel: number }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['users-by-tier-single', tierLevel],
+    queryFn: async () => {
+      const params = new URLSearchParams({ tier: String(tierLevel), limit: '500' });
+      const res = await apiFetch(`/api/user-management/users?${params.toString()}`);
+      if (!res.ok) throw new Error('Failed to fetch users');
+      return res.json() as Promise<{ data: Array<{ id: string; name?: string | null; email: string }> }>;
+    },
+    enabled: true,
+  });
+  const users = data?.data ?? [];
+
+  return (
+    <div className="flex-1 overflow-auto py-4">
+      {isLoading ? (
+        <div className="text-sm text-muted-foreground">Loading users...</div>
+      ) : error ? (
+        <div className="text-sm text-destructive">
+          {error instanceof Error ? error.message : 'Failed to load users'}
+        </div>
+      ) : users.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No users assigned to this tier.</p>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Email</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {users.map((u) => (
+              <TableRow key={u.id}>
+                <TableCell className="font-medium">{u.name?.trim() || '—'}</TableCell>
+                <TableCell className="text-muted-foreground">{u.email}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </div>
+  );
+}
+
 export default function SLAPolicyTiersTable({ policyId }: SLAPolicyTiersTableProps) {
   const { data: tiers, isLoading, error } = useSLAPolicyTiers(policyId);
+  const tierLevels = useMemo(() => (tiers ?? []).map((t) => t.tier_level), [tiers]);
+  const usersByTier = useUsersByTier(tierLevels);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTier, setEditingTier] = useState<SLAPolicyTier | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [tierToDelete, setTierToDelete] = useState<SLAPolicyTier | null>(null);
+  const [usersSheetTier, setUsersSheetTier] = useState<{ level: number; name: string } | null>(null);
 
   const handleAdd = () => {
     setEditingTier(null);
@@ -77,6 +171,35 @@ export default function SLAPolicyTiersTable({ policyId }: SLAPolicyTiersTablePro
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
+        id: 'users',
+        header: ({ column }) => <DataGridColumnHeader title="Users" column={column} />,
+        size: 280,
+        cell: ({ row }) => {
+          const level = row.original.tier_level;
+          const tierName = row.original.tier_name ?? `Tier ${level}`;
+          const users = usersByTier[level] ?? [];
+          const count = users.length;
+          return (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5 font-normal"
+              onClick={(e) => {
+                e.stopPropagation();
+                setUsersSheetTier({ level, name: tierName });
+              }}
+            >
+              <Users className="size-4 text-muted-foreground" />
+              Users
+              {count > 0 && (
+                <span className="text-muted-foreground">({count})</span>
+              )}
+            </Button>
+          );
+        },
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         accessorKey: 'actions',
         header: '',
         cell: ({ row }) => (
@@ -106,7 +229,7 @@ export default function SLAPolicyTiersTable({ policyId }: SLAPolicyTiersTablePro
         size: 100,
       },
     ],
-    [],
+    [usersByTier],
   );
 
   const table = useReactTable({
@@ -164,6 +287,20 @@ export default function SLAPolicyTiersTable({ policyId }: SLAPolicyTiersTablePro
           tier={tierToDelete}
         />
       )}
+
+      {/* Users in tier sheet */}
+      <Sheet open={!!usersSheetTier} onOpenChange={(open) => !open && setUsersSheetTier(null)}>
+        <SheetContent className="flex flex-col sm:max-w-lg">
+          <SheetHeader>
+            <SheetTitle>
+              {usersSheetTier ? `Users in Tier ${usersSheetTier.level} – ${usersSheetTier.name}` : 'Users'}
+            </SheetTitle>
+          </SheetHeader>
+          {usersSheetTier && (
+            <TierUsersSheetContent tierLevel={usersSheetTier.level} />
+          )}
+        </SheetContent>
+      </Sheet>
     </>
   );
 }

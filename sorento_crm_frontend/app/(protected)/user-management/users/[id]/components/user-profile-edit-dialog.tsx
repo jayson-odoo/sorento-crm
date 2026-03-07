@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, type Resolver } from 'react-hook-form';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
 import {
@@ -91,12 +91,13 @@ const UserProfileEditDialog = ({
   });
 
   const form = useForm<UserProfileSchemaType>({
-    resolver: zodResolver(UserProfileSchema),
+    resolver: zodResolver(UserProfileSchema) as Resolver<UserProfileSchemaType>,
     defaultValues: {
       name: user?.name || '',
       roleIds: user?.roles?.length ? user.roles.map((r) => r.id) : (user?.roleId ? [user.roleId] : []),
       status: user?.status || '',
       respond_user_id: user?.respondUserId || '',
+      tier: user?.tier ?? undefined,
       superior_id: user?.superiorId || '',
     },
     mode: 'onSubmit',
@@ -117,10 +118,11 @@ const UserProfileEditDialog = ({
       roleIds,
       status: user.status || '',
       respond_user_id: user.respondUserId || '',
+      tier: user.tier ?? undefined,
       superior_id: user.superiorId || '',
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; omit to avoid reset loop
-  }, [open, user?.id, user?.name, user?.status, user?.roles, user?.respondUserId, user?.superiorId, userRoles.length]);
+  }, [open, user?.id, user?.name, user?.status, user?.roles, user?.respondUserId, user?.tier, user?.superiorId, userRoles.length]);
 
   const { data: superiorUsers } = useQuery({
     queryKey: ['users-select'],
@@ -165,6 +167,7 @@ const UserProfileEditDialog = ({
         status: values.status,
       };
       profileData.respond_user_id = values.respond_user_id?.trim() || null;
+      profileData.tier = values.tier != null ? (typeof values.tier === 'number' ? values.tier : Number(values.tier)) : null;
       profileData.superior_id = (values.superior_id && values.superior_id !== '__none__' && values.superior_id.trim() !== '')
         ? values.superior_id
         : null;
@@ -435,6 +438,31 @@ const UserProfileEditDialog = ({
                 </FormItem>
               );
               }}
+            />
+            <FormField
+              control={form.control}
+              name="tier"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-lg font-semibold">Tier</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={1}
+                      step={1}
+                      placeholder="Conversation SLA policy tier (e.g. 1, 2)"
+                      {...field}
+                      value={field.value ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        field.onChange(v === '' ? undefined : (Number(v) || undefined));
+                      }}
+                      className="border-2"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
             <FormField
               control={form.control}

@@ -43,12 +43,25 @@ interface ApprovalSummary {
   expires_at: string;
   lines?: ApprovalLineSummary[] | null;
   grand_total?: number | null;
+  approval_status?: string | null;
 }
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
   sponsorship_form: 'Sponsorship Form',
 };
+
+const APPROVAL_STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  pending: 'Pending',
+  approved: 'Approved',
+  rejected: 'Rejected',
+};
+
+function approvalStatusLabel(value: string | null | undefined): string {
+  if (value == null || value === '') return '—';
+  return APPROVAL_STATUS_LABELS[value.toLowerCase()] ?? value;
+}
 
 function formatDateStr(value: string | null | undefined): string {
   if (!value) return '—';
@@ -231,6 +244,7 @@ function ApprovalContent() {
         <CardContent className="px-4 sm:px-6 -mt-2 space-y-0">
           <DetailRow label="Type" value={typeLabel} />
           <DetailRow label="Form number" value={summary?.request_number ?? undefined} />
+          <DetailRow label="Status" value={approvalStatusLabel(summary?.approval_status)} />
           <DetailRow label="Customer" value={summary?.customer_name ?? undefined} />
           <DetailRow label="Project" value={summary?.project_title ?? undefined} />
           {summary?.request_type === 'purchase_request' && (

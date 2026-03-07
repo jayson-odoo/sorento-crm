@@ -63,6 +63,14 @@ def _name_from_contact(contact: dict) -> str | None:
     return None
 
 
+def _respond_io_id_from_contact(contact: dict) -> str | None:
+    """Extract Respond.io contact id from payload (for inbox URL)."""
+    cid = contact.get("contactId") or contact.get("id")
+    if cid is None:
+        return None
+    return str(cid).strip() or None
+
+
 def _user_type_from_contact(contact: dict) -> str | None:
     """Extract user_type from custom_fields where name is user_type."""
     custom = (
@@ -208,15 +216,18 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
 
             # Upsert local respond_contacts
             existing = db.query(RespondContact).filter(RespondContact.phone_number == phone).first()
+            respond_io_id = _respond_io_id_from_contact(contact)
             if existing:
                 local_id = existing.id
                 name = _name_from_contact(contact)
                 user_type = _user_type_from_contact(contact)
-                if name is not None or user_type is not None:
+                if name is not None or user_type is not None or respond_io_id is not None:
                     if name is not None:
                         setattr(existing, "name", name)
                     if user_type is not None:
                         setattr(existing, "user_type", user_type)
+                    if respond_io_id is not None:
+                        setattr(existing, "respond_io_id", respond_io_id)
                     db.commit()
                     db.refresh(existing)
             else:
@@ -226,6 +237,7 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
                         phone_number=phone,
                         name=_name_from_contact(contact),
                         user_type=_user_type_from_contact(contact),
+                        respond_io_id=respond_io_id,
                     )
                 )
                 local_id = new_contact.id

@@ -825,7 +825,8 @@ async def get_sla_tracking_record(
             "contact": {
                 "id": tracking.contact.id,
                 "phone_number": tracking.contact.phone_number,
-                "name": tracking.contact.name
+                "name": tracking.contact.name,
+                "respond_io_id": getattr(tracking.contact, "respond_io_id", None),
             } if tracking.contact else None,
             "assigned_user": {
                 "id": tracking.assigned_user.id,

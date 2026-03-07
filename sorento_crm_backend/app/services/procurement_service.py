@@ -2164,6 +2164,43 @@ class PurchaseRequestService:
             event_type="approved",
         )
 
+    def _notify_requester_on_rejected(self, header: PurchaseRequestHeader) -> None:
+        """Notify the user who requested approval when the purchase request / sponsorship form is rejected."""
+        requested_by_uid = getattr(header, "requested_approval_by_user_id", None)
+        if not requested_by_uid:
+            return
+        type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
+        form_number = getattr(header, "request_number", None) or "N/A"
+        project = getattr(header, "project_title", None) or "N/A"
+        title = f"{type_label} rejected"
+        body = f"{type_label} {form_number} (Project: {project}) has been rejected."
+
+        view_token = self.get_or_create_view_token(str(header.id))
+        base_url = (settings.frontend_base_url or "").strip().rstrip("/")
+        if not base_url:
+            from app.models.user import SystemSetting
+            sys_settings = self.db.query(SystemSetting).first()
+            if sys_settings and getattr(sys_settings, "website_url", None):
+                base_url = (sys_settings.website_url or "").strip().rstrip("/")
+        view_url = f"{base_url}/view/request?token={view_token}" if base_url else f"/view/request?token={view_token}"
+        body += f"\n\nView form: {view_url}"
+        body_html = (
+            f"<p>{type_label} {form_number} (Project: {project}) has been rejected.</p>\n"
+            f'<p><a href="{view_url}">View form</a><br />{view_url}</p>'
+        )
+
+        from app.services.notification_service import NotificationService
+        NotificationService(self.db).create(
+            user_id=str(requested_by_uid),
+            type="purchase_request_rejected",
+            title=title,
+            body=body,
+            data={"body_html": body_html},
+            source_entity_type="purchase_request",
+            source_entity_id=str(header.id),
+            event_type="rejected",
+        )
+
     def list_requests(
         self,
         page: int = 1,
@@ -2631,6 +2668,7 @@ class PurchaseRequestService:
             "expires_at": approval_token.expires,
             "lines": lines,
             "grand_total": grand_total,
+            "approval_status": getattr(header, "approval_status", None),
         }
 
     def get_or_create_view_token(self, entity_id: str) -> str:
@@ -2743,6 +2781,7 @@ class PurchaseRequestService:
             "expires_at": None,
             "lines": lines,
             "grand_total": grand_total,
+            "approval_status": getattr(header, "approval_status", None),
         }
 
     def submit_approval(
@@ -2787,4 +2826,11 @@ class PurchaseRequestService:
                     self._notify_requester_on_approved(header)
                 except Exception as e:
                     logger.warning("Failed to notify requester for approved purchase request %s: %s", header.id, e)
+        elif action == "rejected":
+            requested_by_uid = getattr(header, "requested_approval_by_user_id", None)
+            if requested_by_uid:
+                try:
+                    self._notify_requester_on_rejected(header)
+                except Exception as e:
+                    logger.warning("Failed to notify requester for rejected purchase request %s: %s", header.id, e)
         return header

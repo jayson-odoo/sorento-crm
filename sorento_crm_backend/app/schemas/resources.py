@@ -189,6 +189,7 @@ class AttachmentResponse(AttachmentBase):
     linked_products: list[LinkedEntityRef] = []
     linked_promotions: list[LinkedEntityRef] = []
     linked_form: Optional[LinkedEntityRef] = None
+    linked_packing_lists: list[LinkedEntityRef] = []
 
     @field_validator('id', 'uploaded_by', 'deleted_by', 'attachment_type_id', 'entity_id', 'directory_id', mode='before')
     @classmethod

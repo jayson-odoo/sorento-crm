@@ -727,6 +727,7 @@ class PublicApprovalSummaryResponse(BaseModel):
     expires_at: Optional[datetime] = None  # None when used for view (no expiry)
     lines: Optional[List[PublicApprovalLineSummary]] = []
     grand_total: Optional[Decimal] = None  # sponsorship form: sum of line totals
+    approval_status: Optional[str] = None  # draft | pending | approved | rejected
 
 
 class PublicApprovalSubmitRequest(BaseModel):
