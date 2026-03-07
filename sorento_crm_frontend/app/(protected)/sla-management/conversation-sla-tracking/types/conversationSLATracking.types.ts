@@ -44,6 +44,8 @@ export interface ConversationSLATracking {
   created_at: Date;
   updated_at: Date;
   respond_contact_id?: string | null;
+  /** Respond.io contact id for inbox URL (e.g. https://app.respond.io/space/364817/inbox/{respond_io_id}) */
+  respond_io_id?: string | null;
   synced_to_excel: boolean;
   last_synced_to_excel?: Date | null;
   resolution_duration?: number | null;

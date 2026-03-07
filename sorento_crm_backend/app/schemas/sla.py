@@ -117,7 +117,9 @@ class ConversationSLATrackingCreate(BaseModel):
 
 class ConversationSLATrackingUpdate(BaseModel):
     current_tier: Optional[int] = None
+    current_tier_started_at: Optional[datetime] = None
     assigned_to: Optional[str] = None
+    due_at: Optional[datetime] = None
     due_at_resolution: Optional[datetime] = None
     escalated_at: Optional[datetime] = None
     escalation_reason: Optional[str] = None
@@ -323,6 +325,7 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     event_logs: Optional[list[ConversationSLAEventLogResponse]] = []
     # Foreign key fields
     respond_contact_id: Optional[str] = None
+    respond_io_id: Optional[str] = None  # Respond.io contact id for inbox URL
     assigned_to_id: Optional[str] = None
     # Related objects
     contact: Optional[ContactSimple] = None

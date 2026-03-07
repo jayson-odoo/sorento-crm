@@ -810,6 +810,7 @@ async def get_sla_tracking_record(
             "resolved_at": tracking.resolved_at,
             "resolved_by": tracking.resolved_by,
             "respond_contact_id": tracking.respond_contact_id,
+            "respond_io_id": getattr(tracking.contact, "respond_io_id", None) if tracking.contact else None,
             "created_at": tracking.created_at,
             "updated_at": tracking.updated_at,
             "synced_to_excel": tracking.synced_to_excel,

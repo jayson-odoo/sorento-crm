@@ -830,28 +830,57 @@ class ConversationSLATrackingService:
         """
         Update the assignee on Conversation SLA Tracking in our system only (no Respond.io call).
         Used by external API: look up tracking by contact phone, then update assigned_to/assigned_to_id.
+        When changing assignee, sets the conversation's current_tier to the assignee's tier (users.tier).
         assignee_respond_user_id: Respond.io user id (e.g. 1023495). Use empty string to unassign.
         """
         from app.models.user import User
 
         tracking = self.get_tracking(tracking_id)
-        assignee_id = (assignee_respond_user_id or "").strip()
-        self.update_tracking(
-            tracking_id,
-            ConversationSLATrackingUpdate(assigned_to=assignee_id if assignee_id else None),
+        original_assignee = (
+            (tracking.assigned_user.name or tracking.assigned_user.email)
+            if tracking.assigned_user else (tracking.assigned_to or None)
         )
+        original_tier = tracking.current_tier
+
+        assignee_id = (assignee_respond_user_id or "").strip()
+        user = None
+        if assignee_id:
+            user = self.db.query(User).filter(User.respond_user_id == assignee_id).first()
+
+        update_kw: dict = {"assigned_to": assignee_id if assignee_id else None}
+        if user is not None and getattr(user, "tier", None) is not None:
+            new_tier = int(user.tier)
+            now_utc = _now_utc()
+            update_kw["current_tier"] = new_tier
+            update_kw["current_tier_started_at"] = now_utc
+            tier_row = self.db.query(SLAPolicyTier).filter(
+                SLAPolicyTier.policy_id == tracking.policy_id,
+                SLAPolicyTier.tier_level == new_tier,
+            ).first()
+            if tier_row:
+                response_hours = tier_row.response_hours if tier_row.response_hours is not None else 24
+                resolution_hours = getattr(tier_row, "resolution_hours", None) or 24
+                update_kw["due_at"] = now_utc + timedelta(hours=response_hours)
+                initiated_at_utc = _to_aware_utc(tracking.initiated_at)
+                if initiated_at_utc:
+                    resolution_from_initiated = initiated_at_utc + timedelta(hours=resolution_hours)
+                    update_kw["due_at_resolution"] = (
+                        max(resolution_from_initiated, update_kw["due_at"])
+                        if update_kw.get("due_at") else resolution_from_initiated
+                    )
+        self.update_tracking(tracking_id, ConversationSLATrackingUpdate(**update_kw))
         tracking = self.get_tracking(tracking_id)
         phone = None
         if tracking.contact:
             phone = (getattr(tracking.contact, "phone_number", None) or "").strip()
-        user = None
-        if assignee_id:
-            user = self.db.query(User).filter(User.respond_user_id == assignee_id).first()
         return {
             "updated": True,
             "message": "Conversation SLA tracking assignee updated.",
             "tracking_id": tracking_id,
             "contact_phone": phone,
+            "original_assignee": original_assignee,
+            "original_tier": original_tier,
+            "current_tier": tracking.current_tier,
             "assigned_to": (user.name or user.email or assignee_id) if user else (assignee_id or None),
             "assigned_to_id": str(user.id) if user else None,
             "assignee_respond_user_id": assignee_id or None,

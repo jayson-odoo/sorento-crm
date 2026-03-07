@@ -174,6 +174,8 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
     return null;
   };
 
+  const respondIoId = tracking.respond_io_id ?? tracking.contact?.respond_io_id ?? null;
+  const respondInboxUrl = respondIoId ? `${RESPOND_IO_INBOX_BASE_URL}/${respondIoId}` : null;
 
   return (
     <div className="space-y-6">
@@ -236,12 +238,12 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                 <UserRound className={`size-4 mr-2 ${syncAssigneeMutation.isPending ? 'animate-pulse' : ''}`} />
                 Sync assignee
               </DropdownMenuItem>
-              {tracking.contact?.respond_io_id && (
+              {respondInboxUrl && (
                 <DropdownMenuItem
-                  onSelect={() => window.open(`${RESPOND_IO_INBOX_BASE_URL}/${tracking.contact!.respond_io_id}`, '_blank', 'noopener,noreferrer')}
+                  onSelect={() => window.open(respondInboxUrl, '_blank', 'noopener,noreferrer')}
                 >
                   <ExternalLink className="size-4 mr-2" />
-                  Open in Respond.io
+                  Open conversation
                 </DropdownMenuItem>
               )}
             </DropdownMenuContent>
