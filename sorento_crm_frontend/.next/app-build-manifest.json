@@ -75,6 +75,21 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/procurement-management/stock-inquiries/[id]/page.js"
+    ],
+    "/(protected)/procurement-management/stock-inquiries/[id]/edit/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/stock-inquiries/[id]/edit/page.js"
+    ],
+    "/(protected)/procurement-management/purchase-requests/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/purchase-requests/page.js"
+    ],
+    "/(protected)/procurement-management/purchase-requests/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/purchase-requests/[id]/page.js"
     ]
   }
 }

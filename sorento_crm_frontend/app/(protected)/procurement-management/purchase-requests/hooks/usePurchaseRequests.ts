@@ -10,6 +10,7 @@ import {
   deletePurchaseRequest,
   bulkDeletePurchaseRequests,
   updatePurchaseRequestAndReply,
+  deletePurchaseRequestAttachment,
 } from '../services/purchaseRequestService';
 import type { PurchaseRequestUpdateAndReplyData } from '../services/purchaseRequestService';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
@@ -142,5 +143,19 @@ export function useUpdatePurchaseRequestAndReply() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to update and reply'),
+  });
+}
+
+export function useDeletePurchaseRequestAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (linkId: string) => deletePurchaseRequestAttachment(linkId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['purchase-request'] });
+      toast.success('Attachment unlinked');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to unlink attachment'),
   });
 }

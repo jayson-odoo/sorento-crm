@@ -174,19 +174,18 @@ export default function StockInquiryDetail({
               <DropdownMenuItem
                 disabled={updateAndReplyMutation.isPending}
                 onClick={async () => {
-                  let defaultMsg = inquiry.purchasing_response ?? '';
+                  let viewUrl = '';
                   try {
                     const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-                    if (view_url) {
-                      defaultMsg = defaultMsg.trim()
-                        ? `${defaultMsg.trim()}\n\nView full details: ${view_url}`
-                        : `View full details: ${view_url}`;
-                    }
+                    const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+                    viewUrl = res.view_url ?? '';
                   } catch {
-                    // keep default without view link
+                    // continue without view link
                   }
-                  setReplyMessage(defaultMsg);
+                  const purchasingResponse = (inquiry.purchasing_response ?? '').trim();
+                  const linkPart = viewUrl ? ` ${viewUrl}` : '';
+                  const fullMessage = `There is a response to your stock inquiry${linkPart}: ${purchasingResponse}`;
+                  setReplyMessage(fullMessage);
                   setUpdateAndReplyDialogOpen(true);
                 }}
               >

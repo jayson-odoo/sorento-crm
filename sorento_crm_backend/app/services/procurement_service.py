@@ -1877,6 +1877,8 @@ class PurchaseRequestService:
 
     def __init__(self, db: Session):
         self.db = db
+        from app.services.entity_attachment_service import EntityAttachmentService
+        self.entity_attachment_service = EntityAttachmentService(db)
 
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
         """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""
@@ -1928,6 +1930,9 @@ class PurchaseRequestService:
             customer_name=payload.customer_name,
             project_title=payload.project_title,
             purpose=payload.purpose,
+            delivery_address=getattr(payload, "delivery_address", None),
+            total_project_value=getattr(payload, "total_project_value", None),
+            sponsor_subject=getattr(payload, "sponsor_subject", None),
             expected_delivery_date=self._parse_date(payload.expected_delivery_date),
             expected_po_date=self._parse_date(payload.expected_po_date),
             expected_po_date_text=expected_po_date_text,
@@ -1950,6 +1955,8 @@ class PurchaseRequestService:
                     item_code=line_data.item_code,
                     quantity=line_data.quantity,
                     remark=line_data.remark,
+                    unit_price=getattr(line_data, "unit_price", None),
+                    total=getattr(line_data, "total", None),
                     sort_order=index,
                 )
                 self.db.add(line)
@@ -2237,6 +2244,8 @@ class PurchaseRequestService:
                 item_code=line_data.item_code,
                 quantity=line_data.quantity,
                 remark=line_data.remark,
+                unit_price=getattr(line_data, "unit_price", None),
+                total=getattr(line_data, "total", None),
                 sort_order=index,
             )
             self.db.add(line)
@@ -2275,6 +2284,8 @@ class PurchaseRequestService:
                     item_code=line_data.item_code,
                     quantity=line_data.quantity,
                     remark=line_data.remark,
+                    unit_price=getattr(line_data, "unit_price", None),
+                    total=getattr(line_data, "total", None),
                     sort_order=index,
                 )
                 self.db.add(line)
@@ -2326,6 +2337,8 @@ class PurchaseRequestService:
                     item_code=line_data.item_code,
                     quantity=line_data.quantity,
                     remark=line_data.remark,
+                    unit_price=getattr(line_data, "unit_price", None),
+                    total=getattr(line_data, "total", None),
                     sort_order=index,
                 )
                 self.db.add(line)
@@ -2393,7 +2406,28 @@ class PurchaseRequestService:
     def delete_request(self, request_id: str) -> None:
         """Delete a purchase request and its lines."""
         header = self.get_request(request_id)
+        self.entity_attachment_service.delete_links_for_entity("purchase_request", str(header.id))
         self.db.delete(header)
+        self.db.commit()
+
+    def link_attachment_to_request(
+        self, request_id: str, attachment_id: str, created_by: Optional[str] = None
+    ):
+        """Link an existing attachment to a purchase request (generic entity_attachment_links table)."""
+        self.get_request(request_id)  # ensure request exists
+        link = self.entity_attachment_service.link_existing_attachment(
+            entity_type="purchase_request",
+            entity_id=str(request_id),
+            attachment_id=str(attachment_id),
+            created_by=created_by,
+        )
+        self.db.commit()
+        self.db.refresh(link)
+        return link
+
+    def delete_request_attachment(self, link_id: str) -> None:
+        """Delete a purchase-request attachment link from generic entity_attachment_links table."""
+        self.entity_attachment_service.delete_link(link_id, entity_type="purchase_request")
         self.db.commit()
 
     def bulk_delete_requests(self, request_ids: List[str]) -> dict:
@@ -2406,6 +2440,7 @@ class PurchaseRequestService:
             .all()
         )
         for header in headers:
+            self.entity_attachment_service.delete_links_for_entity("purchase_request", str(header.id))
             self.db.delete(header)
         self.db.commit()
         return {"message": f"Deleted {len(headers)} record(s)", "deleted_count": len(headers)}

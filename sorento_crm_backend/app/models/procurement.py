@@ -318,6 +318,9 @@ class PurchaseRequestHeader(Base):
     customer_name = Column(Text, nullable=True)
     project_title = Column(Text, nullable=True)
     purpose = Column(Text, nullable=True)
+    delivery_address = Column(Text, nullable=True)  # sponsorship form
+    total_project_value = Column(Numeric(15, 2), nullable=True)  # sponsorship form
+    sponsor_subject = Column(Text, nullable=True)  # sponsorship: showroom/mockup/others
     expected_delivery_date = Column(Date, nullable=True)
     expected_po_date = Column(Date, nullable=True)
     expected_po_date_text = Column(Text, nullable=True)
@@ -365,6 +368,8 @@ class PurchaseRequestLine(Base):
     item_code = Column(Text, nullable=True)
     quantity = Column(Numeric(15, 2), nullable=True)
     remark = Column(Text, nullable=True)
+    unit_price = Column(Numeric(15, 2), nullable=True)  # sponsorship form line
+    total = Column(Numeric(15, 2), nullable=True)  # sponsorship form line (qty * unit_price)
     sort_order = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 

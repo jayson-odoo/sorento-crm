@@ -53,6 +53,7 @@ import {
 import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink } from '../services/purchaseRequestService';
 import { exportPurchaseRequestOrSponsorshipToExcel } from '../lib/purchase-request-excel-export';
 import { toast } from 'sonner';
+import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
@@ -647,27 +648,51 @@ export default function PurchaseRequestDetail({
                 <p className="text-sm text-muted-foreground">Project Title</p>
                 <p className="font-medium">{request.project_title || '-'}</p>
               </div>
+              {request.request_type !== 'sponsorship_form' && (
+                <div>
+                  <p className="text-sm text-muted-foreground">Purpose</p>
+                  <p className="font-medium">{request.purpose || '-'}</p>
+                </div>
+              )}
+              {request.request_type === 'sponsorship_form' && (
+                <>
+                  <div className="md:col-span-2">
+                    <p className="text-sm text-muted-foreground">Delivery Address</p>
+                    <p className="font-medium">{request.delivery_address || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total Project Value</p>
+                    <p className="font-medium">
+                      {request.total_project_value != null ? Number(request.total_project_value).toLocaleString() : '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Sponsor Subject</p>
+                    <p className="font-medium">{request.sponsor_subject || '-'}</p>
+                  </div>
+                </>
+              )}
               <div>
-                <p className="text-sm text-muted-foreground">Purpose</p>
-                <p className="font-medium">{request.purpose || '-'}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Expected Delivery</p>
+                <p className="text-sm text-muted-foreground">
+                  {request.request_type === 'sponsorship_form' ? 'Date of Delivery' : 'Expected Delivery'}
+                </p>
                 <p className="font-medium">
                   {request.expected_delivery_date
                     ? formatDate(new Date(request.expected_delivery_date))
                     : '-'}
                 </p>
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Expected PO Date</p>
-                <p className="font-medium">
-                  {request.expected_po_date_text ??
-                    (request.expected_po_date
-                      ? formatDate(new Date(request.expected_po_date))
-                      : '-')}
-                </p>
-              </div>
+              {request.request_type !== 'sponsorship_form' && (
+                <div>
+                  <p className="text-sm text-muted-foreground">Expected PO Date</p>
+                  <p className="font-medium">
+                    {request.expected_po_date_text ??
+                      (request.expected_po_date
+                        ? formatDate(new Date(request.expected_po_date))
+                        : '-')}
+                  </p>
+                </div>
+              )}
               <div>
                 <p className="text-sm text-muted-foreground">Requested By</p>
                 <p className="font-medium">{request.requested_by || '-'}</p>
@@ -703,31 +728,65 @@ export default function PurchaseRequestDetail({
           </CardHeader>
           <CardContent>
             {request.lines && request.lines.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>#</TableHead>
-                    <TableHead>Item Code</TableHead>
-                    <TableHead>Quantity</TableHead>
-                    <TableHead>Remark</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {request.lines.map((line, idx) => (
-                    <TableRow key={line.id}>
-                      <TableCell>{idx + 1}</TableCell>
-                      <TableCell>{line.item_code ?? '-'}</TableCell>
-                      <TableCell>{line.quantity ?? '-'}</TableCell>
-                      <TableCell>{line.remark ?? '-'}</TableCell>
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>#</TableHead>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead>Quantity</TableHead>
+                      {request.request_type === 'sponsorship_form' && (
+                        <>
+                          <TableHead>Unit Price</TableHead>
+                          <TableHead>Total</TableHead>
+                        </>
+                      )}
+                      {request.request_type !== 'sponsorship_form' && <TableHead>Remark</TableHead>}
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {request.lines.map((line, idx) => (
+                      <TableRow key={line.id}>
+                        <TableCell>{idx + 1}</TableCell>
+                        <TableCell>{line.item_code ?? '-'}</TableCell>
+                        <TableCell>{line.quantity ?? '-'}</TableCell>
+                        {request.request_type === 'sponsorship_form' && (
+                          <>
+                            <TableCell>
+                              {line.unit_price != null ? Number(line.unit_price).toLocaleString() : '-'}
+                            </TableCell>
+                            <TableCell>
+                              {line.total != null ? Number(line.total).toLocaleString() : '-'}
+                            </TableCell>
+                          </>
+                        )}
+                        {request.request_type !== 'sponsorship_form' && (
+                          <TableCell>{line.remark ?? '-'}</TableCell>
+                        )}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {request.request_type === 'sponsorship_form' && request.grand_total != null && (
+                  <div className="mt-4 flex justify-end">
+                    <p className="text-sm font-semibold">
+                      Grand Total: {Number(request.grand_total).toLocaleString()}
+                    </p>
+                  </div>
+                )}
+              </>
             ) : (
               <p className="text-sm text-muted-foreground">No line items.</p>
             )}
           </CardContent>
         </Card>
+
+        <div className="lg:col-span-2">
+          <PurchaseRequestAttachmentsSection
+            requestId={requestId}
+            attachments={request.attachments}
+          />
+        </div>
 
         <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
       </div>

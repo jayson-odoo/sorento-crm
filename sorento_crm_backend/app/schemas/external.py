@@ -402,6 +402,8 @@ class PurchaseRequestExternalLine(BaseModel):
     item_code: Optional[str] = None
     quantity: Optional[Decimal] = None
     remark: Optional[str] = None
+    unit_price: Optional[Decimal] = None  # sponsorship form line
+    total: Optional[Decimal] = None  # sponsorship form line (qty * unit_price)
 
     @field_validator("quantity", mode="before")
     @classmethod
@@ -413,13 +415,36 @@ class PurchaseRequestExternalLine(BaseModel):
             return Decimal(s) if s else None
         return Decimal(v)
 
+    @field_validator("unit_price", "total", mode="before")
+    @classmethod
+    def coerce_decimal(cls, v: Any) -> Optional[Decimal]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return Decimal(s) if s else None
+        return Decimal(v)
+
 
 class PurchaseRequestExternalCreate(BaseModel):
+    """Create a purchase request or sponsorship form. Ask request_type first, then the relevant fields.
+
+    Purchase request fields: date, customer_name, project_title, purpose (showroom/mock up/others:__),
+    expected_delivery_date, expected_po_date, products (item_code, quantity, remark per line),
+    requested_by, requested_at.
+
+    Sponsorship form fields: date, customer_name, delivery_address, project_title, total_project_value,
+    sponsor_subject (showroom/mockup/others:__), expected_delivery_date (date of delivery), products
+    (item_code, quantity, unit_price, total per line), requested_by, requested_at.
+    """
     request_type: str
     date: Optional[str | DateType] = None
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
+    delivery_address: Optional[str] = None  # sponsorship form
+    total_project_value: Optional[Decimal] = None  # sponsorship form
+    sponsor_subject: Optional[str] = None  # sponsorship: showroom/mockup/others
     expected_delivery_date: Optional[str | DateType] = None
     expected_po_date: Optional[str | DateType] = None
     products: List[PurchaseRequestExternalLine] = []
@@ -428,7 +453,7 @@ class PurchaseRequestExternalCreate(BaseModel):
     external_reference: Optional[str] = None
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
-    base_url: Optional[str] = None  # Frontend app origin for notification email link (e.g. https://fe-sorento.foundryx.my or http://localhost:3000)
+    base_url: Optional[str] = None  # Frontend app origin for notification email link
 
     @field_validator("request_type")
     @classmethod
@@ -446,11 +471,15 @@ class PurchaseRequestExternalResponse(BaseModel):
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
+    delivery_address: Optional[str] = None
+    total_project_value: Optional[Decimal] = None
+    sponsor_subject: Optional[str] = None
     expected_delivery_date: Optional[DateType] = None
     expected_po_date: Optional[str | DateType] = None
     products: List[PurchaseRequestExternalLine] = []
     requested_by: Optional[str] = None
     requested_at: Optional[DateType] = None
+    grand_total: Optional[Decimal] = None  # sponsorship form: sum of line totals
     already_existed: bool = False
     message: Optional[str] = None
     respond_inbox_url: Optional[str] = None

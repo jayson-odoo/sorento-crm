@@ -31,6 +31,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockInquiries } from '../hooks/useStockInquiries';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { StockInquiry } from '../types/stockInquiry.types';
 import { exportStockInquiriesToExcel } from '../utils/exportStockInquiryToExcel';
 import StockInquiryBulkDeleteDialog from './StockInquiryBulkDeleteDialog';
@@ -184,6 +185,20 @@ export default function StockInquiriesList() {
         },
         size: 180,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
+        accessorKey: 'created_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Created" column={column} />
+        ),
+        size: 150,
+        cell: ({ row }) => {
+          const raw = row.original.created_at;
+          if (raw == null) return '-';
+          const formatted = formatDateTimeInMalaysia(raw);
+          return formatted || '-';
+        },
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'salesperson',

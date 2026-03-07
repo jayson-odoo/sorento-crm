@@ -51,6 +51,36 @@ export async function getPurchaseRequest(id: string): Promise<PurchaseRequestDet
   return response.json();
 }
 
+export async function linkPurchaseRequestAttachment(
+  requestId: string,
+  attachmentId: string,
+): Promise<{ id: string; purchase_request_id: string; attachment_id: string }> {
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/${requestId}/attachments`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ attachment_id: attachmentId }),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Failed to link attachment' }));
+    throw new Error(typeof err.detail === 'string' ? err.detail : err.message || 'Failed to link attachment');
+  }
+  return response.json();
+}
+
+export async function deletePurchaseRequestAttachment(linkId: string): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/attachments/${linkId}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Failed to unlink attachment' }));
+    throw new Error(typeof err.detail === 'string' ? err.detail : err.message || 'Failed to unlink attachment');
+  }
+}
+
 export interface PurchaseRequestNeighbours {
   prev_id: string | null;
   next_id: string | null;
@@ -76,6 +106,8 @@ function toRequestBody(data: PurchaseRequestFormData) {
     item_code: p.item_code ?? null,
     quantity: p.quantity ?? null,
     remark: p.remark ?? null,
+    unit_price: p.unit_price ?? null,
+    total: p.total ?? null,
   }));
   return {
     request_type: data.request_type,
@@ -83,7 +115,10 @@ function toRequestBody(data: PurchaseRequestFormData) {
     request_date: data.request_date || null,
     customer_name: data.customer_name || null,
     project_title: data.project_title || null,
-    purpose: data.purpose || null,
+    purpose: data.purpose ?? null,
+    delivery_address: data.delivery_address ?? null,
+    total_project_value: data.total_project_value ?? null,
+    sponsor_subject: data.sponsor_subject ?? null,
     expected_delivery_date: data.expected_delivery_date || null,
     expected_po_date: data.expected_po_date ?? data.expected_po_date_text ?? null,
     expected_po_date_text: data.expected_po_date_text || null,

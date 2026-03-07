@@ -13,6 +13,7 @@ from app.schemas.procurement import (
     PurchaseRequestUpdateAndReply,
     PurchaseRequestHeaderResponse,
     PurchaseRequestHeaderListResponse,
+    PurchaseRequestAttachmentLinkRequest,
     SendApprovalLinkRequest,
     SendApprovalLinkResponse,
     ViewLinkRequest,
@@ -91,7 +92,7 @@ async def get_purchase_request(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get a purchase request or sponsorship form by ID with lines."""
+    """Get a purchase request or sponsorship form by ID with lines and attachments."""
     try:
         from app.models.user import User
 
@@ -105,6 +106,32 @@ async def get_purchase_request(
                     "approver_display_name",
                     (user.name and user.name.strip()) or user.email or "",
                 )
+        links = service.entity_attachment_service.list_links("purchase_request", request_id)
+        setattr(
+            header,
+            "attachments",
+            [
+                service.entity_attachment_service.serialize_link(
+                    link,
+                    entity_key="purchase_request_id",
+                    link_type="purchase_request_attachment",
+                )
+                for link in links
+            ],
+        )
+        if getattr(header, "request_type", None) == "sponsorship_form" and header.lines:
+            from decimal import Decimal
+            grand = Decimal("0")
+            for line in header.lines:
+                line_total = getattr(line, "total", None)
+                if line_total is not None:
+                    grand += line_total
+                else:
+                    qty = getattr(line, "quantity", None)
+                    up = getattr(line, "unit_price", None)
+                    if qty is not None and up is not None:
+                        grand += Decimal(str(qty)) * Decimal(str(up))
+            setattr(header, "grand_total", grand)
         return header
     except HTTPException:
         raise
@@ -315,6 +342,51 @@ async def send_approval_link(
             email_sent=email_sent,
             email_error=email_error,
         )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/attachments/{link_id}", status_code=status.HTTP_200_OK)
+async def delete_purchase_request_attachment(
+    link_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Unlink an attachment from a purchase request or sponsorship form."""
+    try:
+        service = PurchaseRequestService(db)
+        service.delete_request_attachment(link_id)
+        return {"message": "Attachment unlinked successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{request_id}/attachments", status_code=status.HTTP_201_CREATED)
+async def link_attachment_to_purchase_request(
+    request_id: str,
+    body: PurchaseRequestAttachmentLinkRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Link an existing attachment to a purchase request or sponsorship form."""
+    try:
+        service = PurchaseRequestService(db)
+        created_by = (current_user.get("id") or None) if isinstance(current_user.get("id"), str) and len(str(current_user.get("id"))) == 36 else None
+        link = service.link_attachment_to_request(
+            request_id=request_id,
+            attachment_id=body.attachment_id,
+            created_by=created_by,
+        )
+        return {
+            "id": str(link.id),
+            "purchase_request_id": str(link.entity_id),
+            "attachment_id": str(link.attachment_id),
+            "message": "Attachment linked successfully",
+        }
     except HTTPException:
         raise
     except Exception as e:

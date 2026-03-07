@@ -4,14 +4,14 @@
  */
 
 import ExcelJS from 'exceljs';
-import { formatDate } from '@/lib/helpers';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import type { StockInquiryDetail, StockInquiry } from '../types/stockInquiry.types';
 
+/** Date only in Malaysia timezone for Excel (no time). */
 function formatDateForExport(value: Date | string | null | undefined): string {
   if (value == null) return '';
-  if (typeof value === 'string') return value;
   try {
-    return formatDate(value);
+    return formatDateInMalaysia(value);
   } catch {
     return String(value);
   }
@@ -37,24 +37,10 @@ function buildFormRows(inquiry: StockInquiryDetail | StockInquiry): (string | nu
     ['DELIVERY DATE:', inquiry.delivery_date ?? ''],
     ['REMARK:', inquiry.remark ?? ''],
     [],
+    ['ADDITIONAL REMARK:', inquiry.additional_remark ?? ''],
     [],
-    ['REQUEST:'],
-    ['', 'E.T.A', 'MOQ', 'PRICE', 'LEAD TIME', 'NEW ITEM'],
-    [],
+    ['COMMENT / REPLY BY PURCHASING:', inquiry.purchasing_response ?? ''],
   ];
-
-  rows.push(['ADDITIONAL REMARK:']);
-  const additionalLines = (inquiry.additional_remark ?? '').split('\n');
-  if (additionalLines.length > 0) {
-    additionalLines.forEach((line) => rows.push(['', line]));
-  }
-  rows.push([]);
-
-  rows.push(['COMMENT / REPLY BY PURCHASING:']);
-  const responseLines = (inquiry.purchasing_response ?? '').split('\n');
-  if (responseLines.length > 0) {
-    responseLines.forEach((line) => rows.push(['', line]));
-  }
 
   return rows;
 }
@@ -66,9 +52,6 @@ const thinBlackBorder = {
   bottom: { style: 'thin' as const },
   right: { style: 'thin' as const },
 };
-
-/** Row index (1-based) of the REQUEST sub-headings row (E.T.A, MOQ, ...) */
-const REQUEST_HEADER_ROW = 16;
 
 function applyStylesToSheet(
   worksheet: ExcelJS.Worksheet,
@@ -84,16 +67,11 @@ function applyStylesToSheet(
       cell.border = thinBlackBorder;
 
       const isColA = c === 0;
-      const isRequestHeaderRow = excelRow === REQUEST_HEADER_ROW;
 
       if (isColA) {
         cell.font = { bold: true };
-        cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-      } else if (isRequestHeaderRow) {
-        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
-      } else {
-        cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
       }
+      cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
     }
   }
 }
@@ -124,10 +102,6 @@ export async function exportStockInquiryToExcel(
 
   worksheet.getColumn(1).width = 28;
   worksheet.getColumn(2).width = 24;
-  worksheet.getColumn(3).width = 12;
-  worksheet.getColumn(4).width = 12;
-  worksheet.getColumn(5).width = 12;
-  worksheet.getColumn(6).width = 12;
 
   const safeName =
     inquiry.product_code?.replace(/[/\\?*\[\]:]/g, '_').slice(0, 20) ||
@@ -174,10 +148,6 @@ export async function exportStockInquiriesToExcel(
 
     worksheet.getColumn(1).width = 28;
     worksheet.getColumn(2).width = 24;
-    worksheet.getColumn(3).width = 12;
-    worksheet.getColumn(4).width = 12;
-    worksheet.getColumn(5).width = 12;
-    worksheet.getColumn(6).width = 12;
   });
 
   const finalFilename = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;

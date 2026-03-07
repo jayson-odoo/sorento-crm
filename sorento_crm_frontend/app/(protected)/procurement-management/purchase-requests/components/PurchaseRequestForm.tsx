@@ -54,6 +54,7 @@ import {
   type PurchaseRequestSchemaType,
 } from '../forms/purchase-request-schema';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
+import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
 
 const PURCHASE_REQUESTS_EDIT = '/procurement-management/purchase-requests';
 const SPONSORSHIP_FORMS_EDIT = '/procurement-management/sponsorship-forms';
@@ -111,15 +112,21 @@ export default function PurchaseRequestForm({
       customer_name: null,
       project_title: null,
       purpose: null,
+      delivery_address: null,
+      total_project_value: null,
+      sponsor_subject: null,
       expected_delivery_date: null,
       expected_po_date: null,
       expected_po_date_text: null,
       requested_by: null,
       requested_at: null,
-      products: [{ item_code: null, quantity: null, remark: null }],
+      products: [{ item_code: null, quantity: null, remark: null, unit_price: null, total: null }],
     },
     mode: 'onSubmit',
   });
+
+  const requestType = form.watch('request_type') ?? defaultRequestType ?? 'purchase_request';
+  const isSponsorship = requestType === 'sponsorship_form';
 
   const { fields, append, remove } = useFieldArray({
     control: form.control,
@@ -134,11 +141,12 @@ export default function PurchaseRequestForm({
         (request.lines?.length ?? 0) > 0
           ? request.lines!.map((l) => ({
               item_code: l.item_code ?? null,
-              quantity:
-                l.quantity != null ? Number(l.quantity) : null,
+              quantity: l.quantity != null ? Number(l.quantity) : null,
               remark: l.remark ?? null,
+              unit_price: l.unit_price != null ? Number(l.unit_price) : null,
+              total: l.total != null ? Number(l.total) : null,
             }))
-          : [{ item_code: null, quantity: null, remark: null }];
+          : [{ item_code: null, quantity: null, remark: null, unit_price: null, total: null }];
       form.reset({
         request_type: (request.request_type ?? 'purchase_request') as
           | 'purchase_request'
@@ -150,6 +158,9 @@ export default function PurchaseRequestForm({
         customer_name: request.customer_name ?? null,
         project_title: request.project_title ?? null,
         purpose: request.purpose ?? null,
+        delivery_address: request.delivery_address ?? null,
+        total_project_value: request.total_project_value != null ? Number(request.total_project_value) : null,
+        sponsor_subject: request.sponsor_subject ?? null,
         expected_delivery_date: request.expected_delivery_date
           ? new Date(request.expected_delivery_date).toISOString().split('T')[0]
           : null,
@@ -179,21 +190,23 @@ export default function PurchaseRequestForm({
         request_date: data.request_date || undefined,
         customer_name: data.customer_name || undefined,
         project_title: data.project_title || undefined,
-        purpose: data.purpose || undefined,
+        purpose: data.purpose ?? undefined,
+        delivery_address: data.delivery_address ?? undefined,
+        total_project_value: data.total_project_value != null && data.total_project_value !== '' ? Number(data.total_project_value) : undefined,
+        sponsor_subject: data.sponsor_subject ?? undefined,
         expected_delivery_date: data.expected_delivery_date || undefined,
         expected_po_date: data.expected_po_date || undefined,
         expected_po_date_text: data.expected_po_date_text || undefined,
         requested_by: data.requested_by || undefined,
         requested_at: data.requested_at || undefined,
         products: data.products
-          .filter((p) => p.item_code != null || p.quantity != null)
+          .filter((p) => p.item_code != null || p.quantity != null || (isSponsorship && (p.unit_price != null || p.total != null)))
           .map((p) => ({
             item_code: p.item_code ?? undefined,
-            quantity:
-              p.quantity != null && p.quantity !== ''
-                ? Number(p.quantity)
-                : undefined,
+            quantity: p.quantity != null && p.quantity !== '' ? Number(p.quantity) : undefined,
             remark: p.remark ?? undefined,
+            unit_price: p.unit_price != null && p.unit_price !== '' ? Number(p.unit_price) : undefined,
+            total: p.total != null && p.total !== '' ? Number(p.total) : undefined,
           })),
       };
 
@@ -325,29 +338,92 @@ export default function PurchaseRequestForm({
                     </FormItem>
                   )}
                 />
-                <FormField
-                  control={form.control}
-                  name="purpose"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Purpose</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="e.g. Showroom"
-                          {...field}
-                          value={field.value ?? ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                {!isSponsorship && (
+                  <FormField
+                    control={form.control}
+                    name="purpose"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Purpose (showroom/mock up/others)</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="e.g. Showroom, Mock up, Others"
+                            {...field}
+                            value={field.value ?? ''}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+                {isSponsorship && (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name="delivery_address"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Delivery Address</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="Delivery address"
+                              {...field}
+                              value={field.value ?? ''}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="total_project_value"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Total Project Value</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="any"
+                              placeholder="0"
+                              {...field}
+                              value={field.value ?? ''}
+                              onChange={(e) => {
+                                const v = e.target.value ? parseFloat(e.target.value) : null;
+                                field.onChange(v);
+                              }}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="sponsor_subject"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Sponsor Subject (showroom/mockup/others)</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="e.g. Showroom, Mockup, Others"
+                              {...field}
+                              value={field.value ?? ''}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                )}
                 <FormField
                   control={form.control}
                   name="expected_delivery_date"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Expected Delivery Date</FormLabel>
+                      <FormLabel>{isSponsorship ? 'Date of Delivery' : 'Expected Delivery Date'}</FormLabel>
                       <FormControl>
                         <Input type="date" {...field} value={field.value ?? ''} />
                       </FormControl>
@@ -355,19 +431,21 @@ export default function PurchaseRequestForm({
                     </FormItem>
                   )}
                 />
-                <FormField
-                  control={form.control}
-                  name="expected_po_date"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Expected PO Date</FormLabel>
-                      <FormControl>
-                        <Input type="date" {...field} value={field.value ?? ''} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                {!isSponsorship && (
+                  <FormField
+                    control={form.control}
+                    name="expected_po_date"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Expected PO Date</FormLabel>
+                        <FormControl>
+                          <Input type="date" {...field} value={field.value ?? ''} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
                 <FormField
                   control={form.control}
                   name="expected_po_date_text"
@@ -428,7 +506,7 @@ export default function PurchaseRequestForm({
                   variant="outline"
                   size="sm"
                   onClick={() =>
-                    append({ item_code: null, quantity: null, remark: null })
+                    append({ item_code: null, quantity: null, remark: null, unit_price: null, total: null })
                   }
                 >
                   <Plus className="size-4" />
@@ -441,7 +519,9 @@ export default function PurchaseRequestForm({
                     <TableRow>
                       <TableHead>Item Code</TableHead>
                       <TableHead>Qty</TableHead>
-                      <TableHead>Remark</TableHead>
+                      {isSponsorship && <TableHead>Unit Price</TableHead>}
+                      {isSponsorship && <TableHead>Total</TableHead>}
+                      {!isSponsorship && <TableHead>Remark</TableHead>}
                       <TableHead className="w-12" />
                     </TableRow>
                   </TableHeader>
@@ -481,10 +561,14 @@ export default function PurchaseRequestForm({
                                     {...f}
                                     value={f.value ?? ''}
                                     onChange={(e) => {
-                                      const v = e.target.value
-                                        ? parseFloat(e.target.value)
-                                        : null;
+                                      const v = e.target.value ? parseFloat(e.target.value) : null;
                                       f.onChange(v);
+                                      if (isSponsorship) {
+                                        const up = form.getValues(`products.${index}.unit_price`);
+                                        if (up != null && up !== '') {
+                                          form.setValue(`products.${index}.total`, (v ?? 0) * Number(up));
+                                        }
+                                      }
                                     }}
                                     className="h-8 w-24"
                                   />
@@ -494,25 +578,85 @@ export default function PurchaseRequestForm({
                             )}
                           />
                         </TableCell>
-                        <TableCell>
-                          <FormField
-                            control={form.control}
-                            name={`products.${index}.remark`}
-                            render={({ field: f }) => (
-                              <FormItem>
-                                <FormControl>
-                                  <Input
-                                    placeholder="Remark"
-                                    {...f}
-                                    value={f.value ?? ''}
-                                    className="h-8"
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </TableCell>
+                        {isSponsorship && (
+                          <TableCell>
+                            <FormField
+                              control={form.control}
+                              name={`products.${index}.unit_price`}
+                              render={({ field: f }) => (
+                                <FormItem>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      step="any"
+                                      placeholder="0"
+                                      {...f}
+                                      value={f.value ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value ? parseFloat(e.target.value) : null;
+                                        f.onChange(v);
+                                        const qty = form.getValues(`products.${index}.quantity`);
+                                        if (qty != null && qty !== '') {
+                                          form.setValue(`products.${index}.total`, (v ?? 0) * Number(qty));
+                                        }
+                                      }}
+                                      className="h-8 w-24"
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </TableCell>
+                        )}
+                        {isSponsorship && (
+                          <TableCell>
+                            <FormField
+                              control={form.control}
+                              name={`products.${index}.total`}
+                              render={({ field: f }) => (
+                                <FormItem>
+                                  <FormControl>
+                                    <Input
+                                      type="number"
+                                      step="any"
+                                      placeholder="0"
+                                      {...f}
+                                      value={f.value ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value ? parseFloat(e.target.value) : null;
+                                        f.onChange(v);
+                                      }}
+                                      className="h-8 w-28"
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </TableCell>
+                        )}
+                        {!isSponsorship && (
+                          <TableCell>
+                            <FormField
+                              control={form.control}
+                              name={`products.${index}.remark`}
+                              render={({ field: f }) => (
+                                <FormItem>
+                                  <FormControl>
+                                    <Input
+                                      placeholder="Remark"
+                                      {...f}
+                                      value={f.value ?? ''}
+                                      className="h-8"
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>
                           <Button
                             type="button"
@@ -532,6 +676,13 @@ export default function PurchaseRequestForm({
               </CardContent>
             </Card>
           </div>
+
+          {isEditMode && requestId && (
+            <PurchaseRequestAttachmentsSection
+              requestId={requestId}
+              attachments={request?.attachments}
+            />
+          )}
         </div>
 
         <div className="flex justify-end gap-4">

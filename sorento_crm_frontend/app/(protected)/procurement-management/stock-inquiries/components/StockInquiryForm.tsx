@@ -60,6 +60,7 @@ export default function StockInquiryForm({
   const updateAndReplyMutation = useUpdateStockInquiryAndReply();
   const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
   const [replyMessage, setReplyMessage] = useState('');
+  const [previewPreparing, setPreviewPreparing] = useState(false);
 
   const form = useForm<StockInquirySchemaType>({
     resolver: zodResolver(StockInquirySchema),
@@ -110,8 +111,20 @@ export default function StockInquiryForm({
   const handleUpdateAndReplyClick = async () => {
     const valid = await form.trigger();
     if (!valid || !inquiryId) return;
-    setReplyMessage(form.getValues().purchasing_response ?? '');
-    setUpdateAndReplyDialogOpen(true);
+    setPreviewPreparing(true);
+    try {
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+      const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+      const purchasingResponse = (form.getValues().purchasing_response ?? '').trim();
+      const linkPart = view_url ? ` ${view_url}` : '';
+      const fullMessage = `There is a response to your stock inquiry${linkPart}: ${purchasingResponse}`;
+      setReplyMessage(fullMessage);
+      setUpdateAndReplyDialogOpen(true);
+    } catch {
+      toast.error('Failed to prepare message preview. Could not get stock inquiry view link.');
+    } finally {
+      setPreviewPreparing(false);
+    }
   };
 
   const handleUpdateAndReplyConfirm = async () => {
@@ -433,9 +446,14 @@ export default function StockInquiryForm({
               type="button"
               variant="secondary"
               onClick={handleUpdateAndReplyClick}
-              disabled={isLoading || updateAndReplyMutation.isPending}
+              disabled={isLoading || previewPreparing || updateAndReplyMutation.isPending}
             >
-              {updateAndReplyMutation.isPending ? (
+              {previewPreparing ? (
+                <>
+                  <LoaderCircleIcon className="size-4 animate-spin" />
+                  Preparing...
+                </>
+              ) : updateAndReplyMutation.isPending ? (
                 <>
                   <LoaderCircleIcon className="size-4 animate-spin" />
                   Sending...

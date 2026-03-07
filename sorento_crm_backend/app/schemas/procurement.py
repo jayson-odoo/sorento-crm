@@ -515,6 +515,8 @@ class PurchaseRequestLineBase(BaseModel):
     item_code: Optional[str] = None
     quantity: Optional[Decimal] = None
     remark: Optional[str] = None
+    unit_price: Optional[Decimal] = None  # sponsorship form line
+    total: Optional[Decimal] = None  # sponsorship form line (qty * unit_price)
 
 
 class PurchaseRequestLineCreate(PurchaseRequestLineBase):
@@ -538,6 +540,9 @@ class PurchaseRequestHeaderBase(BaseModel):
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
+    delivery_address: Optional[str] = None  # sponsorship form
+    total_project_value: Optional[Decimal] = None  # sponsorship form
+    sponsor_subject: Optional[str] = None  # sponsorship: showroom/mockup/others
     expected_delivery_date: Optional[date] = None
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
@@ -580,6 +585,9 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
     purpose: Optional[str] = None
+    delivery_address: Optional[str] = None
+    total_project_value: Optional[Decimal] = None
+    sponsor_subject: Optional[str] = None
     expected_delivery_date: Optional[date] = None
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
@@ -626,6 +634,22 @@ class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
         from_attributes = True
 
 
+class PurchaseRequestAttachmentResponse(BaseModel):
+    id: str
+    purchase_request_id: str
+    attachment_id: Optional[str] = None
+    file_name: Optional[str] = None
+    original_filename: Optional[str] = None
+    file_url: Optional[str] = None
+    file_size_bytes: Optional[int] = None
+    uploaded_at: Optional[datetime] = None
+    link_type: Optional[str] = None
+
+
+class PurchaseRequestAttachmentLinkRequest(BaseModel):
+    attachment_id: str
+
+
 class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     id: str
     request_number: Optional[str] = None
@@ -634,6 +658,8 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     lines: Optional[List[PurchaseRequestLineResponse]] = []
+    attachments: Optional[List[PurchaseRequestAttachmentResponse]] = []
+    grand_total: Optional[Decimal] = None  # Sum of line totals; set for sponsorship_form
 
     class Config:
         from_attributes = True

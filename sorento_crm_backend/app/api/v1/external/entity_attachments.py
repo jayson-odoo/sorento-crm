@@ -19,6 +19,7 @@ DEFAULT_ATTACHMENT_TYPE_BY_ENTITY = {
 
 
 def _assert_entity_exists(db: Session, entity_type: str, entity_id: str) -> None:
+    """Check entity exists. Use entity_type 'purchase_request' for both purchase requests and sponsorship forms (same table)."""
     if entity_type == "complaint":
         exists = db.query(Complaint.id).filter(Complaint.id == entity_id).first()
     elif entity_type == "stock_inquiry":
@@ -46,6 +47,7 @@ def link_entity_attachment(
     """
     Create an attachment and link it to any supported entity.
     Supported entity_type: complaint, stock_inquiry, purchase_request.
+    Use entity_type 'purchase_request' for both purchase requests and sponsorship forms (same table).
     """
     entity_type = (payload.entity_type or "").strip()
     entity_id = (payload.entity_id or "").strip()

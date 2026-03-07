@@ -4,8 +4,22 @@ export interface PurchaseRequestLine {
   item_code?: string | null;
   quantity?: number | null;
   remark?: string | null;
+  unit_price?: number | null;
+  total?: number | null;
   sort_order?: number | null;
   created_at?: string | null;
+}
+
+export interface PurchaseRequestAttachment {
+  id: string;
+  purchase_request_id: string;
+  attachment_id?: string | null;
+  file_name?: string | null;
+  original_filename?: string | null;
+  file_url?: string | null;
+  file_size_bytes?: number | null;
+  uploaded_at?: string | null;
+  link_type?: string | null;
 }
 
 export interface PurchaseRequest {
@@ -16,6 +30,9 @@ export interface PurchaseRequest {
   customer_name?: string | null;
   project_title?: string | null;
   purpose?: string | null;
+  delivery_address?: string | null;
+  total_project_value?: number | null;
+  sponsor_subject?: string | null;
   expected_delivery_date?: string | null;
   expected_po_date?: string | null;
   expected_po_date_text?: string | null;
@@ -38,6 +55,8 @@ export interface PurchaseRequest {
   created_at?: string | null;
   updated_at?: string | null;
   lines?: PurchaseRequestLine[];
+  attachments?: PurchaseRequestAttachment[];
+  grand_total?: number | null;
 }
 
 export interface SendApprovalLinkRequest {
@@ -60,6 +79,8 @@ export interface PurchaseRequestLineFormData {
   item_code?: string;
   quantity?: number;
   remark?: string;
+  unit_price?: number;
+  total?: number;
 }
 
 export interface PurchaseRequestFormData {
@@ -69,6 +90,9 @@ export interface PurchaseRequestFormData {
   customer_name?: string;
   project_title?: string;
   purpose?: string;
+  delivery_address?: string;
+  total_project_value?: number;
+  sponsor_subject?: string;
   expected_delivery_date?: string;
   expected_po_date?: string;
   expected_po_date_text?: string;
