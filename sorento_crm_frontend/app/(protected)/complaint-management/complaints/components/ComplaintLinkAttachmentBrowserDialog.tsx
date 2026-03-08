@@ -157,6 +157,8 @@ export interface ComplaintLinkAttachmentBrowserDialogProps {
    */
   invalidateQueryKeys?: (readonly unknown[])[];
   successEntityLabel?: string;
+  /** When 1, only one attachment can be selected (e.g. one-to-one relationship). */
+  maxSelections?: number;
 }
 
 export default function ComplaintLinkAttachmentBrowserDialog({
@@ -167,6 +169,7 @@ export default function ComplaintLinkAttachmentBrowserDialog({
   linkAttachment,
   invalidateQueryKeys = [],
   successEntityLabel = 'record',
+  maxSelections,
 }: ComplaintLinkAttachmentBrowserDialogProps) {
   const queryClient = useQueryClient();
   const [selectedDirectoryId, setSelectedDirectoryId] = useState<string | null>(null);
@@ -236,11 +239,15 @@ export default function ComplaintLinkAttachmentBrowserDialog({
   const toggleSelection = useCallback((att: Attachment) => {
     setSelectedMap((prev) => {
       const next = new Map(prev);
-      if (next.has(att.id)) next.delete(att.id);
-      else next.set(att.id, att.original_filename || att.id);
+      if (next.has(att.id)) {
+        next.delete(att.id);
+      } else {
+        if (maxSelections === 1) next.clear();
+        next.set(att.id, att.original_filename || att.id);
+      }
       return next;
     });
-  }, []);
+  }, [maxSelections]);
 
   const toggleSelectAll = useCallback(() => {
     if (selectedIds.size >= availableAttachments.length) {
@@ -355,7 +362,7 @@ export default function ComplaintLinkAttachmentBrowserDialog({
             <div className="h-full flex flex-col overflow-hidden">
               <div className="px-3 py-2 border-b bg-muted/40 flex items-center justify-between gap-2 flex-wrap shrink-0">
                 <span className="text-sm font-medium text-muted-foreground">Files</span>
-                {availableAttachments.length > 0 && (
+                {availableAttachments.length > 0 && maxSelections !== 1 && (
                   <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={toggleSelectAll}>
                     {selectedIds.size >= availableAttachments.length ? 'Deselect all' : 'Select all'}
                   </Button>
@@ -454,10 +461,12 @@ export default function ComplaintLinkAttachmentBrowserDialog({
           </Button>
           <Button
             onClick={handleConfirmLink}
-              disabled={selectedIds.size === 0 || isLinking || !entityId}
+            disabled={selectedIds.size === 0 || isLinking || !entityId}
           >
             {isLinking ? (
               <LoaderCircleIcon className="size-4 animate-spin" />
+            ) : maxSelections === 1 ? (
+              'Link attachment'
             ) : (
               `Link ${selectedIds.size > 0 ? selectedIds.size : ''} attachment(s)`
             )}

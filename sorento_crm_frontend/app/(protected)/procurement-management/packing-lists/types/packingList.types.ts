@@ -41,7 +41,7 @@ export interface PackingList {
   created_at: Date;
   created_by?: string | null;
   updated_at: Date;
-  attachment_id: string;
+  attachment_id?: string | null;
   synced_to_excel: boolean;
   last_synced_to_excel?: Date | null;
   supplier?: {

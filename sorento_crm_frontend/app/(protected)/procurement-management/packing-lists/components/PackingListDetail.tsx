@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Link as LinkIcon, Search, X, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Edit, Trash2, Link as LinkIcon, Search, X, ArrowUpDown, ArrowUp, ArrowDown, Link2, Unlink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { usePackingList, useDeletePackingList } from '../hooks/usePackingLists';
+import { usePackingList, useDeletePackingList, useUpdatePackingList } from '../hooks/usePackingLists';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { toast } from 'sonner';
+import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-management/complaints/components/ComplaintLinkAttachmentBrowserDialog';
 
 interface PackingListDetailProps {
   packingListId: string;
@@ -36,11 +37,37 @@ export default function PackingListDetail({
 }: PackingListDetailProps) {
   const router = useRouter();
   const { data: packingList, isLoading } = usePackingList(packingListId);
+  const updatePackingListMutation = useUpdatePackingList();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [linkAttachmentDialogOpen, setLinkAttachmentDialogOpen] = useState(false);
   const [shipmentLinesSearch, setShipmentLinesSearch] = useState('');
   const [sortField, setSortField] = useState<'product' | 'quantity_shipped' | 'spo_allocated' | 'quantity_received' | 'status'>('product');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const downloadMutation = useDownloadAttachment();
+
+  const linkPackingListAttachment = async (_entityId: string, attachmentId: string) => {
+    await updatePackingListMutation.mutateAsync({
+      id: packingListId,
+      data: { attachment_id: attachmentId },
+    });
+  };
+
+  const handleUnlinkAttachment = async () => {
+    try {
+      await updatePackingListMutation.mutateAsync({
+        id: packingListId,
+        data: { attachment_id: null },
+      });
+      toast.success('Attachment unlinked');
+    } catch {
+      toast.error('Failed to unlink attachment');
+    }
+  };
+
+  const linkedAttachmentIds = useMemo(
+    () => (packingList?.attachment_id ? new Set([packingList.attachment_id]) : new Set<string>()),
+    [packingList?.attachment_id]
+  );
 
   /** Line-level status from quantity shipped, allocated, and received. */
   const getLineStatus = (
@@ -348,12 +375,12 @@ export default function PackingListDetail({
             <CardTitle>Related Documents</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {packingList.attachment_id && packingList.attachment && (
+            {packingList.attachment_id && packingList.attachment ? (
               <div className="space-y-2">
                 <p className="text-sm font-medium">Attachment</p>
                 <div className="flex items-center gap-2 p-3 border rounded-lg">
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">
                       {packingList.attachment.original_filename || 'Unknown'}
                     </p>
                     <p className="text-xs text-muted-foreground">
@@ -363,7 +390,7 @@ export default function PackingListDetail({
                         : '-'}
                     </p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 shrink-0">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -372,6 +399,7 @@ export default function PackingListDetail({
                           handlePreview(packingList.attachment_id);
                         }
                       }}
+                      title="Preview"
                     >
                       <Eye className="size-4" />
                     </Button>
@@ -383,13 +411,46 @@ export default function PackingListDetail({
                           handleDownload(packingList.attachment_id, packingList.attachment.original_filename);
                         }
                       }}
+                      title="Download"
                     >
                       <Download className="size-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleUnlinkAttachment}
+                      disabled={updatePackingListMutation.isPending}
+                      title="Unlink attachment"
+                    >
+                      <Unlink className="size-4" />
                     </Button>
                   </div>
                 </div>
               </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">No attachment linked. Link one to attach a document to this packing list.</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setLinkAttachmentDialogOpen(true)}
+                  className="gap-2"
+                >
+                  <Link2 className="size-4" />
+                  Link attachment
+                </Button>
+              </div>
             )}
+            <ComplaintLinkAttachmentBrowserDialog
+              open={linkAttachmentDialogOpen}
+              onOpenChange={setLinkAttachmentDialogOpen}
+              entityId={packingListId}
+              linkedAttachmentIds={linkedAttachmentIds}
+              linkAttachment={linkPackingListAttachment}
+              invalidateQueryKeys={[['packing-list', packingListId], ['packing-lists']]}
+              successEntityLabel="packing list"
+              maxSelections={1}
+            />
             {packingList.spo_allocations_count !== undefined &&
               packingList.spo_allocations_count > 0 && (
                 <div>

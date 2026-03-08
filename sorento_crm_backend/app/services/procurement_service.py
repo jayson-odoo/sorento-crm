@@ -260,7 +260,7 @@ class InboundShipmentService:
         self.db.add(shipment)
         self.db.flush()  # Get the ID
         
-        # Create lines if provided (one row per product per shipment; merge duplicates)
+        # Create lines if provided (one row per product per shipment; merge duplicates by product_id)
         if shipment_data.shipment_lines:
             merged: dict[str, dict] = {}  # product_id -> merged line dict
             for line_data in shipment_data.shipment_lines:
@@ -271,9 +271,9 @@ class InboundShipmentService:
                     merged[pid]["cartons_count"] += d.get("cartons_count", 1)
                 else:
                     merged[pid] = dict(d)
-                for d in merged.values():
-                    line = InboundShipmentLine(**d, shipment_id=shipment.id)
-                    self.db.add(line)
+            for d in merged.values():
+                line = InboundShipmentLine(**d, shipment_id=shipment.id)
+                self.db.add(line)
         
         self.db.commit()
         self.db.refresh(shipment)
