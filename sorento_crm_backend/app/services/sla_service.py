@@ -279,7 +279,7 @@ def compute_tracking_timings(tracking, tier) -> dict:
     due_at_resolution = _to_aware_utc(getattr(tracking, "due_at_resolution", None))
     resolution_hours = getattr(tier, "resolution_hours", None) or 24
     resolution_due_at = due_at_resolution if due_at_resolution is not None else (
-        (initiated_at + timedelta(hours=resolution_hours)) if initiated_at else None
+        (current_tier_started_at + timedelta(hours=resolution_hours)) if current_tier_started_at else None
     )
 
     # Time in tier (response): if responded = responded_at - initiated_at; else timer keeps counting
@@ -857,9 +857,7 @@ class ConversationSLATrackingService:
                 response_hours = tier_row.response_hours if tier_row.response_hours is not None else 24
                 resolution_hours = getattr(tier_row, "resolution_hours", None) or 24
                 update_kw["due_at"] = now_utc + timedelta(hours=response_hours)
-                initiated_at_utc = _to_aware_utc(tracking.initiated_at)
-                if initiated_at_utc:
-                    update_kw["due_at_resolution"] = initiated_at_utc + timedelta(hours=resolution_hours)
+                update_kw["due_at_resolution"] = now_utc + timedelta(hours=resolution_hours)
         self.update_tracking(tracking_id, ConversationSLATrackingUpdate(**update_kw))
         tracking = self.get_tracking(tracking_id)
         phone = None
@@ -959,18 +957,15 @@ class ConversationSLATrackingService:
                 f"SLA policy tier {tracking_dict['current_tier']} not found for policy {tracking_dict['policy_id']}"
             )
 
-        # Calculate due_at (response) from response_hours; due_at_resolution from resolution_hours (initiated_at only)
+        # Calculate due_at (response) and due_at_resolution from current_tier_started_at + tier hours
         current_tier_started_at = _to_aware_utc(tracking_dict["current_tier_started_at"])
-        initiated_at_utc = _to_aware_utc(tracking_dict["initiated_at"])
         response_hours = tier.response_hours if tier.response_hours is not None else 24
         resolution_hours = getattr(tier, "resolution_hours", None) or 24
         if current_tier_started_at:
             tracking_dict["due_at"] = current_tier_started_at + timedelta(hours=response_hours)
+            tracking_dict["due_at_resolution"] = current_tier_started_at + timedelta(hours=resolution_hours)
         else:
             tracking_dict["due_at"] = None
-        if initiated_at_utc:
-            tracking_dict["due_at_resolution"] = initiated_at_utc + timedelta(hours=resolution_hours)
-        else:
             tracking_dict["due_at_resolution"] = None
 
         # Check if tracking already exists for this contact
@@ -980,7 +975,7 @@ class ConversationSLATrackingService:
         
         if existing:
             # Update existing tracking record. Apply recalculated due_at and due_at_resolution
-            # so they stay in sync with current_tier_started_at and initiated_at (fixes due dates
+            # so they stay in sync with current_tier_started_at (fixes due dates
             # appearing in the past when current_tier_started_at is updated to now).
             preserve_fields = {"id", "created_at", "respond_contact_id"}
 

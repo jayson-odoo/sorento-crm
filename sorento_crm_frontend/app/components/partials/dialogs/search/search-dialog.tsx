@@ -65,6 +65,7 @@ export function SearchDialog({ trigger }: { trigger: ReactNode }) {
     setOpen(false);
   }, [pathname]);
 
+  // Results are filtered by user permissions: only menus the user can access are searchable.
   // Depend on `permissions` (stable array from react-query), not `permissionSet`
   // (new Set every render), to avoid infinite effect loop and page freeze.
   useEffect(() => {

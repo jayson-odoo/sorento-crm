@@ -68,7 +68,7 @@ class ConversationSLATrackingBase(BaseModel):
     initiated_at: datetime
     current_tier_started_at: datetime
     due_at: datetime  # Response deadline
-    due_at_resolution: Optional[datetime] = None  # Resolution deadline (initiated_at + tier.resolution_hours)
+    due_at_resolution: Optional[datetime] = None  # Resolution deadline (current_tier_started_at + tier.resolution_hours)
     escalated_at: Optional[datetime] = None
     escalation_reason: Optional[str] = None
     is_responded: bool = False
@@ -349,7 +349,7 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     time_remaining_response_seconds: Optional[float] = None
     time_in_tier_resolution_seconds: Optional[float] = None
     time_remaining_resolution_seconds: Optional[float] = None
-    resolution_due_at: Optional[datetime] = None  # initiated_at + tier.resolution_hours
+    resolution_due_at: Optional[datetime] = None  # current_tier_started_at + tier.resolution_hours
     # Tier KPI hours (for frontend to color response_time / resolution_duration)
     tier_response_hours: Optional[int] = None
     tier_resolution_hours: Optional[int] = None

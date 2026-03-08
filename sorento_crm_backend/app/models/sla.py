@@ -58,7 +58,7 @@ class ConversationSLATracking(Base):
     initiated_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     current_tier_started_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     due_at = Column(DateTime(timezone=False), nullable=False)  # Response deadline: current_tier_started_at + tier.response_hours
-    due_at_resolution = Column(DateTime(timezone=False), nullable=True)  # Resolution deadline: initiated_at + tier.resolution_hours
+    due_at_resolution = Column(DateTime(timezone=False), nullable=True)  # Resolution deadline: current_tier_started_at + tier.resolution_hours
     escalated_at = Column(DateTime(timezone=False), nullable=True)
     escalation_reason = Column(Text, nullable=True)
     is_responded = Column(Boolean, default=False, nullable=False)

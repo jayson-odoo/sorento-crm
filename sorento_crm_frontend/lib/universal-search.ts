@@ -29,6 +29,7 @@ function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
 
+/** User can see this menu item only if it has no permission or their permissionSet includes it. */
 function isAllowed(item: MenuItem, permissionSet: Set<string>): boolean {
   if (!item.permission) return true;
   return permissionSet.has(item.permission);
@@ -81,6 +82,7 @@ function searchFromKeywords(
     .slice(0, 80);
 }
 
+/** Menu search provider: only includes items the user is allowed to see (context.permissionSet). */
 export function createMenuSearchProvider(menu: MenuConfig): UniversalSearchProvider {
   return {
     id: 'menu',
