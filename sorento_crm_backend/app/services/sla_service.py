@@ -662,12 +662,8 @@ class ConversationSLATrackingService:
         tracking.escalated_at = now_utc
         tracking.escalation_reason = escalation_reason
         tracking.due_at = now_utc + timedelta(hours=response_hours)
-        # Recalculate resolution due from new tier; ensure it is never earlier than response due
-        if initiated_at_utc:
-            resolution_from_initiated = initiated_at_utc + timedelta(hours=resolution_hours)
-            tracking.due_at_resolution = max(resolution_from_initiated, tracking.due_at)
-        else:
-            tracking.due_at_resolution = None
+        # On escalation, due_at_resolution = escalation time (now) + resolution_hours from policy
+        tracking.due_at_resolution = now_utc + timedelta(hours=resolution_hours)
 
         self.create_event_log(
             ConversationSLAEventLogCreate(
@@ -863,11 +859,7 @@ class ConversationSLATrackingService:
                 update_kw["due_at"] = now_utc + timedelta(hours=response_hours)
                 initiated_at_utc = _to_aware_utc(tracking.initiated_at)
                 if initiated_at_utc:
-                    resolution_from_initiated = initiated_at_utc + timedelta(hours=resolution_hours)
-                    update_kw["due_at_resolution"] = (
-                        max(resolution_from_initiated, update_kw["due_at"])
-                        if update_kw.get("due_at") else resolution_from_initiated
-                    )
+                    update_kw["due_at_resolution"] = initiated_at_utc + timedelta(hours=resolution_hours)
         self.update_tracking(tracking_id, ConversationSLATrackingUpdate(**update_kw))
         tracking = self.get_tracking(tracking_id)
         phone = None
@@ -967,8 +959,7 @@ class ConversationSLATrackingService:
                 f"SLA policy tier {tracking_dict['current_tier']} not found for policy {tracking_dict['policy_id']}"
             )
 
-        # Calculate due_at (response) and due_at_resolution from tier (UTC)
-        # Resolution due must always be >= response due
+        # Calculate due_at (response) from response_hours; due_at_resolution from resolution_hours (initiated_at only)
         current_tier_started_at = _to_aware_utc(tracking_dict["current_tier_started_at"])
         initiated_at_utc = _to_aware_utc(tracking_dict["initiated_at"])
         response_hours = tier.response_hours if tier.response_hours is not None else 24
@@ -978,9 +969,7 @@ class ConversationSLATrackingService:
         else:
             tracking_dict["due_at"] = None
         if initiated_at_utc:
-            resolution_from_initiated = initiated_at_utc + timedelta(hours=resolution_hours)
-            due_at = tracking_dict.get("due_at")
-            tracking_dict["due_at_resolution"] = max(resolution_from_initiated, due_at) if due_at else resolution_from_initiated
+            tracking_dict["due_at_resolution"] = initiated_at_utc + timedelta(hours=resolution_hours)
         else:
             tracking_dict["due_at_resolution"] = None
 
@@ -1265,17 +1254,16 @@ class ConversationSLATrackingService:
         if date_from:
             try:
                 dt = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
                 q = q.filter(ConversationSLAEventLog.event_at >= dt)
             except ValueError:
                 pass
         if date_to:
             try:
                 dt = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                # Include full day: end of day in UTC
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
                 end = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
                 q = q.filter(ConversationSLAEventLog.event_at <= end)
             except ValueError:
@@ -1284,9 +1272,44 @@ class ConversationSLATrackingService:
         total = q.count()
 
         logs = q.order_by(ConversationSLAEventLog.event_at.desc()).offset((page - 1) * limit).limit(limit).all()
-        
+
+        # Build response items as dicts (same shape as get_tracking) to avoid ORM->schema validation edge cases
+        data = []
+        for log in logs:
+            item = {
+                "id": str(log.id),
+                "sla_tracking_id": str(log.sla_tracking_id),
+                "event_type": log.event_type,
+                "from_tier": log.from_tier,
+                "to_tier": log.to_tier,
+                "event_at": log.event_at,
+                "from_time": log.from_time,
+                "duration": log.duration,
+                "reason": log.reason,
+                "assigned_to": log.assigned_to,
+                "assigned_to_id": log.assigned_to_id,
+                "due_at": log.due_at,
+                "response_time": log.response_time,
+                "resolution_time": log.resolution_time,
+                "reminder_count": log.reminder_count or 0,
+                "last_reminder_at": log.last_reminder_at,
+                "created_at": log.created_at,
+                "assigned_user": (
+                    {
+                        "id": log.assigned_user.id,
+                        "email": log.assigned_user.email or "",
+                        "name": getattr(log.assigned_user, "name", None),
+                    }
+                    if log.assigned_user
+                    else None
+                ),
+                "assigned_user_name": log.assigned_user.name if log.assigned_user else None,
+                "assigned_user_email": log.assigned_user.email if log.assigned_user else None,
+            }
+            data.append(ConversationSLAEventLogResponse.model_validate(item))
+
         return ListResponse(
-            data=[ConversationSLAEventLogResponse.model_validate(log) for log in logs],
+            data=data,
             pagination={
                 "total": total,
                 "page": page,

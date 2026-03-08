@@ -26,51 +26,6 @@
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/token/route.js"
     ],
-    "/(protected)/resource-management/attachment-directories/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/resource-management/attachment-directories/page.js"
-    ],
-    "/api/v1/external/[...path]/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/v1/external/[...path]/route.js"
-    ],
-    "/(protected)/procurement-management/packing-lists/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/packing-lists/page.js"
-    ],
-    "/(protected)/procurement-management/packing-lists/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/packing-lists/[id]/page.js"
-    ],
-    "/(protected)/user-management/users/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/users/page.js"
-    ],
-    "/(protected)/user-management/users/[id]/layout": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/users/[id]/layout.js"
-    ],
-    "/(protected)/user-management/users/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/users/[id]/page.js"
-    ],
-    "/(protected)/sla-management/sla-policies/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/sla-management/sla-policies/page.js"
-    ],
-    "/(protected)/sla-management/sla-policies/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/sla-management/sla-policies/[id]/page.js"
-    ],
     "/(protected)/sla-management/conversation-sla-tracking/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -80,6 +35,11 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js"
+    ],
+    "/api/v1/sla-management/[...path]/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/v1/sla-management/[...path]/route.js"
     ]
   }
 }

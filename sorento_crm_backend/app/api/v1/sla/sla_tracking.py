@@ -1,6 +1,6 @@
 """SLA tracking API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -211,11 +211,45 @@ async def escalate_sla_tracking_integration(
             request_payload_dict=body.model_dump(),
         )
         assigned_to_respond_user_id = str(superior.respond_user_id)
+
+        # Return new due dates and remaining hours (based on SLA policy)
+        now_utc = datetime.now(timezone.utc)
+
+        def _to_aware_utc(dt):
+            if dt is None:
+                return None
+            if getattr(dt, "tzinfo", None) is not None:
+                return dt.astimezone(timezone.utc)
+            return dt.replace(tzinfo=timezone.utc)
+
+        due_at_utc = _to_aware_utc(tracking.due_at)
+        due_at_resolution_utc = _to_aware_utc(getattr(tracking, "due_at_resolution", None))
+
+        remaining_response_hours = None
+        if due_at_utc:
+            secs = (due_at_utc - now_utc).total_seconds()
+            remaining_response_hours = int(round(max(0.0, secs / 3600.0)))  # full hours
+
+        remaining_resolution_hours = None
+        if due_at_resolution_utc:
+            secs = (due_at_resolution_utc - now_utc).total_seconds()
+            remaining_resolution_hours = int(round(max(0.0, secs / 3600.0)))  # full hours
+
+        def _iso(dt):
+            if dt is None:
+                return None
+            d = _to_aware_utc(dt) if getattr(dt, "tzinfo", None) is None else dt.astimezone(timezone.utc)
+            return d.isoformat()
+
         return {
             "status": "success",
             "message": "SLA tracking escalated successfully.",
             "tracking_id": tracking.id,
             "assigned_to_respond_user_id": assigned_to_respond_user_id,
+            "due_at": _iso(tracking.due_at),
+            "due_at_resolution": _iso(tracking.due_at_resolution),
+            "remaining_response_hours": remaining_response_hours,
+            "remaining_resolution_hours": remaining_resolution_hours,
         }
     except HTTPException:
         raise

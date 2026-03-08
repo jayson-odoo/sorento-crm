@@ -1,9 +1,7 @@
 {
-  "/api/auth/token/route": "app/api/auth/token/route.js",
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/(protected)/sla-management/conversation-sla-tracking/[id]/page": "app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js",
-  "/(protected)/user-management/users/page": "app/(protected)/user-management/users/page.js",
-  "/(protected)/procurement-management/packing-lists/[id]/page": "app/(protected)/procurement-management/packing-lists/[id]/page.js",
-  "/(protected)/sla-management/conversation-sla-tracking/page": "app/(protected)/sla-management/conversation-sla-tracking/page.js",
-  "/(protected)/user-management/users/[id]/page": "app/(protected)/user-management/users/[id]/page.js"
+  "/api/auth/token/route": "app/api/auth/token/route.js",
+  "/api/v1/sla-management/[...path]/route": "app/api/v1/sla-management/[...path]/route.js",
+  "/(protected)/page": "app/(protected)/page.js",
+  "/(protected)/sla-management/conversation-sla-tracking/[id]/page": "app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js"
 }

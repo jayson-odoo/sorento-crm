@@ -9,7 +9,7 @@ import {
   getCoreRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardFooter, CardHeader, CardTable, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
@@ -296,120 +296,125 @@ export default function EventLogTable({ trackingId }: EventLogTableProps) {
 
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 py-5">
-          <CardTitle>Event Log</CardTitle>
-          <div className="flex items-center gap-2">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="icon" disabled={isLoading} title="Filters" className="relative">
-                  <Filter className="size-4" />
-                  {hasActiveFilters && (
-                    <span className="absolute -top-1 -end-1 size-2.5 rounded-full bg-primary" />
-                  )}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-80" align="end">
-                <div className="space-y-4">
-                  <h4 className="font-medium text-sm">Filters</h4>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Event Type</Label>
-                    <Select
-                      value={eventTypeFilter}
-                      onValueChange={(v) => {
-                        setEventTypeFilter(v);
-                        setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                      }}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="All" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {EVENT_TYPE_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Date range (Event At)</Label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <Label className="text-muted-foreground text-xs">From</Label>
-                        <DatePicker
-                          value={dateFrom}
-                          onChange={(d) => {
-                            setDateFrom(d ?? undefined);
-                            setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                          }}
-                          placeholder="From"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-muted-foreground text-xs">To</Label>
-                        <DatePicker
-                          value={dateTo}
-                          onChange={(d) => {
-                            setDateTo(d ?? undefined);
-                            setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                          }}
-                          placeholder="To"
-                        />
+      <DataGrid table={table} recordCount={totalCount} isLoading={isLoading}>
+        <Card>
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 py-5">
+            <CardTitle>Event Log</CardTitle>
+            <div className="flex items-center gap-2 shrink-0">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" disabled={isLoading} title="Filter by event type, date range, assigned to" className="relative">
+                    <Filter className="size-4 mr-1.5" />
+                    Filter
+                    {hasActiveFilters && (
+                      <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-primary" />
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80" align="end">
+                  <div className="space-y-4">
+                    <h4 className="font-medium text-sm">Filters</h4>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Event Type</Label>
+                      <Select
+                        value={eventTypeFilter}
+                        onValueChange={(v) => {
+                          setEventTypeFilter(v);
+                          setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="All" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {EVENT_TYPE_OPTIONS.map((opt) => (
+                            <SelectItem key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Date range (Event At)</Label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <Label className="text-muted-foreground text-xs">From</Label>
+                          <DatePicker
+                            value={dateFrom}
+                            onChange={(d) => {
+                              setDateFrom(d ?? undefined);
+                              setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                            }}
+                            placeholder="From"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-muted-foreground text-xs">To</Label>
+                          <DatePicker
+                            value={dateTo}
+                            onChange={(d) => {
+                              setDateTo(d ?? undefined);
+                              setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                            }}
+                            placeholder="To"
+                          />
+                        </div>
                       </div>
                     </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Assigned To</Label>
+                      <Select
+                        value={assignedToFilter}
+                        onValueChange={(v) => {
+                          setAssignedToFilter(v);
+                          setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="All" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">All</SelectItem>
+                          {users.map((u: { id: string; name?: string; email?: string }) => (
+                            <SelectItem key={u.id} value={u.id}>
+                              {u.name || u.email || u.id}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {hasActiveFilters && (
+                      <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
+                        Clear Filters
+                      </Button>
+                    )}
                   </div>
-                  <div className="space-y-2">
-                    <Label className="text-xs">Assigned To</Label>
-                    <Select
-                      value={assignedToFilter}
-                      onValueChange={(v) => {
-                        setAssignedToFilter(v);
-                        setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                      }}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="All" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__all__">All</SelectItem>
-                        {users.map((u: { id: string; name?: string; email?: string }) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.name || u.email || u.id}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {hasActiveFilters && (
-                    <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
-                      Clear Filters
-                    </Button>
-                  )}
-                </div>
-              </PopoverContent>
-            </Popover>
-          </div>
-        </CardHeader>
-        <CardContent>
+                </PopoverContent>
+              </Popover>
+            </div>
+          </CardHeader>
           {eventLogs.length > 0 ? (
-            <DataGrid table={table} recordCount={totalCount} isLoading={isLoading}>
-              <div className="flex flex-col gap-2">
-                <DataGridPagination />
+            <>
+              <CardTable>
                 <ScrollArea>
                   <DataGridTable />
                   <ScrollBar orientation="horizontal" />
                 </ScrollArea>
-              </div>
-            </DataGrid>
+              </CardTable>
+              <CardFooter>
+                <DataGridPagination />
+              </CardFooter>
+            </>
           ) : (
-            <div className="text-center py-8 text-muted-foreground">
-              {hasActiveFilters ? 'No event logs match the filters.' : 'No event logs found'}
-            </div>
+            <CardContent>
+              <div className="text-center py-8 text-muted-foreground">
+                {hasActiveFilters ? 'No event logs match the filters.' : 'No event logs found'}
+              </div>
+            </CardContent>
           )}
-        </CardContent>
-      </Card>
+        </Card>
+      </DataGrid>
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
