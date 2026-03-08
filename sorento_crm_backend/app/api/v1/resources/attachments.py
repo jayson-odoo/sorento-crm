@@ -344,7 +344,7 @@ async def create_attachment(
         safe_filename = "".join(c for c in original_filename if c.isalnum() or c in (' ', '-', '_', '.')).strip() or "file"
         stored_filename = safe_filename
 
-        # Get attachment type: required for DB (attachments.attachment_type_id is NOT NULL).
+        # Get attachment type: optional in DB (nullable); required by API for new uploads.
         # When entity_type is "promotion" and no type_id given, use the promotion attachment type (code='promotion').
         type_service = AttachmentTypeService(db)
         attachment_type = None

@@ -94,8 +94,14 @@ class ContactService:
         )
     
     def assign_default_agents_to_contact(self, contact: RespondContact) -> None:
-        """Assign all agents with assign_to_new_internal_contacts=True to this contact. Idempotent per agent (skips if access already exists)."""
+        """Assign all agents with assign_to_new_internal_contacts=True to this contact. Idempotent per agent (skips if access already exists).
+        Sets valid_from to start of current year and valid_to to end of current year (for external-API-created contacts)."""
+        from datetime import datetime
         from app.services.user_service import AccessAgentService
+
+        now = datetime.utcnow()
+        valid_from = datetime(now.year, 1, 1, 0, 0, 0)
+        valid_to = datetime(now.year, 12, 31, 23, 59, 59)
 
         try:
             access_agent_service = AccessAgentService(self.db)
@@ -110,6 +116,8 @@ class ContactService:
                             respond_contact_name=contact_name,
                             agent_id=str(agent.id),
                             is_allowed=True,
+                            valid_from=valid_from,
+                            valid_to=valid_to,
                         ),
                     )
                 except Exception as assign_err:

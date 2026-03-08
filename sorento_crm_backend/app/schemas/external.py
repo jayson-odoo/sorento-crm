@@ -256,10 +256,11 @@ class FormFieldInput(BaseModel):
 
 
 class FormCreateRequest(BaseModel):
-    """External form create: form (used), form_sections and form_fields (ignored)."""
+    """External form create: form (used), form_sections and form_fields (ignored). attachment_id can be at root or inside form."""
     form: FormHeaderInput
     form_sections: Optional[List[FormSectionInput]] = None
     form_fields: Optional[List[FormFieldInput]] = None
+    attachment_id: Optional[str] = None  # root-level; used if form.attachment_id not set
 
 
 class FormCreateResponse(BaseModel):

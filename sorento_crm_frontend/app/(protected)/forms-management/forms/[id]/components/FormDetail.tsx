@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Download, Eye, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { useForm, useDeleteForm } from '../../hooks/useForms';
+import RecordNavigation from '@/components/common/RecordNavigation';
+import { useForm, useForms, useDeleteForm } from '../../hooks/useForms';
 import { formatDate } from '@/lib/helpers';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { useQuery } from '@tanstack/react-query';
@@ -29,6 +30,17 @@ interface FormDetailProps {
 export default function FormDetail({ formId }: FormDetailProps) {
   const router = useRouter();
   const { data: form, isLoading } = useForm(formId);
+  const navigationParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+    }),
+    [],
+  );
+  const { data: navigationData } = useForms(navigationParams);
+  const navigationItems = navigationData?.data ?? [];
   const downloadMutation = useDownloadAttachment();
   const deleteMutation = useDeleteForm();
   const [isDownloading, setIsDownloading] = useState(false);
@@ -126,6 +138,13 @@ export default function FormDetail({ formId }: FormDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
+          <RecordNavigation
+            currentId={formId}
+            items={navigationItems}
+            basePath="/forms-management/forms"
+            totalCount={navigationData?.total_count}
+            ariaLabel="form"
+          />
           <Button variant="outline" onClick={() => router.push(`/forms-management/forms/${formId}/edit`)}>
             <Edit className="size-4 mr-2" />
             Edit
