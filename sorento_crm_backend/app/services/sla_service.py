@@ -1315,82 +1315,92 @@ class ConversationSLATrackingService:
     
     def get_dashboard_metrics(self):
         """Get dashboard metrics for SLA tracking."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
         from decimal import Decimal
 
-        def _safe_resolution_hours(t):
+        def _safe_log_hours(log: ConversationSLAEventLog, kind: str) -> Optional[float]:
             try:
-                if t.resolution_duration is None:
-                    return 0.0
-                if isinstance(t.resolution_duration, Decimal):
-                    return float(t.resolution_duration)
-                return float(t.resolution_duration)
+                # Prefer duration; fallback to explicit fields for older data.
+                if log.duration is not None:
+                    return float(log.duration) if isinstance(log.duration, Decimal) else float(log.duration)
+                if kind == "response" and log.response_time is not None:
+                    return float(log.response_time) if isinstance(log.response_time, Decimal) else float(log.response_time)
+                if kind == "resolution" and log.resolution_time is not None:
+                    return float(log.resolution_time) if isinstance(log.resolution_time, Decimal) else float(log.resolution_time)
             except (TypeError, ValueError):
-                return 0.0
-
-        def _initiated_at_date(t):
-            """Return date part of initiated_at whether it's datetime or date."""
-            if t.initiated_at is None:
                 return None
-            if isinstance(t.initiated_at, datetime):
-                return t.initiated_at.date()
-            if hasattr(t.initiated_at, "isoformat"):  # date-like
-                return t.initiated_at
             return None
 
-        def _initiated_at_aware(t):
-            """Return timezone-aware datetime for comparison, or None."""
-            if t.initiated_at is None:
-                return None
-            if isinstance(t.initiated_at, datetime):
-                return _to_aware_utc(t.initiated_at)
-            if hasattr(t.initiated_at, "year"):  # date -> treat as UTC midnight
-                return datetime.combine(t.initiated_at, datetime.min.time()).replace(tzinfo=timezone.utc)
-            return None
+        now_utc = _now_utc()
+        thirty_days_ago = now_utc - timedelta(days=30)
 
         # Get all trackings
         all_trackings = self.db.query(ConversationSLATracking).all()
+        all_logs = self.db.query(ConversationSLAEventLog).all()
+        response_logs = [l for l in all_logs if (l.event_type or "").lower() == "response"]
+        resolution_logs = [l for l in all_logs if (l.event_type or "").lower() == "resolution"]
 
         total_trackings = len(all_trackings)
+        responded_count = sum(1 for t in all_trackings if t.is_responded)
         resolved_count = sum(1 for t in all_trackings if t.is_resolved)
-        pending_count = sum(1 for t in all_trackings if not t.is_resolved and not t.escalated_at)
+        pending_count = total_trackings - responded_count  # not yet responded
+        responded_not_resolved_count = sum(1 for t in all_trackings if t.is_responded and not t.is_resolved)
         escalated_count = sum(1 for t in all_trackings if t.escalated_at is not None)
 
-        # Calculate average resolution time (in hours)
-        resolved_trackings = [t for t in all_trackings if t.is_resolved and t.resolution_duration]
-        average_resolution_time = 0.0
-        if resolved_trackings:
-            total_duration = sum(_safe_resolution_hours(t) for t in resolved_trackings)
-            average_resolution_time = total_duration / len(resolved_trackings)
+        # Overdue: not responded and due_at passed; not resolved and due_at_resolution passed
+        overdue_at_response_count = 0
+        overdue_at_resolution_count = 0
+        overdue_at_resolution_responded_count = 0
+        for t in all_trackings:
+            if not t.is_responded and t.due_at:
+                due_at_utc = _to_aware_utc(t.due_at)
+                if due_at_utc and due_at_utc < now_utc:
+                    overdue_at_response_count += 1
+            if not t.is_resolved and getattr(t, "due_at_resolution", None):
+                due_res_utc = _to_aware_utc(t.due_at_resolution)
+                if due_res_utc and due_res_utc < now_utc:
+                    overdue_at_resolution_count += 1
+                    if t.is_responded:
+                        overdue_at_resolution_responded_count += 1
+
+        # Average durations (hours) from event logs
+        response_times = [_safe_log_hours(l, "response") for l in response_logs]
+        response_times = [t for t in response_times if t is not None]
+        average_response_time = sum(response_times) / len(response_times) if response_times else 0.0
+
+        resolution_times = [_safe_log_hours(l, "resolution") for l in resolution_logs]
+        resolution_times = [t for t in resolution_times if t is not None]
+        average_resolution_time = sum(resolution_times) / len(resolution_times) if resolution_times else 0.0
 
         # Calculate escalation rate
         escalation_rate = float(escalated_count / total_trackings * 100) if total_trackings > 0 else 0.0
 
-        # Response time trends (last 30 days) — UTC
-        thirty_days_ago = _now_utc() - timedelta(days=30)
-        recent_trackings = [
-            t for t in all_trackings
-            if _initiated_at_aware(t) is not None and _initiated_at_aware(t) >= thirty_days_ago
-        ]
-
-        response_time_trends = []
+        # Trends (last 30 days) from event logs by event_at date.
+        response_resolution_trends = []
         for i in range(30):
-            date = _now_utc() - timedelta(days=29 - i)
+            date = now_utc - timedelta(days=29 - i)
             date_str = date.date().isoformat()
 
-            day_trackings = [
-                t for t in recent_trackings
-                if _initiated_at_date(t) is not None and _initiated_at_date(t).isoformat() == date_str
-            ]
+            day_response_logs = []
+            for log in response_logs:
+                event_at = _to_aware_utc(log.event_at)
+                if event_at and event_at >= thirty_days_ago and event_at.date().isoformat() == date_str:
+                    day_response_logs.append(log)
+            day_resolution_logs = []
+            for log in resolution_logs:
+                event_at = _to_aware_utc(log.event_at)
+                if event_at and event_at >= thirty_days_ago and event_at.date().isoformat() == date_str:
+                    day_resolution_logs.append(log)
 
-            avg_response_time = 0.0
-            if day_trackings:
-                total_duration = sum(_safe_resolution_hours(t) for t in day_trackings)
-                avg_response_time = total_duration / len(day_trackings)
+            day_response_times = [_safe_log_hours(l, "response") for l in day_response_logs]
+            day_response_times = [v for v in day_response_times if v is not None]
+            day_resolution_times = [_safe_log_hours(l, "resolution") for l in day_resolution_logs]
+            day_resolution_times = [v for v in day_resolution_times if v is not None]
 
-            response_time_trends.append({
+            response_resolution_trends.append({
                 "date": date_str,
-                "average_response_time": avg_response_time,
+                "average_response_time": (sum(day_response_times) / len(day_response_times)) if day_response_times else 0.0,
+                "average_resolution_time": (sum(day_resolution_times) / len(day_resolution_times)) if day_resolution_times else 0.0,
             })
 
         # Escalation rates by tier
@@ -1417,19 +1427,36 @@ class ConversationSLATrackingService:
         # Status breakdown
         status_breakdown = {
             "resolved": resolved_count,
-            "escalated": escalated_count,
+            "responded_not_resolved": responded_not_resolved_count,
             "pending": pending_count,
+        }
+
+        pending_response_overdue_breakdown = {
+            "not_yet_overdue": max(0, pending_count - overdue_at_response_count),
+            "overdue_at_response": overdue_at_response_count,
+        }
+        responded_resolution_overdue_breakdown = {
+            "not_yet_overdue": max(0, responded_not_resolved_count - overdue_at_resolution_responded_count),
+            "overdue_at_resolution": overdue_at_resolution_responded_count,
         }
         
         return {
             "total_trackings": total_trackings,
-            "resolved_count": resolved_count,
             "pending_count": pending_count,
+            "responded_count": responded_count,
+            "responded_not_resolved_count": responded_not_resolved_count,
+            "resolved_count": resolved_count,
             "escalated_count": escalated_count,
+            "overdue_at_response_count": overdue_at_response_count,
+            "overdue_at_resolution_count": overdue_at_resolution_count,
+            "average_response_time": average_response_time,
             "average_resolution_time": average_resolution_time,
             "escalation_rate": escalation_rate,
-            "response_time_trends": response_time_trends,
+            "response_time_trends": response_resolution_trends,
+            "response_resolution_trends": response_resolution_trends,
             "escalation_rates_by_tier": escalation_rates_by_tier,
             "resolution_time_distribution": resolution_time_distribution,
             "status_breakdown": status_breakdown,
+            "pending_response_overdue_breakdown": pending_response_overdue_breakdown,
+            "responded_resolution_overdue_breakdown": responded_resolution_overdue_breakdown,
         }

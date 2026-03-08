@@ -226,29 +226,6 @@ export default function EventLogTable({ trackingId }: EventLogTableProps) {
         },
         size: 150,
       },
-      {
-        accessorKey: 'due_at',
-        header: ({ column }) => <DataGridColumnHeader title="Due At" column={column} />,
-        cell: ({ row }) => row.original.due_at ? formatDateTime(parseNaiveDateTimeAsLocal(row.original.due_at)) : '-',
-        size: 180,
-      },
-      {
-        accessorKey: 'response_time',
-        header: ({ column }) => <DataGridColumnHeader title="Response Time" column={column} />,
-        cell: ({ row }) => row.original.response_time ? `${row.original.response_time}h` : '-',
-        size: 120,
-      },
-      {
-        accessorKey: 'resolution_time',
-        header: ({ column }) => <DataGridColumnHeader title="Resolution Time" column={column} />,
-        cell: ({ row }) => row.original.resolution_time ? `${row.original.resolution_time}h` : '-',
-        size: 120,
-      },
-      {
-        accessorKey: 'reminder_count',
-        header: ({ column }) => <DataGridColumnHeader title="Reminders" column={column} />,
-        size: 100,
-      },
       ...(isAdmin ? [{
         id: 'actions',
         header: () => <div className="text-right">Actions</div>,

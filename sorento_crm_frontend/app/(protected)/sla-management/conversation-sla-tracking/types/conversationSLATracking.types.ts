@@ -107,9 +107,14 @@ export interface ConversationSLAEventLog {
 
 export interface SLATrackingDashboardMetrics {
   total_trackings: number;
-  resolved_count: number;
   pending_count: number;
+  responded_count: number;
+  responded_not_resolved_count: number;
+  resolved_count: number;
   escalated_count: number;
+  overdue_at_response_count: number;
+  overdue_at_resolution_count: number;
+  average_response_time: number;
   average_resolution_time: number;
   escalation_rate: number;
   response_time_trends: Array<{
@@ -126,7 +131,20 @@ export interface SLATrackingDashboardMetrics {
   };
   status_breakdown: {
     resolved: number;
-    escalated: number;
+    responded_not_resolved: number;
     pending: number;
   };
+  pending_response_overdue_breakdown: {
+    not_yet_overdue: number;
+    overdue_at_response: number;
+  };
+  responded_resolution_overdue_breakdown: {
+    not_yet_overdue: number;
+    overdue_at_resolution: number;
+  };
+  response_resolution_trends: Array<{
+    date: string;
+    average_response_time: number;
+    average_resolution_time: number;
+  }>;
 }
