@@ -120,6 +120,8 @@ class InboundShipmentLineResponse(InboundShipmentLineBase):
     updated_at: Optional[datetime] = None
     product: Optional[ProductSimple] = None
     spo_allocated_quantity: Optional[int] = None  # Total SPO allocated qty for this product on this shipment (all warehouses)
+    quantity_received: Optional[int] = None  # Sum of quantity_received from SPO allocations for this line
+    line_status: Optional[str] = None  # Stored in DB: in_transit, allocated, partially_allocated, received, partially_received (for n8n/API)
 
     class Config:
         from_attributes = True

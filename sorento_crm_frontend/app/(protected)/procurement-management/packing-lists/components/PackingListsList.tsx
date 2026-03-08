@@ -12,7 +12,6 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Plus, Search, X, ChevronRight, Trash2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
@@ -25,7 +24,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { usePackingLists } from '../hooks/usePackingLists';
 import type { PackingList } from '../types/packingList.types';
 import { formatDate } from '@/lib/helpers';
-import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 
 export default function PackingListsList() {
@@ -93,22 +91,6 @@ export default function PackingListsList() {
             : '-',
         size: 120,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
-      },
-      {
-        accessorKey: 'shipment_status',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Status" column={column} />
-        ),
-        cell: ({ row }) => {
-          const status = row.original.shipment_status;
-          return (
-            <Badge variant={getStatusBadgeVariant(status)}>
-              {formatStatusLabel(status) || '-'}
-            </Badge>
-          );
-        },
-        size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'expected_arrival_date',

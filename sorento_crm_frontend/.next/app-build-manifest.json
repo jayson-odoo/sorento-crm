@@ -40,6 +40,76 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/v1/sla-management/[...path]/route.js"
+    ],
+    "/(protected)/procurement-management/packing-lists/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/packing-lists/page.js"
+    ],
+    "/(protected)/procurement-management/packing-lists/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/packing-lists/[id]/page.js"
+    ],
+    "/(protected)/procurement-management/spo-allocations/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/spo-allocations/page.js"
+    ],
+    "/(protected)/system-management/import-jobs/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/system-management/import-jobs/page.js"
+    ],
+    "/(protected)/system-management/import-jobs/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/system-management/import-jobs/[id]/page.js"
+    ],
+    "/(protected)/system-management/scheduled-tasks/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/system-management/scheduled-tasks/page.js"
+    ],
+    "/(protected)/system-management/scheduled-tasks/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/system-management/scheduled-tasks/[id]/page.js"
+    ],
+    "/(auth)/layout": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(auth)/layout.js"
+    ],
+    "/(auth)/signin/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(auth)/signin/page.js"
+    ],
+    "/(protected)/user-management/teams/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/teams/page.js"
+    ],
+    "/(protected)/user-management/users/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/users/page.js"
+    ],
+    "/(protected)/user-management/logs/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/logs/page.js"
+    ],
+    "/api/user-management/logs/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/user-management/logs/route.js"
+    ],
+    "/api/v1/external/[...path]/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/v1/external/[...path]/route.js"
     ]
   }
 }

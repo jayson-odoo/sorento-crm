@@ -35,6 +35,30 @@ def _normalize_spo_number(spo_number: Optional[str]) -> str:
     return str(spo_number).strip().replace("/", ".").replace("\\", ".")
 
 
+def compute_inbound_shipment_line_status(
+    quantity_shipped: int,
+    allocated_quantity: int,
+    quantity_received: int,
+) -> str:
+    """Compute line-level status for packing list lines (stored in DB for n8n/API).
+    Same logic as frontend: in_transit, allocated, partially_allocated, received, partially_received.
+    """
+    qty = quantity_shipped or 0
+    alloc = allocated_quantity or 0
+    recv = quantity_received or 0
+    if alloc == 0:
+        return "in_transit"
+    if recv >= alloc:
+        return "received"
+    if qty > alloc:
+        return "partially_allocated"
+    if alloc >= qty and recv == 0:
+        return "allocated"
+    if alloc >= qty and recv > 0:
+        return "partially_received"
+    return "in_transit"
+
+
 class SupplierService:
     """Service for supplier operations."""
     
@@ -188,6 +212,38 @@ class InboundShipmentService:
         if not shipment:
             raise handle_not_found("Inbound Shipment", shipment_id)
         return shipment
+
+    def refresh_shipment_line_statuses(self, shipment_id: str) -> None:
+        """Recompute and persist line_status for all lines of this shipment (for n8n/API)."""
+        lines = (
+            self.db.query(InboundShipmentLine)
+            .filter(InboundShipmentLine.shipment_id == shipment_id)
+            .all()
+        )
+        if not lines:
+            return
+        totals_alloc = (
+            self.db.query(SPOAllocation.product_id, func.sum(SPOAllocation.allocated_quantity).label("total"))
+            .filter(SPOAllocation.inbound_shipment_id == shipment_id)
+            .group_by(SPOAllocation.product_id)
+            .all()
+        )
+        spo_by_product = {str(p): int(t) for p, t in totals_alloc}
+        received_by_line = (
+            self.db.query(SPOAllocation.inbound_shipment_lines_id, func.sum(SPOAllocation.quantity_received).label("total"))
+            .filter(SPOAllocation.inbound_shipment_id == shipment_id)
+            .filter(SPOAllocation.inbound_shipment_lines_id.isnot(None))
+            .group_by(SPOAllocation.inbound_shipment_lines_id)
+            .all()
+        )
+        received_by_line_id = {str(lid): int(t) for lid, t in received_by_line}
+        for line in lines:
+            alloc = spo_by_product.get(str(line.product_id), 0)
+            recv = received_by_line_id.get(str(line.id), 0)
+            line.line_status = compute_inbound_shipment_line_status(
+                line.quantity_shipped or 0, alloc, recv
+            )
+        self.db.commit()
     
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
         """Create a new inbound shipment with lines."""
@@ -215,12 +271,13 @@ class InboundShipmentService:
                     merged[pid]["cartons_count"] += d.get("cartons_count", 1)
                 else:
                     merged[pid] = dict(d)
-            for d in merged.values():
-                line = InboundShipmentLine(**d, shipment_id=shipment.id)
-                self.db.add(line)
+                for d in merged.values():
+                    line = InboundShipmentLine(**d, shipment_id=shipment.id)
+                    self.db.add(line)
         
         self.db.commit()
         self.db.refresh(shipment)
+        self.refresh_shipment_line_statuses(shipment.id)
         return shipment
     
     def update_shipment(self, shipment_id: str, shipment_data: InboundShipmentUpdate, updated_by: str):
@@ -253,6 +310,7 @@ class InboundShipmentService:
         
         self.db.commit()
         self.db.refresh(shipment)
+        self.refresh_shipment_line_statuses(shipment_id)
         return shipment
 
     def delete_shipment(self, shipment_id: str) -> None:
@@ -1291,20 +1349,26 @@ class PickingHeaderService:
 
     def sync_grn_received_to_spo(self, picking_header_id: str) -> None:
         """After GRN is approved: set quantity_received on each affected SPO allocation (DB field, for legacy/reports).
-        From picking lines (spo_allocation_id = allocation, header approved). Idempotent."""
+        From picking lines (spo_allocation_id = allocation, header approved). Idempotent.
+        Also refreshes inbound_shipment_lines.line_status for affected shipments."""
         lines = self.db.query(PickingLine).filter(
             PickingLine.picking_header_id == picking_header_id,
             PickingLine.spo_allocation_id.isnot(None),
         ).all()
         allocation_ids = {str(line.spo_allocation_id) for line in lines if line.spo_allocation_id}
+        shipment_ids = set()
         for alloc_id in allocation_ids:
             alloc = self.db.query(SPOAllocation).filter(SPOAllocation.id == alloc_id).first()
             if not alloc:
                 continue
+            shipment_ids.add(alloc.inbound_shipment_id)
             total = self.compute_received_for_allocation(alloc_id)
             alloc.quantity_received = total
             alloc.receipt_status = "received" if total >= alloc.allocated_quantity else "pending"
         self.db.commit()
+        inbound_svc = InboundShipmentService(self.db)
+        for sid in shipment_ids:
+            inbound_svc.refresh_shipment_line_statuses(sid)
 
     def sync_received_for_spo_number(self, spo_number: Optional[str]) -> None:
         """Re-sync DB quantity_received for all allocations under this SPO (optional background use)."""

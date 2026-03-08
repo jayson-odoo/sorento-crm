@@ -24,6 +24,7 @@ import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { ChevronRight } from 'lucide-react';
 
 const INTERVAL_LABELS: Record<string, string> = {
+  seconds: 'sec',
   minutes: 'min',
   hours: 'hr',
   days: 'day',

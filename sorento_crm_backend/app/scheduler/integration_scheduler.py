@@ -228,15 +228,15 @@ def start_scheduler():
 
     scheduler = BackgroundScheduler()
 
-    # Single heartbeat every 60s: query due scheduled_tasks, run handlers, persist run logs
+    # Single heartbeat every 10s: query due scheduled_tasks, run handlers, persist run logs
     scheduler.add_job(
         _scheduled_tasks_heartbeat,
-        trigger=IntervalTrigger(seconds=60),
+        trigger=IntervalTrigger(seconds=10),
         id="scheduled_tasks_heartbeat",
         name="Scheduled tasks heartbeat",
         replace_existing=True,
     )
 
     scheduler.start()
-    logger.info("Scheduler started: scheduled tasks heartbeat (every 60s)")
+    logger.info("Scheduler started: scheduled tasks heartbeat (every 10s)")
     return scheduler

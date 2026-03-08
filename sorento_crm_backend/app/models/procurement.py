@@ -145,6 +145,7 @@ class InboundShipmentLine(Base):
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     updated_at = Column(DateTime(timezone=False), nullable=True)
+    line_status = Column(String(50), default="in_transit", nullable=False)
     
     shipment = relationship("InboundShipment", back_populates="shipment_lines")
     product = relationship("Product", back_populates="inbound_shipment_lines")

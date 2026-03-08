@@ -13,6 +13,10 @@ export interface InboundShipmentLine {
   unit_cost?: number | null;
   /** Total SPO allocated quantity for this product on this shipment (all warehouses). */
   spo_allocated_quantity?: number | null;
+  /** Sum of quantity_received from SPO allocations for this line. */
+  quantity_received?: number | null;
+  /** Stored in DB: in_transit, allocated, partially_allocated, received, partially_received (for n8n/API). */
+  line_status?: string | null;
   product?: {
     id: string;
     product_code: string;

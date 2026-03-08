@@ -49,10 +49,15 @@ async def get_packing_list(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get a single packing list by ID. Shipment lines include spo_allocated_quantity (total SPO allocated for that product on this shipment)."""
+    """Get a single packing list by ID. Shipment lines include spo_allocated_quantity, quantity_received, and line_status (stored in DB for n8n/API)."""
     try:
         service = InboundShipmentService(db)
         shipment = service.get_shipment(shipment_id)
+        # Refresh and persist line_status so n8n/API always have current value in DB
+        service.refresh_shipment_line_statuses(shipment_id)
+        # Reload shipment so line_status is in memory (refresh committed)
+        shipment = service.get_shipment(shipment_id)
+        # SPO allocated total per product on this shipment
         totals = (
             db.query(SPOAllocation.product_id, func.sum(SPOAllocation.allocated_quantity).label("total"))
             .filter(SPOAllocation.inbound_shipment_id == shipment_id)
@@ -60,8 +65,18 @@ async def get_packing_list(
             .all()
         )
         spo_by_product = {str(p): int(t) for p, t in totals}
+        # Quantity received per inbound_shipment_line (SPO allocations are keyed by inbound_shipment_lines_id)
+        received_by_line = (
+            db.query(SPOAllocation.inbound_shipment_lines_id, func.sum(SPOAllocation.quantity_received).label("total"))
+            .filter(SPOAllocation.inbound_shipment_id == shipment_id)
+            .filter(SPOAllocation.inbound_shipment_lines_id.isnot(None))
+            .group_by(SPOAllocation.inbound_shipment_lines_id)
+            .all()
+        )
+        received_by_line_id = {str(line_id): int(t) for line_id, t in received_by_line}
         for line in shipment.shipment_lines:
             setattr(line, "spo_allocated_quantity", spo_by_product.get(str(line.product_id), 0))
+            setattr(line, "quantity_received", received_by_line_id.get(str(line.id), 0))
         return shipment
     except HTTPException:
         raise

@@ -32,7 +32,9 @@ def compute_next_run(
     Compute next run time from interval and start/from time.
     Uses UTC; timezone param is reserved for future use.
     """
-    if interval_unit == "minutes":
+    if interval_unit == "seconds":
+        delta = timedelta(seconds=interval_value)
+    elif interval_unit == "minutes":
         delta = timedelta(minutes=interval_value)
     elif interval_unit == "hours":
         delta = timedelta(hours=interval_value)

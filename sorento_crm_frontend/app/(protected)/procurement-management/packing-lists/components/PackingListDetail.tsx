@@ -38,9 +38,28 @@ export default function PackingListDetail({
   const { data: packingList, isLoading } = usePackingList(packingListId);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [shipmentLinesSearch, setShipmentLinesSearch] = useState('');
-  const [sortField, setSortField] = useState<'product' | 'quantity_shipped' | 'spo_allocated'>('product');
+  const [sortField, setSortField] = useState<'product' | 'quantity_shipped' | 'spo_allocated' | 'quantity_received' | 'status'>('product');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const downloadMutation = useDownloadAttachment();
+
+  /** Line-level status from quantity shipped, allocated, and received. */
+  const getLineStatus = (
+    quantityShipped: number,
+    allocated: number,
+    received: number
+  ): string => {
+    const qty = quantityShipped ?? 0;
+    const alloc = allocated ?? 0;
+    const recv = received ?? 0;
+    if (alloc === 0) return 'in_transit';
+    // Received: full or over-received (recv >= alloc)
+    if (recv >= alloc) return 'received';
+    if (qty > alloc) return 'partially_allocated';
+    // Allocated: allocated qty >= shipped and nothing received yet
+    if (alloc >= qty && recv === 0) return 'allocated';
+    if (alloc >= qty && recv > 0) return 'partially_received';
+    return 'in_transit';
+  };
 
   // Sort and filter shipment lines - must be called before early returns (Rules of Hooks)
   const sortedAndFilteredLines = useMemo(() => {
@@ -72,6 +91,18 @@ export default function PackingListDetail({
           aVal = a.spo_allocated_quantity ?? 0;
           bVal = b.spo_allocated_quantity ?? 0;
           break;
+        case 'quantity_received':
+          aVal = a.quantity_received ?? 0;
+          bVal = b.quantity_received ?? 0;
+          break;
+        case 'status':
+          aVal =
+            a.line_status ??
+            getLineStatus(a.quantity_shipped ?? 0, a.spo_allocated_quantity ?? 0, a.quantity_received ?? 0);
+          bVal =
+            b.line_status ??
+            getLineStatus(b.quantity_shipped ?? 0, b.spo_allocated_quantity ?? 0, b.quantity_received ?? 0);
+          break;
         default:
           return 0;
       }
@@ -90,7 +121,7 @@ export default function PackingListDetail({
     return filtered;
   }, [packingList?.shipment_lines, shipmentLinesSearch, sortField, sortDirection]);
 
-  const handleSort = (field: 'product' | 'quantity_shipped' | 'spo_allocated') => {
+  const handleSort = (field: 'product' | 'quantity_shipped' | 'spo_allocated' | 'quantity_received' | 'status') => {
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
@@ -99,7 +130,7 @@ export default function PackingListDetail({
     }
   };
 
-  const SortIcon = ({ field }: { field: 'product' | 'quantity_shipped' | 'spo_allocated' }) => {
+  const SortIcon = ({ field }: { field: 'product' | 'quantity_shipped' | 'spo_allocated' | 'quantity_received' | 'status' }) => {
     if (sortField !== field) {
       return <ArrowUpDown className="size-4 ml-1 text-muted-foreground" />;
     }
@@ -161,8 +192,6 @@ export default function PackingListDetail({
     );
   }
 
-  const statusLabel = formatStatusLabel(packingList.shipment_status) || '-';
-
   // Total items/cartons from shipment lines when present (source of truth)
   const totalItemsFromLines =
     packingList.shipment_lines?.reduce(
@@ -188,14 +217,9 @@ export default function PackingListDetail({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">
-              {packingList.shipment_number}
-            </h1>
-            <Badge variant={getStatusBadgeVariant(packingList.shipment_status)}>
-              {statusLabel}
-            </Badge>
-          </div>
+          <h1 className="text-2xl font-bold">
+            {packingList.shipment_number}
+          </h1>
           <p className="text-sm text-muted-foreground">
             {packingList.supplier?.supplier_name || 'No supplier'} • Shipment
             Date:{' '}
@@ -282,14 +306,6 @@ export default function PackingListDetail({
                     ? formatDate(new Date(packingList.actual_arrival_date))
                     : '-'}
                 </p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Status</p>
-                <Badge
-                  variant={getStatusBadgeVariant(packingList.shipment_status)}
-                >
-                  {statusLabel}
-                </Badge>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">
@@ -449,20 +465,55 @@ export default function PackingListDetail({
                           <SortIcon field="spo_allocated" />
                         </button>
                       </TableHead>
+                      <TableHead>
+                        <button
+                          onClick={() => handleSort('quantity_received')}
+                          className="flex items-center hover:text-foreground transition-colors"
+                        >
+                          Received Quantity
+                          <SortIcon field="quantity_received" />
+                        </button>
+                      </TableHead>
+                      <TableHead>
+                        <button
+                          onClick={() => handleSort('status')}
+                          className="flex items-center hover:text-foreground transition-colors"
+                        >
+                          Status
+                          <SortIcon field="status" />
+                        </button>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {sortedAndFilteredLines.map((line) => (
-                      <TableRow key={line.id}>
-                        <TableCell>
-                          {line.product?.product_code || '-'}
-                        </TableCell>
-                        <TableCell>{line.quantity_shipped}</TableCell>
-                        <TableCell>
-                          {line.spo_allocated_quantity != null ? line.spo_allocated_quantity : '-'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {sortedAndFilteredLines.map((line) => {
+                      const lineStatus =
+                        line.line_status ??
+                        getLineStatus(
+                          line.quantity_shipped ?? 0,
+                          line.spo_allocated_quantity ?? 0,
+                          line.quantity_received ?? 0
+                        );
+                      return (
+                        <TableRow key={line.id}>
+                          <TableCell>
+                            {line.product?.product_code || '-'}
+                          </TableCell>
+                          <TableCell>{line.quantity_shipped}</TableCell>
+                          <TableCell>
+                            {line.spo_allocated_quantity != null ? line.spo_allocated_quantity : '-'}
+                          </TableCell>
+                          <TableCell>
+                            {line.quantity_received != null ? line.quantity_received : '-'}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={getStatusBadgeVariant(lineStatus)}>
+                              {formatStatusLabel(lineStatus)}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>

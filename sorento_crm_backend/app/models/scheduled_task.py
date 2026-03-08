@@ -16,7 +16,7 @@ class ScheduledTask(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)  # context for UI
     enabled = Column(Boolean, default=True, nullable=False)
-    interval_unit = Column(String(20), nullable=False)  # minutes | hours | days
+    interval_unit = Column(String(20), nullable=False)  # seconds | minutes | hours | days
     interval_value = Column(Integer, nullable=False)  # e.g. 10 for "every 10 minutes"
     timezone = Column(String(50), default="UTC", nullable=False)
     start_at = Column(DateTime(timezone=False), nullable=True)

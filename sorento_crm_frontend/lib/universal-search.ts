@@ -1,0 +1,125 @@
+import type { MenuConfig, MenuItem } from '@/config/types';
+
+export type UniversalSearchSource = 'menu' | 'spo';
+
+export interface UniversalSearchResult {
+  id: string;
+  sourceType: UniversalSearchSource;
+  group: string;
+  title: string;
+  breadcrumb: string;
+  path?: string;
+  keywords: string[];
+}
+
+export interface UniversalSearchContext {
+  permissionSet: Set<string>;
+}
+
+export interface UniversalSearchProvider {
+  id: UniversalSearchSource;
+  label: string;
+  search: (
+    query: string,
+    context: UniversalSearchContext,
+  ) => Promise<UniversalSearchResult[]> | UniversalSearchResult[];
+}
+
+function normalize(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function isAllowed(item: MenuItem, permissionSet: Set<string>): boolean {
+  if (!item.permission) return true;
+  return permissionSet.has(item.permission);
+}
+
+function collectMenuItems(
+  items: MenuConfig,
+  permissionSet: Set<string>,
+  parents: string[] = [],
+): UniversalSearchResult[] {
+  const results: UniversalSearchResult[] = [];
+
+  for (const item of items) {
+    if (item.heading || item.disabled || !isAllowed(item, permissionSet)) {
+      continue;
+    }
+
+    const nextParents = item.title ? [...parents, item.title] : parents;
+
+    if (item.path && item.title) {
+      const breadcrumb = nextParents.join(' > ');
+      results.push({
+        id: `menu:${item.path}`,
+        sourceType: 'menu',
+        group: 'Menus',
+        title: item.title,
+        breadcrumb,
+        path: item.path,
+        keywords: [item.title, breadcrumb, item.path],
+      });
+    }
+
+    if (item.children?.length) {
+      results.push(...collectMenuItems(item.children, permissionSet, nextParents));
+    }
+  }
+
+  return results;
+}
+
+function searchFromKeywords(
+  query: string,
+  records: UniversalSearchResult[],
+): UniversalSearchResult[] {
+  const q = normalize(query);
+  if (!q) return records.slice(0, 80);
+
+  return records
+    .filter((item) => item.keywords.some((key) => normalize(key).includes(q)))
+    .slice(0, 80);
+}
+
+export function createMenuSearchProvider(menu: MenuConfig): UniversalSearchProvider {
+  return {
+    id: 'menu',
+    label: 'Menus',
+    search: (query, context) => {
+      const records = collectMenuItems(menu, context.permissionSet);
+      return searchFromKeywords(query, records);
+    },
+  };
+}
+
+export const spoSearchProvider: UniversalSearchProvider = {
+  id: 'spo',
+  label: 'SPO Allocations',
+  search: async () => {
+    // Placeholder provider for future SPO-number lookup integration.
+    return [];
+  },
+};
+
+export async function runUniversalSearch(
+  query: string,
+  providers: UniversalSearchProvider[],
+  context: UniversalSearchContext,
+): Promise<Record<string, UniversalSearchResult[]>> {
+  const groups: Record<string, UniversalSearchResult[]> = {};
+
+  const providerResults = await Promise.all(
+    providers.map(async (provider) => ({
+      label: provider.label,
+      items: await provider.search(query, context),
+    })),
+  );
+
+  for (const { label, items } of providerResults) {
+    if (items.length > 0) {
+      groups[label] = items;
+    }
+  }
+
+  return groups;
+}

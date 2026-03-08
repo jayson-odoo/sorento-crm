@@ -1,7 +1,10 @@
 {
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/api/v1/sla-management/[...path]/route": "app/api/v1/sla-management/[...path]/route.js",
+  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
+  "/api/v1/external/[...path]/route": "app/api/v1/external/[...path]/route.js",
+  "/(protected)/procurement-management/spo-allocations/page": "app/(protected)/procurement-management/spo-allocations/page.js",
+  "/(protected)/user-management/users/page": "app/(protected)/user-management/users/page.js",
+  "/(protected)/user-management/logs/page": "app/(protected)/user-management/logs/page.js",
   "/(protected)/page": "app/(protected)/page.js",
-  "/(protected)/sla-management/conversation-sla-tracking/[id]/page": "app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js"
+  "/(protected)/user-management/teams/page": "app/(protected)/user-management/teams/page.js"
 }

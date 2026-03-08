@@ -1,321 +1,135 @@
 'use client';
 
-import { ReactNode, useState } from 'react';
-import { DropdownMenu4 } from '@/partials/dropdown-menu/dropdown-menu-4';
+import { ReactNode, useEffect, useMemo, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { ArrowUpRight, Search } from 'lucide-react';
+import { MENU_SIDEBAR } from '@/config/menu.config';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
-  Badge,
-  Bolt,
-  Captions,
-  CircleUserRound,
-  Home,
-  IdCard,
-  Search,
-  Settings,
-  SquareCode,
-  UserRoundPen,
-  UserRoundPlus,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandShortcut,
+} from '@/components/ui/command';
 import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  SearchDocs,
-  SearchDocsItem,
-  SearchEmpty,
-  SearchIntegrations,
-  SearchIntegrationsItem,
-  SearchMixed,
-  SearchNoResults,
-  SearchSettings,
-  SearchSettingsItem,
-  SearchUsers,
-  SearchUsersItem,
-} from './';
+  createMenuSearchProvider,
+  runUniversalSearch,
+  spoSearchProvider,
+  type UniversalSearchProvider,
+  type UniversalSearchResult,
+} from '@/lib/universal-search';
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName.toLowerCase();
+  if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
+    return true;
+  }
+  if (target.isContentEditable) return true;
+  return target.getAttribute('role') === 'textbox';
+}
 
 export function SearchDialog({ trigger }: { trigger: ReactNode }) {
-  const [searchInput, setSearchInput] = useState('');
+  const pathname = usePathname();
+  const router = useRouter();
+  const { permissions } = usePermissions();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [groupedResults, setGroupedResults] = useState<
+    Record<string, UniversalSearchResult[]>
+  >({});
 
-  const mixedSettingsItems: SearchSettingsItem[] = [
-    { icon: IdCard, info: 'Public Profile' },
-    { icon: Settings, info: 'My Account' },
-    { icon: SquareCode, info: 'Devs Forum' },
-  ];
+  const providers = useMemo<UniversalSearchProvider[]>(
+    () => [createMenuSearchProvider(MENU_SIDEBAR), spoSearchProvider],
+    [],
+  );
 
-  const mixedUsersItems: SearchUsersItem[] = [
-    {
-      avatar: '300-3.png',
-      name: 'Tyler Hero',
-      email: 'tyler.hero@gmail.com',
-      label: 'In Office',
-      color: 'success',
-    },
-    {
-      avatar: '300-1.png',
-      name: 'Esther Howard',
-      email: 'esther.howard@gmail.com',
-      label: 'On Leave',
-      color: 'destructive',
-    },
-  ];
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isShortcut =
+        (event.metaKey || event.ctrlKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === 'k';
+      if (!isShortcut || isTypingTarget(event.target)) return;
+      event.preventDefault();
+      setOpen((value) => !value);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
-  const mixedIntegrationsItems: SearchIntegrationsItem[] = [
-    {
-      logo: 'jira.svg',
-      name: 'Jira',
-      description: 'Project management',
-      team: [
-        { filename: '300-4.png', variant: 'size-6' },
-        { filename: '300-1.png', variant: 'size-6' },
-        { filename: '300-2.png', variant: 'size-6' },
-        {
-          fallback: '+3',
-          variant: 'text-white rounded-full size-6 ring-background bg-green-500',
-        },
-      ],
-    },
-    {
-      logo: 'inferno.svg',
-      name: 'Inferno',
-      description: 'Real-time photo sharing app',
-      team: [
-        { filename: '300-14.png', variant: 'size-6' },
-        { filename: '300-12.png', variant: 'size-6' },
-        { filename: '300-9.png', variant: 'size-6' },
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
 
-      ],
-    },
-  ];
+  // Depend on `permissions` (stable array from react-query), not `permissionSet`
+  // (new Set every render), to avoid infinite effect loop and page freeze.
+  useEffect(() => {
+    let cancelled = false;
+    const permissionSet = new Set(permissions);
+    const run = async () => {
+      const next = await runUniversalSearch(query, providers, { permissionSet });
+      if (!cancelled) setGroupedResults(next);
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [query, providers, permissions]);
 
-  const docsItems: SearchDocsItem[] = [
-    {
-      image: 'pdf.svg',
-      desc: 'Project-pitch.pdf',
-      date: '4.7 MB 26 Sep 2024 3:20 PM',
-    },
-    {
-      image: 'doc.svg',
-      desc: 'Report-v1.docx',
-      date: '2.3 MB 1 Oct 2024 12:00 PM',
-    },
-    {
-      image: 'javascript.svg',
-      desc: 'Framework-App.js',
-      date: '0.8 MB 17 Oct 2024 6:46 PM',
-    },
-    {
-      image: 'ai.svg',
-      desc: 'Framework-App.js',
-      date: '0.8 MB 17 Oct 2024 6:46 PM',
-    },
-    {
-      image: 'php.svg',
-      desc: 'appController.js',
-      date: '0.1 MB 21 Nov 2024 3:20 PM',
-    },
-  ];
+  const hasAnyResults = useMemo(
+    () => Object.values(groupedResults).some((items) => items.length > 0),
+    [groupedResults],
+  );
 
-  const settingsItems = [
-    {
-      title: 'Shortcuts',
-      children: [
-        { icon: Home, info: 'Go to Dashboard' },
-        { icon: Badge, info: 'Public Profile' },
-        { icon: CircleUserRound, info: 'My Profile' },
-        { icon: Settings, info: 'My Account' },
-        { icon: SquareCode, info: 'Devs Forum' },
-      ],
-    },
-    {
-      title: 'Actions',
-      children: [
-        { icon: UserRoundPlus, info: 'Create User' },
-        { icon: UserRoundPen, info: 'Create Team' },
-        { icon: Captions, info: 'Change Plan' },
-        { icon: Bolt, info: 'Setup Branding' },
-      ],
-    },
-  ];
-
-  const integrationsItems = [
-    {
-      logo: 'jira.svg',
-      name: 'Jira',
-      description: 'Project management',
-      team: [
-        { filename: '300-4.png', variant: 'size-6' },
-        { filename: '300-1.png', variant: 'size-6' },
-        { filename: '300-2.png', variant: 'size-6' },
-        {
-          fallback: '+3',
-          variant: 'text-white size-6 ring-background bg-green-500',
-        },
-      ],
-    },
-    {
-      logo: 'inferno.svg',
-      name: 'Inferno',
-      description: 'Real-time photo sharing app',
-      team: [
-        { filename: '300-14.png', variant: 'size-6' },
-        { filename: '300-12.png', variant: 'size-6' },
-        { filename: '300-9.png', variant: 'size-6' },
-      ],
-    },
-    {
-      logo: 'evernote.svg',
-      name: 'Evernote',
-      description: 'Notes management app',
-      team: [
-        { filename: '300-6.png', variant: 'size-6' },
-        { filename: '300-3.png', variant: 'size-6' },
-        { filename: '300-1.png', variant: 'size-6' },
-        { filename: '300-8.png', variant: 'size-6' },
-      ],
-    },
-    {
-      logo: 'gitlab.svg',
-      name: 'Gitlab',
-      description: 'Version control and CI/CD platform',
-      team: [
-        { filename: '300-18.png', variant: 'size-6' },
-        { filename: '300-17.png', variant: 'size-6' },
-      ],
-    },
-    {
-      logo: 'google-webdev.svg',
-      name: 'Google Webdev',
-      description: 'Building web experiences',
-      team: [
-        { filename: '300-14.png', variant: 'size-6' },
-        { filename: '300-20.png', variant: 'size-6' },
-        { filename: '300-21.png', variant: 'size-6' },
-      ],
-    },
-  ];
-
-  const usersItems: SearchUsersItem[] = [
-    {
-      avatar: '300-3.png',
-      name: 'Tyler Hero',
-      email: 'tyler.hero@gmail.com',
-      label: 'In Office',
-      color: 'success',
-    },
-    {
-      avatar: '300-1.png',
-      name: 'Esther Howard',
-      email: 'esther.howard@gmail.com',
-      label: 'On Leave',
-      color: 'destructive',
-    },
-    {
-      avatar: '300-11.png',
-      name: 'Jacob Jones',
-      email: 'jacob.jones@gmail.com',
-      label: 'Remote',
-      color: 'primary',
-    },
-    {
-      avatar: '300-5.png',
-      name: 'Leslie Alexander',
-      email: 'leslie.alexander@gmail.com',
-      label: 'In Office',
-      color: 'success',
-    },
-    {
-      avatar: '300-2.png',
-      name: 'Cody Fisher',
-      email: 'cody.fisher@gmail.com',
-      label: 'Remote',
-      color: 'primary',
-    },
-  ];
+  const handleSelect = (path?: string) => {
+    if (!path) return;
+    setOpen(false);
+    router.push(path);
+  };
 
   return (
-    <Dialog>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent className="lg:max-w-[600px] lg:top-[15%] lg:translate-y-0 p-0 [&_[data-slot=dialog-close]]:top-5.5 [&_[data-slot=dialog-close]]:end-5.5">
-        <DialogHeader className="px-4 py-1 mb-1">
-          <DialogTitle className="sr-only">Search</DialogTitle>
-          <DialogDescription className="sr-only">Search the application</DialogDescription>
-          <div className="relative">
-            <Search className="absolute top-1/2 -translate-y-1/2 size-4" />
-            <Input
-              type="text"
-              name="query"
-              value={searchInput}
-              className="ps-6 outline-none! ring-0! shadow-none! border-0"
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Search..."
-            />
-          </div>
-        </DialogHeader>
-        <DialogBody className="p-0 pb-5">
-          <Tabs defaultValue="1">
-            <TabsList className="justify-between px-5 mb-2.5" variant="line">
-              <div className="flex items-center gap-5">
-                <TabsTrigger value="1">Mixed</TabsTrigger>
-                <TabsTrigger value="2">Settings</TabsTrigger>
-                <TabsTrigger value="3">Integrations</TabsTrigger>
-                <TabsTrigger value="4">Users</TabsTrigger>
-                <TabsTrigger value="5">Docs</TabsTrigger>
-                <TabsTrigger value="6">Empty</TabsTrigger>
-                <TabsTrigger value="7">No Results</TabsTrigger>
-              </div>
-
-              <DropdownMenu4
-                trigger={
-                  <Button
-                    variant="ghost"
-                    mode="icon"
-                    size="sm"
-                    className="mb-1.5 -me-2"
-                  >
-                    <Settings />
-                  </Button>
-                }
-              />
-            </TabsList>
-            <ScrollArea className="h-[480px]">
-              <TabsContent value="1">
-                <SearchMixed
-                  settings={mixedSettingsItems}
-                  integrations={mixedIntegrationsItems}
-                  users={mixedUsersItems}
-                />
-              </TabsContent>
-              <TabsContent value="2">
-                <SearchSettings items={settingsItems} />
-              </TabsContent>
-              <TabsContent value="3">
-                <SearchIntegrations items={integrationsItems} more={true} />
-              </TabsContent>
-              <TabsContent value="4">
-                <SearchUsers items={usersItems} more={true} />
-              </TabsContent>
-              <TabsContent value="5">
-                <SearchDocs items={docsItems} />
-              </TabsContent>
-              <TabsContent value="6">
-                <SearchEmpty />
-              </TabsContent>
-              <TabsContent value="7">
-                <SearchNoResults />
-              </TabsContent>
-            </ScrollArea>
-          </Tabs>
-        </DialogBody>
-      </DialogContent>
-    </Dialog>
+    <>
+      <span className="contents" onClick={() => setOpen(true)}>
+        {trigger}
+      </span>
+      <CommandDialog open={open} onOpenChange={setOpen} className="sm:max-w-[680px]">
+        <CommandInput
+          value={query}
+          onValueChange={setQuery}
+          placeholder="Search menu (e.g. SPO Allocations)"
+        />
+        <CommandList>
+          {!hasAnyResults && <CommandEmpty>No results found.</CommandEmpty>}
+          {Object.entries(groupedResults).map(([groupLabel, items]) => (
+            <CommandGroup key={groupLabel} heading={groupLabel}>
+              {items.map((item) => (
+                <CommandItem
+                  key={item.id}
+                  value={`${item.title} ${item.breadcrumb} ${item.path ?? ''}`}
+                  onSelect={() => handleSelect(item.path)}
+                >
+                  <Search className="size-4" />
+                  <div className="flex min-w-0 flex-col">
+                    <span className="truncate font-medium">{item.title}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {item.breadcrumb}
+                    </span>
+                  </div>
+                  <ArrowUpRight className="ms-auto size-4 text-muted-foreground" />
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          ))}
+        </CommandList>
+        <div className="flex items-center justify-between border-t px-3 py-2 text-xs text-muted-foreground">
+          <span>Tip: Search by menu title or module</span>
+          <CommandShortcut>Cmd/Ctrl + Shift + K</CommandShortcut>
+        </div>
+      </CommandDialog>
+    </>
   );
 }

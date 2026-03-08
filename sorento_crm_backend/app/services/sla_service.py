@@ -979,9 +979,10 @@ class ConversationSLATrackingService:
         ).first()
         
         if existing:
-            # Update existing tracking record. Do not recalculate due_at/due_at_resolution here;
-            # they are only set when creating a new tracking or when escalating (integration/escalate).
-            preserve_fields = {"id", "created_at", "respond_contact_id", "due_at", "due_at_resolution"}
+            # Update existing tracking record. Apply recalculated due_at and due_at_resolution
+            # so they stay in sync with current_tier_started_at and initiated_at (fixes due dates
+            # appearing in the past when current_tier_started_at is updated to now).
+            preserve_fields = {"id", "created_at", "respond_contact_id"}
 
             for key, value in tracking_dict.items():
                 if key not in preserve_fields:

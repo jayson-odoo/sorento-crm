@@ -9,7 +9,7 @@ class ScheduledTaskBase(BaseModel):
     name: str
     description: Optional[str] = None
     enabled: bool = True
-    interval_unit: str = Field(..., pattern="^(minutes|hours|days)$")
+    interval_unit: str = Field(..., pattern="^(seconds|minutes|hours|days)$")
     interval_value: int = Field(..., ge=1)
     timezone: str = "UTC"
     start_at: Optional[datetime] = None
@@ -19,7 +19,7 @@ class ScheduledTaskUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     enabled: Optional[bool] = None
-    interval_unit: Optional[str] = Field(None, pattern="^(minutes|hours|days)$")
+    interval_unit: Optional[str] = Field(None, pattern="^(seconds|minutes|hours|days)$")
     interval_value: Optional[int] = Field(None, ge=1)
     timezone: Optional[str] = None
     start_at: Optional[datetime] = None

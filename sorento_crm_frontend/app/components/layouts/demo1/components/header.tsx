@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { SearchDialog } from '@/partials/dialogs/search/search-dialog';
@@ -34,9 +35,19 @@ import { MegaMenu } from './mega-menu';
 import { MegaMenuMobile } from './mega-menu-mobile';
 import { SidebarMenu } from './sidebar-menu';
 
+/** Compact shortcut label for search: ⌘⇧K on Mac, Ctrl+⇧K on Windows/Linux. */
+function getSearchShortcutLabel(): string {
+  if (typeof navigator === 'undefined') return '⌘⇧K';
+  return /Mac|iPod|iPhone|iPad/.test(navigator.platform) ? '⌘⇧K' : 'Ctrl+⇧K';
+}
+
 export function Header() {
   const [isSidebarSheetOpen, setIsSidebarSheetOpen] = useState(false);
   const [isMegaMenuSheetOpen, setIsMegaMenuSheetOpen] = useState(false);
+  const [searchShortcut, setSearchShortcut] = useState('⌘⇧K');
+  useEffect(() => {
+    setSearchShortcut(getSearchShortcutLabel());
+  }, []);
 
   const pathname = usePathname();
   const mobileMode = useIsMobile();
@@ -134,12 +145,20 @@ export function Header() {
                 <SearchDialog
                   trigger={
                     <Button
-                      variant="ghost"
-                      mode="icon"
-                      shape="circle"
-                      className="size-9 hover:bg-primary/10 hover:[&_svg]:text-primary"
+                      variant="outline"
+                      className="h-9 w-60 justify-between px-3 text-muted-foreground hover:text-foreground"
+                      title="Open search (Cmd+Shift+K or Ctrl+Shift+K)"
                     >
-                      <Search className="size-4.5!" />
+                      <span className="inline-flex min-w-0 flex-1 items-center gap-2 truncate">
+                        <Search className="size-4 shrink-0" />
+                        <span className="truncate">Search menu...</span>
+                      </span>
+                      <span
+                        className="shrink-0 text-[11px] text-muted-foreground"
+                        title="Cmd+Shift+K or Ctrl+Shift+K"
+                      >
+                        {searchShortcut}
+                      </span>
                     </Button>
                   }
                 />

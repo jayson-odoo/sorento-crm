@@ -24,7 +24,7 @@ const schema = z.object({
   description: z.string().nullable().optional(),
   enabled: z.boolean(),
   interval_value: z.number().min(1),
-  interval_unit: z.enum(['minutes', 'hours', 'days']),
+  interval_unit: z.enum(['seconds', 'minutes', 'hours', 'days']),
   timezone: z.string().optional(),
   start_at: z.date().nullable().optional(),
 });
@@ -51,7 +51,7 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
       description: task.description ?? '',
       enabled: task.enabled,
       interval_value: task.interval_value,
-      interval_unit: task.interval_unit as 'minutes' | 'hours' | 'days',
+      interval_unit: task.interval_unit as 'seconds' | 'minutes' | 'hours' | 'days',
       timezone: task.timezone || 'UTC',
       start_at: task.start_at ? parseDateSafe(task.start_at) ?? undefined : undefined,
     },
@@ -66,7 +66,7 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
     setValue('description', task.description ?? '');
     setValue('enabled', task.enabled);
     setValue('interval_value', task.interval_value);
-    setValue('interval_unit', task.interval_unit as 'minutes' | 'hours' | 'days');
+    setValue('interval_unit', task.interval_unit as 'seconds' | 'minutes' | 'hours' | 'days');
     setValue('timezone', task.timezone || 'UTC');
     setValue(
       'start_at',
@@ -116,12 +116,13 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
           <Label htmlFor="interval_unit">Interval unit</Label>
           <Select
             value={intervalUnit}
-            onValueChange={(v) => setValue('interval_unit', v as 'minutes' | 'hours' | 'days', { shouldDirty: true })}
+            onValueChange={(v) => setValue('interval_unit', v as 'seconds' | 'minutes' | 'hours' | 'days', { shouldDirty: true })}
           >
             <SelectTrigger id="interval_unit">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="seconds">Seconds</SelectItem>
               <SelectItem value="minutes">Minutes</SelectItem>
               <SelectItem value="hours">Hours</SelectItem>
               <SelectItem value="days">Days</SelectItem>

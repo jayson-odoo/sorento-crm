@@ -27,7 +27,7 @@ router = APIRouter()
 @router.get("/grouped-by-shipment", response_model=ListResponse[ShipmentWithAllocationsGroup])
 async def get_spo_allocations_grouped_by_shipment(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
     product_code: Optional[str] = Query(None),
     warehouse_id: Optional[str] = Query(None),
@@ -58,7 +58,7 @@ async def get_spo_allocations_grouped_by_shipment(
 @router.get("/grouped-by-spo-number", response_model=ListResponse[SPOWithAllocationsGroup])
 async def get_spo_allocations_grouped_by_spo_number(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
     product_code: Optional[str] = Query(None),
     warehouse_id: Optional[str] = Query(None),
@@ -142,7 +142,7 @@ async def import_spo_allocations(
 @router.get("/", response_model=ListResponse[SPOAllocationResponse])
 async def get_spo_allocations(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
     shipment_id: Optional[str] = Query(None),
     warehouse_id: Optional[str] = Query(None),

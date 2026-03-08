@@ -41,6 +41,8 @@ const STATUS_VARIANT_MAP: Record<string, StatusBadgeVariant> = {
   started: 'warning',
   in_progress: 'warning',
   in_transit: 'warning',
+  allocated: 'info',
+  partially_allocated: 'warning',
   reserved: 'warning',
   planning: 'warning',
   processing: 'warning',
