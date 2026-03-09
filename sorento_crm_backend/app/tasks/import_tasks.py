@@ -785,11 +785,339 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         db.close()
 
 
+def validate_spo_import(file_data: bytes, filename: str) -> Dict[str, Any]:
+    """Run SPO import validation (same parsing and row validation as process_spo_import). No allocations created."""
+    import openpyxl
+
+    spo_number = re.sub(r"\.xlsx?$", "", filename or "", flags=re.IGNORECASE).strip()
+    if not spo_number:
+        return {"valid": False, "errors": ["Filename must provide SPO number (e.g. SPO-2025.10-0050.xlsx)"], "warnings": [], "summary": {}}
+
+    db = SessionLocal()
+    try:
+        workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
+    except Exception as exc:
+        db.close()
+        return {"valid": False, "errors": [f"Failed to read Excel: {exc}"], "warnings": [], "summary": {}}
+    sheet = workbook.active
+    if not sheet:
+        db.close()
+        return {"valid": False, "errors": ["Workbook has no active sheet"], "warnings": [], "summary": {}}
+
+    headers = [_spo_import_normalize_header(cell.value) for cell in sheet[1]]
+    data_rows: List[tuple[int, dict]] = []
+    all_product_codes = set()
+    all_locations = set()
+    for row_idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+        if not any(cell is not None and str(cell).strip() for cell in row):
+            continue
+        row_data = {}
+        for idx, value in enumerate(row):
+            if idx < len(headers) and headers[idx]:
+                row_data[headers[idx]] = value
+        item_code_raw = _spo_import_find_column(row_data, "Item Code", "Item code", "Product Code", "Product code")
+        location_raw = _spo_import_find_column(row_data, "Location", "Warehouse", "Warehouse Code")
+        qty_raw = _spo_import_find_column(row_data, "Qty", "Quantity", "Allocated", "Allocated Quantity")
+        loading_date_raw = _spo_import_find_column(row_data, "Loading Date", "Loading date")
+        item_code = (item_code_raw and str(item_code_raw).strip()) or None
+        location = (location_raw and str(location_raw).strip()) or None
+        try:
+            qty = int(float(qty_raw)) if qty_raw is not None else 0
+        except (TypeError, ValueError):
+            qty = 0
+        container = _spo_import_extract_container(loading_date_raw)
+        if item_code:
+            all_product_codes.add(item_code)
+        if location:
+            all_locations.add(location)
+        data_rows.append((row_idx, row_data))
+
+    if not data_rows:
+        db.close()
+        return {"valid": True, "errors": [], "warnings": [], "summary": {"total_data_rows": 0}}
+
+    from app.api.v1.external.utils import normalize_code
+    products_by_code = get_products_by_code_exact(db, all_product_codes)
+    warehouses_map = get_warehouses_by_code_or_name(db, all_locations)
+    skipped_rows_detail: List[dict] = []
+    would_succeed = 0
+    for row_idx, row_data in data_rows:
+        item_code_raw = _spo_import_find_column(row_data, "Item Code", "Item code", "Product Code", "Product code")
+        loading_date_raw = _spo_import_find_column(row_data, "Loading Date", "Loading date")
+        location_raw = _spo_import_find_column(row_data, "Location", "Warehouse", "Warehouse Code")
+        qty_raw = _spo_import_find_column(row_data, "Qty", "Quantity", "Allocated", "Allocated Quantity")
+        item_code = (item_code_raw and str(item_code_raw).strip()) or None
+        location = (location_raw and str(location_raw).strip()) or None
+        try:
+            qty = int(float(qty_raw)) if qty_raw is not None else 0
+        except (TypeError, ValueError):
+            qty = 0
+        container = _spo_import_extract_container(loading_date_raw)
+        if not item_code:
+            skipped_rows_detail.append({"row": row_idx, "reason": "Missing Item Code / Product Code"})
+            continue
+        if not location:
+            skipped_rows_detail.append({"row": row_idx, "reason": "Missing Location / Warehouse"})
+            continue
+        if qty <= 0:
+            skipped_rows_detail.append({"row": row_idx, "reason": "Invalid or zero Qty"})
+            continue
+        if not container:
+            skipped_rows_detail.append({"row": row_idx, "reason": "Missing or invalid Loading Date (no container number)"})
+            continue
+        product = products_by_code.get(item_code)
+        warehouse = warehouses_map.get(normalize_code(location)) if location else None
+        shipment = get_inbound_shipment_by_container_number(db, container)
+        if not product:
+            skipped_rows_detail.append({"row": row_idx, "reason": f"Product not found: {item_code}"})
+            continue
+        if not warehouse:
+            skipped_rows_detail.append({"row": row_idx, "reason": f"Warehouse not found: {location}"})
+            continue
+        if not shipment:
+            skipped_rows_detail.append({"row": row_idx, "reason": f"Inbound shipment not found for container: {container}"})
+            continue
+        would_succeed += 1
+
+    errors = [f"Row {s['row']}: {s['reason']}" for s in skipped_rows_detail]
+    db.close()
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "warnings": [],
+        "summary": {
+            "spo_number": spo_number,
+            "total_data_rows": len(data_rows),
+            "would_succeed": would_succeed,
+            "would_skip": len(skipped_rows_detail),
+            "skipped_rows_detail": skipped_rows_detail[-100:],
+        },
+    }
+
+
 def _grn_import_normalize_header(value: Any) -> str:
     """Normalize Excel header for GRN import (lowercase, strip)."""
     if value is None:
         return ""
     return str(value).strip().lower() or ""
+
+
+def _run_grn_listing_import_core(
+    db,
+    file_data: bytes,
+    job_service: Optional[JobService] = None,
+    job_id_str: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Parse GRN listing Excel and run upsert loop. Returns counts and errors. Caller must commit or rollback."""
+    import openpyxl
+
+    try:
+        workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
+    except Exception as exc:
+        return {"error": f"Failed to read Excel: {exc}", "successful": 0, "failed": 0, "skipped": 0, "errors": [], "skipped_rows_detail": [], "total_data_rows": 0}
+
+    sheet = workbook.active
+    if not sheet:
+        return {"error": "Workbook has no active sheet", "successful": 0, "failed": 0, "skipped": 0, "errors": [], "skipped_rows_detail": [], "total_data_rows": 0}
+
+    headers = [_grn_import_normalize_header(cell.value) for cell in sheet[1]]
+    data_rows: List[dict] = []
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        if not any(cell is not None and str(cell).strip() for cell in row):
+            continue
+        row_data = {}
+        for idx, value in enumerate(row):
+            if idx < len(headers) and headers[idx]:
+                row_data[headers[idx]] = value
+        data_rows.append(row_data)
+
+    def _find(row: dict, *candidates: str) -> Any:
+        for c in candidates:
+            cl = c.lower().strip()
+            if cl in row:
+                return row.get(cl)
+        return None
+
+    total_data_rows = len(data_rows)
+    if job_service and job_id_str:
+        job_service.update_job_progress(job_id_str, total_rows=total_data_rows)
+
+    proc = PickingHeaderService(db)
+    successful = 0
+    failed = 0
+    skipped = 0
+    errors: List[str] = []
+    skipped_rows_detail: List[dict] = []
+
+    for row_idx, row in enumerate(data_rows, start=2):
+        doc_num = _find(row, "doc number", "doc. no.", "doc. number", "doc number ", "grn number")
+        grn_number = (doc_num and str(doc_num).strip()) or None
+        if not grn_number:
+            skipped += 1
+            skipped_rows_detail.append({"row": row_idx, "reason": "Missing doc number / GRN number"})
+            if job_service and job_id_str:
+                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, successful_rows=successful, failed_rows=failed, skipped_rows=skipped)
+            continue
+        transfer_from = _find(row, "transfer from", "transfer from ", "spo number")
+        spo_number = (transfer_from and str(transfer_from).strip()) or None
+        date_val = _find(row, "date", "picking date", "picking date ")
+        try:
+            _pd = parse_date_value(date_val) if date_val is not None else date.today()
+            picking_date = _pd if _pd is not None else date.today()
+        except Exception:
+            picking_date = date.today()
+        try:
+            proc.upsert_grn_header_for_import(grn_number, spo_number, picking_date)
+            successful += 1
+        except Exception as e:
+            failed += 1
+            errors.append(f"{grn_number}: {e}")
+        if job_service and job_id_str:
+            job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, successful_rows=successful, failed_rows=failed, skipped_rows=skipped)
+
+    return {
+        "successful": successful,
+        "failed": failed,
+        "skipped": skipped,
+        "errors": errors,
+        "skipped_rows_detail": skipped_rows_detail,
+        "total_data_rows": total_data_rows,
+    }
+
+
+def validate_grn_listing_import(file_data: bytes) -> Dict[str, Any]:
+    """Run GRN listing validation (same logic as import, then rollback). No DB writes."""
+    db = SessionLocal()
+    try:
+        result = _run_grn_listing_import_core(db, file_data)
+        db.rollback()
+        if "error" in result:
+            return {"valid": False, "errors": [result["error"]], "warnings": [], "summary": result}
+        return {
+            "valid": result["failed"] == 0 and len(result["errors"]) == 0,
+            "errors": result["errors"],
+            "warnings": [],
+            "summary": {
+                "total_data_rows": result["total_data_rows"],
+                "would_succeed": result["successful"],
+                "would_fail": result["failed"],
+                "would_skip": result["skipped"],
+                "skipped_rows_detail": result["skipped_rows_detail"][-100:],
+            },
+        }
+    finally:
+        db.close()
+
+
+def validate_grn_lines_import(file_data: bytes) -> Dict[str, Any]:
+    """Run GRN lines validation: parse file and run grouping-phase checks (same as import). No line creation."""
+    import openpyxl
+    from app.api.v1.external.utils import normalize_code
+
+    db = SessionLocal()
+    try:
+        workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
+    except Exception as exc:
+        db.close()
+        return {"valid": False, "errors": [f"Failed to read Excel: {exc}"], "warnings": [], "summary": {}}
+    sheet = workbook.active
+    if not sheet:
+        db.close()
+        return {"valid": False, "errors": ["Workbook has no active sheet"], "warnings": [], "summary": {}}
+
+    headers = [_grn_import_normalize_header(cell.value) for cell in sheet[1]]
+    data_rows: List[tuple] = []
+    all_doc_nos = set()
+    all_product_codes = set()
+    all_locations = set()
+
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        if not any(cell is not None and str(cell).strip() for cell in row):
+            continue
+        row_data = {}
+        for idx, value in enumerate(row):
+            if idx < len(headers) and headers[idx]:
+                row_data[headers[idx]] = value
+
+        def _find(row_d: dict, *candidates: str) -> Any:
+            for c in candidates:
+                cl = c.lower().strip()
+                if cl in row_d:
+                    return row_d.get(cl)
+            return None
+
+        doc_no = (_find(row_data, "doc no", "doc number", "grn number") and str(_find(row_data, "doc no", "doc number", "grn number")).strip()) or None
+        item_code = (_find(row_data, "item code", "item code ", "product code", "product code ") and str(_find(row_data, "item code", "item code ", "product code", "product code ")).strip()) or None
+        location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
+        qty_raw = _find(row_data, "qty", "quantity", "qty ")
+        try:
+            qty = int(float(qty_raw)) if qty_raw is not None else 0
+        except (TypeError, ValueError):
+            qty = 0
+        if doc_no:
+            all_doc_nos.add(doc_no)
+        if item_code:
+            all_product_codes.add(item_code)
+        if location:
+            all_locations.add(location)
+        data_rows.append((doc_no, item_code, location, qty))
+
+    if not data_rows:
+        db.close()
+        return {"valid": True, "errors": [], "warnings": [], "summary": {"total_data_rows": 0}}
+
+    proc = PickingHeaderService(db)
+    products_by_code = get_products_by_code_exact(db, all_product_codes)
+    warehouses_map = get_warehouses_by_code_or_name(db, all_locations)
+    headers_by_number: Dict[str, Any] = {}
+    for pn in all_doc_nos:
+        h = proc.get_grn_by_picking_number(pn)
+        if h:
+            headers_by_number[pn] = h
+
+    errors = []
+    skipped_detail: List[dict] = []
+    would_succeed = 0
+    for row_idx, row_tuple in enumerate(data_rows, start=2):
+        doc_no, item_code, location, qty = row_tuple
+        if not doc_no:
+            skipped_detail.append({"row": row_idx, "reason": "Missing doc no"})
+            continue
+        if not item_code:
+            skipped_detail.append({"row": row_idx, "reason": "Missing item code"})
+            continue
+        if not location:
+            skipped_detail.append({"row": row_idx, "reason": "Missing location"})
+            continue
+        if qty <= 0:
+            skipped_detail.append({"row": row_idx, "reason": "Invalid quantity"})
+            continue
+        if doc_no not in headers_by_number:
+            skipped_detail.append({"row": row_idx, "reason": f"GRN header not found: {doc_no}"})
+            continue
+        product = products_by_code.get((item_code or "").strip())
+        warehouse = warehouses_map.get(normalize_code(location)) if location else None
+        if not product:
+            skipped_detail.append({"row": row_idx, "reason": f"Product not found: {item_code}"})
+            continue
+        if not warehouse:
+            skipped_detail.append({"row": row_idx, "reason": f"Warehouse not found: {location}"})
+            continue
+        would_succeed += 1
+
+    errors = [f"Row {s['row']}: {s['reason']}" for s in skipped_detail]
+    db.close()
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "warnings": [],
+        "summary": {
+            "total_data_rows": len(data_rows),
+            "would_succeed": would_succeed,
+            "would_skip": len(skipped_detail),
+            "skipped_rows_detail": skipped_detail[-100:],
+        },
+    }
 
 
 def _normalize_spo_number(spo_number: Optional[str]) -> str:
@@ -804,11 +1132,8 @@ def _normalize_spo_number(spo_number: Optional[str]) -> str:
 
 
 def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
-    """Process GRN listing Excel: create/update picking headers. Idempotent.
-    Columns: doc number -> GRN number, transfer from -> SPO number, date -> picking date.
-    """
+    """Process GRN listing Excel: create/update picking headers. Idempotent."""
     from rq import get_current_job
-    import openpyxl
 
     db = SessionLocal()
     job_service = JobService(db)
@@ -825,98 +1150,29 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
     job_id_str: str = str(job.job_id)
     try:
         job_service.start_job(job_id_str)
-        try:
-            workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
-        except Exception as exc:
-            job_service.fail_job(job_id_str, f"Failed to read Excel: {exc}")
+        result = _run_grn_listing_import_core(db, file_data, job_service=job_service, job_id_str=job_id_str)
+        if "error" in result:
+            job_service.fail_job(job_id_str, result["error"])
             db.close()
             return
-
-        sheet = workbook.active
-        if not sheet:
-            job_service.fail_job(job_id_str, "Workbook has no active sheet")
-            db.close()
-            return
-
-        headers = [_grn_import_normalize_header(cell.value) for cell in sheet[1]]
-        data_rows: List[dict] = []
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            if not any(cell is not None and str(cell).strip() for cell in row):
-                continue
-            row_data = {}
-            for idx, value in enumerate(row):
-                if idx < len(headers) and headers[idx]:
-                    row_data[headers[idx]] = value
-            data_rows.append(row_data)
-
-        def _find(row: dict, *candidates: str) -> Any:
-            for c in candidates:
-                cl = c.lower().strip()
-                if cl in row:
-                    return row.get(cl)
-            return None
-
-        total_data_rows = len(data_rows)
-        job_service.update_job_progress(job_id_str, total_rows=total_data_rows)
-
-        proc = PickingHeaderService(db)
-        successful = 0
-        failed = 0
-        skipped = 0
-        errors: List[str] = []
-        skipped_rows_detail: List[dict] = []  # [{"row": int, "reason": str}, ...]
-
-        for row_idx, row in enumerate(data_rows, start=2):  # Excel row 2 = first data row
-            doc_num = _find(row, "doc number", "doc. no.", "doc. number", "doc number ", "grn number")
-            grn_number = (doc_num and str(doc_num).strip()) or None
-            if not grn_number:
-                skipped += 1
-                skipped_rows_detail.append({"row": row_idx, "reason": "Missing doc number / GRN number"})
-                job_service.update_job_progress(
-                    job_id_str,
-                    processed_rows=row_idx - 1,
-                    successful_rows=successful,
-                    failed_rows=failed,
-                    skipped_rows=skipped,
-                )
-                continue
-            transfer_from = _find(row, "transfer from", "transfer from ", "spo number")
-            spo_number = (transfer_from and str(transfer_from).strip()) or None
-            date_val = _find(row, "date", "picking date", "picking date ")
-            try:
-                _pd = parse_date_value(date_val) if date_val is not None else date.today()
-                picking_date = _pd if _pd is not None else date.today()
-            except Exception:
-                picking_date = date.today()
-            try:
-                proc.upsert_grn_header_for_import(grn_number, spo_number, picking_date)
-                successful += 1
-            except Exception as e:
-                failed += 1
-                errors.append(f"{grn_number}: {e}")
-
-            job_service.update_job_progress(
-                job_id_str,
-                processed_rows=row_idx - 1,
-                successful_rows=successful,
-                failed_rows=failed,
-                skipped_rows=skipped,
-            )
-
+        db.commit()
         job_service.complete_job(
             job_id=job_id_str,
             result={
                 "message": "GRN listing import completed",
-                "errors": errors[-100:],
-                "skipped_rows_detail": _json_safe(skipped_rows_detail[-500:]),
+                "errors": result["errors"][-100:],
+                "skipped_rows_detail": _json_safe(result["skipped_rows_detail"][-500:]),
             },
-            successful_rows=successful,
-            failed_rows=failed,
-            skipped_rows=skipped,
-            processed_rows=len(data_rows),
-            total_rows=total_data_rows,
+            successful_rows=result["successful"],
+            failed_rows=result["failed"],
+            skipped_rows=result["skipped"],
+            processed_rows=result["total_data_rows"],
+            total_rows=result["total_data_rows"],
         )
-        logger.info("GRN listing import job %s completed: %s ok, %s failed, %s skipped", job_id_str, successful, failed, skipped)
+        logger.info(
+            "GRN listing import job %s completed: %s ok, %s failed, %s skipped",
+            job_id_str, result["successful"], result["failed"], result["skipped"],
+        )
     except Exception as e:
         logger.exception("GRN listing import job %s failed", job_id_str)
         job_service.fail_job(job_id_str, str(e))

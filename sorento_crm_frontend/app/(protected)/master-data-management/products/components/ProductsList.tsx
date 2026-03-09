@@ -52,10 +52,11 @@ import { useProductFilters } from '../hooks/useProductFilters';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
 import type { ProductListItem } from '../types/product.types';
-import { getProducts, bulkImportProducts, type GetProductsParams } from '../services/productService';
+import { getProducts, bulkImportProducts, validateProductsImport, type GetProductsParams } from '../services/productService';
 import ProductDeleteDialog from './product-delete-dialog';
 import ProductBulkDeleteDialog from './ProductBulkDeleteDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
+import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { generateExcelFile } from '@/lib/excel-utils';
@@ -742,6 +743,7 @@ const ProductsList = () => {
     >
       <Card>
         <DataGridToolbar />
+        <LatestImportStatusPanel jobType="product_import" title="Latest products import" className="mx-5 mb-2" />
         <CardTable>
           <ScrollArea>
             <DataGridTable />
@@ -765,6 +767,7 @@ const ProductsList = () => {
       <TemplateUploadDialog
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
+        onTest={async (data: Record<string, unknown>[]) => validateProductsImport(data)}
         onUpload={async (data: Record<string, unknown>[]) => {
           await bulkImportProducts(data);
           toast.success(

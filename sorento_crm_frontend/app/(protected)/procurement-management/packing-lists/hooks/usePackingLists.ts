@@ -7,6 +7,7 @@ import {
   createPackingList,
   updatePackingList,
   deletePackingList,
+  bulkDeletePackingLists,
 } from '../services/packingListService';
 import type { PackingListFormData } from '../types/packingList.types';
 
@@ -89,5 +90,20 @@ export function useDeletePackingList() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to delete packing list'),
+  });
+}
+
+export function useBulkDeletePackingLists() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeletePackingLists(ids),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['packing-lists'] });
+      toast.success(
+        result?.message ?? `${result?.deleted_count ?? 0} packing list(s) deleted`,
+      );
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to bulk delete packing lists'),
   });
 }

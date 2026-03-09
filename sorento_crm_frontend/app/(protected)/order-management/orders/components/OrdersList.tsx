@@ -38,8 +38,9 @@ import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { TemplateDownloadDialog } from '@/components/template/TemplateDownloadDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
-import { exportOrders, bulkImportOrders, importOrderTracking } from '../services/orderService';
+import { exportOrders, bulkImportOrders, importOrderTracking, validateOrderTracking } from '../services/orderService';
 import { OrderTrackingUploadDialog } from './OrderTrackingUploadDialog';
+import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { ColumnOption } from '@/lib/excel-utils';
@@ -371,6 +372,7 @@ export default function OrdersList() {
             </Button>
           </div>
         </CardHeader>
+        <LatestImportStatusPanel jobType="order_tracking_import" title="Latest order tracking import" className="mx-5 mb-2" />
         <CardTable>
           <ScrollArea>
             <DataGridTable />
@@ -396,6 +398,7 @@ export default function OrdersList() {
       <OrderTrackingUploadDialog
         open={trackingUploadOpen}
         onOpenChange={setTrackingUploadOpen}
+        onTest={validateOrderTracking}
         onUpload={handleUploadTracking}
       />
       <OrderBulkDeleteDialog

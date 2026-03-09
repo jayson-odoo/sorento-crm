@@ -113,6 +113,41 @@ export interface GRNImportResult {
   id: string;
 }
 
+export interface ValidateImportResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  summary?: Record<string, unknown>;
+}
+
+export async function validateGRNListing(file: File): Promise<ValidateImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const response = await apiFetch(
+    '/api/v1/procurement/grn/import-listing?validate_only=true',
+    { method: 'POST', body: form },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Validation failed' }));
+    throw new Error(err.detail ?? 'GRN listing validation failed');
+  }
+  return response.json();
+}
+
+export async function validateGRNLines(file: File): Promise<ValidateImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const response = await apiFetch(
+    '/api/v1/procurement/grn/import-lines?validate_only=true',
+    { method: 'POST', body: form },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Validation failed' }));
+    throw new Error(err.detail ?? 'GRN lines validation failed');
+  }
+  return response.json();
+}
+
 export async function importGRNListing(file: File): Promise<GRNImportResult> {
   const form = new FormData();
   form.append('file', file);

@@ -1,12 +1,13 @@
 """Orders API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Body
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.services.order_service import OrderService
 from app.schemas.order import OrderCreate, OrderUpdate, OrderResponse, BulkImportRequest, BulkImportResponse, BulkDeleteOrdersRequest
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -183,13 +184,11 @@ async def bulk_import_orders(
 @router.post("/import-tracking", status_code=status.HTTP_202_ACCEPTED)
 async def import_order_tracking(
     file: UploadFile = File(...),
+    validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Import orders from Excel file with Master and Daily Tracking sheets (queued).
-    
-    Returns job ID for tracking progress.
-    """
+    """Import orders from Excel file with Master and Daily Tracking sheets (queued). Use validate_only=true to test without importing."""
     try:
         if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
             raise HTTPException(
@@ -197,12 +196,24 @@ async def import_order_tracking(
                 detail="Invalid file type. Please upload an Excel file (.xlsx or .xls)."
             )
         file_data = await file.read()
-        
+
+        if validate_only:
+            service = OrderService(db)
+            result = service.import_excel_tracking(file_data, current_user["id"], validate_only=True)
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "valid": result["valid"],
+                    "errors": result["errors"],
+                    "warnings": result["warnings"],
+                    "summary": result.get("summary"),
+                },
+            )
+
         from app.services.job_service import JobService
         from app.services.queue_service import enqueue_job
         from app.tasks.import_tasks import process_order_tracking_import
-        
-        # Create job record
+
         job_service = JobService(db)
         job = job_service.create_job(
             job_type='order_tracking_import',
@@ -210,20 +221,17 @@ async def import_order_tracking(
             filename=file.filename
         )
         db.commit()
-        
-        # Enqueue job
+
         rq_job = enqueue_job(
             process_order_tracking_import,
-            str(job.id),  # Pass DB job ID (UUID)
+            str(job.id),
             file_data,
             current_user["id"],
             queue_name='imports',
             job_timeout=3600
         )
-        
-        # Update job with RQ job ID
         job_service.update_job_with_rq_id(job, rq_job.id)
-        
+
         return {
             'job_id': rq_job.id,
             'status': 'queued',

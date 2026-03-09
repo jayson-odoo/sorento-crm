@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Upload, FileSpreadsheet, X } from 'lucide-react';
+import { Upload, FileSpreadsheet, X, TestTube } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import type { GRNImportResult } from '../services/grnService';
+import type { GRNImportResult, ValidateImportResult } from '../services/grnService';
 
 const ACCEPT = '.xlsx,.xls';
 
@@ -22,6 +22,7 @@ interface GRNImportDialogProps {
   onOpenChange: (open: boolean) => void;
   title: string;
   description: string;
+  onTest?: (file: File) => Promise<ValidateImportResult>;
   onUpload: (file: File) => Promise<GRNImportResult>;
 }
 
@@ -30,11 +31,14 @@ export function GRNImportDialog({
   onOpenChange,
   title,
   description,
+  onTest,
   onUpload,
 }: GRNImportDialogProps) {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [testResult, setTestResult] = useState<ValidateImportResult | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
 
   const validExtensions = ACCEPT.split(',').map((ext) => ext.trim().replace('.', ''));
   const isValidFile = (f: File) => {
@@ -53,6 +57,7 @@ export function GRNImportDialog({
       toast.info('Using first Excel file only.');
     }
     setFile(first);
+    setTestResult(null);
   }, []);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
@@ -109,8 +114,32 @@ export function GRNImportDialog({
   };
 
   const handleOpenChange = (next: boolean) => {
-    if (!next) setFile(null);
+    if (!next) {
+      setFile(null);
+      setTestResult(null);
+    }
     onOpenChange(next);
+  };
+
+  const handleTest = async () => {
+    if (!file || !onTest) return;
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const result = await onTest(file);
+      setTestResult(result);
+      if (result.valid && (result.warnings?.length ?? 0) === 0) {
+        toast.success('Validation passed with no issues.');
+      } else if (result.valid) {
+        toast.success('Validation passed with warnings. Review below.');
+      } else {
+        toast.error('Validation found errors. Fix them before importing.');
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Validation failed');
+    } finally {
+      setIsTesting(false);
+    }
   };
 
   return (
@@ -149,28 +178,80 @@ export function GRNImportDialog({
             <p className="text-xs text-muted-foreground mt-2">.xlsx or .xls only</p>
           </div>
           {file && (
-            <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
-              <span className="flex items-center gap-2 truncate">
-                <FileSpreadsheet className="size-4 shrink-0 text-muted-foreground" />
-                {file.name}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-7 shrink-0"
-                onClick={() => setFile(null)}
-                aria-label="Remove file"
-              >
-                <X className="size-4" />
-              </Button>
-            </div>
+            <>
+              <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                <span className="flex items-center gap-2 truncate">
+                  <FileSpreadsheet className="size-4 shrink-0 text-muted-foreground" />
+                  {file.name}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="size-7 shrink-0"
+                  onClick={() => {
+                    setFile(null);
+                    setTestResult(null);
+                  }}
+                  aria-label="Remove file"
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
+              {testResult !== null && (
+                <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                  <p className="font-medium">
+                    {testResult.valid
+                      ? (testResult.warnings?.length ?? 0) > 0
+                        ? 'Validation passed with warnings'
+                        : 'Validation passed'
+                      : 'Validation found errors'}
+                  </p>
+                  {testResult.errors?.length ? (
+                    <div className="mt-2 max-h-32 overflow-y-auto">
+                      <p className="text-destructive font-medium">Errors ({testResult.errors.length}):</p>
+                      <ul className="list-disc pl-4 text-destructive">
+                        {(testResult.errors.slice(0, 50) as string[]).map((err, i) => (
+                          <li key={i}>{err}</li>
+                        ))}
+                        {testResult.errors.length > 50 && (
+                          <li>… and {testResult.errors.length - 50} more</li>
+                        )}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {testResult.warnings?.length ? (
+                    <div className="mt-2 max-h-24 overflow-y-auto">
+                      <p className="font-medium text-amber-600 dark:text-amber-500">Warnings ({testResult.warnings.length}):</p>
+                      <ul className="list-disc pl-4 text-amber-600 dark:text-amber-500">
+                        {(testResult.warnings.slice(0, 20) as string[]).map((w, i) => (
+                          <li key={i}>{w}</li>
+                        ))}
+                        {testResult.warnings.length > 20 && (
+                          <li>… and {testResult.warnings.length - 20} more</li>
+                        )}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </>
           )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)}>
             Cancel
           </Button>
+          {onTest && (
+            <Button
+              variant="outline"
+              onClick={handleTest}
+              disabled={!file || isTesting}
+            >
+              <TestTube className="size-4 mr-2" />
+              {isTesting ? 'Testing...' : 'Test'}
+            </Button>
+          )}
           <Button onClick={handleUpload} disabled={!file}>
             Upload
           </Button>

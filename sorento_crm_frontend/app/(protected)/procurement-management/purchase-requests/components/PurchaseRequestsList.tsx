@@ -40,7 +40,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
-import { formatDate, formatDateTime } from '@/lib/helpers';
+import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 
@@ -210,7 +210,7 @@ export default function PurchaseRequestsList({
         ),
         cell: ({ row }) =>
           row.original.created_at
-            ? formatDateTime(new Date(row.original.created_at))
+            ? formatDateTimeInMalaysia(row.original.created_at)
             : '-',
         size: 160,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },

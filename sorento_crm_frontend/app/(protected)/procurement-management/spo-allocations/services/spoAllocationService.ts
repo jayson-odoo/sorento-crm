@@ -212,6 +212,32 @@ export type SPOImportResult = {
   message: string;
 };
 
+export interface ValidateImportResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  summary?: Record<string, unknown>;
+}
+
+/**
+ * Validate the first SPO file without importing (same validation as import).
+ */
+export async function validateSPOAllocations(file: File): Promise<ValidateImportResult> {
+  const formData = new FormData();
+  formData.append('files', file);
+  const response = await apiFetch(
+    '/api/v1/procurement/spo-allocations/import?validate_only=true',
+    { method: 'POST', body: formData },
+  );
+  if (!response.ok) {
+    const err = await response
+      .json()
+      .catch(() => ({ detail: 'Validation failed' }));
+    throw new Error(err.detail ?? 'SPO validation failed');
+  }
+  return response.json();
+}
+
 /**
  * Import SPO allocations from one or more Excel files.
  * Filename = SPO number (e.g. SPO-2025.10-0050.xlsx).

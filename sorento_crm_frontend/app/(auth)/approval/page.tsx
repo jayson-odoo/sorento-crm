@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { AlertCircle, CheckCircle, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -44,6 +45,8 @@ interface ApprovalSummary {
   lines?: ApprovalLineSummary[] | null;
   grand_total?: number | null;
   approval_status?: string | null;
+  approver_display_name?: string | null;
+  approver_email?: string | null;
 }
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
@@ -117,6 +120,8 @@ function ApprovalContent() {
       if (res.ok) {
         setSummary(data);
         setError(null);
+        const prefill = data.approver_display_name ?? data.approver_email ?? '';
+        if (prefill) setApprovedBy(prefill);
       } else {
         setError(data.detail || data.message || 'This link is invalid or has expired.');
       }
@@ -268,7 +273,7 @@ function ApprovalContent() {
           )}
           <DetailRow label="Requested by" value={summary?.requested_by ?? undefined} />
           <DetailRow label="Request date" value={summary?.request_date ? formatDateStr(summary.request_date) : undefined} />
-          <DetailRow label="Created at" value={summary?.created_at ? formatDateTimeStr(summary.created_at) : undefined} />
+          <DetailRow label="Created at" value={summary?.created_at ? formatDateTimeInMalaysia(summary.created_at) : undefined} />
           <DetailRow label="Expected delivery" value={summary?.expected_delivery_date ? formatDateStr(summary.expected_delivery_date) : undefined} />
           {summary?.request_type === 'purchase_request' && (
             <DetailRow label="Expected PO date" value={poDisplay ?? undefined} />

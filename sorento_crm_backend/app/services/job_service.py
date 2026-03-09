@@ -13,6 +13,10 @@ from app.services.queue_service import enqueue_job, get_job_status, cancel_job a
 
 logger = logging.getLogger(__name__)
 
+_IMPORT_NOTIFICATION_DISCLAIMER = (
+    "\n\nThis is a system-generated message. Please do not reply."
+)
+
 
 def _notify_import_job_event(
     db: Session,
@@ -123,8 +127,12 @@ class JobService:
                     self.db,
                     job,
                     "finished",
-                    "Import job finished",
-                    f"Your {job.job_type} import completed: {processed_rows}/{job.total_rows} rows processed, {successful_rows} successful, {failed_rows} failed, {skipped_rows} skipped.",
+                    "Import completed",
+                    (
+                        f"Your {job.job_type} import has completed. Processed: {processed_rows}/{job.total_rows} rows "
+                        f"({successful_rows} successful, {failed_rows} failed, {skipped_rows} skipped). View job for details."
+                        + _IMPORT_NOTIFICATION_DISCLAIMER
+                    ),
                 )
             except Exception:
                 pass  # Do not let notification failure mark the job as failed
@@ -144,8 +152,11 @@ class JobService:
                 self.db,
                 job,
                 "failed",
-                "Import job failed",
-                f"Your {job.job_type} import failed: {error[:500]}",
+                "Import failed",
+                (
+                    f"Your {job.job_type} import has failed. {error[:500]} View job for details."
+                    + _IMPORT_NOTIFICATION_DISCLAIMER
+                ),
             )
         return job
 
@@ -229,8 +240,8 @@ class JobService:
             self.db,
             job,
             "cancelled",
-            "Import job cancelled",
-            f"Your {job.job_type} import was cancelled.",
+            "Import cancelled",
+            f"Your {job.job_type} import was cancelled. View job for details." + _IMPORT_NOTIFICATION_DISCLAIMER,
         )
 
         # Tell RQ to stop the worker in background so we never block the API response
@@ -268,7 +279,10 @@ class JobService:
                 job.completed_at = now
             job.updated_at = now
             self.db.commit()
-            _notify_import_job_event(self.db, job, "cancelled", "Import job cancelled", f"Your {job.job_type} import was cancelled.")
+            _notify_import_job_event(
+                self.db, job, "cancelled", "Import cancelled",
+                f"Your {job.job_type} import was cancelled. View job for details." + _IMPORT_NOTIFICATION_DISCLAIMER,
+            )
             return job
         elif rq_status_str == 'started' and job.status != JobStatus.STARTED.value:
             job.status = JobStatus.STARTED.value
@@ -286,8 +300,11 @@ class JobService:
                 self.db,
                 job,
                 "finished",
-                "Import job finished",
-                f"Your {job.job_type} import completed: {job.processed_rows}/{job.total_rows} rows processed.",
+                "Import completed",
+                (
+                    f"Your {job.job_type} import has completed. Processed: {job.processed_rows}/{job.total_rows} rows. View job for details."
+                    + _IMPORT_NOTIFICATION_DISCLAIMER
+                ),
             )
             return job
         elif rq_status_str == 'failed' and job.status != JobStatus.FAILED.value:
@@ -306,8 +323,8 @@ class JobService:
                 self.db,
                 job,
                 "failed",
-                "Import job failed",
-                f"Your {job.job_type} import failed.",
+                "Import failed",
+                f"Your {job.job_type} import has failed. View job for details." + _IMPORT_NOTIFICATION_DISCLAIMER,
             )
             return job
 

@@ -1,8 +1,10 @@
 """Packing lists (Inbound Shipments) API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
+
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.procurement import SPOAllocation
@@ -12,6 +14,10 @@ from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
+
+
+class BulkDeletePackingListsRequest(BaseModel):
+    ids: list[str]
 
 
 @router.get("/", response_model=ListResponse[InboundShipmentResponse])
@@ -113,6 +119,22 @@ async def update_packing_list(
         service = InboundShipmentService(db)
         shipment = service.update_shipment(shipment_id, shipment_data, current_user["id"])
         return shipment
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_packing_lists(
+    body: BulkDeletePackingListsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Bulk delete packing lists (inbound shipments) by ID."""
+    try:
+        service = InboundShipmentService(db)
+        return service.bulk_delete_shipments(body.ids)
     except HTTPException:
         raise
     except Exception as e:

@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Upload, X, FileSpreadsheet } from 'lucide-react';
+import { Upload, X, FileSpreadsheet, TestTube } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -13,24 +13,28 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import type { SPOImportResult } from '../services/spoAllocationService';
+import type { SPOImportResult, ValidateImportResult } from '../services/spoAllocationService';
 
 const ACCEPT = '.xlsx,.xls';
 
 interface SPOImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onTest?: (file: File) => Promise<ValidateImportResult>;
   onUpload: (files: File[]) => Promise<SPOImportResult>;
 }
 
 export function SPOImportDialog({
   open,
   onOpenChange,
+  onTest,
   onUpload,
 }: SPOImportDialogProps) {
   const router = useRouter();
   const [files, setFiles] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
+  const [testResult, setTestResult] = useState<ValidateImportResult | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
 
   const validExtensions = ACCEPT.split(',').map((ext) => ext.trim().replace('.', ''));
   const isValidFile = (file: File) => {
@@ -53,6 +57,7 @@ export function SPOImportDialog({
         const added = valid.filter((f) => !names.has(f.name));
         return [...prev, ...added];
       });
+      setTestResult(null);
     }
   }, []);
 
@@ -86,6 +91,29 @@ export function SPOImportDialog({
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
+    setTestResult(null);
+  };
+
+  const handleTest = async () => {
+    if (files.length === 0 || !onTest) return;
+    const firstFile = files[0];
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const result = await onTest(firstFile);
+      setTestResult(result);
+      if (result.valid && (result.warnings?.length ?? 0) === 0) {
+        toast.success('Validation passed with no issues (first file).');
+      } else if (result.valid) {
+        toast.success('Validation passed with warnings. Review below.');
+      } else {
+        toast.error('Validation found errors. Fix them before importing.');
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Validation failed');
+    } finally {
+      setIsTesting(false);
+    }
   };
 
   const handleUpload = () => {
@@ -123,7 +151,10 @@ export function SPOImportDialog({
   };
 
   const handleOpenChange = (next: boolean) => {
-    if (!next) setFiles([]);
+    if (!next) {
+      setFiles([]);
+      setTestResult(null);
+    }
     onOpenChange(next);
   };
 
@@ -190,6 +221,43 @@ export function SPOImportDialog({
                   </li>
                 ))}
               </ul>
+              {testResult !== null && (
+                <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                  <p className="font-medium">
+                    {testResult.valid
+                      ? (testResult.warnings?.length ?? 0) > 0
+                        ? 'Validation passed with warnings (first file)'
+                        : 'Validation passed (first file)'
+                      : 'Validation found errors (first file)'}
+                  </p>
+                  {testResult.errors?.length ? (
+                    <div className="mt-2 max-h-32 overflow-y-auto">
+                      <p className="text-destructive font-medium">Errors ({testResult.errors.length}):</p>
+                      <ul className="list-disc pl-4 text-destructive">
+                        {(testResult.errors.slice(0, 50) as string[]).map((err, i) => (
+                          <li key={i}>{err}</li>
+                        ))}
+                        {testResult.errors.length > 50 && (
+                          <li>… and {testResult.errors.length - 50} more</li>
+                        )}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {testResult.warnings?.length ? (
+                    <div className="mt-2 max-h-24 overflow-y-auto">
+                      <p className="font-medium text-amber-600 dark:text-amber-500">Warnings ({testResult.warnings.length}):</p>
+                      <ul className="list-disc pl-4 text-amber-600 dark:text-amber-500">
+                        {(testResult.warnings.slice(0, 20) as string[]).map((w, i) => (
+                          <li key={i}>{w}</li>
+                        ))}
+                        {testResult.warnings.length > 20 && (
+                          <li>… and {testResult.warnings.length - 20} more</li>
+                        )}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -197,6 +265,16 @@ export function SPOImportDialog({
           <Button variant="outline" onClick={() => handleOpenChange(false)}>
             Cancel
           </Button>
+          {onTest && (
+            <Button
+              variant="outline"
+              onClick={handleTest}
+              disabled={files.length === 0 || isTesting}
+            >
+              <TestTube className="size-4 mr-2" />
+              {isTesting ? 'Testing...' : 'Test (first file)'}
+            </Button>
+          )}
           <Button onClick={handleUpload} disabled={files.length === 0}>
             Import
           </Button>

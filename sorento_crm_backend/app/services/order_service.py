@@ -397,8 +397,8 @@ class OrderService:
             "errors": errors
         }
 
-    def import_excel_tracking(self, file_data: bytes, user_id: str):
-        """Import orders from Excel file with Master and Daily Tracking sheets."""
+    def import_excel_tracking(self, file_data: bytes, user_id: str, validate_only: bool = False):
+        """Import orders from Excel file with Master and Daily Tracking sheets. If validate_only=True, run validation and return errors/warnings without persisting (rollback)."""
         from io import BytesIO
         from datetime import datetime, date, time as dt_time, timedelta
         import openpyxl
@@ -785,6 +785,25 @@ class OrderService:
         if len(errors) > 5:
             logger.warning("Order tracking import: ... and %s more errors", len(errors) - 5)
 
+        if validate_only:
+            self.db.rollback()
+            err_list = [e.get("error", str(e)) if isinstance(e, dict) else str(e) for e in errors]
+            warn_list = [w.get("warning", str(w)) if isinstance(w, dict) else str(w) for w in warnings]
+            return {
+                "valid": len(errors) == 0,
+                "errors": err_list,
+                "warnings": warn_list,
+                "summary": {
+                    "master_rows": master_rows,
+                    "tracking_rows": tracking_rows,
+                    "would_create": created,
+                    "would_update": updated,
+                    "error_count": len(errors),
+                    "warning_count": len(warnings),
+                    "kpi_warnings": kpi_warnings,
+                },
+            }
+
         try:
             self.db.commit()
         except Exception as exc:
@@ -793,28 +812,29 @@ class OrderService:
             logger.exception("Order tracking import: database commit failed")
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
-        try:
-            import_log_service = ImportLogService(self.db)
-            import_log_service.create_import_log(
-                entity_type="order",
-                entity_table="orders",
-                import_session_id=import_session_id,
-                filename=None,
-                import_type="EXCEL_IMPORT",
-                total_rows=master_rows + tracking_rows,
-                successful_rows=created + updated,
-                created_rows=created,
-                updated_rows=updated,
-                failed_rows=len(errors),
-                skipped_rows=len(warnings),
-                warnings=json_safe(warnings),
-                errors=json_safe(errors),
-                summary=json_safe({"kpi_warnings": kpi_warnings, "master_rows": master_rows, "tracking_rows": tracking_rows, "warnings": len(warnings)}),
-                imported_by=user_id,
-                duration_ms=duration_ms,
-            )
-        except Exception:
-            pass
+        if not validate_only:
+            try:
+                import_log_service = ImportLogService(self.db)
+                import_log_service.create_import_log(
+                    entity_type="order",
+                    entity_table="orders",
+                    import_session_id=import_session_id,
+                    filename=None,
+                    import_type="EXCEL_IMPORT",
+                    total_rows=master_rows + tracking_rows,
+                    successful_rows=created + updated,
+                    created_rows=created,
+                    updated_rows=updated,
+                    failed_rows=len(errors),
+                    skipped_rows=len(warnings),
+                    warnings=json_safe(warnings),
+                    errors=json_safe(errors),
+                    summary=json_safe({"kpi_warnings": kpi_warnings, "master_rows": master_rows, "tracking_rows": tracking_rows, "warnings": len(warnings)}),
+                    imported_by=user_id,
+                    duration_ms=duration_ms,
+                )
+            except Exception:
+                pass
 
         return {
             "import_session_id": import_session_id,

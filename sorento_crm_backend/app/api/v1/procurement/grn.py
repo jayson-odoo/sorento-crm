@@ -1,5 +1,6 @@
 """GRN (Goods Receipt Note) API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, File, UploadFile, Body
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
@@ -52,15 +53,29 @@ async def get_grns(
 @router.post("/import-listing", status_code=status.HTTP_202_ACCEPTED)
 async def import_grn_listing(
     file: UploadFile = File(..., description="Excel file: GRN listing (doc number, transfer from, date)"),
+    validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("procurement.grn.import")),
     db: Session = Depends(get_db),
 ):
-    """Queue GRN listing import. Creates/updates picking headers. Processed in background; track via Import Jobs."""
+    """Queue GRN listing import. Use validate_only=true to test without importing."""
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx or .xls) required")
     file_data = await file.read()
-    from app.tasks.import_tasks import process_grn_listing_import
 
+    if validate_only:
+        from app.tasks.import_tasks import validate_grn_listing_import
+        result = validate_grn_listing_import(file_data)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "valid": result["valid"],
+                "errors": result["errors"],
+                "warnings": result.get("warnings", []),
+                "summary": result.get("summary"),
+            },
+        )
+
+    from app.tasks.import_tasks import process_grn_listing_import
     job_service = JobService(db)
     job = job_service.create_job(
         job_type="grn_listing_import",
@@ -84,15 +99,29 @@ async def import_grn_listing(
 @router.post("/import-lines", status_code=status.HTTP_202_ACCEPTED)
 async def import_grn_lines(
     file: UploadFile = File(..., description="Excel file: GRN lines (doc no, item code, location, quantity)"),
+    validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("procurement.grn.import")),
     db: Session = Depends(get_db),
 ):
-    """Queue GRN lines import. Creates/updates picking lines; links to headers by doc no. Processed in background."""
+    """Queue GRN lines import. Use validate_only=true to test without importing."""
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx or .xls) required")
     file_data = await file.read()
-    from app.tasks.import_tasks import process_grn_lines_import
 
+    if validate_only:
+        from app.tasks.import_tasks import validate_grn_lines_import
+        result = validate_grn_lines_import(file_data)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "valid": result["valid"],
+                "errors": result["errors"],
+                "warnings": result.get("warnings", []),
+                "summary": result.get("summary"),
+            },
+        )
+
+    from app.tasks.import_tasks import process_grn_lines_import
     job_service = JobService(db)
     job = job_service.create_job(
         job_type="grn_lines_import",

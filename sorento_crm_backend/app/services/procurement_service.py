@@ -15,6 +15,7 @@ from app.models.procurement import (
 )
 from app.models.product import Product
 from app.models.resources import Attachment
+from app.models.user import User
 from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
@@ -318,6 +319,17 @@ class InboundShipmentService:
         shipment = self.get_shipment(shipment_id)
         self.db.delete(shipment)
         self.db.commit()
+
+    def bulk_delete_shipments(self, shipment_ids: list[str]) -> dict:
+        """Delete multiple inbound shipments by ID. Returns message and deleted_count."""
+        if not shipment_ids:
+            return {"message": "No packing lists to delete", "deleted_count": 0}
+        shipments = self.db.query(InboundShipment).filter(InboundShipment.id.in_(shipment_ids)).all()
+        for shipment in shipments:
+            self.db.delete(shipment)
+        self.db.commit()
+        deleted = len(shipments)
+        return {"message": f"{deleted} packing list(s) deleted", "deleted_count": deleted}
 
 
 class SPOAllocationService:
@@ -2711,6 +2723,16 @@ class PurchaseRequestService:
                     grand_total = total_sum
                 except (InvalidOperation, ValueError, TypeError):
                     grand_total = None
+        approver_display_name = None
+        approver_email = getattr(header, "approver_email", None) or None
+        approver_user_id = getattr(header, "approver_user_id", None)
+        if approver_user_id:
+            user = self.db.query(User).filter(User.id == approver_user_id).first()
+            if user:
+                approver_display_name = (user.name and user.name.strip()) or user.email or None
+                if not approver_email and user.email:
+                    approver_email = user.email
+
         return {
             "entity_type": approval_token.entity_type,
             "entity_id": approval_token.entity_id,
@@ -2733,6 +2755,8 @@ class PurchaseRequestService:
             "lines": lines,
             "grand_total": grand_total,
             "approval_status": getattr(header, "approval_status", None),
+            "approver_display_name": approver_display_name,
+            "approver_email": approver_email,
         }
 
     def get_or_create_view_token(self, entity_id: str) -> str:

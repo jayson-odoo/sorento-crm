@@ -36,3 +36,11 @@ class SuccessResponse(BaseModel):
     """Standard success response."""
     message: str
     data: Optional[dict] = None
+
+
+class ValidateImportResponse(BaseModel):
+    """Response for validate-only import (products, GRN, SPO, order tracking). No DB writes."""
+    valid: bool  # True if no errors (warnings allowed)
+    errors: List[str] = []
+    warnings: List[str] = []
+    summary: Optional[dict] = None  # e.g. total_rows, would_create, would_update

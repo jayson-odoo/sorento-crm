@@ -244,6 +244,37 @@ const authOptions: NextAuthOptions = {
   pages: {
     signIn: '/signin',
   },
+  logger: {
+    error(code, metadata) {
+      // Downgrade CLIENT_FETCH_ERROR to warning – usually means session refetch failed
+      // (e.g. server restart, network blip, or NEXTAUTH_URL/origin mismatch). Avoids noisy console.
+      if (code === 'CLIENT_FETCH_ERROR') {
+        const msg =
+          typeof metadata === 'object' &&
+          metadata !== null &&
+          'error' in metadata &&
+          metadata.error instanceof Error
+            ? metadata.error.message
+            : metadata instanceof Error
+              ? metadata.message
+              : metadata;
+        console.warn(
+          '[next-auth][warn] Session fetch failed. If this persists, check that the app and NEXTAUTH_URL use the same origin.',
+          msg,
+        );
+        return;
+      }
+      console.error(`[next-auth][error][${code}]`, metadata);
+    },
+    warn(code) {
+      console.warn(`[next-auth][warn][${code}]`);
+    },
+    debug(code, metadata) {
+      if (process.env.NODE_ENV === 'development') {
+        console.debug(`[next-auth][debug][${code}]`, metadata);
+      }
+    },
+  },
 };
 
 export default authOptions;

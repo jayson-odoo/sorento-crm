@@ -730,6 +730,8 @@ class PublicApprovalSummaryResponse(BaseModel):
     lines: Optional[List[PublicApprovalLineSummary]] = []
     grand_total: Optional[Decimal] = None  # sponsorship form: sum of line totals
     approval_status: Optional[str] = None  # draft | pending | approved | rejected
+    approver_display_name: Optional[str] = None  # Prefill "Your name" when approver is system user
+    approver_email: Optional[str] = None  # Prefill fallback when no display name
 
 
 class PublicApprovalSubmitRequest(BaseModel):

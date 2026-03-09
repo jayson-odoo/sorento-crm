@@ -13,6 +13,7 @@ import {
 } from '@tanstack/react-table';
 import { Plus, Search, X, ChevronRight, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -25,6 +26,7 @@ import { usePackingLists } from '../hooks/usePackingLists';
 import type { PackingList } from '../types/packingList.types';
 import { formatDate } from '@/lib/helpers';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
+import PackingListBulkDeleteDialog from './PackingListBulkDeleteDialog';
 
 export default function PackingListsList() {
   const router = useRouter();
@@ -38,6 +40,8 @@ export default function PackingListsList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [packingListToDelete, setPackingListToDelete] =
     useState<PackingList | null>(null);
+  const [selectedPackingListIds, setSelectedPackingListIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
   const { data, isLoading, refetch } = usePackingLists({
     pageIndex: pagination.pageIndex,
@@ -51,8 +55,48 @@ export default function PackingListsList() {
     router.push(`/procurement-management/packing-lists/${packingListId}`);
   };
 
+  const pagePackingLists = data?.data ?? [];
+  const isAllSelected = pagePackingLists.length > 0 && selectedPackingListIds.size === pagePackingLists.length;
+
+  const toggleSelection = (id: string) => {
+    setSelectedPackingListIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    if (isAllSelected) {
+      setSelectedPackingListIds(new Set());
+    } else {
+      setSelectedPackingListIds(new Set(pagePackingLists.map((p) => p.id)));
+    }
+  };
+
   const columns = useMemo<ColumnDef<PackingList>[]>(
     () => [
+      {
+        id: 'select',
+        header: () => (
+          <Checkbox
+            checked={isAllSelected}
+            onCheckedChange={selectAll}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={selectedPackingListIds.has(row.original.id)}
+            onCheckedChange={() => toggleSelection(row.original.id)}
+            aria-label={`Select ${row.original.shipment_number ?? row.original.id}`}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        size: 44,
+        enableResizing: false,
+      },
       {
         accessorKey: 'shipment_number',
         header: ({ column }) => (
@@ -140,7 +184,7 @@ export default function PackingListsList() {
         size: 80,
       },
     ],
-    [],
+    [isAllSelected, selectedPackingListIds],
   );
 
   const table = useReactTable({
@@ -187,14 +231,27 @@ export default function PackingListsList() {
               </Button>
             )}
           </div>
-          <Button
-            onClick={() =>
-              router.push('/procurement-management/packing-lists/new')
-            }
-          >
-            <Plus />
-            Create Packing List
-          </Button>
+          <div className="flex items-center gap-2">
+            {selectedPackingListIds.size > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setBulkDeleteDialogOpen(true)}
+                className="text-destructive hover:text-destructive"
+              >
+                <Trash2 className="size-4" />
+                Bulk Delete ({selectedPackingListIds.size})
+              </Button>
+            )}
+            <Button
+              onClick={() =>
+                router.push('/procurement-management/packing-lists/new')
+              }
+            >
+              <Plus />
+              Create Packing List
+            </Button>
+          </div>
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -214,6 +271,18 @@ export default function PackingListsList() {
           onSuccess={() => refetch()}
         />
       )}
+      <PackingListBulkDeleteDialog
+        open={bulkDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setBulkDeleteDialogOpen(open);
+          if (!open) setSelectedPackingListIds(new Set());
+        }}
+        packingListIds={Array.from(selectedPackingListIds)}
+        onSuccess={() => {
+          setSelectedPackingListIds(new Set());
+          refetch();
+        }}
+      />
     </DataGrid>
   );
 }

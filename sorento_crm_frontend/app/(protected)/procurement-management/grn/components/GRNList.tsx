@@ -35,7 +35,8 @@ import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import { GRNImportDialog } from './GRNImportDialog';
 import GRNBulkDeleteDialog from './GRNBulkDeleteDialog';
-import { importGRNListing, importGRNLines } from '../services/grnService';
+import { importGRNListing, importGRNLines, validateGRNListing, validateGRNLines } from '../services/grnService';
+import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
 import { useQueryClient } from '@tanstack/react-query';
 
 export default function GRNList() {
@@ -261,12 +262,17 @@ export default function GRNList() {
             </Button>
           </div>
         </CardHeader>
+        <div className="mx-5 mb-2 flex flex-wrap gap-4">
+          <LatestImportStatusPanel jobType="grn_listing_import" title="Latest GRN listing import" />
+          <LatestImportStatusPanel jobType="grn_lines_import" title="Latest GRN lines import" />
+        </div>
         {uploadMode === 'listing' && (
           <GRNImportDialog
             open={true}
             onOpenChange={(open) => !open && setUploadMode(null)}
             title="Upload GRN"
             description="Upload GRN listing Excel"
+            onTest={validateGRNListing}
             onUpload={async (file) => {
               const result = await importGRNListing(file);
               queryClient.invalidateQueries({ queryKey: ['grn'] });
@@ -281,6 +287,7 @@ export default function GRNList() {
             onOpenChange={(open) => !open && setUploadMode(null)}
             title="Upload GRN Lines"
             description="Upload GRN lines Excel"
+            onTest={validateGRNLines}
             onUpload={async (file) => {
               const result = await importGRNLines(file);
               queryClient.invalidateQueries({ queryKey: ['grn'] });

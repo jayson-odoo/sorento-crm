@@ -1,12 +1,13 @@
 """Products API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.product_service import ProductService
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, BulkImportProductsRequest, BulkDeleteProductsRequest
-from app.schemas.common import ListResponse, ErrorResponse
+from app.schemas.common import ListResponse, ErrorResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -101,14 +102,31 @@ async def update_product(
         raise handle_internal_error(str(e))
 
 
-@router.post("/bulk-import", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/bulk-import",
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={200: {"description": "Validation only (validate_only=true)", "model": ValidateImportResponse}},
+)
 async def bulk_import_products(
     import_data: BulkImportProductsRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Bulk import products from Excel data (queued). Columns: Item Code, Description, Desc 2, Item Group (→ category), Item Brand (→ brand), Price, Is Active (T/F). Returns job ID for tracking."""
+    """Bulk import products from Excel data (queued). If validate_only=true, run validation only and return errors/warnings (no job)."""
     try:
+        if getattr(import_data, "validate_only", False):
+            service = ProductService(db)
+            result = service.validate_products_import(import_data.products)
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "valid": result["valid"],
+                    "errors": result["errors"],
+                    "warnings": result.get("warnings", []),
+                    "summary": result.get("summary"),
+                },
+            )
+
         from app.services.job_service import JobService
         from app.services.queue_service import enqueue_job
         from app.tasks.import_tasks import process_product_import

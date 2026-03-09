@@ -124,6 +124,30 @@ export async function bulkImportOrders(data: any[]): Promise<{ created: number; 
   return response.json();
 }
 
+export interface ValidateImportResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  summary?: Record<string, unknown>;
+}
+
+/**
+ * Validate order tracking file without importing (same validation as import).
+ */
+export async function validateOrderTracking(file: File): Promise<ValidateImportResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiFetch(
+    '/api/v1/order-management/orders/import-tracking?validate_only=true',
+    { method: 'POST', body: formData },
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Validation failed' }));
+    throw new Error(error.message || 'Validation failed');
+  }
+  return response.json();
+}
+
 /**
  * Import order tracking data from Excel file (Master + Daily Tracking sheets)
  */

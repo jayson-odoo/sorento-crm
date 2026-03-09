@@ -379,6 +379,87 @@ class ProductService:
             on_progress(len(products_data), created + updated, len(errors), 0)
         return {"created": created, "updated": updated, "errors": errors}
 
+    def validate_products_import(self, products_data: List[dict]) -> dict:
+        """
+        Run the same validation as bulk_import_products without writing to DB.
+        Returns errors, warnings, and summary (would_create, would_update counts).
+        """
+        errors = []
+        warnings = []
+        would_create = 0
+        would_update = 0
+        category_map = self._build_category_map()
+        brand_map = self._build_brand_map()
+        all_codes = []
+        for row in products_data:
+            code = (row.get("product_code") or row.get("Product Code") or row.get("Item Code") or "").strip()
+            if code:
+                all_codes.append(code)
+        existing_by_code = self._fetch_existing_products_by_codes(all_codes)
+
+        for idx, row in enumerate(products_data, start=1):
+            try:
+                product_code = (row.get("product_code") or row.get("Product Code") or row.get("Item Code") or "").strip()
+                if not product_code:
+                    errors.append(f"Row {idx}: product_code / Item Code is required")
+                    continue
+                product_name = (row.get("product_name") or row.get("Product Name") or row.get("Item Code") or product_code).strip() or product_code
+                item_group = (row.get("item_group") or row.get("Item Group") or "").strip() or None
+                item_brand = (row.get("item_brand") or row.get("Item Brand") or "").strip() or None
+                raw_price = row.get("list_price") or row.get("Price") or row.get("price")
+                try:
+                    if raw_price is None or str(raw_price).strip() == "":
+                        list_price = Decimal("0")
+                    else:
+                        list_price = Decimal(str(raw_price))
+                    if list_price < 0:
+                        errors.append(
+                            f"Row {idx} ({product_code}): List price cannot be negative, got '{raw_price}'"
+                        )
+                        continue
+                except Exception:
+                    errors.append(
+                        f"Row {idx} ({product_code}): Price must be a valid number, got '{raw_price}'"
+                    )
+                    continue
+
+                category_id = None
+                if item_group:
+                    category_id = category_map.get(str(item_group).strip().lower())
+                if item_group and not category_id:
+                    errors.append(f"Row {idx} ({product_code}): no category found for item_group '{item_group}'")
+                    continue
+                if not category_id:
+                    errors.append(f"Row {idx} ({product_code}): item_group is required and must match a category")
+                    continue
+
+                brand_id = None
+                if item_brand:
+                    brand_id = brand_map.get(str(item_brand).strip().lower())
+                if item_brand and not brand_id:
+                    errors.append(f"Row {idx} ({product_code}): no brand found for item_brand '{item_brand}'")
+                    continue
+
+                existing = existing_by_code.get(product_code)
+                if existing:
+                    would_update += 1
+                else:
+                    would_create += 1
+            except Exception as e:
+                errors.append(f"Row {idx} ({row.get('product_code', '')}): {str(e)}")
+
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": warnings,
+            "summary": {
+                "total_rows": len(products_data),
+                "would_create": would_create,
+                "would_update": would_update,
+                "error_count": len(errors),
+            },
+        }
+
 
 class ProductCategoryService:
     """Service for product category operations."""

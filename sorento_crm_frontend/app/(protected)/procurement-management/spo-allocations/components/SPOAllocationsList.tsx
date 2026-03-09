@@ -30,7 +30,8 @@ import { GroupBySelect } from '@/components/ui/group-by-select';
 import { useSPOAllocations, useSPOAllocationsGroupedBySPONumber } from '../hooks/useSPOAllocations';
 import SPOBulkDeleteDialog from './SPOBulkDeleteDialog';
 import { SPOImportDialog } from './SPOImportDialog';
-import { importSPOAllocations } from '../services/spoAllocationService';
+import { importSPOAllocations, validateSPOAllocations } from '../services/spoAllocationService';
+import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
 import { useQueryClient } from '@tanstack/react-query';
 import type {
   SPOAllocation,
@@ -448,9 +449,11 @@ export default function SPOAllocationsList() {
             </Button>
           </div>
         </CardHeader>
+        <LatestImportStatusPanel jobType="spo_import" title="Latest SPO import" className="mx-5 mb-2" />
         <SPOImportDialog
           open={importDialogOpen}
           onOpenChange={setImportDialogOpen}
+          onTest={validateSPOAllocations}
           onUpload={async (files) => {
             const result = await importSPOAllocations(files);
             queryClient.invalidateQueries({ queryKey: ['spo-allocations'] });

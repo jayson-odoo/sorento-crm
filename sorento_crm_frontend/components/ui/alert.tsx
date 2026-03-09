@@ -239,13 +239,22 @@ function AlertToolbar({ children, className, ...props }: AlertIconProps) {
   );
 }
 
-function AlertDescription({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
+function AlertDescription({
+  className,
+  asChild = false,
+  ...props
+}: React.HTMLAttributes<HTMLParagraphElement> & { asChild?: boolean }) {
+  const baseClassName = cn('text-sm [&_p]:leading-relaxed [&_p]:mb-2', className);
+  if (asChild && React.isValidElement(props.children)) {
+    const child = props.children as React.ReactElement<{ className?: string }>;
+    return React.cloneElement(child, {
+      ...child.props,
+      className: cn(baseClassName, child.props?.className),
+      'data-slot': 'alert-description',
+    } as React.Attributes & { className?: string; 'data-slot'?: string });
+  }
   return (
-    <div
-      data-slot="alert-description"
-      className={cn('text-sm [&_p]:leading-relaxed [&_p]:mb-2', className)}
-      {...props}
-    />
+    <div data-slot="alert-description" className={baseClassName} {...props} />
   );
 }
 

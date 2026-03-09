@@ -90,13 +90,15 @@ async def get_spo_allocations_grouped_by_spo_number(
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
 async def import_spo_allocations(
     files: List[UploadFile] = File(..., description="One or more Excel files (.xlsx). Filename = SPO number."),
+    validate_only: bool = Query(False, description="If true, validate the first file only and return errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("procurement.spo_allocations.import")),
     db: Session = Depends(get_db),
 ):
-    """Queue SPO allocation import jobs. One job per file. Processed in background; progress in Import Jobs; notification when done."""
+    """Queue SPO allocation import jobs. Use validate_only=true to test the first file without importing."""
+    from fastapi.responses import JSONResponse
     from app.services.job_service import JobService
     from app.services.queue_service import enqueue_job
-    from app.tasks.import_tasks import process_spo_import
+    from app.tasks.import_tasks import process_spo_import, validate_spo_import
 
     if not files:
         raise HTTPException(
@@ -110,6 +112,20 @@ async def import_spo_allocations(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid file type: {upload.filename}. Please upload Excel (.xlsx or .xls).",
             )
+
+    if validate_only:
+        upload = files[0]
+        file_data = await upload.read()
+        result = validate_spo_import(file_data, upload.filename or "unknown.xlsx")
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "valid": result["valid"],
+                "errors": result["errors"],
+                "warnings": result.get("warnings", []),
+                "summary": result.get("summary"),
+            },
+        )
 
     job_ids = []
     job_service = JobService(db)

@@ -305,6 +305,7 @@ class BulkDeleteProductsRequest(BaseModel):
 class BulkImportProductsRequest(BaseModel):
     """Request schema for product bulk import. Each item is a row (Excel headers as keys). Processed in background as an import job."""
     products: List[dict]
+    validate_only: Optional[bool] = False  # If True, run validation only (no import); return errors/warnings.
 
     @field_validator("products")
     @classmethod
