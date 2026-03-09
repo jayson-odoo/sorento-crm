@@ -772,7 +772,7 @@ class StockService:
             # Ensure tuple keys use string UUIDs for consistent matching
             existing_stock_by_pair = {(str(s.product_id), str(s.warehouse_id)): s for s in existing_stocks}
         
-        # Step 4: Separate creates and updates (no new stock creation allowed)
+        # Step 4: Separate creates and updates (new stock records are created automatically)
         final_creates = []
         final_updates = []
         ledger_entries = []
@@ -785,13 +785,8 @@ class StockService:
                 row_dict['_existing_id'] = existing_stock_by_pair[pair].id
                 final_updates.append(row_dict)
             else:
-                skipped_rows += 1
-                warnings.append({
-                    "row": row_dict.get("_row_idx"),
-                    "product_code": row_dict.get("_product_code"),
-                    "warehouse": row_dict.get("_warehouse_name"),
-                    "reason": "Stock record not found for product + warehouse"
-                })
+                # Create new stock record for this product + warehouse
+                final_creates.append(row_dict)
 
         for row_dict in rows_to_update:
             final_updates.append(row_dict)
@@ -801,12 +796,15 @@ class StockService:
                 f"Row {w.get('row', '?')}: {w.get('product_code', '-')} / {w.get('warehouse', '-')}: {w.get('reason', '')}"
                 for w in warnings
             ]
+            # Dedupe creates by (product_id, warehouse_id) for count
+            create_keys = {(str(r['product_id']), str(r['warehouse_id'])) for r in final_creates}
             return {
                 "valid": len(errors) == 0,
                 "errors": errors,
                 "warnings": warnings_str,
                 "summary": {
                     "total_rows": len(stock_data),
+                    "would_create": len(create_keys),
                     "would_update": len(final_updates),
                     "would_skip": skipped_rows,
                     "error_count": len(errors),
@@ -818,9 +816,49 @@ class StockService:
         for stock in existing_stock_by_pair.values():
             existing_by_id[stock.id] = stock
         
-        # Step 5: Skip bulk insert (no new stock creation allowed)
-        if final_creates:
-            created = 0
+        # Step 5: Create new stock records (dedupe by product_id + warehouse_id, last wins)
+        create_dict = {}
+        for row_dict in final_creates:
+            pair = (str(row_dict['product_id']), str(row_dict['warehouse_id']))
+            create_dict[pair] = row_dict
+        if create_dict:
+            try:
+                for (_pid, _wid), row_dict in create_dict.items():
+                    qoh = row_dict.get('quantity_on_hand', 0) or 0
+                    qres = row_dict.get('quantity_reserved', 0) or 0
+                    q_avail = max(0, qoh - qres)
+                    new_stock = Stock(
+                        product_id=row_dict['product_id'],
+                        warehouse_id=row_dict['warehouse_id'],
+                        zone_id=row_dict.get('zone_id'),
+                        quantity_on_hand=qoh,
+                        quantity_reserved=qres,
+                        quantity_available=q_avail,
+                        quantity_damaged=row_dict.get('quantity_damaged', 0) or 0,
+                        reorder_point=row_dict.get('reorder_point'),
+                    )
+                    self.db.add(new_stock)
+                    self.db.flush()  # Get id for ledger
+                    if qoh != 0:
+                        ledger_entries.append({
+                            'id': str(uuid.uuid4()),
+                            'product_id': new_stock.product_id,
+                            'warehouse_id': new_stock.warehouse_id,
+                            'transaction_type': 'BULK_IMPORT',
+                            'quantity_change': qoh,
+                            'previous_quantity': 0,
+                            'new_quantity': qoh,
+                            'reference_type': 'bulk_import',
+                            'reference_id': new_stock.id,
+                            'notes': 'Bulk import (new stock record)',
+                            'created_by': user_id
+                        })
+                created = len(create_dict)
+            except Exception as e:
+                message = f"Bulk create error: {str(e)}"
+                errors.append(message)
+                error_records.append({"row": None, "error": message, "data": None})
+                created = 0
 
         # Step 6: Update existing records (use individual updates for reliability)
         if final_updates:
