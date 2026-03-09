@@ -32,8 +32,9 @@ import type { Warehouse } from '@/app/(protected)/inventory-management/warehouse
 import type { Stock } from '../types/stock.types';
 import { TemplateDownloadDialog } from '@/components/template/TemplateDownloadDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
-import { exportStockBalance, bulkImportStock } from '../services/stockService';
+import { exportStockBalance, bulkImportStock, validateStockImport } from '../services/stockService';
 import { replaceLatestStockList, getCurrentStockListAttachment } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
+import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
 import StockBulkDeleteDialog from './StockBulkDeleteDialog';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
@@ -411,6 +412,7 @@ export default function StockBalanceGrid() {
             </Button>
           </div>
         </CardHeader>
+        <LatestImportStatusPanel jobType="stock_import" title="Latest stock import" className="mx-5 mb-2" />
         <CardTable>
           <ScrollArea>
             <DataGridTable />
@@ -431,6 +433,7 @@ export default function StockBalanceGrid() {
       <TemplateUploadDialog
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
+        onTest={async (data: any[]) => validateStockImport(data)}
         onUpload={handleUploadTemplate}
       />
       <StockBulkDeleteDialog

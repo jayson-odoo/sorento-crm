@@ -1,5 +1,6 @@
 """Stock API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
@@ -8,7 +9,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.services.inventory_service import StockService
 from app.schemas.inventory import StockResponse, StockDashboardResponse, BulkImportStockRequest, BulkImportStockResponse, StockLedgerResponse
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -145,23 +146,37 @@ async def get_stock_ledger_by_stock(
         raise handle_internal_error(str(e))
 
 
-@router.post("/bulk-import", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/bulk-import",
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={200: {"description": "Validation only (validate_only=true)", "model": ValidateImportResponse}},
+)
 async def bulk_import_stock(
     import_data: BulkImportStockRequest,
     current_user: dict = Depends(require_permission("inventory.stock.import")),
     db: Session = Depends(get_db)
 ):
-    """Bulk import stock from Excel data (queued).
-
-    Updates existing stock records based on ID or product_id + warehouse_id.
-    Rows without existing stock records are skipped and logged.
-    Returns job ID for tracking progress.
-    """
+    """Bulk import stock from Excel data (queued). If validate_only=true, validate only and return errors/warnings (no job)."""
     try:
+        if getattr(import_data, "validate_only", False):
+            service = StockService(db)
+            result = service.bulk_import_stock(
+                import_data.stock, current_user["id"], validate_only=True
+            )
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "valid": result["valid"],
+                    "errors": result["errors"],
+                    "warnings": result.get("warnings", []),
+                    "summary": result.get("summary"),
+                },
+            )
+
         from app.services.job_service import JobService
         from app.services.queue_service import enqueue_job
         from app.tasks.import_tasks import process_stock_import
-        
+
         # Create job record
         job_service = JobService(db)
         job = job_service.create_job(

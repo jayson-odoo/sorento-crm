@@ -82,6 +82,38 @@ export async function exportStockBalance(params?: { warehouse_id?: string; categ
   return result.data || [];
 }
 
+/** Result shape for validate-only stock import (matches TemplateUploadDialog ValidateImportResult). */
+export interface ValidateStockImportResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  summary?: Record<string, unknown>;
+}
+
+/**
+ * Validate stock import data without importing (same validation as bulk import).
+ */
+export async function validateStockImport(
+  data: Record<string, unknown>[],
+): Promise<ValidateStockImportResult> {
+  const response = await apiFetch('/api/v1/inventory/stock/bulk-import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stock: data, validate_only: true }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Validation failed' }));
+    const message =
+      typeof error.detail === 'string'
+        ? error.detail
+        : Array.isArray(error.detail)
+          ? error.detail.map((e: { msg?: string }) => e.msg || String(e)).join('; ')
+          : error.message || 'Validation failed';
+    throw new Error(message);
+  }
+  return response.json();
+}
+
 /**
  * Bulk import stock from Excel data (queued)
  * Returns job_id for tracking progress

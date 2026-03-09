@@ -426,16 +426,17 @@ class StockService:
         stock_items = q.all()
         
         return stock_items
-    
-    def bulk_import_stock(self, stock_data: list[dict], user_id: str):
+
+    def bulk_import_stock(self, stock_data: list[dict], user_id: str, validate_only: bool = False):
         """Bulk import stock from Excel data using bulk operations for performance.
-        
+
         Args:
             stock_data: List of dictionaries containing stock data from Excel
             user_id: ID of the user performing the import
-            
+            validate_only: If True, run validation only (no DB writes); return errors/warnings.
+
         Returns:
-            dict with created, updated, skipped counts and errors
+            dict with created, updated, skipped counts and errors; if validate_only, valid/errors/warnings/summary.
         """
         created = 0
         updated = 0
@@ -791,10 +792,27 @@ class StockService:
                     "warehouse": row_dict.get("_warehouse_name"),
                     "reason": "Stock record not found for product + warehouse"
                 })
-        
+
         for row_dict in rows_to_update:
             final_updates.append(row_dict)
-        
+
+        if validate_only:
+            warnings_str = [
+                f"Row {w.get('row', '?')}: {w.get('product_code', '-')} / {w.get('warehouse', '-')}: {w.get('reason', '')}"
+                for w in warnings
+            ]
+            return {
+                "valid": len(errors) == 0,
+                "errors": errors,
+                "warnings": warnings_str,
+                "summary": {
+                    "total_rows": len(stock_data),
+                    "would_update": len(final_updates),
+                    "would_skip": skipped_rows,
+                    "error_count": len(errors),
+                },
+            }
+
         # Build existing stock map for ledger calculations
         existing_by_id = {**existing_stock_by_id}
         for stock in existing_stock_by_pair.values():
@@ -803,7 +821,7 @@ class StockService:
         # Step 5: Skip bulk insert (no new stock creation allowed)
         if final_creates:
             created = 0
-        
+
         # Step 6: Update existing records (use individual updates for reliability)
         if final_updates:
             try:
@@ -815,7 +833,7 @@ class StockService:
                     stock_id = row_dict['_existing_id']
                     qoh = row_dict.get('quantity_on_hand', 0) or 0
                     qres = row_dict.get('quantity_reserved', 0) or 0
-                    
+
                     # Store update data - only fields we can update (NOT quantity_available)
                     update_dict[stock_id] = {
                         'zone_id': row_dict.get('zone_id'),
@@ -825,7 +843,7 @@ class StockService:
                         'quantity_damaged': row_dict.get('quantity_damaged', 0) or 0,
                         'reorder_point': row_dict.get('reorder_point'),
                     }
-                
+
                 # Perform individual updates for reliability
                 for stock_id, update_data in update_dict.items():
                     stock = existing_by_id.get(stock_id)

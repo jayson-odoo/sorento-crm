@@ -186,6 +186,7 @@ class StockDashboardResponse(BaseModel):
 class BulkImportStockRequest(BaseModel):
     """Request schema for bulk import."""
     stock: list[dict]  # List of stock dictionaries from Excel
+    validate_only: Optional[bool] = False  # If True, validate only (no import); return errors/warnings.
 
 
 class BulkImportStockResponse(BaseModel):
