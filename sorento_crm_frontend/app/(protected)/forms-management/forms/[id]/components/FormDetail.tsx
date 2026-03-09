@@ -142,7 +142,7 @@ export default function FormDetail({ formId }: FormDetailProps) {
             currentId={formId}
             items={navigationItems}
             basePath="/forms-management/forms"
-            totalCount={navigationData?.total_count}
+            totalCount={navigationData?.pagination?.total}
             ariaLabel="form"
           />
           <Button variant="outline" onClick={() => router.push(`/forms-management/forms/${formId}/edit`)}>
