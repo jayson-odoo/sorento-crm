@@ -1,6 +1,6 @@
 """Inventory management models."""
 import enum
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Computed
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -77,7 +77,8 @@ class Stock(Base):
     zone_id = Column(String, nullable=True)
     quantity_on_hand = Column(Integer, default=0, nullable=False)
     quantity_reserved = Column(Integer, default=0, nullable=False)
-    quantity_available = Column(Integer, default=0, nullable=False)
+    # DB-generated column: GENERATED ALWAYS AS (quantity_on_hand - quantity_reserved) STORED
+    quantity_available = Column(Integer, Computed("(quantity_on_hand - quantity_reserved)"), nullable=False)
     quantity_damaged = Column(Integer, default=0, nullable=False)
     reorder_point = Column(Integer, nullable=True)
     last_count_date = Column(DateTime(timezone=False), nullable=True)

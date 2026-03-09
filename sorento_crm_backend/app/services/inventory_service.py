@@ -826,14 +826,13 @@ class StockService:
                 for (_pid, _wid), row_dict in create_dict.items():
                     qoh = row_dict.get('quantity_on_hand', 0) or 0
                     qres = row_dict.get('quantity_reserved', 0) or 0
-                    q_avail = max(0, qoh - qres)
+                    # quantity_available is a DB-generated column (quantity_on_hand - quantity_reserved), do not set it
                     new_stock = Stock(
                         product_id=row_dict['product_id'],
                         warehouse_id=row_dict['warehouse_id'],
                         zone_id=row_dict.get('zone_id'),
                         quantity_on_hand=qoh,
                         quantity_reserved=qres,
-                        quantity_available=q_avail,
                         quantity_damaged=row_dict.get('quantity_damaged', 0) or 0,
                         reorder_point=row_dict.get('reorder_point'),
                     )

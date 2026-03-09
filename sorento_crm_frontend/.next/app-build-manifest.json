@@ -11,10 +11,10 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/layout.js"
     ],
-    "/(protected)/procurement-management/spo-allocations/page": [
+    "/(protected)/inventory-management/stock/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/spo-allocations/page.js"
+      "static/chunks/app/(protected)/inventory-management/stock/page.js"
     ],
     "/api/auth/[...nextauth]/route": [
       "static/chunks/webpack.js",
@@ -25,46 +25,6 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/token/route.js"
-    ],
-    "/(protected)/inventory-management/stock/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/inventory-management/stock/page.js"
-    ],
-    "/(protected)/master-data-management/products/layout": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/layout.js"
-    ],
-    "/(protected)/master-data-management/products/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/page.js"
-    ],
-    "/(protected)/procurement-management/purchase-requests/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/purchase-requests/page.js"
-    ],
-    "/(protected)/marketing-management/promotions/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/marketing-management/promotions/page.js"
-    ],
-    "/(protected)/forms-management/forms/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/forms-management/forms/page.js"
-    ],
-    "/(protected)/resource-management/attachment-directories/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/resource-management/attachment-directories/page.js"
-    ],
-    "/(protected)/resource-management/trash/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/resource-management/trash/page.js"
     ]
   }
 }

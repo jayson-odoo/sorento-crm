@@ -1,10 +1,5 @@
 {
-  "/api/auth/token/route": "app/api/auth/token/route.js",
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/(protected)/procurement-management/purchase-requests/page": "app/(protected)/procurement-management/purchase-requests/page.js",
-  "/(protected)/marketing-management/promotions/page": "app/(protected)/marketing-management/promotions/page.js",
-  "/(protected)/resource-management/attachment-directories/page": "app/(protected)/resource-management/attachment-directories/page.js",
-  "/(protected)/inventory-management/stock/page": "app/(protected)/inventory-management/stock/page.js",
-  "/(protected)/forms-management/forms/page": "app/(protected)/forms-management/forms/page.js",
-  "/(protected)/resource-management/trash/page": "app/(protected)/resource-management/trash/page.js"
+  "/api/auth/token/route": "app/api/auth/token/route.js",
+  "/(protected)/inventory-management/stock/page": "app/(protected)/inventory-management/stock/page.js"
 }
