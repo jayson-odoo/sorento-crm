@@ -1,10 +1,9 @@
 {
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/api/v1/public/[...path]/route": "app/api/v1/public/[...path]/route.js",
-  "/(protected)/procurement-management/spo-allocations/page": "app/(protected)/procurement-management/spo-allocations/page.js",
-  "/(protected)/procurement-management/purchase-requests/[id]/page": "app/(protected)/procurement-management/purchase-requests/[id]/page.js",
   "/(protected)/procurement-management/purchase-requests/page": "app/(protected)/procurement-management/purchase-requests/page.js",
-  "/(auth)/approval/page": "app/(auth)/approval/page.js",
-  "/(auth)/signin/page": "app/(auth)/signin/page.js"
+  "/(protected)/marketing-management/promotions/page": "app/(protected)/marketing-management/promotions/page.js",
+  "/(protected)/forms-management/forms/page": "app/(protected)/forms-management/forms/page.js",
+  "/(protected)/resource-management/trash/page": "app/(protected)/resource-management/trash/page.js",
+  "/(protected)/resource-management/attachment-directories/page": "app/(protected)/resource-management/attachment-directories/page.js",
+  "/(protected)/master-data-management/products/page": "app/(protected)/master-data-management/products/page.js"
 }

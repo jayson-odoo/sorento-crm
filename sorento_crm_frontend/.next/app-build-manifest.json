@@ -26,35 +26,45 @@
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/token/route.js"
     ],
+    "/(protected)/inventory-management/stock/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/inventory-management/stock/page.js"
+    ],
+    "/(protected)/master-data-management/products/layout": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/master-data-management/products/layout.js"
+    ],
+    "/(protected)/master-data-management/products/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/master-data-management/products/page.js"
+    ],
     "/(protected)/procurement-management/purchase-requests/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/procurement-management/purchase-requests/page.js"
     ],
-    "/(protected)/procurement-management/purchase-requests/[id]/page": [
+    "/(protected)/marketing-management/promotions/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/purchase-requests/[id]/page.js"
+      "static/chunks/app/(protected)/marketing-management/promotions/page.js"
     ],
-    "/(auth)/layout": [
+    "/(protected)/forms-management/forms/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(auth)/layout.js"
+      "static/chunks/app/(protected)/forms-management/forms/page.js"
     ],
-    "/(auth)/approval/page": [
+    "/(protected)/resource-management/attachment-directories/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(auth)/approval/page.js"
+      "static/chunks/app/(protected)/resource-management/attachment-directories/page.js"
     ],
-    "/api/v1/public/[...path]/route": [
+    "/(protected)/resource-management/trash/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/api/v1/public/[...path]/route.js"
-    ],
-    "/(auth)/signin/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(auth)/signin/page.js"
+      "static/chunks/app/(protected)/resource-management/trash/page.js"
     ]
   }
 }

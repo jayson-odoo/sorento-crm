@@ -10,9 +10,10 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, Download, Upload, FileSpreadsheet, Filter } from 'lucide-react';
+import { Search, X, ChevronRight, Download, Upload, FileSpreadsheet, Filter, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -25,6 +26,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockBalance } from '../hooks/useStock';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
 import type { Warehouse } from '@/app/(protected)/inventory-management/warehouses/types/warehouse.types';
 import type { Stock } from '../types/stock.types';
@@ -32,6 +34,7 @@ import { TemplateDownloadDialog } from '@/components/template/TemplateDownloadDi
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { exportStockBalance, bulkImportStock } from '../services/stockService';
 import { replaceLatestStockList, getCurrentStockListAttachment } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
+import StockBulkDeleteDialog from './StockBulkDeleteDialog';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -52,6 +55,10 @@ export default function StockBalanceGrid() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [exportData, setExportData] = useState<Stock[]>([]);
   const [isLoadingExport, setIsLoadingExport] = useState(false);
+  const [selectedStockIds, setSelectedStockIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+
+  const canDeleteStock = useHasPermission('inventory.stock.delete');
 
   const { data: stockListAttachment } = useQuery({
     queryKey: ['current-stock-list-attachment'],
@@ -72,6 +79,24 @@ export default function StockBalanceGrid() {
     warehouse_id: warehouseId || undefined,
     status: statusFilter || undefined,
   });
+
+  const pageStock = data?.data ?? [];
+  const isAllSelected = pageStock.length > 0 && selectedStockIds.size === pageStock.length;
+  const toggleSelection = (id: string) => {
+    setSelectedStockIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const selectAll = () => {
+    if (isAllSelected) {
+      setSelectedStockIds(new Set());
+    } else {
+      setSelectedStockIds(new Set(pageStock.map((s) => s.id)));
+    }
+  };
 
   // Define column options for export
   const columnOptions: ColumnOption[] = useMemo(() => [
@@ -133,6 +158,30 @@ export default function StockBalanceGrid() {
 
   const columns = useMemo<ColumnDef<Stock>[]>(
     () => [
+      ...(canDeleteStock
+        ? [
+            {
+              id: 'select',
+              header: () => (
+                <Checkbox
+                  checked={isAllSelected}
+                  onCheckedChange={selectAll}
+                  aria-label="Select all"
+                />
+              ),
+              cell: ({ row }: { row: { original: Stock } }) => (
+                <Checkbox
+                  checked={selectedStockIds.has(row.original.id)}
+                  onCheckedChange={() => toggleSelection(row.original.id)}
+                  aria-label={`Select ${row.original.product?.product_code ?? row.original.id}`}
+                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                />
+              ),
+              size: 44,
+              enableResizing: false,
+            } as ColumnDef<Stock>,
+          ]
+        : []),
       {
         accessorKey: 'product.product_code',
         header: ({ column }) => <DataGridColumnHeader title="Product Code" column={column} />,
@@ -209,7 +258,7 @@ export default function StockBalanceGrid() {
         size: 40,
       },
     ],
-    [],
+    [canDeleteStock, isAllSelected, selectedStockIds, selectAll, toggleSelection],
   );
 
   const table = useReactTable({
@@ -327,7 +376,18 @@ export default function StockBalanceGrid() {
               </PopoverContent>
             </Popover>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {canDeleteStock && selectedStockIds.size > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive border-destructive/50 hover:bg-destructive/10"
+                onClick={() => setBulkDeleteDialogOpen(true)}
+              >
+                <Trash2 className="size-4" />
+                Bulk Delete ({selectedStockIds.size})
+              </Button>
+            )}
             {stockListAttachment ? (
               <Button variant="outline" size="sm" asChild>
                 <Link href={`/resource-management/attachments/${stockListAttachment.id}`}>
@@ -372,6 +432,12 @@ export default function StockBalanceGrid() {
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
         onUpload={handleUploadTemplate}
+      />
+      <StockBulkDeleteDialog
+        open={bulkDeleteDialogOpen}
+        onOpenChange={setBulkDeleteDialogOpen}
+        stockIds={Array.from(selectedStockIds)}
+        onSuccess={() => setSelectedStockIds(new Set())}
       />
     </DataGrid>
   );

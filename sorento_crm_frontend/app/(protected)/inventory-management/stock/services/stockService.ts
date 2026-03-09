@@ -11,12 +11,11 @@ export async function getStockDashboard(): Promise<StockDashboard> {
 
 export async function getStockBalance(params: DataGridApiFetchParams & { warehouse_id?: string; product_id?: string; category_id?: string; status?: string }): Promise<DataGridApiResponse<Stock>> {
   const { pageIndex, pageSize, sorting, searchQuery, warehouse_id, product_id, category_id, status } = params;
-  const cappedPageSize = Math.min(pageSize, 100);
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
     page: String(pageIndex + 1),
-    limit: String(cappedPageSize),
+    limit: String(pageSize),
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
     ...(warehouse_id ? { warehouse_id } : {}),
@@ -98,6 +97,24 @@ export async function bulkImportStock(
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to queue import job' }));
     throw new Error(error.message || 'Failed to queue import job');
+  }
+  return response.json();
+}
+
+/**
+ * Bulk delete stock records by id. Requires inventory.stock.delete permission.
+ */
+export async function bulkDeleteStock(
+  ids: string[],
+): Promise<{ deleted_count: number; message: string }> {
+  const response = await apiFetch('/api/v1/inventory/stock/bulk', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to bulk delete stock' }));
+    throw new Error(error.message || 'Failed to bulk delete stock');
   }
   return response.json();
 }

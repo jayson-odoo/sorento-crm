@@ -23,7 +23,7 @@ function DataGridPagination(props: DataGridPaginationProps) {
   const { table, recordCount, isLoading } = useDataGrid();
 
   const defaultProps: Partial<DataGridPaginationProps> = {
-    sizes: [5, 10, 25, 50, 100, 250, 500, 1000],
+    sizes: [5, 10, 25, 50, 100, 250, 500, 1000, 5000],
     sizesLabel: 'Show',
     sizesDescription: 'per page',
     sizesSkeleton: <Skeleton className="h-8 w-44" />,
@@ -139,7 +139,14 @@ function DataGridPagination(props: DataGridPaginationProps) {
               indicatorPosition="right"
               onValueChange={(value) => {
                 const newPageSize = Number(value);
-                table.setPageSize(newPageSize);
+                // Explicitly notify parent so controlled pagination state updates and data refetches.
+                // table.setPageSize() alone can fail to trigger parent state in some cases.
+                const updater = (old: { pageIndex: number; pageSize: number }) => ({
+                  ...old,
+                  pageSize: newPageSize,
+                  pageIndex: 0,
+                });
+                table.options.onPaginationChange?.(updater);
               }}
             >
               <SelectTrigger className="w-fit" size="sm">

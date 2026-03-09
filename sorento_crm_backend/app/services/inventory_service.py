@@ -283,6 +283,14 @@ class StockService:
             "empty": total == 0,
         }
 
+    def bulk_delete_stock(self, stock_ids: list[str]) -> dict:
+        """Delete multiple stock records by id. Returns deleted_count and message."""
+        if not stock_ids:
+            return {"deleted_count": 0, "message": "No stock records to delete."}
+        deleted = self.db.query(Stock).filter(Stock.id.in_(stock_ids)).delete(synchronize_session=False)
+        self.db.commit()
+        return {"deleted_count": deleted, "message": f"Deleted {deleted} stock record(s)."}
+
     def list_stock_ledger(
         self,
         page: int = 1,

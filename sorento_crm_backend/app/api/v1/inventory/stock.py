@@ -1,7 +1,9 @@
 """Stock API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
+
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.services.inventory_service import StockService
@@ -12,10 +14,14 @@ from app.services.error_handler import handle_internal_error
 router = APIRouter()
 
 
+class BulkDeleteStockRequest(BaseModel):
+    ids: list[str]
+
+
 @router.get("/balance", response_model=ListResponse[StockResponse])
 async def get_stock_balance(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=5000),
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
@@ -101,12 +107,27 @@ async def export_stock_balance(
         raise handle_internal_error(str(e))
 
 
+@router.delete("/bulk")
+async def bulk_delete_stock(
+    body: BulkDeleteStockRequest = Body(...),
+    current_user: dict = Depends(require_permission("inventory.stock.delete")),
+    db: Session = Depends(get_db)
+):
+    """Bulk delete stock records by id. Requires inventory.stock.delete permission."""
+    try:
+        service = StockService(db)
+        result = service.bulk_delete_stock(body.ids)
+        return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{product_id}/{warehouse_id}/ledger", response_model=ListResponse[StockLedgerResponse])
 async def get_stock_ledger_by_stock(
     product_id: str,
     warehouse_id: str,
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=5000),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):

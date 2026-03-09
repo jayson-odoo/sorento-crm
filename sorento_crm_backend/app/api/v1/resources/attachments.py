@@ -66,7 +66,7 @@ def _enrich_uploaded_by_user(db, attachment) -> Optional[dict]:
 @router.get("/", response_model=ListResponse[AttachmentResponse])
 async def get_attachments(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=5000),
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
