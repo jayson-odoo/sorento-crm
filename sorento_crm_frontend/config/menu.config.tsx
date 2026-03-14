@@ -599,6 +599,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Work Calendar',
         path: '/system-management/work-calendar',
       },
+      {
+        title: 'Running Numbers',
+        path: '/system-management/numbering-rules',
+      },
     ],
   },
   // Hidden: Store - Client

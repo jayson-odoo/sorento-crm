@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useProduct, useProducts } from '../../hooks/useProducts';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
 import ProductStockTab from './ProductStockTab';
 import ProductSuppliersTab from './ProductSuppliersTab';
@@ -172,14 +172,14 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               <div>
                 <p className="text-sm text-muted-foreground">Created</p>
                 <p className="font-medium text-sm">
-                  {formatDateTime(new Date(product.created_at))}
+                  {formatDateTimeInMalaysia(product.created_at)}
                 </p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Last Updated</p>
                 <p className="font-medium text-sm">
                   {product.updated_at
-                    ? formatDateTime(new Date(product.updated_at))
+                    ? formatDateTimeInMalaysia(product.updated_at)
                     : '-'}
                 </p>
               </div>

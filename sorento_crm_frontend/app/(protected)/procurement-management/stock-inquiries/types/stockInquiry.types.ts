@@ -17,10 +17,28 @@ export interface StockInquiry {
   last_responded_by?: string | null;
   last_responded_by_name?: string | null;
   last_responded_at?: string | null;
+  rejection_reason?: string | null;
+  rejected_at?: string | null;
+  rejected_by?: string | null;
+  rejected_by_name?: string | null;
+  rejected_from?: string | null;
+  reopen_reason?: string | null;
+  reopened_at?: string | null;
+  reopened_by?: string | null;
+  reopened_by_name?: string | null;
   attachments?: StockInquiryAttachment[];
   created_at: Date;
   updated_at: Date;
 }
+
+export const STOCK_INQUIRY_STATUS_LABELS: Record<string, string> = {
+  new: 'New',
+  pending_project_sales: 'Pending project sales',
+  pending_purchasing: 'Pending purchasing',
+  rejected: 'Rejected',
+  responded: 'Responded',
+  updated: 'Updated', // legacy
+};
 
 export interface StockInquiryAttachment {
   id: string;

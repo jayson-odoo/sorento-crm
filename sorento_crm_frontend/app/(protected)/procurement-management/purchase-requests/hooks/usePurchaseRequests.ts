@@ -11,6 +11,7 @@ import {
   bulkDeletePurchaseRequests,
   updatePurchaseRequestAndReply,
   deletePurchaseRequestAttachment,
+  getPurchaseRequestConversation,
 } from '../services/purchaseRequestService';
 import type { PurchaseRequestUpdateAndReplyData } from '../services/purchaseRequestService';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
@@ -157,5 +158,21 @@ export function useDeletePurchaseRequestAttachment() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to unlink attachment'),
+  });
+}
+
+export function usePurchaseRequestConversation(
+  requestId: string | null,
+  options?: { limit?: number; cursor?: string; enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['purchase-request-conversation', requestId, options?.limit, options?.cursor],
+    queryFn: () =>
+      getPurchaseRequestConversation(requestId!, {
+        limit: options?.limit ?? 50,
+        cursor: options?.cursor,
+      }),
+    enabled: !!requestId && (options?.enabled !== false),
+    staleTime: 30 * 1000,
   });
 }

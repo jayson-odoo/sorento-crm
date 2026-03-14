@@ -6,7 +6,17 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.services.order_service import OrderService
-from app.schemas.order import OrderCreate, OrderUpdate, OrderResponse, BulkImportRequest, BulkImportResponse, BulkDeleteOrdersRequest
+from app.schemas.order import (
+    OrderCreate,
+    OrderUpdate,
+    OrderResponse,
+    OrderLineCreate,
+    OrderLineUpdate,
+    OrderLineResponse,
+    BulkImportRequest,
+    BulkImportResponse,
+    BulkDeleteOrdersRequest,
+)
 from app.schemas.common import ListResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 
@@ -127,6 +137,60 @@ async def delete_order(
         raise handle_internal_error(str(e))
 
 
+@router.post("/{order_id}/lines", response_model=OrderLineResponse, status_code=status.HTTP_201_CREATED)
+async def create_order_line(
+    order_id: str,
+    data: OrderLineCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Add a line to an order (delivery order detail)."""
+    try:
+        service = OrderService(db)
+        line = service.create_order_line(order_id, data)
+        return line
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{order_id}/lines/{line_id}", response_model=OrderLineResponse)
+async def update_order_line(
+    order_id: str,
+    line_id: str,
+    data: OrderLineUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update an order line."""
+    try:
+        service = OrderService(db)
+        line = service.update_order_line(order_id, line_id, data)
+        return line
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/{order_id}/lines/{line_id}", status_code=status.HTTP_200_OK)
+async def delete_order_line(
+    order_id: str,
+    line_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove an order line."""
+    try:
+        service = OrderService(db)
+        return service.delete_order_line(order_id, line_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.post("/{order_id}/archive", status_code=status.HTTP_200_OK)
 async def archive_order(
     order_id: str,
@@ -236,6 +300,57 @@ async def import_order_tracking(
             'job_id': rq_job.id,
             'status': 'queued',
             'message': 'Import job queued successfully'
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/import-order-lines", status_code=status.HTTP_202_ACCEPTED)
+async def import_delivery_order_detail(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_permission("order_management.orders.import")),
+    db: Session = Depends(get_db),
+):
+    """Import delivery order detail (order lines) from Excel. Uses doc no -> order, item code -> product, location -> warehouse. Upserts by (order, product, warehouse)."""
+    try:
+        if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file type. Please upload an Excel file (.xlsx or .xls)."
+            )
+        file_data = await file.read()
+
+        from app.services.job_service import JobService
+        from app.services.queue_service import enqueue_job
+        from app.tasks.import_tasks import process_delivery_order_detail_import
+
+        job_service = JobService(db)
+        job = job_service.create_job(
+            job_type="delivery_order_detail_import",
+            user_id=current_user["id"],
+            filename=file.filename,
+        )
+        db.commit()
+
+        rq_job = enqueue_job(
+            process_delivery_order_detail_import,
+            str(job.id),
+            file_data,
+            file.filename or "upload.xlsx",
+            current_user["id"],
+            queue_name="imports",
+            job_timeout=3600,
+        )
+        job_service.update_job_with_rq_id(job, rq_job.id)
+
+        return {
+            "job_id": rq_job.id,
+            "status": "queued",
+            "message": "Delivery order detail import job queued successfully",
         }
     except HTTPException:
         raise

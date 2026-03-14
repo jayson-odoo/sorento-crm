@@ -76,6 +76,14 @@ PERMISSION_REGISTRY.extend(_crud("procurement", "grn", "GRN"))
 PERMISSION_REGISTRY.append({"slug": "procurement.grn.import", "name": "Import GRN", "description": "Permission to import GRN."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "picking_lines", "Picking Lines"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "stock_inquiries", "Stock Inquiries"))
+PERMISSION_REGISTRY.extend([
+    {"slug": "procurement.stock_inquiries.submit_for_project_sales", "name": "Submit stock inquiry for project sales", "description": "Move stock inquiry to pending project sales review."},
+    {"slug": "procurement.stock_inquiries.project_sales_approve", "name": "Project sales approve stock inquiry", "description": "Approve stock inquiry and send to purchasing."},
+    {"slug": "procurement.stock_inquiries.project_sales_reject", "name": "Project sales reject stock inquiry", "description": "Reject stock inquiry (project sales)."},
+    {"slug": "procurement.stock_inquiries.purchasing_approve", "name": "Purchasing respond to stock inquiry", "description": "Update & Reply is used to respond; this permission gates access to that action."},
+    {"slug": "procurement.stock_inquiries.purchasing_reject", "name": "Purchasing reject stock inquiry", "description": "Reject stock inquiry (purchasing)."},
+    {"slug": "procurement.stock_inquiries.reopen", "name": "Reopen rejected stock inquiry", "description": "Reopen a rejected stock inquiry back to its previous state (pending project sales or pending purchasing)."},
+])
 PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase Requests"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "sponsorship_forms", "Sponsorship Forms"))
 
@@ -116,6 +124,10 @@ PERMISSION_REGISTRY.append({
     "name": "View Outgoing Mails",
     "description": "Permission to view outgoing email log and delivery status.",
 })
+PERMISSION_REGISTRY.extend([
+    {"slug": "system.numbering_rules.view", "name": "View Running Numbers", "description": "Permission to view document numbering rules."},
+    {"slug": "system.numbering_rules.edit", "name": "Edit Running Numbers", "description": "Permission to edit document numbering rules."},
+])
 
 # Menu / Quick Access
 PERMISSION_REGISTRY.append({

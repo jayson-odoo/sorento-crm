@@ -187,3 +187,109 @@ export async function getOrCreateStockInquiryViewLink(
   }
   return response.json();
 }
+
+export async function submitStockInquiryForProjectSales(id: string): Promise<StockInquiry> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${id}/submit-for-project-sales`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || 'Failed to submit for project sales');
+  }
+  return response.json();
+}
+
+export async function projectSalesApproveStockInquiry(id: string): Promise<StockInquiry> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${id}/project-sales-approve`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || 'Failed to approve');
+  }
+  return response.json();
+}
+
+export async function projectSalesRejectStockInquiry(id: string, reason?: string): Promise<StockInquiry> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${id}/project-sales-reject`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reason ?? null }),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || 'Failed to reject');
+  }
+  return response.json();
+}
+
+export async function purchasingRejectStockInquiry(id: string, reason?: string): Promise<StockInquiry> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${id}/purchasing-reject`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reason ?? null }),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || 'Failed to reject');
+  }
+  return response.json();
+}
+
+export async function reopenStockInquiry(id: string, reason?: string): Promise<StockInquiry> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${id}/reopen`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reason ?? null }),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || 'Failed to reopen');
+  }
+  return response.json();
+}
+
+export interface RespondMessageItem {
+  messageId?: number;
+  channelMessageId?: string;
+  contactId?: number;
+  channelId?: number;
+  traffic?: string;
+  message?: { type?: string; text?: string; messageTag?: string };
+  status?: Array<{ value?: string; timestamp?: number; message?: string }>;
+  sender?: { source?: string; userId?: number; teamId?: number };
+}
+
+export interface RespondConversationResponse {
+  items: RespondMessageItem[];
+  pagination?: { next?: string; previous?: string };
+  error?: string;
+}
+
+export async function getStockInquiryConversation(
+  inquiryId: string,
+  params?: { limit?: number; cursor?: string },
+): Promise<RespondConversationResponse> {
+  const sp = new URLSearchParams();
+  if (params?.limit != null) sp.set('limit', String(params.limit));
+  if (params?.cursor) sp.set('cursor', params.cursor);
+  const qs = sp.toString();
+  const url = `/api/v1/procurement/stock-inquiries/${inquiryId}/conversation${qs ? `?${qs}` : ''}`;
+  const response = await apiFetch(url);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || 'Failed to load conversation');
+  }
+  return response.json();
+}

@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, LoaderCircleIcon } from 'lucide-react';
+import { Plus, Trash2, LoaderCircleIcon, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -16,10 +16,110 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { getProductSuppliersByProductId, createProductSupplier, deleteProductSupplier } from '../../../procurement-management/product-suppliers/services/productSupplierService';
+import { getProductSuppliersByProductId, createProductSupplier, updateProductSupplier, deleteProductSupplier } from '../../../procurement-management/product-suppliers/services/productSupplierService';
 import { useSupplierSelectQuery } from '../../../procurement-management/suppliers/hooks/useSupplierSelectQuery';
 import { toast } from 'sonner';
 import type { ProductSupplier } from '../../../procurement-management/product-suppliers/types/productSupplier.types';
+
+function ProductSupplierRow({
+  ps,
+  onUpdateLeadTime,
+  onRemove,
+  isUpdating,
+  isDeleting,
+}: {
+  ps: ProductSupplier;
+  onUpdateLeadTime: (days: number) => void;
+  onRemove: () => void;
+  isUpdating: boolean;
+  isDeleting: boolean;
+}) {
+  const currentDays = ps.standard_lead_time_days ?? ps.lead_time_days ?? 0;
+  const [leadTimeInput, setLeadTimeInput] = useState(String(currentDays));
+  const [hasChange, setHasChange] = useState(false);
+
+  useEffect(() => {
+    setLeadTimeInput(String(currentDays));
+  }, [currentDays]);
+
+  const handleLeadTimeBlur = () => {
+    const num = parseInt(leadTimeInput, 10);
+    if (!hasChange) return;
+    if (isNaN(num) || num < 0) {
+      setLeadTimeInput(String(currentDays));
+      setHasChange(false);
+      return;
+    }
+    onUpdateLeadTime(num);
+    setHasChange(false);
+  };
+
+  const handleLeadTimeKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      (e.target as HTMLInputElement).blur();
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Badge variant="secondary">
+          {ps.supplier?.supplier_code || 'N/A'}
+        </Badge>
+        <span className="text-sm font-medium">
+          {ps.supplier?.supplier_name || 'Unknown Supplier'}
+        </span>
+        <div className="flex items-center gap-2">
+          <Label className="text-xs text-muted-foreground whitespace-nowrap">Lead time (days)</Label>
+          <Input
+            type="number"
+            min={0}
+            className="w-20 h-8"
+            value={leadTimeInput}
+            onChange={(e) => {
+              setLeadTimeInput(e.target.value);
+              setHasChange(true);
+            }}
+            onBlur={handleLeadTimeBlur}
+            onKeyDown={handleLeadTimeKeyDown}
+            disabled={isUpdating}
+          />
+          {hasChange && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8"
+              onClick={() => {
+                const num = parseInt(leadTimeInput, 10);
+                if (!isNaN(num) && num >= 0) {
+                  onUpdateLeadTime(num);
+                  setHasChange(false);
+                }
+              }}
+              disabled={isUpdating}
+            >
+              {isUpdating ? <LoaderCircleIcon className="size-4 animate-spin" /> : <Save className="size-4" />}
+            </Button>
+          )}
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={onRemove}
+        disabled={isDeleting}
+      >
+        {isDeleting ? (
+          <LoaderCircleIcon className="size-4 animate-spin" />
+        ) : (
+          <Trash2 className="size-4 text-destructive" />
+        )}
+      </Button>
+    </div>
+  );
+}
 
 interface ProductSuppliersSectionProps {
   productId: string | undefined;
@@ -65,6 +165,19 @@ export default function ProductSuppliersSection({
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Failed to add supplier');
+    },
+  });
+
+  // Update lead time mutation
+  const updateMutation = useMutation({
+    mutationFn: ({ id, standard_lead_time_days }: { id: string; standard_lead_time_days: number }) =>
+      updateProductSupplier(id, { standard_lead_time_days }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['product-suppliers', productId] });
+      toast.success('Lead time updated');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to update lead time');
     },
   });
 
@@ -192,37 +305,16 @@ export default function ProductSuppliersSection({
         ) : productSuppliers && productSuppliers.length > 0 ? (
           <div className="space-y-2">
             {productSuppliers.map((ps) => (
-              <div
+              <ProductSupplierRow
                 key={ps.id}
-                className="flex items-center justify-between rounded-lg border p-3"
-              >
-                <div className="flex items-center gap-3">
-                  <Badge variant="secondary">
-                    {ps.supplier?.supplier_code || 'N/A'}
-                  </Badge>
-                  <span className="text-sm font-medium">
-                    {ps.supplier?.supplier_name || 'Unknown Supplier'}
-                  </span>
-                  {(ps.standard_lead_time_days !== undefined || ps.lead_time_days !== undefined) && (
-                    <Badge variant="outline" className="text-xs">
-                      Lead Time: {ps.standard_lead_time_days ?? ps.lead_time_days} days
-                    </Badge>
-                  )}
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleRemoveSupplier(ps.id)}
-                  disabled={deleteMutation.isPending}
-                >
-                  {deleteMutation.isPending ? (
-                    <LoaderCircleIcon className="size-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="size-4 text-destructive" />
-                  )}
-                </Button>
-              </div>
+                ps={ps}
+                onUpdateLeadTime={(days) =>
+                  updateMutation.mutate({ id: ps.id, standard_lead_time_days: days })
+                }
+                onRemove={() => handleRemoveSupplier(ps.id)}
+                isUpdating={updateMutation.isPending}
+                isDeleting={deleteMutation.isPending}
+              />
             ))}
           </div>
         ) : (

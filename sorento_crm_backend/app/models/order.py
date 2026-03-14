@@ -7,6 +7,10 @@ from app.database import Base
 import uuid
 
 
+def _uuid_str():
+    return str(uuid.uuid4())
+
+
 class OrderStatus(Base):
     __tablename__ = "order_statuses"
     
@@ -94,7 +98,8 @@ class Order(Base):
     
     customer = relationship("Customer", back_populates="orders")
     order_status = relationship("OrderStatus", back_populates="orders")
-    
+    lines = relationship("OrderLine", back_populates="order", cascade="all, delete-orphan")
+
     __table_args__ = (
         Index("ix_orders_customer_id", "customer_id"),
         Index("ix_orders_order_status_id", "order_status_id"),
@@ -105,4 +110,46 @@ class Order(Base):
         Index("ix_orders_debtor_code", "debtor_code"),
         Index("ix_orders_kpi_warning", "kpi_warning"),
         Index("ix_orders_is_cancelled", "is_cancelled"),
+    )
+
+
+class OrderLine(Base):
+    """Delivery order detail line: product + warehouse + qty + pricing."""
+    __tablename__ = "order_lines"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("products.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    warehouse_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("warehouses.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    quantity = Column(Numeric(15, 4), default=0, nullable=False)
+    unit_price = Column(Numeric(15, 4), nullable=True)
+    discount = Column(Numeric(15, 4), default=0, nullable=True)
+    total = Column(Numeric(15, 4), nullable=True)
+    tax = Column(Numeric(15, 4), nullable=True)
+    total_excluding_tax = Column(Numeric(15, 4), nullable=True)
+    total_including_tax = Column(Numeric(15, 4), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    order = relationship("Order", back_populates="lines")
+    product = relationship("Product", backref="order_lines")
+    warehouse = relationship("Warehouse", backref="order_lines")
+
+    __table_args__ = (
+        Index("ix_order_lines_order_id", "order_id"),
+        Index("ix_order_lines_product_id", "product_id"),
+        Index("ix_order_lines_warehouse_id", "warehouse_id"),
+        Index("ix_order_lines_order_product_warehouse", "order_id", "product_id", "warehouse_id", unique=True),
     )

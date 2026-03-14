@@ -33,7 +33,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getStockDetail, getStockLedgerByStock, exportStockBalance } from '../../services/stockService';
 import type { Stock } from '../../types/stock.types';
 import type { StockLedgerEntry } from '../../../stock-ledger/types/stockLedger.types';
@@ -133,7 +133,7 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
       {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Created At" column={column} />,
-        cell: ({ row }) => formatDateTime(new Date(row.original.created_at)),
+        cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
         size: 200,
       },
       {

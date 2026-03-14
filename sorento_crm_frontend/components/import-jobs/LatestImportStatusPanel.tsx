@@ -20,6 +20,8 @@ export interface LatestImportStatusPanelProps {
   className?: string;
   /** If true, panel content is expanded by default. Default is false (collapsed). */
   defaultExpanded?: boolean;
+  /** If true, show the panel even when there is no job (displays "No recent import" placeholder). */
+  showWhenEmpty?: boolean;
 }
 
 function statusVariant(status: string): 'primary' | 'secondary' | 'success' | 'warning' | 'destructive' | 'outline' {
@@ -93,6 +95,7 @@ export function LatestImportStatusPanel({
   title,
   className,
   defaultExpanded = false,
+  showWhenEmpty = false,
 }: LatestImportStatusPanelProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const { data, isLoading, isError } = useImportJobs({
@@ -116,9 +119,27 @@ export function LatestImportStatusPanel({
     );
   }
 
-  if (isError || !job) {
+  if (!showWhenEmpty && (isError || !job)) {
     return null;
   }
+
+  if (showWhenEmpty && !job && !isLoading) {
+    return (
+      <Card className={className}>
+        <CardHeader className="py-3">
+          <div className="flex items-center gap-2">
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            <span className="text-sm font-medium text-muted-foreground">
+              {title ?? 'Latest import'}
+            </span>
+            <span className="text-xs text-muted-foreground ml-2">No recent import</span>
+          </div>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  if (!job) return null;
 
   return (
     <Card className={className}>

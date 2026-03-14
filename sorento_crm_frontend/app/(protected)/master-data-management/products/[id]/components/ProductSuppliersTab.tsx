@@ -12,7 +12,7 @@ interface ProductSuppliersTabProps {
 
 export default function ProductSuppliersTab({ productId }: ProductSuppliersTabProps) {
   const { data: productSuppliers, isLoading } = useQuery({
-    queryKey: ['product-suppliers-view', productId],
+    queryKey: ['product-suppliers', productId],
     queryFn: () => getProductSuppliersByProductId(productId),
     enabled: !!productId,
   });

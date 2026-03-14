@@ -1,6 +1,6 @@
 """Order management schemas."""
 from pydantic import BaseModel, field_validator
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 import uuid
@@ -165,6 +165,7 @@ class OrderResponse(OrderBase):
     updated_by: Optional[str] = None
     customer: Optional[CustomerSimple] = None
     order_status: Optional[OrderStatusSimple] = None
+    lines: Optional[list["OrderLineResponse"]] = []
     
     @field_validator('created_by', mode='before')
     @classmethod
@@ -205,3 +206,64 @@ class BulkImportResponse(BaseModel):
 class BulkDeleteOrdersRequest(BaseModel):
     """Request body for bulk delete: { ids: list[str] }."""
     ids: list[str]
+
+
+# Order lines (delivery order detail)
+class OrderLineBase(BaseModel):
+    product_id: str
+    warehouse_id: str
+    quantity: Optional[Decimal] = None
+    unit_price: Optional[Decimal] = None
+    discount: Optional[Decimal] = None
+    total: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+    total_excluding_tax: Optional[Decimal] = None
+    total_including_tax: Optional[Decimal] = None
+
+
+class OrderLineCreate(OrderLineBase):
+    pass
+
+
+class OrderLineUpdate(BaseModel):
+    quantity: Optional[Decimal] = None
+    unit_price: Optional[Decimal] = None
+    discount: Optional[Decimal] = None
+    total: Optional[Decimal] = None
+    tax: Optional[Decimal] = None
+    total_excluding_tax: Optional[Decimal] = None
+    total_including_tax: Optional[Decimal] = None
+
+
+class ProductSimpleRef(BaseModel):
+    id: str
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class WarehouseSimpleRef(BaseModel):
+    id: str
+    warehouse_code: Optional[str] = None
+    warehouse_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class OrderLineResponse(OrderLineBase):
+    id: str
+    order_id: str
+    created_at: datetime
+    updated_at: datetime
+    product: Optional[ProductSimpleRef] = None
+    warehouse: Optional[WarehouseSimpleRef] = None
+
+    class Config:
+        from_attributes = True
+
+
+# Fix forward ref for OrderResponse.lines
+OrderResponse.model_rebuild()

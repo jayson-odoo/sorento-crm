@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2 } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -54,6 +54,8 @@ import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrC
 import { exportPurchaseRequestOrSponsorshipToExcel } from '../lib/purchase-request-excel-export';
 import { toast } from 'sonner';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
+import PurchaseRequestConversationPanel from './PurchaseRequestConversationPanel';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
@@ -102,6 +104,7 @@ export default function PurchaseRequestDetail({
   const [replyMessage, setReplyMessage] = useState('');
   const [exportingExcel, setExportingExcel] = useState(false);
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
+  const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const updateAndReplyMutation = useUpdatePurchaseRequestAndReply();
 
   const { data: usersForApprover = [] } = useQuery({
@@ -266,31 +269,37 @@ export default function PurchaseRequestDetail({
               {exportingExcel ? 'Exporting…' : 'Export to Excel'}
             </DropdownMenuItem>
             {request.respond_inbox_url && (
-              <DropdownMenuItem
-                disabled={updateAndReplyMutation.isPending}
-                onClick={async () => {
-                  const typeLabelVal =
-                    REQUEST_TYPE_LABELS[request.request_type] ?? request.request_type;
-                  let defaultReply =
-                    `This is the form number ${request.request_number ?? ''} for ${typeLabelVal} for project title ${request.project_title ?? ''}.`;
-                  try {
-                    if (requestId) {
-                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                      const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
-                      if (view_url) {
-                        defaultReply += `\n\nView full details: ${view_url}`;
+              <>
+                <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
+                  <ScrollText className="size-4" />
+                  Chat records
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={updateAndReplyMutation.isPending}
+                  onClick={async () => {
+                    const typeLabelVal =
+                      REQUEST_TYPE_LABELS[request.request_type] ?? request.request_type;
+                    let defaultReply =
+                      `This is the form number ${request.request_number ?? ''} for ${typeLabelVal} for project title ${request.project_title ?? ''}.`;
+                    try {
+                      if (requestId) {
+                        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                        const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
+                        if (view_url) {
+                          defaultReply += `\n\nView full details: ${view_url}`;
+                        }
                       }
+                    } catch {
+                      toast.error('Could not generate view link. You can still send the message.');
                     }
-                  } catch {
-                    toast.error('Could not generate view link. You can still send the message.');
-                  }
-                  setReplyMessage(defaultReply);
-                  setUpdateAndReplyDialogOpen(true);
-                }}
-              >
-                <MessageSquare className="size-4" />
-                {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
-              </DropdownMenuItem>
+                    setReplyMessage(defaultReply);
+                    setUpdateAndReplyDialogOpen(true);
+                  }}
+                >
+                  <MessageSquare className="size-4" />
+                  {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
+                </DropdownMenuItem>
+              </>
             )}
           </DetailActionsMenu>
           <RecordNavigation
@@ -786,6 +795,24 @@ export default function PurchaseRequestDetail({
             attachments={request.attachments}
           />
         </div>
+
+        {request?.respond_inbox_url && (
+          <Sheet open={conversationSheetOpen} onOpenChange={setConversationSheetOpen}>
+            <SheetContent side="right" className="flex flex-col w-full sm:max-w-lg overflow-y-auto">
+              <SheetHeader className="sr-only">
+                <SheetTitle>Chat Records</SheetTitle>
+              </SheetHeader>
+              <div className="flex-1 min-h-0 pt-2">
+                <PurchaseRequestConversationPanel
+                  requestId={requestId}
+                  canReply
+                  respondInboxUrl={request.respond_inbox_url}
+                  showAsPopup
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
+        )}
 
         <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
       </div>

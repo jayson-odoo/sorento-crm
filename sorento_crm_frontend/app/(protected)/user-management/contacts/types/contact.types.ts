@@ -3,6 +3,7 @@ export interface RespondContact {
   phone_number: string;
   name?: string | null;
   user_type?: string | null;
+  respond_io_id?: string | null;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;

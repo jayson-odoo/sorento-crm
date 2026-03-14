@@ -33,6 +33,7 @@ import { useStockInquiries } from '../hooks/useStockInquiries';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { StockInquiry } from '../types/stockInquiry.types';
+import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
 import { exportStockInquiriesToExcel } from '../utils/exportStockInquiryToExcel';
 import StockInquiryBulkDeleteDialog from './StockInquiryBulkDeleteDialog';
 
@@ -220,7 +221,7 @@ export default function StockInquiriesList() {
           if (!status) return '-';
           return (
             <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
-              {status.charAt(0).toUpperCase() + status.slice(1)}
+              {STOCK_INQUIRY_STATUS_LABELS[status] ?? status}
             </Badge>
           );
         },

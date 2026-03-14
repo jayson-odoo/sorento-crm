@@ -18,6 +18,7 @@ import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-s
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import OrderDeleteDialog from './order-delete-dialog';
+import OrderLinesCard from './OrderLinesCard';
 import RecordNavigation from '@/components/common/RecordNavigation';
 
 interface OrderDetailProps {
@@ -365,6 +366,8 @@ export default function OrderDetail({ orderId, listPageIndex = 0, listPageSize =
           )}
         </CardContent>
       </Card>
+
+      <OrderLinesCard orderId={orderId} lines={order.lines ?? []} />
     </div>
   );
 }

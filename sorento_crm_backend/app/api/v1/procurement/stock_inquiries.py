@@ -5,10 +5,16 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.dependencies import get_current_user, get_current_user_or_api_key
+from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.procurement_service import StockInquiryService
-from app.schemas.procurement import StockInquiryCreate, StockInquiryUpdate, StockInquiryResponse
-from app.schemas.procurement import ViewLinkRequest, ViewLinkResponse
+from app.schemas.procurement import (
+    StockInquiryCreate,
+    StockInquiryUpdate,
+    StockInquiryResponse,
+    StockInquiryRejectReopenRequest,
+    ViewLinkRequest,
+    ViewLinkResponse,
+)
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 from app.config import settings as app_settings
@@ -90,6 +96,33 @@ async def get_stock_inquiry(
         return service.get_inquiry_for_response(inquiry_id)
     except HTTPException:
         raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{inquiry_id}/conversation")
+async def get_stock_inquiry_conversation(
+    inquiry_id: str,
+    limit: int = Query(50, ge=1, le=50),
+    cursor: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Get Respond.io conversation messages for this stock inquiry (contact from respond_inbox_url)."""
+    try:
+        from app.services.integration_service import RespondClient
+        service = StockInquiryService(db)
+        inquiry = service.get_inquiry(inquiry_id)
+        identifier = service._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
+        if not identifier:
+            return {"items": [], "pagination": {}, "error": "No Respond.io contact linked"}
+        client = RespondClient()
+        data = client.list_messages(identifier, limit=limit, cursor=cursor)
+        return data
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -203,7 +236,7 @@ async def update_stock_inquiry_and_reply(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Update inquiry, send purchasing response to customer via Respond.io, and mark SLA as responded."""
+    """Update inquiry, send purchasing response to customer via Respond.io, and mark SLA as responded. Allowed only when status is pending_purchasing."""
     try:
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = StockInquiryService(db)
@@ -215,6 +248,100 @@ async def update_stock_inquiry_and_reply(
         )
         db.commit()
         return inquiry
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{inquiry_id}/submit-for-project-sales", response_model=StockInquiryResponse)
+async def submit_stock_inquiry_for_project_sales(
+    inquiry_id: str,
+    current_user: dict = Depends(require_permission("procurement.stock_inquiries.submit_for_project_sales")),
+    db: Session = Depends(get_db),
+):
+    """Move stock inquiry from new to pending_project_sales."""
+    try:
+        service = StockInquiryService(db)
+        inquiry = service.submit_inquiry_for_project_sales(inquiry_id)
+        return inquiry
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{inquiry_id}/project-sales-approve", response_model=StockInquiryResponse)
+async def project_sales_approve_stock_inquiry(
+    inquiry_id: str,
+    current_user: dict = Depends(require_permission("procurement.stock_inquiries.project_sales_approve")),
+    db: Session = Depends(get_db),
+):
+    """Move stock inquiry from pending_project_sales to pending_purchasing."""
+    try:
+        service = StockInquiryService(db)
+        inquiry = service.project_sales_approve_inquiry(inquiry_id)
+        return inquiry
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{inquiry_id}/project-sales-reject", response_model=StockInquiryResponse)
+async def project_sales_reject_stock_inquiry(
+    inquiry_id: str,
+    body: Optional[StockInquiryRejectReopenRequest] = Body(None),
+    current_user: dict = Depends(require_permission("procurement.stock_inquiries.project_sales_reject")),
+    db: Session = Depends(get_db),
+):
+    """Move stock inquiry from pending_project_sales to rejected."""
+    try:
+        service = StockInquiryService(db)
+        reason = body.reason if body else None
+        user_id = (current_user or {}).get("id")
+        service.project_sales_reject_inquiry(inquiry_id, reason=reason, user_id=user_id)
+        return service.get_inquiry_for_response(inquiry_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{inquiry_id}/purchasing-reject", response_model=StockInquiryResponse)
+async def purchasing_reject_stock_inquiry(
+    inquiry_id: str,
+    body: Optional[StockInquiryRejectReopenRequest] = Body(None),
+    current_user: dict = Depends(require_permission("procurement.stock_inquiries.purchasing_reject")),
+    db: Session = Depends(get_db),
+):
+    """Move stock inquiry from pending_purchasing to rejected."""
+    try:
+        service = StockInquiryService(db)
+        reason = body.reason if body else None
+        user_id = (current_user or {}).get("id")
+        service.purchasing_reject_inquiry(inquiry_id, reason=reason, user_id=user_id)
+        return service.get_inquiry_for_response(inquiry_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{inquiry_id}/reopen", response_model=StockInquiryResponse)
+async def reopen_stock_inquiry(
+    inquiry_id: str,
+    body: Optional[StockInquiryRejectReopenRequest] = Body(None),
+    current_user: dict = Depends(require_permission("procurement.stock_inquiries.reopen")),
+    db: Session = Depends(get_db),
+):
+    """Move stock inquiry from rejected to pending_project_sales."""
+    try:
+        service = StockInquiryService(db)
+        reason = body.reason if body else None
+        user_id = (current_user or {}).get("id")
+        service.reopen_inquiry(inquiry_id, reason=reason, user_id=user_id)
+        return service.get_inquiry_for_response(inquiry_id)
     except HTTPException:
         raise
     except Exception as e:

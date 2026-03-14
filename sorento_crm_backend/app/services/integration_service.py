@@ -102,6 +102,30 @@ class RespondClient:
             response.raise_for_status()
             return response.json() if response.content else {}
 
+    def list_messages(
+        self,
+        identifier: str,
+        limit: int = 50,
+        cursor: Optional[str] = None,
+    ) -> dict:
+        """
+        List messages for a contact. GET /v2/contact/{identifier}/message/list.
+        identifier: contact id (e.g. last segment of respond inbox URL); will be prefixed with id: if no colon.
+        Returns dict with 'items' (list of message objects) and 'pagination' (next/previous URLs or cursor).
+        Max limit 50.
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}/message/list"
+        params: dict = {"limit": min(limit, 50)}
+        if cursor:
+            params["cursorId"] = cursor
+        with httpx.Client(timeout=15) as client:
+            response = client.get(url, headers=self._headers(), params=params)
+            response.raise_for_status()
+            return response.json() if response.content else {"items": [], "pagination": {}}
+
     def set_conversation_assignee(self, identifier: str, assignee_id: str) -> dict:
         """
         Set the conversation assignee for a contact. POST /v2/contact/{identifier}/conversation/assignee.

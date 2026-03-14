@@ -12,6 +12,12 @@ import {
   bulkDeleteStockInquiries,
   linkStockInquiryAttachment,
   deleteStockInquiryAttachment,
+  submitStockInquiryForProjectSales,
+  projectSalesApproveStockInquiry,
+  projectSalesRejectStockInquiry,
+  purchasingRejectStockInquiry,
+  reopenStockInquiry,
+  getStockInquiryConversation,
 } from '../services/stockInquiryService';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
 
@@ -168,5 +174,89 @@ export function useDeleteStockInquiryAttachment() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to unlink attachment'),
+  });
+}
+
+function workflowInvalidate(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
+  queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+}
+
+export function useSubmitStockInquiryForProjectSales() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => submitStockInquiryForProjectSales(id),
+    onSuccess: () => {
+      workflowInvalidate(queryClient);
+      toast.success('Submitted for project sales review');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to submit'),
+  });
+}
+
+export function useProjectSalesApproveStockInquiry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => projectSalesApproveStockInquiry(id),
+    onSuccess: () => {
+      workflowInvalidate(queryClient);
+      toast.success('Approved; sent to purchasing');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to approve'),
+  });
+}
+
+export function useProjectSalesRejectStockInquiry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      projectSalesRejectStockInquiry(id, reason),
+    onSuccess: () => {
+      workflowInvalidate(queryClient);
+      toast.success('Rejected');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to reject'),
+  });
+}
+
+export function usePurchasingRejectStockInquiry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      purchasingRejectStockInquiry(id, reason),
+    onSuccess: () => {
+      workflowInvalidate(queryClient);
+      toast.success('Rejected');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to reject'),
+  });
+}
+
+export function useReopenStockInquiry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      reopenStockInquiry(id, reason),
+    onSuccess: () => {
+      workflowInvalidate(queryClient);
+      toast.success('Reopened to pending project sales');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to reopen'),
+  });
+}
+
+export function useStockInquiryConversation(
+  inquiryId: string | null,
+  options?: { limit?: number; cursor?: string; enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['stock-inquiry-conversation', inquiryId, options?.limit, options?.cursor],
+    queryFn: () =>
+      getStockInquiryConversation(inquiryId!, {
+        limit: options?.limit ?? 50,
+        cursor: options?.cursor,
+      }),
+    enabled: !!inquiryId && (options?.enabled !== false),
+    staleTime: 30 * 1000,
   });
 }

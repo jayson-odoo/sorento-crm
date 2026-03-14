@@ -497,6 +497,10 @@ class StockInquiryAttachmentResponse(BaseModel):
     link_type: Optional[str] = None
 
 
+class StockInquiryRejectReopenRequest(BaseModel):
+    reason: Optional[str] = None
+
+
 class StockInquiryResponse(StockInquiryBase):
     id: str
     respond_inbox_url: Optional[str] = None
@@ -504,6 +508,15 @@ class StockInquiryResponse(StockInquiryBase):
     last_responded_by: Optional[str] = None
     last_responded_by_name: Optional[str] = None
     last_responded_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    rejected_at: Optional[datetime] = None
+    rejected_by: Optional[str] = None
+    rejected_by_name: Optional[str] = None
+    rejected_from: Optional[str] = None
+    reopen_reason: Optional[str] = None
+    reopened_at: Optional[datetime] = None
+    reopened_by: Optional[str] = None
+    reopened_by_name: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     attachments: Optional[List[StockInquiryAttachmentResponse]] = []

@@ -5,6 +5,7 @@ from sqlalchemy import or_, and_, func
 from typing import Optional, List, Callable
 from decimal import Decimal
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
+from app.models.procurement import ProductSupplier, Supplier
 from app.models.resources import Attachment, AttachmentType
 from app.schemas.product import (
     ProductCreate, ProductUpdate, ProductCategoryCreate, ProductCategoryUpdate,
@@ -117,6 +118,31 @@ class ProductService:
             raise handle_not_found("Product", product_id)
         return product
     
+    DEFAULT_LEAD_TIME_DAYS = 90
+
+    def _ensure_default_supplier_lead_time(self, product_id: str, lead_time_days: int = DEFAULT_LEAD_TIME_DAYS) -> None:
+        """Link product to the first supplier in the system with the given lead time, if any supplier exists and no link exists."""
+        first_supplier = self.db.query(Supplier).order_by(Supplier.created_at.asc(), Supplier.id.asc()).first()
+        if not first_supplier:
+            return
+        existing = self.db.query(ProductSupplier).filter(
+            ProductSupplier.product_id == product_id,
+            ProductSupplier.supplier_id == first_supplier.id,
+        ).first()
+        if existing:
+            if existing.standard_lead_time_days != lead_time_days:
+                existing.standard_lead_time_days = lead_time_days
+                self.db.flush()
+            return
+        self.db.add(
+            ProductSupplier(
+                product_id=product_id,
+                supplier_id=first_supplier.id,
+                standard_lead_time_days=lead_time_days,
+            )
+        )
+        self.db.flush()
+
     def create_product(self, product_data: ProductCreate, created_by: str):
         """Create a new product."""
         # Trim product_code defensively (schema validator also does this; belt-and-suspenders)
@@ -130,6 +156,9 @@ class ProductService:
         data["product_code"] = product_code
         product = Product(**data, created_by=created_by)
         self.db.add(product)
+        self.db.commit()
+        self.db.refresh(product)
+        self._ensure_default_supplier_lead_time(product.id)
         self.db.commit()
         self.db.refresh(product)
         return product
@@ -359,6 +388,8 @@ class ProductService:
                         created_by=user_id,
                     )
                     self.db.add(product)
+                    self.db.flush()  # get product.id for default supplier link
+                    self._ensure_default_supplier_lead_time(product.id)
                     existing_by_code[product_code] = product  # avoid duplicate add if same code again
                     created += 1
 

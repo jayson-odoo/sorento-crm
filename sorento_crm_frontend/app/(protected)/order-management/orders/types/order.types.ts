@@ -50,6 +50,25 @@ export interface Order {
     status_code: string;
     status_name: string;
   };
+  lines?: OrderLine[];
+}
+
+export interface OrderLine {
+  id: string;
+  order_id: string;
+  product_id: string;
+  warehouse_id: string;
+  quantity?: number | string | null;
+  unit_price?: number | string | null;
+  discount?: number | string | null;
+  total?: number | string | null;
+  tax?: number | string | null;
+  total_excluding_tax?: number | string | null;
+  total_including_tax?: number | string | null;
+  created_at: string;
+  updated_at: string;
+  product?: { id: string; product_code?: string; product_name?: string };
+  warehouse?: { id: string; warehouse_code?: string; warehouse_name?: string };
 }
 
 export interface OrderFormData {
@@ -88,7 +107,20 @@ export interface OrderFormData {
   remarks?: string;
 }
 
+export interface OrderLineFormData {
+  product_id: string;
+  warehouse_id: string;
+  quantity?: number | string;
+  unit_price?: number | string;
+  discount?: number | string;
+  total?: number | string;
+  tax?: number | string;
+  total_excluding_tax?: number | string;
+  total_including_tax?: number | string;
+}
+
 export interface OrderDetail extends Order {
+  lines?: OrderLine[];
   customer?: {
     id: string;
     customer_code: string;

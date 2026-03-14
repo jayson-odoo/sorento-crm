@@ -1,5 +1,5 @@
 import { apiFetch } from '@/lib/api';
-import type { Order, OrderFormData, OrderDetail } from '../types/order.types';
+import type { Order, OrderFormData, OrderDetail, OrderLine, OrderLineFormData } from '../types/order.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
 export async function getOrders(params: DataGridApiFetchParams & { customer_id?: string; order_status_id?: string }): Promise<DataGridApiResponse<Order>> {
@@ -169,5 +169,53 @@ export async function importOrderTracking(file: File): Promise<{
     throw new Error(error.message || 'Failed to queue import job');
   }
 
+  return response.json();
+}
+
+export async function createOrderLine(orderId: string, data: OrderLineFormData): Promise<OrderLine> {
+  const response = await apiFetch(`/api/v1/order-management/orders/${orderId}/lines`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || error.message || 'Failed to add order line');
+  }
+  return response.json();
+}
+
+export async function updateOrderLine(orderId: string, lineId: string, data: Partial<OrderLineFormData>): Promise<OrderLine> {
+  const response = await apiFetch(`/api/v1/order-management/orders/${orderId}/lines/${lineId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || error.message || 'Failed to update order line');
+  }
+  return response.json();
+}
+
+export async function deleteOrderLine(orderId: string, lineId: string): Promise<void> {
+  const response = await apiFetch(`/api/v1/order-management/orders/${orderId}/lines/${lineId}`, { method: 'DELETE' });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || error.message || 'Failed to delete order line');
+  }
+}
+
+export async function importDeliveryOrderDetail(file: File): Promise<{ job_id: string; status: string; message: string }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiFetch('/api/v1/order-management/orders/import-order-lines', {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || error.message || 'Failed to queue import');
+  }
   return response.json();
 }

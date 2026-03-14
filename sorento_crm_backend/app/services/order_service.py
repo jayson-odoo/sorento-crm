@@ -7,10 +7,13 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
 from decimal import Decimal
-from app.models.order import Order, OrderStatus, Customer
+from app.models.order import Order, OrderStatus, Customer, OrderLine
+from app.models.product import Product
+from app.models.inventory import Warehouse
 from app.schemas.order import (
     OrderCreate, OrderUpdate, CustomerCreate, CustomerUpdate,
-    OrderStatusCreate, OrderStatusUpdate
+    OrderStatusCreate, OrderStatusUpdate,
+    OrderLineCreate, OrderLineUpdate,
 )
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.import_log_service import ImportLogService
@@ -123,11 +126,17 @@ class OrderService:
         }
     
     def get_order(self, order_id: str):
-        """Get a single order by ID."""
-        order = self.db.query(Order).filter(
-            Order.id == order_id,
-            Order.deleted_at.is_(None)
-        ).first()
+        """Get a single order by ID with lines, product and warehouse loaded for each line."""
+        from sqlalchemy.orm import joinedload
+        order = (
+            self.db.query(Order)
+            .filter(Order.id == order_id, Order.deleted_at.is_(None))
+            .options(
+                joinedload(Order.lines).joinedload(OrderLine.product),
+                joinedload(Order.lines).joinedload(OrderLine.warehouse),
+            )
+            .first()
+        )
         if not order:
             raise handle_not_found("Order", order_id)
         return order
@@ -187,7 +196,65 @@ class OrderService:
             self.db.refresh(order)
         
         return order
-    
+
+    def create_order_line(self, order_id: str, data: OrderLineCreate):
+        """Add a line to an order. Enforces unique (order_id, product_id, warehouse_id)."""
+        self.get_order(order_id)  # ensure order exists
+        existing = (
+            self.db.query(OrderLine)
+            .filter(
+                OrderLine.order_id == order_id,
+                OrderLine.product_id == data.product_id,
+                OrderLine.warehouse_id == data.warehouse_id,
+            )
+            .first()
+        )
+        if existing:
+            raise handle_conflict("A line with this product and warehouse already exists for this order.")
+        line = OrderLine(order_id=order_id, **data.model_dump())
+        self.db.add(line)
+        self.db.commit()
+        self.db.refresh(line)
+        return line
+
+    def update_order_line(self, order_id: str, line_id: str, data: OrderLineUpdate):
+        """Update an order line."""
+        line = (
+            self.db.query(OrderLine)
+            .filter(OrderLine.id == line_id, OrderLine.order_id == order_id)
+            .first()
+        )
+        if not line:
+            raise handle_not_found("Order line", line_id)
+        for key, value in data.model_dump(exclude_unset=True).items():
+            setattr(line, key, value)
+        self.db.commit()
+        self.db.refresh(line)
+        return line
+
+    def delete_order_line(self, order_id: str, line_id: str):
+        """Remove an order line."""
+        line = (
+            self.db.query(OrderLine)
+            .filter(OrderLine.id == line_id, OrderLine.order_id == order_id)
+            .first()
+        )
+        if not line:
+            raise handle_not_found("Order line", line_id)
+        self.db.delete(line)
+        self.db.commit()
+        return {"message": "Order line deleted"}
+
+    def get_order_by_order_number(self, order_number: str):
+        """Get order by order_number (doc no). Returns None if not found."""
+        if not (order_number or "").strip():
+            return None
+        return (
+            self.db.query(Order)
+            .filter(Order.deleted_at.is_(None), Order.order_number == (order_number or "").strip())
+            .first()
+        )
+
     def _get_order_any(self, order_id: str):
         """Get order by ID including archived."""
         order = self.db.query(Order).filter(Order.id == order_id).first()

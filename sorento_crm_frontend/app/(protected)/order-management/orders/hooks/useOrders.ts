@@ -1,8 +1,18 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getOrders, getOrder, createOrder, updateOrder, deleteOrder, bulkDeleteOrders } from '../services/orderService';
-import type { OrderFormData } from '../types/order.types';
+import {
+  getOrders,
+  getOrder,
+  createOrder,
+  updateOrder,
+  deleteOrder,
+  bulkDeleteOrders,
+  createOrderLine,
+  updateOrderLine,
+  deleteOrderLine,
+} from '../services/orderService';
+import type { OrderFormData, OrderLineFormData } from '../types/order.types';
 
 export function useOrders(params: DataGridApiFetchParams & { customer_id?: string; order_status_id?: string }) {
   return useQuery({
@@ -73,5 +83,45 @@ export function useBulkDeleteOrders() {
       toast.success(result?.message ?? `${result?.deleted_count ?? 0} order(s) deleted`);
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to bulk delete orders'),
+  });
+}
+
+export function useCreateOrderLine() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ orderId, data }: { orderId: string; data: OrderLineFormData }) => createOrderLine(orderId, data),
+    onSuccess: (_, { orderId }) => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['order', orderId] });
+      toast.success('Order line added');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to add line'),
+  });
+}
+
+export function useUpdateOrderLine() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ orderId, lineId, data }: { orderId: string; lineId: string; data: Partial<OrderLineFormData> }) =>
+      updateOrderLine(orderId, lineId, data),
+    onSuccess: (_, { orderId }) => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['order', orderId] });
+      toast.success('Order line updated');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to update line'),
+  });
+}
+
+export function useDeleteOrderLine() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ orderId, lineId }: { orderId: string; lineId: string }) => deleteOrderLine(orderId, lineId),
+    onSuccess: (_, { orderId }) => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['order', orderId] });
+      toast.success('Order line removed');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to remove line'),
   });
 }

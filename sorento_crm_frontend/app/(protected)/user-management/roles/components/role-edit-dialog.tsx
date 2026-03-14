@@ -17,9 +17,9 @@ import {
 } from '@/components/ui/alert';
 import { Badge, BadgeButton } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Command,
-  CommandCheck,
   CommandEmpty,
   CommandGroup,
   CommandInput,
@@ -289,7 +289,7 @@ const RoleEditDialog = ({
                           </Button>
                         </PopoverTrigger>
                         <PopoverContent
-                          className="w-80 p-0 m-0"
+                          className="w-full min-w-[20rem] max-w-[36rem] p-0 m-0"
                           align="start"
                           side="bottom"
                         >
@@ -304,33 +304,44 @@ const RoleEditDialog = ({
                                 >
                                   Select all permissions
                                 </CommandItem>
-                                <ScrollArea className="h-[200px]">
-                                  {permissionList?.map(
-                                    (permission: UserPermission) => (
-                                      <CommandItem
-                                        key={permission.id}
-                                        onSelect={() =>
-                                          togglePermissionSelection(
-                                            permission.id,
-                                          )
-                                        }
-                                      >
-                                        <span className="grow">
-                                          {permission.slug}
-                                        </span>
-                                        <CommandCheck
-                                          className={cn(
-                                            selectedPermissions.includes(
+                                <div className="h-[200px] overflow-auto min-w-0">
+                                  <div className="min-w-max pr-2">
+                                    {permissionList?.map(
+                                      (permission: UserPermission) => (
+                                        <CommandItem
+                                          key={permission.id}
+                                          onSelect={() =>
+                                            togglePermissionSelection(
                                               permission.id,
                                             )
-                                              ? 'opacity-100'
-                                              : 'opacity-0',
-                                          )}
-                                        />
-                                      </CommandItem>
-                                    ),
-                                  )}
-                                </ScrollArea>
+                                          }
+                                          className="flex items-center gap-2 justify-start text-left px-2"
+                                        >
+                                          <div
+                                            className="shrink-0"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <Checkbox
+                                              size="sm"
+                                              checked={selectedPermissions.includes(
+                                                permission.id,
+                                              )}
+                                              onCheckedChange={() =>
+                                                togglePermissionSelection(
+                                                  permission.id,
+                                                )
+                                              }
+                                              aria-label={permission.slug}
+                                            />
+                                          </div>
+                                          <span className="truncate min-w-0 text-left">
+                                            {permission.slug}
+                                          </span>
+                                        </CommandItem>
+                                      ),
+                                    )}
+                                  </div>
+                                </div>
                               </CommandGroup>
                             </CommandList>
                           </Command>

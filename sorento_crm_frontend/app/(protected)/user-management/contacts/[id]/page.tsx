@@ -218,6 +218,10 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                 <p className="font-medium">{contact.user_type || <span className="text-muted-foreground">—</span>}</p>
               </div>
               <div>
+                <p className="text-sm text-muted-foreground">Respond.io ID</p>
+                <p className="font-medium font-mono text-sm">{contact.respond_io_id ?? <span className="text-muted-foreground">—</span>}</p>
+              </div>
+              <div>
                 <p className="text-sm text-muted-foreground">Created At</p>
                 <p className="font-medium">{formatDate(new Date(contact.created_at))}</p>
               </div>

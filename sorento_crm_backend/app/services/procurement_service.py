@@ -1439,6 +1439,134 @@ class StockInquiryService:
         self.db = db
         from app.services.entity_attachment_service import EntityAttachmentService
         self.entity_attachment_service = EntityAttachmentService(db)
+
+    def _get_team_user_ids_for_agent_code(self, agent_code: str) -> List[str]:
+        """Return user IDs of all teams assigned to the access agent with the given code."""
+        from app.services.user_service import AccessAgentService
+        from app.models.access import AgentTeam, TeamMember
+
+        agent_id = AccessAgentService(self.db).get_agent_id_by_code(agent_code)
+        if not agent_id:
+            logger.debug("No access agent found for code=%s", agent_code)
+            return []
+
+        rows = (
+            self.db.query(TeamMember.user_id)
+            .join(AgentTeam, AgentTeam.team_id == TeamMember.team_id)
+            .filter(AgentTeam.agent_id == agent_id)
+            .distinct()
+            .all()
+        )
+        return [str(r[0]) for r in rows if r and r[0]]
+
+    def _build_stock_inquiry_view_url(self, inquiry_id: str, base_url_override: Optional[str] = None) -> str:
+        """Build a shareable (no-auth) frontend link for a stock inquiry using view token."""
+        from app.models.user import SystemSetting
+
+        view_token = self.get_or_create_view_token(inquiry_id)
+        base_url = (base_url_override or "").strip().rstrip("/")
+        if not base_url:
+            base_url = (settings.frontend_base_url or "").strip().rstrip("/")
+        if not base_url:
+            sys_settings = self.db.query(SystemSetting).first()
+            if sys_settings and getattr(sys_settings, "website_url", None):
+                base_url = (sys_settings.website_url or "").strip().rstrip("/")
+        return f"{base_url}/view/stock-inquiry?token={view_token}" if base_url else f"/view/stock-inquiry?token={view_token}"
+
+    def _notify_team_stock_inquiry(
+        self,
+        *,
+        inquiry_id: str,
+        agent_code: str,
+        title: str,
+        intro_plain: str,
+        intro_html: str,
+        event_type: str,
+        base_url_override: Optional[str] = None,
+    ) -> None:
+        """Notify a team (agent_code) via in-app (each user) + one email to all (single_email_to_all)."""
+        from app.models.user import User
+        from app.models.notification import Notification, NotificationDelivery
+        from app.services.notification_service import NotificationService
+        from datetime import datetime
+
+        user_ids = self._get_team_user_ids_for_agent_code(agent_code)
+        if not user_ids:
+            logger.warning(
+                "No team members found for agent code '%s'. Create an Access Agent with code '%s' and assign a team under Team Assignments.",
+                agent_code,
+                agent_code,
+            )
+            return
+
+        users = self.db.query(User).filter(User.id.in_(user_ids)).all()
+        emails = [u.email for u in users if getattr(u, "email", None) and str(u.email).strip()]
+        if not emails:
+            logger.warning("Team members for %s have no email addresses; skipping email.", agent_code)
+
+        view_url = self._build_stock_inquiry_view_url(inquiry_id, base_url_override=base_url_override)
+        # Requirement: include the link as a pure hyperlink (anchor text is the URL; no extra wording).
+        body_plain = (
+            f"{intro_plain}\n\n"
+            f"{view_url}\n\n"
+            "This is a system generated email. Please do not reply."
+        )
+        body_html = (
+            f"<p>{intro_html}</p>\n"
+            f'<p><a href="{view_url}">{view_url}</a></p>\n'
+            "<p>This is a system generated email. Please do not reply.</p>"
+        )
+
+        notif_svc = NotificationService(self.db)
+        first_uid = user_ids[0]
+
+        if emails:
+            notification = Notification(
+                user_id=first_uid,
+                type="stock_inquiry_notification",
+                title=title,
+                body=body_plain,
+                data={"recipient_emails": emails, "single_email_to_all": True, "body_html": body_html},
+                source_entity_type="stock_inquiry",
+                source_entity_id=inquiry_id,
+                event_type=event_type,
+            )
+            self.db.add(notification)
+            self.db.flush()
+            self.db.add(
+                NotificationDelivery(
+                    notification_id=notification.id,
+                    channel="in_app",
+                    status="sent",
+                    sent_at=datetime.utcnow(),
+                )
+            )
+            self.db.add(NotificationDelivery(notification_id=notification.id, channel="email", status="pending"))
+            self.db.commit()
+            self.db.refresh(notification)
+            try:
+                from app.services.queue_service import enqueue_job
+                from app.tasks import notification_tasks
+
+                enqueue_job(notification_tasks.send_notification_deliveries, str(notification.id), queue_name="imports")
+            except Exception as e:
+                logger.warning("Failed to enqueue notification deliveries: %s", e)
+
+        for uid in user_ids:
+            if uid == first_uid and emails:
+                continue
+            try:
+                notif_svc.create_in_app_only(
+                    user_id=uid,
+                    type="stock_inquiry_notification",
+                    title=title,
+                    body=body_plain,
+                    source_entity_type="stock_inquiry",
+                    source_entity_id=inquiry_id,
+                    event_type=event_type,
+                )
+            except Exception as e:
+                logger.warning("Failed to create in-app notification for user %s: %s", uid, e)
     
     def list_inquiries(self, page: int = 1, limit: int = 50, query: Optional[str] = None, sort_field: str = "created_at", sort_dir: str = "desc"):
         """List stock inquiries."""
@@ -1521,6 +1649,12 @@ class StockInquiryService:
         data = {attr.key: getattr(inquiry, attr.key) for attr in inspect(inquiry).mapper.column_attrs}
         data["last_responded_by_name"] = (
             self._resolve_user_display_name(inquiry.last_responded_by) if inquiry.last_responded_by else None
+        )
+        data["rejected_by_name"] = (
+            self._resolve_user_display_name(inquiry.rejected_by) if inquiry.rejected_by else None
+        )
+        data["reopened_by_name"] = (
+            self._resolve_user_display_name(inquiry.reopened_by) if inquiry.reopened_by else None
         )
         links = self.entity_attachment_service.list_links("stock_inquiry", str(inquiry.id))
         data["attachments"] = [
@@ -1621,14 +1755,25 @@ class StockInquiryService:
             return None
         return f"{base}/space/{space_id.strip()}/inbox/{contact_id.strip()}"
 
+    # Allowed initial statuses when creating via API (e.g. external flow can start in pending_project_sales).
+    _CREATE_ALLOWED_STATUSES = ("new", "pending_project_sales", "pending_purchasing")
+
     def create_inquiry(self, inquiry_data: StockInquiryCreate):
-        """Create a new stock inquiry."""
+        """Create a new stock inquiry. Status may be set via API to start in project sales or purchasing queue."""
         data = inquiry_data.model_dump()
         contact_id = data.get("contact_id")
         space_id = data.get("space_id")
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
         if respond_inbox_url is not None:
             data["respond_inbox_url"] = respond_inbox_url
+        status = data.get("status")
+        if status is not None and status not in self._CREATE_ALLOWED_STATUSES:
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error(
+                f"status must be one of {self._CREATE_ALLOWED_STATUSES!r}, got {status!r}"
+            )
+        if status is None:
+            data["status"] = "new"
         inquiry = StockInquiry(**data)
         self.db.add(inquiry)
         self.db.commit()
@@ -1684,10 +1829,12 @@ class StockInquiryService:
         return parts[-1] if parts else None
 
     def update_inquiry(self, inquiry_id: str, inquiry_data: StockInquiryUpdate):
-        """Update a stock inquiry. Sets status to 'updated' when purchasing_response is changed."""
+        """Update a stock inquiry. Status is only changed via workflow actions (submit/approve/reject/reopen)."""
         inquiry = self.get_inquiry(inquiry_id)
 
         update_data = inquiry_data.model_dump(exclude_unset=True)
+        update_data.pop("status", None)  # Status only via workflow endpoints
+
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -1696,9 +1843,7 @@ class StockInquiryService:
         elif contact_id is None and space_id is None:
             update_data["respond_inbox_url"] = None
 
-        if "purchasing_response" in update_data and inquiry.status != "responded":
-            update_data["status"] = "updated"
-
+        # Status is only changed via workflow actions (submit/approve/reject/reopen) and update_and_reply
         for key, value in update_data.items():
             setattr(inquiry, key, value)
 
@@ -1728,6 +1873,13 @@ class StockInquiryService:
         log_service = IntegrationLogService(self.db)
 
         inquiry = self.get_inquiry(inquiry_id)
+        if inquiry.status != "pending_purchasing":
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error(
+                "Update & Reply is only allowed when inquiry is pending purchasing review. "
+                "Current status: " + (inquiry.status or "unknown")
+            )
+
         update_data = inquiry_data.model_dump(exclude_unset=True)
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
@@ -1737,10 +1889,13 @@ class StockInquiryService:
         elif contact_id is None and space_id is None:
             update_data["respond_inbox_url"] = None
 
+        # Message to send (may include view link); do not write back to purchasing_response
         message_text = update_data.get("purchasing_response") or inquiry.purchasing_response
         if not (message_text and str(message_text).strip()):
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error("purchasing_response is required to reply.")
+        # Do not persist the reply payload (often includes view link) into purchasing_response
+        update_data.pop("purchasing_response", None)
 
         for key, value in update_data.items():
             setattr(inquiry, key, value)
@@ -1751,15 +1906,12 @@ class StockInquiryService:
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error("respond_inbox_url is missing or invalid; cannot send message.")
 
-        product_code = (inquiry.product_code or "this inquiry").strip()
-        response_snippet = str(message_text).strip()[:200]
-        display_message = f"Please find your response on stock inquiry on {product_code}. {response_snippet}"
-        if len(str(message_text).strip()) > 200:
-            display_message += "..."
+        # Send the full composed message (e.g. with view link) to the contact; do not truncate
+        message_to_send = str(message_text).strip()
 
         try:
             client = RespondClient()
-            response = client.send_message(identifier, display_message)
+            response = client.send_message(identifier, message_to_send)
             log_service.create_integration_log(
                 IntegrationLogCreate(
                     integration_channel="respond_io",
@@ -1772,7 +1924,7 @@ class StockInquiryService:
                     status="success",
                     response_payload=str(response)[:50000] if response else None,
                 ),
-                request_payload_dict={"message": {"type": "text", "text": display_message}},
+                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
             )
         except Exception as e:
             logger.exception("Respond.io send_message failed for stock_inquiry %s", inquiry_id)
@@ -1788,7 +1940,7 @@ class StockInquiryService:
                     status="failed",
                     error_message=str(e),
                 ),
-                request_payload_dict={"message": {"type": "text", "text": display_message}},
+                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
             )
             raise
 
@@ -1838,6 +1990,101 @@ class StockInquiryService:
         inquiry.status = "responded"
         inquiry.last_responded_by = respond_user_id
         inquiry.last_responded_at = now_utc
+        self.db.commit()
+        self.db.refresh(inquiry)
+        return inquiry
+
+    def submit_inquiry_for_project_sales(self, inquiry_id: str) -> StockInquiry:
+        """Move inquiry from new to pending_project_sales."""
+        inquiry = self.get_inquiry(inquiry_id)
+        if inquiry.status != "new":
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error(f"Cannot submit for project sales when status is {inquiry.status}. Expected: new.")
+        inquiry.status = "pending_project_sales"
+        self.db.commit()
+        self.db.refresh(inquiry)
+        return inquiry
+
+    def project_sales_approve_inquiry(self, inquiry_id: str) -> StockInquiry:
+        """Move inquiry from pending_project_sales to pending_purchasing."""
+        inquiry = self.get_inquiry(inquiry_id)
+        if inquiry.status != "pending_project_sales":
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error(f"Cannot approve when status is {inquiry.status}. Expected: pending_project_sales.")
+        inquiry.status = "pending_purchasing"
+        inquiry.rejection_reason = None
+        inquiry.rejected_at = None
+        inquiry.rejected_by = None
+        inquiry.rejected_from = None
+        self.db.commit()
+        self.db.refresh(inquiry)
+        try:
+            self._notify_team_stock_inquiry(
+                inquiry_id=str(inquiry.id),
+                agent_code="stock_inquiry_purchasing",
+                title="Stock Inquiry pending purchasing review",
+                intro_plain="Dear Purchasing Team,\n\nA stock inquiry has been approved and is now pending purchasing review.",
+                intro_html="Dear Purchasing Team,<br /><br />A stock inquiry has been approved and is now pending purchasing review.",
+                event_type="pending_purchasing",
+            )
+        except Exception as e:
+            logger.warning("Failed to notify purchasing team for stock inquiry %s: %s", inquiry_id, e)
+        return inquiry
+
+    def project_sales_reject_inquiry(
+        self, inquiry_id: str, reason: Optional[str] = None, user_id: Optional[str] = None
+    ) -> StockInquiry:
+        """Move inquiry from pending_project_sales to rejected."""
+        from datetime import datetime, timezone
+        inquiry = self.get_inquiry(inquiry_id)
+        if inquiry.status != "pending_project_sales":
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_project_sales.")
+        inquiry.status = "rejected"
+        inquiry.rejected_from = "pending_project_sales"
+        inquiry.rejection_reason = reason
+        inquiry.rejected_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        inquiry.rejected_by = user_id
+        self.db.commit()
+        self.db.refresh(inquiry)
+        return inquiry
+
+    def purchasing_reject_inquiry(
+        self, inquiry_id: str, reason: Optional[str] = None, user_id: Optional[str] = None
+    ) -> StockInquiry:
+        """Move inquiry from pending_purchasing to rejected."""
+        from datetime import datetime, timezone
+        inquiry = self.get_inquiry(inquiry_id)
+        if inquiry.status != "pending_purchasing":
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_purchasing.")
+        inquiry.status = "rejected"
+        inquiry.rejected_from = "pending_purchasing"
+        inquiry.rejection_reason = reason
+        inquiry.rejected_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        inquiry.rejected_by = user_id
+        self.db.commit()
+        self.db.refresh(inquiry)
+        return inquiry
+
+    def reopen_inquiry(
+        self, inquiry_id: str, reason: Optional[str] = None, user_id: Optional[str] = None
+    ) -> StockInquiry:
+        """Move inquiry from rejected back to the state it was rejected from (rejected_from)."""
+        from datetime import datetime, timezone
+        inquiry = self.get_inquiry(inquiry_id)
+        if inquiry.status != "rejected":
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error(f"Cannot reopen when status is {inquiry.status}. Expected: rejected.")
+        # Restore to the state before rejection (pending_project_sales or pending_purchasing)
+        inquiry.status = inquiry.rejected_from or "pending_project_sales"
+        inquiry.reopen_reason = reason
+        inquiry.reopened_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        inquiry.reopened_by = user_id
+        inquiry.rejection_reason = None
+        inquiry.rejected_at = None
+        inquiry.rejected_by = None
+        inquiry.rejected_from = None
         self.db.commit()
         self.db.refresh(inquiry)
         return inquiry
@@ -2021,8 +2268,16 @@ class PurchaseRequestService:
         space_id = getattr(payload, "space_id", None) or None
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
 
+        # Generate request_number if not provided
+        request_number = getattr(payload, "request_number", None) or None
+        if not request_number:
+            from app.services.numbering_service import NumberingService
+            ref_date = self._parse_date(getattr(payload, "date", None)) or date.today()
+            request_number = NumberingService(self.db).get_next_number(payload.request_type, ref_date)
+
         header = PurchaseRequestHeader(
             request_type=payload.request_type,
+            request_number=request_number,
             request_date=self._parse_date(payload.date),
             customer_name=payload.customer_name,
             project_title=payload.project_title,
@@ -2380,6 +2635,14 @@ class PurchaseRequestService:
         dump = data.model_dump(exclude={"products"})
         dump["status"] = "draft"
         dump["source"] = "manual"
+        if not dump.get("request_number"):
+            from app.services.numbering_service import NumberingService
+            ref_date = dump.get("request_date") or date.today()
+            if isinstance(ref_date, datetime):
+                ref_date = ref_date.date() if hasattr(ref_date, "date") else ref_date
+            number = NumberingService(self.db).get_next_number(dump["request_type"], ref_date)
+            if number:
+                dump["request_number"] = number
         contact_id = dump.get("contact_id")
         space_id = dump.get("space_id")
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)

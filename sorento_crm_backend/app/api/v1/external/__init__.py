@@ -8,6 +8,7 @@ from app.api.v1.external import (
     promotions,
     forms,
     complaint_attachments,
+    stock_inquiries,
     stock_inquiry_attachments,
     entity_attachments,
     purchase_requests,
@@ -28,6 +29,7 @@ router.include_router(product_attachments.router, prefix="/product-attachments",
 router.include_router(promotions.router, prefix="/promotions", tags=["external"])
 router.include_router(forms.router, prefix="/forms", tags=["external"])
 router.include_router(complaint_attachments.router, prefix="/complaint-attachments", tags=["external"])
+router.include_router(stock_inquiries.router, prefix="/stock-inquiries", tags=["external"])
 router.include_router(stock_inquiry_attachments.router, prefix="/stock-inquiry-attachments", tags=["external"])
 router.include_router(entity_attachments.router, prefix="/entity-attachments", tags=["external"])
 router.include_router(purchase_requests.router, prefix="/purchase-requests", tags=["external"])

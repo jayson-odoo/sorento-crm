@@ -192,6 +192,19 @@ export default function PurchaseRequestsList({
           ]
         : []),
       {
+        accessorKey: 'request_number',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Form number" column={column} />
+        ),
+        cell: ({ row }) => (
+          <span className="font-medium tabular-nums">
+            {row.original.request_number ?? '—'}
+          </span>
+        ),
+        size: 140,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         accessorKey: 'request_date',
         header: ({ column }) => (
           <DataGridColumnHeader title="Request Date" column={column} />

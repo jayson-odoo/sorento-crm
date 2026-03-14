@@ -296,9 +296,16 @@ class StockInquiry(Base):
     status = Column(String(50), default="new", nullable=False)
     last_responded_by = Column(Text, nullable=True)
     last_responded_at = Column(DateTime(timezone=False), nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    rejected_at = Column(DateTime(timezone=False), nullable=True)
+    rejected_by = Column(Text, nullable=True)
+    rejected_from = Column(String(50), nullable=True)  # pending_project_sales | pending_purchasing; used on reopen
+    reopen_reason = Column(Text, nullable=True)
+    reopened_at = Column(DateTime(timezone=False), nullable=True)
+    reopened_by = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=True)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=True)
-    
+
     __table_args__ = (
         Index("ix_stock_inquiries_product_code", "product_code"),
         Index("ix_stock_inquiries_delivery_date", "delivery_date"),

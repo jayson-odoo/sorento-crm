@@ -18,7 +18,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
-import { useComplaint, useUpdateComplaintAndReply } from '../hooks/useComplaints';
+import { useComplaint, useUpdateComplaint, useUpdateComplaintAndReply } from '../hooks/useComplaints';
 import { getOrCreateComplaintViewLink } from '../services/complaintService';
 import { toast } from 'sonner';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -38,12 +38,15 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   // Don't fetch if it's "new" or invalid
   const isValidId = complaintId && complaintId !== 'new' && complaintId !== 'edit';
   const { data: complaint, isLoading } = useComplaint(isValidId ? complaintId : null);
+  const updateComplaintMutation = useUpdateComplaint();
   const updateAndReplyMutation = useUpdateComplaintAndReply();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
   const [replyMessage, setReplyMessage] = useState('');
   const [replyViewUrl, setReplyViewUrl] = useState('');
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
+  const [editTechnicalResponseOpen, setEditTechnicalResponseOpen] = useState(false);
+  const [editTechnicalResponseValue, setEditTechnicalResponseValue] = useState('');
   
   if (!isValidId) {
     return (
@@ -250,6 +253,47 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={editTechnicalResponseOpen} onOpenChange={setEditTechnicalResponseOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit technical team response</DialogTitle>
+            <DialogDescription>
+              Update the technical team response text. This does not send a message to the contact.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="edit-technical-response">Technical team response</Label>
+            <Textarea
+              id="edit-technical-response"
+              value={editTechnicalResponseValue}
+              onChange={(e) => setEditTechnicalResponseValue(e.target.value)}
+              placeholder="Response text..."
+              rows={5}
+              className="resize-none"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTechnicalResponseOpen(false)}>Cancel</Button>
+            <Button
+              disabled={updateComplaintMutation.isPending}
+              onClick={async () => {
+                try {
+                  await updateComplaintMutation.mutateAsync({
+                    id: complaintId,
+                    data: { technical_team_response: editTechnicalResponseValue.trim() },
+                  });
+                  setEditTechnicalResponseOpen(false);
+                } catch {
+                  // toast from mutation
+                }
+              }}
+            >
+              {updateComplaintMutation.isPending ? 'Saving…' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Complaint Information */}
       <Card>
         <CardHeader>
@@ -364,7 +408,21 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             </div>
           )}
           <div>
-            <p className="text-sm text-muted-foreground">Technical Team Response</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm text-muted-foreground">Technical Team Response</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setEditTechnicalResponseValue(complaint.technical_team_response ?? '');
+                  setEditTechnicalResponseOpen(true);
+                }}
+                aria-label="Edit technical team response"
+              >
+                <Edit className="size-4" />
+                Edit
+              </Button>
+            </div>
             <p className="font-medium whitespace-pre-wrap">
               {complaint.technical_team_response || '-'}
             </p>

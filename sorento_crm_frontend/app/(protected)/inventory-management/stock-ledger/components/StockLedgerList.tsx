@@ -19,7 +19,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Search } from 'lucide-react';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useStockLedger } from '../hooks/useStockLedger';
 import type { StockLedgerEntry } from '../types/stockLedger.types';
 
@@ -95,7 +95,7 @@ export default function StockLedgerList() {
       {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Created At" column={column} />,
-        cell: ({ row }) => formatDateTime(new Date(row.original.created_at)),
+        cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
         size: 200,
       },
       {

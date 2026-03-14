@@ -1802,6 +1802,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/system-management/numbering-rules/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/system-management/numbering-rules">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/system-management/numbering-rules/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/(protected)/system-management/outgoing-mails/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/system-management/outgoing-mails">> = Specific

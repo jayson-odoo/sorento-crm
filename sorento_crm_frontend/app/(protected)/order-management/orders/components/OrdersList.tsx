@@ -40,6 +40,7 @@ import { TemplateDownloadDialog } from '@/components/template/TemplateDownloadDi
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { exportOrders, bulkImportOrders, importOrderTracking, validateOrderTracking } from '../services/orderService';
 import { OrderTrackingUploadDialog } from './OrderTrackingUploadDialog';
+import { OrderLinesImportDialog } from './OrderLinesImportDialog';
 import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -54,6 +55,7 @@ export default function OrdersList() {
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [trackingUploadOpen, setTrackingUploadOpen] = useState(false);
+  const [orderLinesImportOpen, setOrderLinesImportOpen] = useState(false);
   const [exportData, setExportData] = useState<Order[]>([]);
   const [isLoadingExport, setIsLoadingExport] = useState(false);
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
@@ -366,6 +368,10 @@ export default function OrdersList() {
               <Upload className="size-4" />
               Import Tracking
             </Button>
+            <Button variant="outline" onClick={() => setOrderLinesImportOpen(true)}>
+              <Upload className="size-4" />
+              Import order lines
+            </Button>
             <Button onClick={() => router.push('/order-management/orders/new')}>
               <Plus />
               Create Order
@@ -373,6 +379,7 @@ export default function OrdersList() {
           </div>
         </CardHeader>
         <LatestImportStatusPanel jobType="order_tracking_import" title="Latest order tracking import" className="mx-5 mb-2" />
+        <LatestImportStatusPanel jobType="delivery_order_detail_import" title="Latest order lines import" className="mx-5 mb-2" showWhenEmpty />
         <CardTable>
           <ScrollArea>
             <DataGridTable />
@@ -400,6 +407,11 @@ export default function OrdersList() {
         onOpenChange={setTrackingUploadOpen}
         onTest={validateOrderTracking}
         onUpload={handleUploadTracking}
+      />
+      <OrderLinesImportDialog
+        open={orderLinesImportOpen}
+        onOpenChange={setOrderLinesImportOpen}
+        onSuccess={() => queryClient.invalidateQueries({ queryKey: ['orders'] })}
       />
       <OrderBulkDeleteDialog
         open={bulkDeleteDialogOpen}

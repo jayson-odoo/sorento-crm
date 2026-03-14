@@ -35,6 +35,7 @@ from app.api.v1.external.utils import (
 )
 from app.models.job import JobStatus
 from app.models.procurement import SPOAllocation
+from app.models.order import OrderLine
 from app.schemas.resources import AttachmentCreate
 from app.schemas.procurement import SPOAllocationCreate
 
@@ -1513,6 +1514,249 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
         logger.info("GRN lines import job %s completed: %s ok, %s failed", job_id_str, successful, failed)
     except Exception as e:
         logger.exception("GRN lines import job %s failed", job_id_str)
+        job_service.fail_job(job_id_str, str(e))
+    finally:
+        db.close()
+
+
+def _delivery_order_detail_normalize_header(value: Any) -> str:
+    """Normalize column header for delivery order detail import."""
+    if value is None:
+        return ""
+    s = str(value).strip().lower()
+    if not s:
+        return ""
+    return s
+
+
+def _decimal_or_none(value: Any) -> Optional[Decimal]:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
+    """Process delivery order detail Excel: upsert order lines by (doc no, item code, location).
+    Columns: doc no -> order (order_number), item code -> product, location -> warehouse,
+    qty, unit price, discount, total, tax, total excluding tax, total including tax.
+    """
+    from rq import get_current_job
+    import openpyxl
+    from app.api.v1.external.utils import normalize_code
+
+    db = SessionLocal()
+    job_service = JobService(db)
+    rq_job = get_current_job()
+    rq_job_id = rq_job.id if rq_job else None
+    job = job_service.get_job_by_db_id(db_job_id) if db_job_id else None
+    if not job and rq_job_id:
+        job = job_service.get_job(rq_job_id)
+    if not job:
+        logger.error("Delivery order detail import job not found: db_job_id=%s", db_job_id)
+        db.close()
+        return
+
+    job_id_str = str(job.job_id)
+    try:
+        job_service.start_job(job_id_str)
+        try:
+            workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
+        except Exception as exc:
+            job_service.fail_job(job_id_str, f"Failed to read Excel: {exc}")
+            db.close()
+            return
+
+        sheet = workbook.active
+        if not sheet:
+            job_service.fail_job(job_id_str, "Workbook has no active sheet")
+            db.close()
+            return
+
+        headers = [_delivery_order_detail_normalize_header(cell.value) for cell in sheet[1]]
+        data_rows: List[Dict[str, Any]] = []
+        all_doc_nos = set()
+        all_product_codes = set()
+        all_locations = set()
+
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if not any(cell is not None and str(cell).strip() for cell in row):
+                continue
+            row_data = {}
+            for idx, value in enumerate(row):
+                if idx < len(headers) and headers[idx]:
+                    row_data[headers[idx]] = value
+
+            def _find(row_d: dict, *candidates: str) -> Any:
+                for c in candidates:
+                    cl = c.lower().strip()
+                    if cl in row_d:
+                        return row_d.get(cl)
+                return None
+
+            doc_no = (_find(row_data, "doc no", "doc number", "order number") and str(_find(row_data, "doc no", "doc number", "order number")).strip()) or None
+            item_code = (_find(row_data, "item code", "product code") and str(_find(row_data, "item code", "product code")).strip()) or None
+            location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
+            qty = _decimal_or_none(_find(row_data, "qty", "quantity"))
+            unit_price = _decimal_or_none(_find(row_data, "unit price", "unit price "))
+            discount = _decimal_or_none(_find(row_data, "discount"))
+            total = _decimal_or_none(_find(row_data, "total"))
+            tax = _decimal_or_none(_find(row_data, "tax"))
+            total_excl = _decimal_or_none(_find(row_data, "total excluding tax", "total excluding tax "))
+            total_incl = _decimal_or_none(_find(row_data, "total including tax", "total including tax "))
+
+            if doc_no:
+                all_doc_nos.add(doc_no)
+            if item_code:
+                all_product_codes.add(item_code)
+            if location:
+                all_locations.add(location)
+            data_rows.append({
+                "doc_no": doc_no,
+                "item_code": item_code,
+                "location": location,
+                "quantity": qty,
+                "unit_price": unit_price,
+                "discount": discount,
+                "total": total,
+                "tax": tax,
+                "total_excluding_tax": total_excl,
+                "total_including_tax": total_incl,
+            })
+
+        total_data_rows = len(data_rows)
+        job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=0)
+
+        if not data_rows:
+            job_service.complete_job(
+                job_id=job_id_str,
+                result={"message": "No valid data rows"},
+                successful_rows=0,
+                failed_rows=0,
+                skipped_rows=0,
+                processed_rows=0,
+                total_rows=total_data_rows,
+            )
+            db.close()
+            return
+
+        order_service = OrderService(db)
+        orders_by_number: Dict[str, Any] = {}
+        for doc_no in all_doc_nos:
+            order = order_service.get_order_by_order_number(doc_no)
+            if order:
+                orders_by_number[doc_no] = order
+
+        products_by_code = get_products_by_code_exact(db, all_product_codes)
+        warehouses_map = get_warehouses_by_code_or_name(db, all_locations)
+
+        successful = 0
+        failed = 0
+        skipped = 0
+        errors: List[Dict[str, Any]] = []
+
+        for row_idx, row_data in enumerate(data_rows, start=2):
+            doc_no = row_data.get("doc_no")
+            item_code = row_data.get("item_code")
+            location = row_data.get("location")
+            if not doc_no:
+                skipped += 1
+                errors.append({"row": row_idx, "error": "Missing doc no"})
+                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
+                continue
+            if not item_code:
+                skipped += 1
+                errors.append({"row": row_idx, "error": "Missing item code"})
+                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
+                continue
+            if not location:
+                skipped += 1
+                errors.append({"row": row_idx, "error": "Missing location"})
+                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
+                continue
+
+            order = orders_by_number.get(doc_no)
+            product = products_by_code.get((item_code or "").strip())
+            warehouse = warehouses_map.get(normalize_code(location)) if location else None
+            if not order:
+                skipped += 1
+                errors.append({"row": row_idx, "error": f"Order not found: {doc_no}"})
+                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
+                continue
+            if not product:
+                skipped += 1
+                errors.append({"row": row_idx, "error": f"Product not found: {item_code}"})
+                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
+                continue
+            if not warehouse:
+                skipped += 1
+                errors.append({"row": row_idx, "error": f"Warehouse not found: {location}"})
+                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
+                continue
+
+            try:
+                line = (
+                    db.query(OrderLine)
+                    .filter(
+                        OrderLine.order_id == order.id,
+                        OrderLine.product_id == product.id,
+                        OrderLine.warehouse_id == warehouse.id,
+                    )
+                    .first()
+                )
+                qty = row_data.get("quantity") or Decimal("0")
+                if line:
+                    line.quantity = qty
+                    line.unit_price = row_data.get("unit_price")
+                    line.discount = row_data.get("discount")
+                    line.total = row_data.get("total")
+                    line.tax = row_data.get("tax")
+                    line.total_excluding_tax = row_data.get("total_excluding_tax")
+                    line.total_including_tax = row_data.get("total_including_tax")
+                else:
+                    line = OrderLine(
+                        order_id=order.id,
+                        product_id=product.id,
+                        warehouse_id=warehouse.id,
+                        quantity=qty,
+                        unit_price=row_data.get("unit_price"),
+                        discount=row_data.get("discount"),
+                        total=row_data.get("total"),
+                        tax=row_data.get("tax"),
+                        total_excluding_tax=row_data.get("total_excluding_tax"),
+                        total_including_tax=row_data.get("total_including_tax"),
+                    )
+                    db.add(line)
+                successful += 1
+            except Exception as e:
+                failed += 1
+                errors.append({"row": row_idx, "error": str(e)})
+            job_service.update_job_progress(
+                job_id_str,
+                processed_rows=row_idx - 1,
+                successful_rows=successful,
+                failed_rows=failed,
+                skipped_rows=skipped,
+            )
+
+        db.commit()
+        job_service.complete_job(
+            job_id=job_id_str,
+            result={
+                "message": "Delivery order detail import completed",
+                "errors": _json_safe(errors[:100]),
+            },
+            successful_rows=successful,
+            failed_rows=failed,
+            skipped_rows=skipped,
+            processed_rows=total_data_rows,
+            total_rows=total_data_rows,
+        )
+        logger.info("Delivery order detail import job %s completed: %s ok, %s failed, %s skipped", job_id_str, successful, failed, skipped)
+    except Exception as e:
+        logger.exception("Delivery order detail import job %s failed", job_id_str)
         job_service.fail_job(job_id_str, str(e))
     finally:
         db.close()
