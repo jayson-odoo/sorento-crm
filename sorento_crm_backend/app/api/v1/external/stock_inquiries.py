@@ -27,9 +27,8 @@ async def create_stock_inquiry_external(
         service = StockInquiryService(db)
         inquiry = service.create_inquiry(inquiry_data)
         try:
-            # Always notify project sales team (lead_time_enquiries / project_sales), including when
-            # inquiry was created with status pending_project_sales. sync_email=True so the email is
-            # sent immediately instead of waiting for the scheduled processor.
+            # Notify project sales team (lead_time_enquiries / project_sales). Email is enqueued so
+            # API returns immediately; Notification Delivery Processor sends it in the background.
             service._notify_team_stock_inquiry(
                 inquiry_id=str(inquiry.id),
                 agent_code="lead_time_enquiries",
@@ -38,7 +37,7 @@ async def create_stock_inquiry_external(
                 intro_plain="Dear Project Sales Team,\n\nA new stock inquiry has been created via system integration and requires your review.",
                 intro_html="Dear Project Sales Team,<br /><br />A new stock inquiry has been created via system integration and requires your review.",
                 event_type="external_created",
-                sync_email=True,
+                sync_email=False,
             )
         except Exception:
             # Don't fail the API call if notifications fail.

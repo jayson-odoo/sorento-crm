@@ -2394,6 +2394,29 @@ class PurchaseRequestService:
         )
         return [str(r[0]) for r in rows if r and r[0]]
 
+    def _get_team_user_ids_for_agent_team_assignment_pr(
+        self, agent_code: str, team_assignment_code: str
+    ) -> List[str]:
+        """Return user IDs of the team assigned to the agent with the given team assignment code (e.g. project_sales)."""
+        from app.services.user_service import AccessAgentService
+        from app.models.access import TeamMember
+
+        agent_svc = AccessAgentService(self.db)
+        agent_id = agent_svc.get_agent_id_by_code(agent_code)
+        if not agent_id:
+            logger.debug("No access agent found for code=%s", agent_code)
+            return []
+        team_id = agent_svc.get_team_id_by_code(agent_id, team_assignment_code)
+        if not team_id:
+            logger.debug(
+                "No team assignment found for agent %s with code=%s",
+                agent_code,
+                team_assignment_code,
+            )
+            return []
+        rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
+        return [str(r[0]) for r in rows if r and r[0]]
+
     def _notify_team_on_external_pr_created(
         self,
         header_id: str,
@@ -2401,28 +2424,28 @@ class PurchaseRequestService:
         request_number: str = "N/A",
         project_title: str = "N/A",
         base_url_override: Optional[str] = None,
+        sync_email: bool = False,
     ) -> None:
-        """Notify the team assigned to agent code purchase_request: one email to all, plus in-app for each."""
+        """Notify the project_sales team under agent purchase_request: one email to all, plus in-app for each. Email is enqueued by default so API returns quickly."""
         from app.models.user import User, SystemSetting
         from app.models.notification import Notification, NotificationDelivery
         from app.services.notification_service import NotificationService
         from datetime import datetime
 
-        user_ids = self._get_team_user_ids_for_agent_code("purchase_request")
+        user_ids = self._get_team_user_ids_for_agent_team_assignment_pr("purchase_request", "project_sales")
         if not user_ids:
             logger.warning(
-                "No team members found for agent code 'purchase_request' (access agent may be missing or have no team assignments). "
-                "Create an Access Agent with code 'purchase_request' and assign a team under Team Assignments."
+                "No team members found for agent 'purchase_request' with assignment 'project_sales'. "
+                "Create an Access Agent with code 'purchase_request' and a Team Assignment with code 'project_sales'."
             )
             return
         users = self.db.query(User).filter(User.id.in_(user_ids)).all()
         emails = [u.email for u in users if getattr(u, "email", None) and str(u.email).strip()]
         if not emails:
-            logger.warning("Team members for purchase_request have no email addresses; skipping email.")
+            logger.warning("Team members for purchase_request/project_sales have no email addresses; skipping email.")
         type_label = "Purchase Request" if request_type == "purchase_request" else "Sponsorship Form"
         title = f"New {type_label} created"
         view_token = self.get_or_create_view_token(header_id)
-        # App domain for email link: payload base_url (external API) > FRONTEND_BASE_URL env > System settings Website URL
         base_url = (base_url_override or "").strip().rstrip("/")
         if not base_url:
             base_url = (settings.frontend_base_url or "").strip().rstrip("/")
@@ -2436,17 +2459,23 @@ class PurchaseRequestService:
                 "or FRONTEND_BASE_URL in backend .env, or pass base_url in the external create payload."
             )
         view_url = f"{base_url}/view/request?token={view_token}" if base_url else f"/view/request?token={view_token}"
+        intro_plain = (
+            "Dear Project Sales Team,\n\n"
+            f"A new {type_label.lower()} has been created via system integration and requires your review."
+        )
+        intro_html = (
+            f"Dear Project Sales Team,<br /><br />"
+            f"A new {type_label.lower()} has been created via system integration and requires your review."
+        )
         body_plain = (
-            "Hey Sorento,\n\n"
-            f"A new {type_label.lower()} has been created.\n\n"
-            f"View the form here: {view_url}\n\n"
-            "This is a system generated message, please do not reply."
+            f"{intro_plain}\n\n"
+            f"{view_url}\n\n"
+            "This is a system generated email. Please do not reply."
         )
         body_html = (
-            "<p>Hey Sorento,</p>\n<p>"
-            f"A new {type_label.lower()} has been created.</p>\n<p>"
-            f'<a href="{view_url}">View the form here</a>.</p>\n<p>'
-            "This is a system generated message, please do not reply.</p>"
+            f"<p>{intro_html}</p>\n"
+            f'<p><a href="{view_url}">{view_url}</a></p>\n'
+            "<p>This is a system generated email. Please do not reply.</p>"
         )
         notif_svc = NotificationService(self.db)
         first_uid = user_ids[0]
@@ -2468,11 +2497,15 @@ class PurchaseRequestService:
             self.db.commit()
             self.db.refresh(notification)
             try:
-                from app.services.queue_service import enqueue_job
-                from app.tasks import notification_tasks
-                enqueue_job(notification_tasks.send_notification_deliveries, str(notification.id), queue_name="notifications")
+                if sync_email:
+                    from app.tasks import notification_tasks
+                    notification_tasks.send_notification_deliveries(str(notification.id))
+                else:
+                    from app.services.queue_service import enqueue_job
+                    from app.tasks import notification_tasks
+                    enqueue_job(notification_tasks.send_notification_deliveries, str(notification.id), queue_name="notifications")
             except Exception as e:
-                logger.warning("Failed to enqueue notification deliveries: %s", e)
+                logger.warning("Failed to send/enqueue notification deliveries: %s", e)
         for uid in user_ids:
             if uid == first_uid and emails:
                 continue

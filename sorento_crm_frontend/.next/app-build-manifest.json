@@ -60,6 +60,41 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/system-management/scheduled-tasks/[id]/page.js"
+    ],
+    "/(protected)/user-management/access-agents/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/access-agents/page.js"
+    ],
+    "/(protected)/user-management/access-agents/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/access-agents/[id]/page.js"
+    ],
+    "/api/user-management/access-agents/[id]/contact-access/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/user-management/access-agents/[id]/contact-access/route.js"
+    ],
+    "/api/v1/external/[...path]/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/v1/external/[...path]/route.js"
+    ],
+    "/api/v1/complaints-management/complaints/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/v1/complaints-management/complaints/route.js"
+    ],
+    "/(protected)/complaint-management/complaints/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/complaint-management/complaints/page.js"
+    ],
+    "/(protected)/user-management/teams/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/teams/page.js"
     ]
   }
 }

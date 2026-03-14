@@ -1,8 +1,9 @@
 """Complaints service for business logic."""
+import logging
 import secrets
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, inspect
-from typing import Optional
+from typing import List, Optional
 from app.config import settings
 from app.models.complaints import Complaint
 from app.models.procurement import ViewToken
@@ -173,6 +174,143 @@ class ComplaintService:
         self.db.add(view_token)
         self.db.flush()
         return token_value
+
+    def _get_team_user_ids_for_agent_team_assignment(
+        self, agent_code: str, team_assignment_code: str
+    ) -> List[str]:
+        """Return user IDs of the team assigned to the agent with the given team assignment code (e.g. project_sales)."""
+        from app.services.user_service import AccessAgentService
+        from app.models.access import TeamMember
+
+        agent_svc = AccessAgentService(self.db)
+        agent_id = agent_svc.get_agent_id_by_code(agent_code)
+        if not agent_id:
+            logging.getLogger(__name__).debug("No access agent found for code=%s", agent_code)
+            return []
+        team_id = agent_svc.get_team_id_by_code(agent_id, team_assignment_code)
+        if not team_id:
+            logging.getLogger(__name__).debug(
+                "No team assignment found for agent %s with code=%s",
+                agent_code,
+                team_assignment_code,
+            )
+            return []
+        rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
+        return [str(r[0]) for r in rows if r and r[0]]
+
+    def _build_complaint_view_url(self, complaint_id: str, base_url_override: Optional[str] = None) -> str:
+        """Build shareable (no-auth) frontend link for a complaint using view token."""
+        from app.models.user import SystemSetting
+
+        view_token = self.get_or_create_view_token(complaint_id)
+        base_url = (base_url_override or "").strip().rstrip("/")
+        if not base_url:
+            base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+        if not base_url:
+            sys_settings = self.db.query(SystemSetting).first()
+            if sys_settings and getattr(sys_settings, "website_url", None):
+                base_url = (sys_settings.website_url or "").strip().rstrip("/")
+        return f"{base_url}/view/complaint?token={view_token}" if base_url else f"/view/complaint?token={view_token}"
+
+    def notify_team_complaint_external_created(
+        self,
+        complaint_id: str,
+        base_url_override: Optional[str] = None,
+        sync_email: bool = False,
+    ) -> None:
+        """Notify project_sales team under complaint agent when complaint is created externally (in-app + one email to all). Email is enqueued by default so API returns quickly."""
+        from datetime import datetime
+        from app.models.user import User
+        from app.models.notification import Notification, NotificationDelivery
+        from app.services.notification_service import NotificationService
+
+        logger = logging.getLogger(__name__)
+        user_ids = self._get_team_user_ids_for_agent_team_assignment("complaint", "project_sales")
+        if not user_ids:
+            logger.warning(
+                "No team members found for agent 'complaint' with assignment 'project_sales'. "
+                "Create an Access Agent with code 'complaint' and a Team Assignment with code 'project_sales'."
+            )
+            return
+        users = self.db.query(User).filter(User.id.in_(user_ids)).all()
+        emails = [u.email for u in users if getattr(u, "email", None) and str(u.email).strip()]
+        if not emails:
+            logger.warning("Team members for complaint/project_sales have no email addresses; skipping email.")
+        title = "New Complaint created"
+        intro_plain = (
+            "Dear Project Sales Team,\n\n"
+            "A new complaint has been created via system integration and requires your review."
+        )
+        intro_html = (
+            "Dear Project Sales Team,<br /><br />"
+            "A new complaint has been created via system integration and requires your review."
+        )
+        view_url = self._build_complaint_view_url(complaint_id, base_url_override=base_url_override)
+        body_plain = (
+            f"{intro_plain}\n\n"
+            f"{view_url}\n\n"
+            "This is a system generated email. Please do not reply."
+        )
+        body_html = (
+            f"<p>{intro_html}</p>\n"
+            f'<p><a href="{view_url}">{view_url}</a></p>\n'
+            "<p>This is a system generated email. Please do not reply.</p>"
+        )
+        notif_svc = NotificationService(self.db)
+        first_uid = user_ids[0]
+        if emails:
+            notification = Notification(
+                user_id=first_uid,
+                type="complaint_notification",
+                title=title,
+                body=body_plain,
+                data={"recipient_emails": emails, "single_email_to_all": True, "body_html": body_html},
+                source_entity_type="complaint",
+                source_entity_id=complaint_id,
+                event_type="external_created",
+            )
+            self.db.add(notification)
+            self.db.flush()
+            self.db.add(
+                NotificationDelivery(
+                    notification_id=notification.id,
+                    channel="in_app",
+                    status="sent",
+                    sent_at=datetime.utcnow(),
+                )
+            )
+            self.db.add(NotificationDelivery(notification_id=notification.id, channel="email", status="pending"))
+            self.db.commit()
+            self.db.refresh(notification)
+            try:
+                if sync_email:
+                    from app.tasks import notification_tasks
+                    notification_tasks.send_notification_deliveries(str(notification.id))
+                else:
+                    from app.services.queue_service import enqueue_job
+                    from app.tasks import notification_tasks
+                    enqueue_job(
+                        notification_tasks.send_notification_deliveries,
+                        str(notification.id),
+                        queue_name="notifications",
+                    )
+            except Exception as e:
+                logger.warning("Failed to send/enqueue notification deliveries: %s", e)
+        for uid in user_ids:
+            if uid == first_uid and emails:
+                continue
+            try:
+                notif_svc.create_in_app_only(
+                    user_id=uid,
+                    type="complaint_notification",
+                    title=title,
+                    body=body_plain,
+                    source_entity_type="complaint",
+                    source_entity_id=complaint_id,
+                    event_type="external_created",
+                )
+            except Exception as e:
+                logger.warning("Failed to create in-app notification for user %s: %s", uid, e)
 
     def get_complaint_summary_by_token(self, token_value: str) -> dict:
         """Return read-only complaint summary for the given view token. No auth required."""

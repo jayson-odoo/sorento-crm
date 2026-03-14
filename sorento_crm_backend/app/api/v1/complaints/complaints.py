@@ -183,18 +183,29 @@ async def create_complaint(
     - Integration payload (date_of_complaint, sales_person, delivery_order_numbers, defect_discovered_when, ...), single object or [{ ... }].
     """
     try:
+        is_integration_payload = False
         if isinstance(body, list) and body and _is_integration_payload(body):
             payload = ComplaintIntegrationCreate.model_validate(body[0])
             complaint_data = payload.to_complaint_create()
+            is_integration_payload = True
         elif isinstance(body, dict) and _is_integration_payload(body):
             payload = ComplaintIntegrationCreate.model_validate(body)
             complaint_data = payload.to_complaint_create()
+            is_integration_payload = True
         else:
             raw = body[0] if isinstance(body, list) and body else body
             complaint_data = ComplaintCreate.model_validate(raw)
         service = ComplaintService(db)
         complaint = service.create_complaint(complaint_data)
         db.commit()
+        if is_integration_payload:
+            try:
+                service.notify_team_complaint_external_created(
+                    complaint_id=str(complaint.id),
+                    sync_email=False,
+                )
+            except Exception:
+                pass
         return service.get_complaint_with_attachments(complaint.id)
     except HTTPException:
         raise
@@ -221,6 +232,14 @@ async def create_complaint_integration(
         complaint_data = payload.to_complaint_create()
         service = ComplaintService(db)
         complaint = service.create_complaint(complaint_data)
+
+        try:
+            service.notify_team_complaint_external_created(
+                complaint_id=str(complaint.id),
+                sync_email=False,
+            )
+        except Exception:
+            pass
 
         log_service = IntegrationLogService(db)
         log_service.create_integration_log(
