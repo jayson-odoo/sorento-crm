@@ -27,10 +27,12 @@ async def create_stock_inquiry_external(
         service = StockInquiryService(db)
         inquiry = service.create_inquiry(inquiry_data)
         try:
-            # If external wants a specific frontend domain for the link, it can set FRONTEND_BASE_URL / Website URL.
+            # Always notify project sales team (lead_time_enquiries / project_sales), including when
+            # inquiry was created with status pending_project_sales so it starts in their queue.
             service._notify_team_stock_inquiry(
                 inquiry_id=str(inquiry.id),
-                agent_code="stock_inquiry_project_sales",
+                agent_code="lead_time_enquiries",
+                team_assignment_code="project_sales",
                 title="New Stock Inquiry created",
                 intro_plain="Dear Project Sales Team,\n\nA new stock inquiry has been created via system integration and requires your review.",
                 intro_html="Dear Project Sales Team,<br /><br />A new stock inquiry has been created via system integration and requires your review.",

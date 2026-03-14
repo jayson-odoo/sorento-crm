@@ -1459,6 +1459,29 @@ class StockInquiryService:
         )
         return [str(r[0]) for r in rows if r and r[0]]
 
+    def _get_team_user_ids_for_agent_team_assignment(
+        self, agent_code: str, team_assignment_code: str
+    ) -> List[str]:
+        """Return user IDs of the team assigned to the agent with the given team assignment code (e.g. project_sales, purchasing)."""
+        from app.services.user_service import AccessAgentService
+        from app.models.access import TeamMember
+
+        agent_svc = AccessAgentService(self.db)
+        agent_id = agent_svc.get_agent_id_by_code(agent_code)
+        if not agent_id:
+            logger.debug("No access agent found for code=%s", agent_code)
+            return []
+        team_id = agent_svc.get_team_id_by_code(agent_id, team_assignment_code)
+        if not team_id:
+            logger.debug(
+                "No team assignment found for agent %s with code=%s",
+                agent_code,
+                team_assignment_code,
+            )
+            return []
+        rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
+        return [str(r[0]) for r in rows if r and r[0]]
+
     def _build_stock_inquiry_view_url(self, inquiry_id: str, base_url_override: Optional[str] = None) -> str:
         """Build a shareable (no-auth) frontend link for a stock inquiry using view token."""
         from app.models.user import SystemSetting
@@ -1478,24 +1501,28 @@ class StockInquiryService:
         *,
         inquiry_id: str,
         agent_code: str,
+        team_assignment_code: Optional[str] = None,
         title: str,
         intro_plain: str,
         intro_html: str,
         event_type: str,
         base_url_override: Optional[str] = None,
     ) -> None:
-        """Notify a team (agent_code) via in-app (each user) + one email to all (single_email_to_all)."""
+        """Notify a team via in-app (each user) + one email to all. If team_assignment_code is set, use that assignment under the agent; else all teams for the agent."""
         from app.models.user import User
         from app.models.notification import Notification, NotificationDelivery
         from app.services.notification_service import NotificationService
         from datetime import datetime
 
-        user_ids = self._get_team_user_ids_for_agent_code(agent_code)
+        if team_assignment_code:
+            user_ids = self._get_team_user_ids_for_agent_team_assignment(agent_code, team_assignment_code)
+        else:
+            user_ids = self._get_team_user_ids_for_agent_code(agent_code)
         if not user_ids:
             logger.warning(
-                "No team members found for agent code '%s'. Create an Access Agent with code '%s' and assign a team under Team Assignments.",
+                "No team members found for agent code '%s'%s. Assign a team under Team Assignments.",
                 agent_code,
-                agent_code,
+                f" with assignment code '{team_assignment_code}'" if team_assignment_code else "",
             )
             return
 
@@ -2021,7 +2048,8 @@ class StockInquiryService:
         try:
             self._notify_team_stock_inquiry(
                 inquiry_id=str(inquiry.id),
-                agent_code="stock_inquiry_purchasing",
+                agent_code="lead_time_enquiries",
+                team_assignment_code="purchasing",
                 title="Stock Inquiry pending purchasing review",
                 intro_plain="Dear Purchasing Team,\n\nA stock inquiry has been approved and is now pending purchasing review.",
                 intro_html="Dear Purchasing Team,<br /><br />A stock inquiry has been approved and is now pending purchasing review.",
