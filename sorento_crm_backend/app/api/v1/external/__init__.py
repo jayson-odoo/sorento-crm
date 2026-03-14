@@ -15,6 +15,7 @@ from app.api.v1.external import (
     conversation_assignee,
     presigned_url,
     respond_contacts,
+    chat_history,
     view_link,
 )
 
@@ -34,4 +35,5 @@ router.include_router(next_assignee.router, prefix="/next-assignee", tags=["exte
 router.include_router(conversation_assignee.router, prefix="/conversation-assignee", tags=["external"])
 router.include_router(presigned_url.router, prefix="/presigned-url", tags=["external"])
 router.include_router(respond_contacts.router, prefix="/respond-contacts", tags=["external"])
+router.include_router(chat_history.router, prefix="/chat-history", tags=["external"])
 router.include_router(view_link.router, prefix="/view-link", tags=["external"])

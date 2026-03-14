@@ -520,3 +520,17 @@ class RespondContactSyncResponse(BaseModel):
     user_type: Optional[str] = None
     respond_io_id: Optional[str] = None
     action: str  # "created" | "updated"
+
+
+# --- N8N chat history (latest human messages by contact) ---
+
+
+class ChatHistoryHumanMessagesRequest(BaseModel):
+    """Request for latest n human messages from n8n_chat_histories for a contact (by respond_io_id)."""
+    contact_id: str  # respond_io_id (maps to session_id in n8n_chat_histories)
+    limit: int = 10  # number of latest human messages to return (1–100), clamped server-side
+
+
+class ChatHistoryHumanMessagesResponse(BaseModel):
+    """Response: list of human message content strings (oldest to newest, chronological order)."""
+    content: List[str]

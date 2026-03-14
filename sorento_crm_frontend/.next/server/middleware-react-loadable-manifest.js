@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST="{\"components/DynamicClientProviders.tsx -> @/components/ClientProviders\":{\"id\":\"components/DynamicClientProviders.tsx -> @/components/ClientProviders\",\"files\":[\"static/chunks/_app-pages-browser_components_ClientProviders_tsx.js\"]}}"
+self.__REACT_LOADABLE_MANIFEST="{}"
