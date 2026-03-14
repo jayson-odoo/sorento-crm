@@ -78,7 +78,7 @@ class NotificationService:
             enqueue_job(
                 notification_tasks.send_notification_deliveries,
                 str(notification.id),
-                queue_name="imports",
+                queue_name="notifications",
             )
         except Exception as e:
             logger.warning("Failed to enqueue notification deliveries: %s", e)

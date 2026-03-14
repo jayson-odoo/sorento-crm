@@ -196,11 +196,24 @@ async def create_stock_inquiry(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Create a new stock inquiry."""
+    """Create a new stock inquiry. Notifies project sales team when status is new or pending_project_sales."""
     try:
         service = StockInquiryService(db)
         inquiry = service.create_inquiry(inquiry_data)
         db.commit()
+        if getattr(inquiry, "status", None) in ("new", "pending_project_sales"):
+            try:
+                service._notify_team_stock_inquiry(
+                    inquiry_id=str(inquiry.id),
+                    agent_code="lead_time_enquiries",
+                    team_assignment_code="project_sales",
+                    title="New Stock Inquiry created",
+                    intro_plain="Dear Project Sales Team,\n\nA new stock inquiry has been created and requires your review.",
+                    intro_html="Dear Project Sales Team,<br /><br />A new stock inquiry has been created and requires your review.",
+                    event_type="created",
+                )
+            except Exception:
+                pass
         return inquiry
     except HTTPException:
         raise

@@ -31,6 +31,65 @@ def _handler_import_job_processor(db, task):
     return result
 
 
+def _handler_notification_delivery_processor(db, task):
+    """Handler for notification_delivery_processor: process notification email/push deliveries from queue."""
+    result = _run_notification_delivery_jobs_impl()
+    return result
+
+
+def _run_notification_delivery_jobs_impl():
+    """Process jobs from the notifications queue (email and web_push deliveries). Returns summary dict."""
+    from rq.job import Job
+    from app.services.queue_service import redis_conn
+
+    queue = get_queue("notifications")
+    queue_length = len(queue)
+    if queue_length == 0:
+        return {"processed": 0, "queued": 0}
+    all_job_ids = queue.get_job_ids()
+    if not all_job_ids:
+        return {"processed": 0, "queued": 0}
+    queued_jobs = []
+    for job_id in all_job_ids:
+        try:
+            job = Job.fetch(job_id, connection=redis_conn)
+            if job.get_status() == "queued":
+                queued_jobs.append(job)
+            else:
+                try:
+                    queue.remove(job)
+                except Exception:
+                    pass
+        except Exception:
+            continue
+    if not queued_jobs:
+        return {"processed": 0, "queued": 0}
+    max_jobs_per_run = 20
+    processed = 0
+    for job in queued_jobs[:max_jobs_per_run]:
+        try:
+            job.set_status("started")
+            job.save()
+            result = job.func(*job.args, **job.kwargs)
+            job.set_status("finished")
+            job.save()
+            try:
+                queue.remove(job)
+            except Exception:
+                pass
+            processed += 1
+        except Exception as e:
+            logger.error("Error processing notification job %s: %s", job.id, e, exc_info=True)
+            try:
+                job.set_status("failed")
+                job.meta["exc_info"] = str(e)
+                job.save()
+                queue.remove(job)
+            except Exception:
+                pass
+    return {"processed": processed, "queued": len(queued_jobs)}
+
+
 def _run_import_jobs_impl():
     """Logic of process_import_jobs, returns summary dict."""
     from rq.job import Job
@@ -224,6 +283,7 @@ def start_scheduler():
     # Register handlers for task keys (used when tasks are due in DB)
     register_handler("integration_log_retry", _handler_integration_log_retry)
     register_handler("import_job_processor", _handler_import_job_processor)
+    register_handler("notification_delivery_processor", _handler_notification_delivery_processor)
     register_handler("respond_contacts_sync", run_respond_contacts_sync)
 
     scheduler = BackgroundScheduler()

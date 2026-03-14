@@ -1507,8 +1507,9 @@ class StockInquiryService:
         intro_html: str,
         event_type: str,
         base_url_override: Optional[str] = None,
+        sync_email: bool = False,
     ) -> None:
-        """Notify a team via in-app (each user) + one email to all. If team_assignment_code is set, use that assignment under the agent; else all teams for the agent."""
+        """Notify a team via in-app (each user) + one email to all. If team_assignment_code is set, use that assignment under the agent; else all teams for the agent. When sync_email=True, send email in the same request (e.g. for external API); otherwise enqueue to notifications queue."""
         from app.models.user import User
         from app.models.notification import Notification, NotificationDelivery
         from app.services.notification_service import NotificationService
@@ -1572,12 +1573,15 @@ class StockInquiryService:
             self.db.commit()
             self.db.refresh(notification)
             try:
-                from app.services.queue_service import enqueue_job
-                from app.tasks import notification_tasks
-
-                enqueue_job(notification_tasks.send_notification_deliveries, str(notification.id), queue_name="imports")
+                if sync_email:
+                    from app.tasks import notification_tasks
+                    notification_tasks.send_notification_deliveries(str(notification.id))
+                else:
+                    from app.services.queue_service import enqueue_job
+                    from app.tasks import notification_tasks
+                    enqueue_job(notification_tasks.send_notification_deliveries, str(notification.id), queue_name="notifications")
             except Exception as e:
-                logger.warning("Failed to enqueue notification deliveries: %s", e)
+                logger.warning("Failed to send/enqueue notification deliveries: %s", e)
 
         for uid in user_ids:
             if uid == first_uid and emails:
@@ -2466,7 +2470,7 @@ class PurchaseRequestService:
             try:
                 from app.services.queue_service import enqueue_job
                 from app.tasks import notification_tasks
-                enqueue_job(notification_tasks.send_notification_deliveries, str(notification.id), queue_name="imports")
+                enqueue_job(notification_tasks.send_notification_deliveries, str(notification.id), queue_name="notifications")
             except Exception as e:
                 logger.warning("Failed to enqueue notification deliveries: %s", e)
         for uid in user_ids:
