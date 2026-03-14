@@ -1,5 +1,9 @@
 {
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/(protected)/inventory-management/stock/page": "app/(protected)/inventory-management/stock/page.js"
+  "/api/user-management/access-agents/[id]/contact-access/route": "app/api/user-management/access-agents/[id]/contact-access/route.js",
+  "/(protected)/procurement-management/spo-allocations/page": "app/(protected)/procurement-management/spo-allocations/page.js",
+  "/(protected)/user-management/contacts/[id]/page": "app/(protected)/user-management/contacts/[id]/page.js",
+  "/(protected)/user-management/contact-access-agents/page": "app/(protected)/user-management/contact-access-agents/page.js",
+  "/(protected)/user-management/contacts/page": "app/(protected)/user-management/contacts/page.js"
 }

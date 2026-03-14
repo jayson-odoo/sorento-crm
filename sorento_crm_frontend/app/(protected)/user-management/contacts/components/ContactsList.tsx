@@ -5,14 +5,16 @@ import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { Search, X, RefreshCw, ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { Search, X, RefreshCw, ChevronRight, Plus, Trash2, Copy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
@@ -27,6 +29,8 @@ import { formatDate } from '@/lib/helpers';
 import { toast } from 'sonner';
 import ContactCreateDialog from './ContactCreateDialog';
 import ContactDeleteDialog from './ContactDeleteDialog';
+import ContactBulkDeleteDialog from './ContactBulkDeleteDialog';
+import BulkCopySettingsFromContactDialog from './BulkCopySettingsFromContactDialog';
 
 interface ContactsListProps {
   pageIndex?: number;
@@ -44,6 +48,9 @@ export default function ContactsList() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [contactToDelete, setContactToDelete] = useState<RespondContact | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkCopyDialogOpen, setBulkCopyDialogOpen] = useState(false);
 
   const fetchContacts = async (): Promise<DataGridApiResponse<RespondContact>> => {
     const sortField = sorting?.[0]?.id || 'created_at';
@@ -68,6 +75,13 @@ export default function ContactsList() {
     refetchOnWindowFocus: false,
     retry: 1,
   });
+
+  const pageContacts = data?.data ?? [];
+  const selectedContactIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
+  const selectedContacts = useMemo(
+    () => pageContacts.filter((c) => rowSelection[c.id]),
+    [pageContacts, rowSelection],
+  );
 
   const syncContactMutation = useMutation({
     mutationFn: async (contactId: string) => {
@@ -102,6 +116,29 @@ export default function ContactsList() {
 
   const columns = useMemo<ColumnDef<RespondContact>[]>(
     () => [
+      {
+        id: 'select',
+        header: ({ table }) => (
+          <Checkbox
+            checked={
+              table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && 'indeterminate')
+            }
+            onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+            aria-label="Select all"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label={`Select ${row.original.phone_number}`}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        size: 44,
+        enableSorting: false,
+      },
       {
         accessorKey: 'phone_number',
         header: ({ column }) => <DataGridColumnHeader title="Phone Number" column={column} />,
@@ -186,17 +223,21 @@ export default function ContactsList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
+    onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    enableRowSelection: true,
     meta: {
       onRowClick: handleRowClick,
     },
   });
+
+  const clearSelection = () => setRowSelection({});
 
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
@@ -221,10 +262,33 @@ export default function ContactsList() {
               </Button>
             )}
           </div>
-          <Button onClick={() => setCreateDialogOpen(true)}>
-            <Plus className="size-4 mr-2" />
-            Create Contact
-          </Button>
+          <div className="flex items-center gap-2">
+            {selectedContactIds.length > 0 && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setBulkCopyDialogOpen(true)}
+                >
+                  <Copy className="size-4 mr-2" />
+                  Copy settings to {selectedContactIds.length} user{selectedContactIds.length !== 1 ? 's' : ''}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => setBulkDeleteDialogOpen(true)}
+                >
+                  <Trash2 className="size-4 mr-2" />
+                  Delete ({selectedContactIds.length})
+                </Button>
+              </>
+            )}
+            <Button onClick={() => setCreateDialogOpen(true)}>
+              <Plus className="size-4 mr-2" />
+              Create Contact
+            </Button>
+          </div>
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -246,6 +310,20 @@ export default function ContactsList() {
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         contact={contactToDelete}
+      />
+
+      <ContactBulkDeleteDialog
+        open={bulkDeleteDialogOpen}
+        onOpenChange={setBulkDeleteDialogOpen}
+        contactIds={selectedContactIds}
+        onSuccess={clearSelection}
+      />
+
+      <BulkCopySettingsFromContactDialog
+        open={bulkCopyDialogOpen}
+        onOpenChange={setBulkCopyDialogOpen}
+        targetContacts={selectedContacts}
+        onSuccess={clearSelection}
       />
     </DataGrid>
   );

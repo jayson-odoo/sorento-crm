@@ -11,10 +11,10 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/layout.js"
     ],
-    "/(protected)/inventory-management/stock/page": [
+    "/(protected)/procurement-management/spo-allocations/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/inventory-management/stock/page.js"
+      "static/chunks/app/(protected)/procurement-management/spo-allocations/page.js"
     ],
     "/api/auth/[...nextauth]/route": [
       "static/chunks/webpack.js",
@@ -25,6 +25,26 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/token/route.js"
+    ],
+    "/(protected)/user-management/contact-access-agents/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/contact-access-agents/page.js"
+    ],
+    "/(protected)/user-management/contacts/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/contacts/[id]/page.js"
+    ],
+    "/api/user-management/access-agents/[id]/contact-access/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/user-management/access-agents/[id]/contact-access/route.js"
+    ],
+    "/(protected)/user-management/contacts/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/contacts/page.js"
     ]
   }
 }

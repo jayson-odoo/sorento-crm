@@ -176,6 +176,23 @@ class ContactService:
         self.db.delete(contact)
         self.db.commit()
 
+    def bulk_delete_contacts(self, contact_ids: list[str]) -> dict:
+        """Delete multiple contacts by id. Returns deleted_count and message."""
+        if not contact_ids:
+            return {"deleted_count": 0, "message": "No contacts to delete."}
+        from app.models.access import ContactAgentAccess
+        deleted = 0
+        for contact_id in contact_ids:
+            contact = self.db.query(RespondContact).filter(RespondContact.id == contact_id).first()
+            if contact:
+                self.db.query(ContactAgentAccess).filter(
+                    ContactAgentAccess.respond_contact_id == contact_id
+                ).delete(synchronize_session=False)
+                self.db.delete(contact)
+                deleted += 1
+        self.db.commit()
+        return {"deleted_count": deleted, "message": f"Deleted {deleted} contact(s)."}
+
     def sync_contact_name(self, contact_id: str) -> RespondContact:
         """Sync contact name from Respond.io API."""
         contact = self.get_contact(contact_id)

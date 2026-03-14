@@ -25,12 +25,14 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ChevronDown, Search } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useCreateContactAgentAccess, useUpdateContactAgentAccess } from '../hooks/useAccessAgents';
 import { useQueryClient } from '@tanstack/react-query';
 import { ContactAgentAccessSchema, type ContactAgentAccessSchemaType } from '../forms/access-agent-schema';
@@ -65,6 +67,7 @@ export default function ContactAgentAccessDialog({
   const updateMutation = useUpdateContactAgentAccess();
   const [formInitialized, setFormInitialized] = useState(false);
   const [isLookingUp, setIsLookingUp] = useState(false);
+  const [agentSearchQuery, setAgentSearchQuery] = useState('');
 
   const form = useForm<ContactAgentAccessSchemaType>({
     resolver: zodResolver(ContactAgentAccessSchema),
@@ -72,6 +75,7 @@ export default function ContactAgentAccessDialog({
       respond_contact_phone: '',
       respond_contact_name: '',
       agent_id: accessAgentId || '',
+      agent_ids: [] as string[],
       is_allowed: true,
       valid_from: undefined,
       valid_to: undefined,
@@ -87,6 +91,7 @@ export default function ContactAgentAccessDialog({
           respond_contact_phone: contactAccess.respond_contact_phone,
           respond_contact_name: contactAccess.respond_contact_name || '',
           agent_id: contactAccess.agent_id,
+          agent_ids: [],
           is_allowed: contactAccess.is_allowed,
           valid_from: contactAccess.valid_from ? new Date(contactAccess.valid_from) : undefined,
           valid_to: contactAccess.valid_to ? new Date(contactAccess.valid_to) : undefined,
@@ -96,14 +101,15 @@ export default function ContactAgentAccessDialog({
 
       return () => clearTimeout(timeoutId);
     } else if (!isEditMode && open) {
-      form.reset({
-        respond_contact_phone: defaultContactPhone || '',
-        respond_contact_name: '',
-        agent_id: accessAgentId || '',
-        is_allowed: true,
-        valid_from: undefined,
-        valid_to: undefined,
-      });
+form.reset({
+          respond_contact_phone: defaultContactPhone || '',
+          respond_contact_name: '',
+          agent_id: accessAgentId || '',
+          agent_ids: [],
+          is_allowed: true,
+          valid_from: undefined,
+          valid_to: undefined,
+        });
       setFormInitialized(true);
     }
   }, [contactAccess, isEditMode, form, open, accessAgentId, formInitialized, defaultContactPhone]);
@@ -134,24 +140,26 @@ export default function ContactAgentAccessDialog({
           },
         });
       } else {
-        const agentId = data.agent_id || accessAgentId;
-        if (!agentId) {
-          throw new Error('Agent ID is required');
+        const agentIds = (data.agent_ids?.length ? data.agent_ids : [data.agent_id || accessAgentId].filter(Boolean)) as string[];
+        if (!agentIds.length) {
+          throw new Error('Select at least one access agent');
         }
         if (!contactPhone) {
           throw new Error('Contact phone is required');
         }
-        await createMutation.mutateAsync({
-          agentId: agentId,
-          data: {
-            respond_contact_phone: contactPhone,
-            respond_contact_name: contactName,
-            agent_id: agentId,
-            is_allowed: data.is_allowed,
-            valid_from: data.valid_from ?? undefined,
-            valid_to: data.valid_to ?? undefined,
-          },
-        });
+        for (const agentId of agentIds) {
+          await createMutation.mutateAsync({
+            agentId,
+            data: {
+              respond_contact_phone: contactPhone,
+              respond_contact_name: contactName,
+              agent_id: agentId,
+              is_allowed: data.is_allowed,
+              valid_from: data.valid_from ?? undefined,
+              valid_to: data.valid_to ?? undefined,
+            },
+          });
+        }
       }
       // Invalidate contact-specific queries if contactId is provided
       if (contactId) {
@@ -187,32 +195,110 @@ export default function ContactAgentAccessDialog({
             {showAgentSelection && !isEditMode && (
               <FormField
                 control={form.control}
-                name="agent_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Access Agent *</FormLabel>
-                    <FormControl>
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select access agent" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {accessAgents
-                            .filter((agent) => agent.is_active)
-                            .map((agent) => (
-                              <SelectItem key={agent.id} value={agent.id}>
-                                {agent.name} ({agent.code})
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                name="agent_ids"
+                render={({ field }) => {
+                  const activeAgents = accessAgents.filter((a) => a.is_active);
+                  const q = (agentSearchQuery ?? '').trim().toLowerCase();
+                  const filteredAgents = q
+                    ? activeAgents.filter(
+                        (a) =>
+                          a.name.toLowerCase().includes(q) || a.code.toLowerCase().includes(q),
+                      )
+                    : activeAgents;
+                  const selectedIds = field.value ?? [];
+                  const allFilteredSelected =
+                    filteredAgents.length > 0 &&
+                    filteredAgents.every((a) => selectedIds.includes(a.id));
+                  const someFilteredSelected = filteredAgents.some((a) => selectedIds.includes(a.id));
+                  return (
+                    <FormItem>
+                      <FormLabel>Access Agent(s) *</FormLabel>
+                      <FormControl>
+<Popover
+                          onOpenChange={(open) => {
+                            if (!open) setAgentSearchQuery('');
+                          }}
+                        >
+                        <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              className={cn(
+                                'w-full justify-between font-normal',
+                                !field.value?.length && 'text-muted-foreground',
+                              )}
+                            >
+                              {field.value?.length
+                                ? `${field.value.length} agent${field.value.length !== 1 ? 's' : ''} selected`
+                                : 'Select access agent(s)'}
+                              <ChevronDown className="ml-2 size-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            className="w-[var(--radix-popover-trigger-width)] p-0"
+                            align="start"
+                            onOpenAutoFocus={(e) => e.preventDefault()}
+                          >
+                            <div className="p-2 border-b">
+                              <div className="relative">
+                                <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                                <Input
+                                  placeholder="Search agents..."
+                                  value={agentSearchQuery}
+                                  onChange={(e) => setAgentSearchQuery(e.target.value)}
+                                  className="pl-8 h-9"
+                                />
+                              </div>
+                            </div>
+                            <label className="flex items-center gap-2 px-3 py-2 text-sm font-medium cursor-pointer border-b hover:bg-accent/50">
+                              <Checkbox
+                                checked={allFilteredSelected ? true : someFilteredSelected ? 'indeterminate' : false}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    const add = filteredAgents.map((a) => a.id);
+                                    field.onChange(Array.from(new Set([...selectedIds, ...add])));
+                                  } else {
+                                    const remove = new Set(filteredAgents.map((a) => a.id));
+                                    field.onChange(selectedIds.filter((id) => !remove.has(id)));
+                                  }
+                                }}
+                              />
+                              Select all
+                            </label>
+                            <ScrollArea className="h-[280px]">
+                              <div className="p-2 space-y-0.5">
+                                {filteredAgents.length === 0 ? (
+                                  <p className="py-4 text-center text-sm text-muted-foreground">
+                                    No agents match your search.
+                                  </p>
+                                ) : (
+                                  filteredAgents.map((agent) => (
+                                    <label
+                                      key={agent.id}
+                                      className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                                    >
+                                      <Checkbox
+                                        checked={selectedIds.includes(agent.id)}
+                                        onCheckedChange={(checked) => {
+                                          const next = checked
+                                            ? [...selectedIds, agent.id]
+                                            : selectedIds.filter((id) => id !== agent.id);
+                                          field.onChange(next);
+                                        }}
+                                      />
+                                      {agent.name} ({agent.code})
+                                    </label>
+                                  ))
+                                )}
+                              </div>
+                            </ScrollArea>
+                          </PopoverContent>
+                        </Popover>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
               />
             )}
             <div className="grid grid-cols-2 gap-4">

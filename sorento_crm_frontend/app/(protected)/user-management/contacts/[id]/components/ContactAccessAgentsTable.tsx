@@ -8,7 +8,7 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { Plus, Edit, Trash2 } from 'lucide-react';
+import { Plus, Edit, Trash2, Copy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CardContent } from '@/components/ui/card';
@@ -22,6 +22,7 @@ import { apiFetch } from '@/lib/api';
 import { formatDate } from '@/lib/helpers';
 import ContactAgentAccessDialog from '../../../access-agents/components/ContactAgentAccessDialog';
 import ContactAgentAccessDeleteDialog from '../../../access-agents/components/contact-agent-access-delete-dialog';
+import CopyAccessAgentsFromContactDialog from './CopyAccessAgentsFromContactDialog';
 import {
   Dialog,
   DialogContent,
@@ -53,6 +54,7 @@ export default function ContactAccessAgentsTable({ contactId }: ContactAccessAge
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [contactAccessToDelete, setContactAccessToDelete] = useState<ContactAgentAccess | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  const [copyFromDialogOpen, setCopyFromDialogOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['contact-access-agents', contactId, pagination, sorting],
@@ -211,10 +213,16 @@ export default function ContactAccessAgentsTable({ contactId }: ContactAccessAge
       <CardContent>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold">Access Agents</h3>
-          <Button onClick={handleAdd} size="sm">
-            <Plus className="size-4" />
-            Add Access Agent
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setCopyFromDialogOpen(true)} size="sm">
+              <Copy className="size-4" />
+              Copy from another user
+            </Button>
+            <Button onClick={handleAdd} size="sm">
+              <Plus className="size-4" />
+              Add Access Agent
+            </Button>
+          </div>
         </div>
         {isLoading ? (
           <div className="text-center py-8 text-muted-foreground">Loading access agents...</div>
@@ -258,6 +266,18 @@ export default function ContactAccessAgentsTable({ contactId }: ContactAccessAge
           }}
           accessAgentId={contactAccessToDelete.agent_id}
           contactAccess={contactAccessToDelete}
+        />
+      )}
+
+      {/* Copy from another user */}
+      {contact && (
+        <CopyAccessAgentsFromContactDialog
+          open={copyFromDialogOpen}
+          onOpenChange={setCopyFromDialogOpen}
+          currentContactId={contactId}
+          currentContactPhone={contact.phone_number}
+          currentContactName={contact.name ?? undefined}
+          onSuccess={() => queryClient.invalidateQueries({ queryKey: ['contact-access-agents', contactId] })}
         />
       )}
     </>

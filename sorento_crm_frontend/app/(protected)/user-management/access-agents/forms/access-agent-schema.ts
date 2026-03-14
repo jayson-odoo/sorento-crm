@@ -23,18 +23,24 @@ export type AccessAgentSchemaType = z.infer<typeof AccessAgentSchema>;
 export const ContactAgentAccessSchema = z.object({
   respond_contact_phone: z.string().min(1, { message: 'Respond contact phone is required.' }),
   respond_contact_name: z.string().optional().nullable(),
-  agent_id: z.string().min(1, { message: 'Agent ID is required.' }),
+  agent_id: z.string().optional(),
+  agent_ids: z.array(z.string()).optional(),
   is_allowed: z.boolean(),
   valid_from: z.date().optional().nullable(),
   valid_to: z.date().optional().nullable(),
-}).refine((data) => {
-  if (data.valid_from && data.valid_to) {
-    return data.valid_to >= data.valid_from;
-  }
-  return true;
-}, {
-  message: 'Valid to date must be after valid from date.',
-  path: ['valid_to'],
-});
+})
+  .refine((data) => (data.agent_ids?.length ?? 0) >= 1 || !!data.agent_id, {
+    message: 'Select at least one access agent.',
+    path: ['agent_ids'],
+  })
+  .refine((data) => {
+    if (data.valid_from && data.valid_to) {
+      return data.valid_to >= data.valid_from;
+    }
+    return true;
+  }, {
+    message: 'Valid to date must be after valid from date.',
+    path: ['valid_to'],
+  });
 
 export type ContactAgentAccessSchemaType = z.infer<typeof ContactAgentAccessSchema>;

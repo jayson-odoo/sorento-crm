@@ -1,7 +1,8 @@
 """Respond contacts API routes."""
-from fastapi import APIRouter, Depends, Query, status, HTTPException
+from fastapi import APIRouter, Depends, Query, status, HTTPException, Body
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
 import logging
 import httpx
 from app.database import get_db
@@ -104,6 +105,28 @@ async def update_contact(
         raise
     except Exception as e:
         logger.error(f"Error updating contact {contact_id}: {str(e)}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+class BulkDeleteContactsRequest(BaseModel):
+    ids: list[str]
+
+
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_contacts(
+    body: BulkDeleteContactsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Bulk delete contacts by ID. Related access records are removed."""
+    try:
+        service = ContactService(db)
+        result = service.bulk_delete_contacts(body.ids)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in bulk_delete_contacts: {str(e)}", exc_info=True)
         raise handle_internal_error(str(e))
 
 
