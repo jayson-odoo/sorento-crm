@@ -78,6 +78,7 @@ class ContactService:
                     'phone_number': contact.phone_number,
                     'name': contact.name,
                     'user_type': contact.user_type,
+                    'access_type_code': getattr(contact, 'access_type_code', None),
                     'created_at': contact.created_at,
                     'updated_at': contact.updated_at,
                     'created_by': contact.created_by,
@@ -132,13 +133,17 @@ class ContactService:
             logger.warning("Assign default agents to new contact failed: %s", e)
 
     def create_contact(self, contact_data: RespondContactCreate) -> RespondContact:
-        """Create a new contact and assign default access agents (assign_to_new_internal_contacts=True)."""
+        """Create a new contact and assign default access agents (assign_to_new_internal_contacts=True). Resolves user_type to access_type_code from catalog/mappings."""
         # Check if contact with same phone number already exists
         existing = self.get_contact_by_phone(contact_data.phone_number)
         if existing:
             raise handle_conflict("Contact with this phone number already exists.")
-        
-        contact = RespondContact(**contact_data.model_dump())
+        data = contact_data.model_dump()
+        if data.get("user_type") is not None:
+            from app.services.contact_access_type_service import ContactAccessTypeService
+            access_svc = ContactAccessTypeService(self.db)
+            data["access_type_code"] = access_svc.resolve_respond_value_to_code(data["user_type"])
+        contact = RespondContact(**data)
         self.db.add(contact)
         self.db.commit()
         self.db.refresh(contact)
@@ -146,10 +151,14 @@ class ContactService:
         return contact
     
     def update_contact(self, contact_id: str, contact_data: RespondContactUpdate) -> RespondContact:
-        """Update a contact."""
+        """Update a contact. When user_type is updated, resolves to access_type_code from catalog/mappings."""
         contact = self.get_contact(contact_id)
         
         update_data = contact_data.model_dump(exclude_unset=True)
+        if "user_type" in update_data:
+            from app.services.contact_access_type_service import ContactAccessTypeService
+            access_svc = ContactAccessTypeService(self.db)
+            update_data["access_type_code"] = access_svc.resolve_respond_value_to_code(update_data["user_type"])
         
         # Check phone number uniqueness if being updated
         if 'phone_number' in update_data and update_data['phone_number'] != contact.phone_number:
@@ -257,6 +266,9 @@ class ContactService:
                     setattr(contact, "name", name)
                 if user_type is not None:
                     setattr(contact, "user_type", str(user_type).strip() if user_type is not None else None)
+                    from app.services.contact_access_type_service import ContactAccessTypeService
+                    access_svc = ContactAccessTypeService(self.db)
+                    contact.access_type_code = access_svc.resolve_respond_value_to_code(contact.user_type)
                 self.db.commit()
                 self.db.refresh(contact)
                 logger.info(

@@ -24,7 +24,7 @@ class Promotion(Base):
     __tablename__ = "promotions"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    promo_code = Column(String(50), unique=True, nullable=False)
+    promo_code = Column(String(50), nullable=False)
     name = Column(String(255), nullable=False)
     promo_type = Column(String(50), nullable=False)
     description = Column(Text, nullable=True)

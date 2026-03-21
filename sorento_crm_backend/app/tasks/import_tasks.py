@@ -337,6 +337,15 @@ def process_attachment_bulk_import(
             access_levels_payload = parsed
     except Exception:
         pass
+    from app.services.contact_access_type_service import ContactAccessTypeService
+    access_svc = ContactAccessTypeService(db)
+    if access_levels_payload:
+        try:
+            access_levels_payload = access_svc.validate_access_levels(access_levels_payload, field_name="access_levels")
+        except Exception:
+            access_levels_payload = access_svc.get_default_access_levels()
+    else:
+        access_levels_payload = access_svc.get_default_access_levels()
 
     try:
         job_service.start_job(job_id_str)
@@ -445,7 +454,7 @@ def process_attachment_bulk_import(
                         entity_type=None,
                         entity_id=None,
                         directory_id=directory_id,
-                        access_levels=access_levels_payload if access_levels_payload else ["dealer", "end_user"],
+                        access_levels=access_levels_payload,
                     )
                     attachment = attachment_service.create_attachment(attachment_data, user_id)
                     if attachment is not None:

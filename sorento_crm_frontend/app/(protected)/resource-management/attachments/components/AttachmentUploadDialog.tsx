@@ -24,6 +24,7 @@ import { Alert, AlertDescription, AlertIcon } from '@/components/ui/alert';
 import { useUploadAttachment, useAttachmentTypesList } from '../hooks/useAttachments';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 import { toast } from 'sonner';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 interface AttachmentUploadDialogProps {
   open: boolean;
@@ -47,13 +48,15 @@ export default function AttachmentUploadDialog({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [entityType, setEntityType] = useState<string>(propEntityType || '');
   const [entityId, setEntityId] = useState<string>(propEntityId || '');
-  const [accessLevels, setAccessLevels] = useState<string[]>(['dealer', 'end_user']);
+  const [accessLevels, setAccessLevels] = useState<string[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [validationError, setValidationError] = useState<string>('');
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [isUploading, setIsUploading] = useState(false);
 
   const { data: attachmentTypes = [], isLoading: isLoadingTypes } = useAttachmentTypesList();
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
   const uploadMutation = useUploadAttachment();
 
   const selectedType = attachmentTypes.find((type: AttachmentType) => type.id === selectedTypeId);
@@ -65,12 +68,18 @@ export default function AttachmentUploadDialog({
       setSelectedFiles([]);
       setEntityType(propEntityType || '');
       setEntityId(propEntityId || '');
-      setAccessLevels(['dealer', 'end_user']);
+      setAccessLevels(defaultAccessLevels);
       setValidationError('');
       setUploadProgress({});
       setIsUploading(false);
     }
-  }, [open, propEntityType, propEntityId]);
+  }, [open, propEntityType, propEntityId, defaultAccessLevels.join(',')]);
+
+  useEffect(() => {
+    if (accessLevels.length === 0 && defaultAccessLevels.length > 0) {
+      setAccessLevels(defaultAccessLevels);
+    }
+  }, [defaultAccessLevels, accessLevels.length]);
 
   // Update validation when type or files change
   useEffect(() => {
@@ -435,23 +444,23 @@ export default function AttachmentUploadDialog({
           <div className="space-y-2">
             <Label>Access Levels</Label>
             <div className="flex flex-wrap gap-4">
-              {['dealer', 'end_user'].map((level) => {
-                const checked = accessLevels.includes(level);
+              {accessTypeOptions.map((opt) => {
+                const checked = accessLevels.includes(opt.code);
                 return (
-                  <label key={level} className="flex items-center gap-2 text-sm">
+                  <label key={opt.code} className="flex items-center gap-2 text-sm">
                     <Checkbox
                       checked={checked}
                       onCheckedChange={(value) => {
                         const next = new Set(accessLevels);
                         if (value) {
-                          next.add(level);
+                          next.add(opt.code);
                         } else {
-                          next.delete(level);
+                          next.delete(opt.code);
                         }
                         setAccessLevels(Array.from(next));
                       }}
                     />
-                    {level === 'dealer' ? 'Dealer' : 'End User'}
+                    {opt.name || opt.code}
                   </label>
                 );
               })}

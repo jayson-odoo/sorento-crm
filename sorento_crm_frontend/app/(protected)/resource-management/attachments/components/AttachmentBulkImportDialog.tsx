@@ -24,6 +24,7 @@ import { AlertCircle } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { useBulkImportAttachment, useAttachmentTypesList, useDirectoryTree } from '../hooks/useAttachments';
 import { getJobStatus } from '../services/attachmentService';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import type { JobStatusResponse } from '../services/attachmentService';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 import type { AttachmentDirectoryTreeNode } from '../services/directoryService';
@@ -57,7 +58,9 @@ export default function AttachmentBulkImportDialog({
   const [selectedTypeId, setSelectedTypeId] = useState('');
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [parentDirectoryId, setParentDirectoryId] = useState<string>('');
-  const [accessLevels, setAccessLevels] = useState<string[]>(['dealer', 'end_user']);
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
+  const [accessLevels, setAccessLevels] = useState<string[]>([]);
   const [validationError, setValidationError] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [phase, setPhase] = useState<'form' | 'processing' | 'done'>('form');
@@ -71,11 +74,17 @@ export default function AttachmentBulkImportDialog({
   const bulkImportMutation = useBulkImportAttachment();
 
   useEffect(() => {
+    if (accessLevels.length === 0 && defaultAccessLevels.length > 0) {
+      setAccessLevels(defaultAccessLevels);
+    }
+  }, [defaultAccessLevels, accessLevels.length]);
+
+  useEffect(() => {
     if (!open) {
       setSelectedTypeId('');
       setZipFile(null);
       setParentDirectoryId(defaultParentDirectoryId ?? '');
-      setAccessLevels(['dealer', 'end_user']);
+      setAccessLevels(defaultAccessLevels);
       setValidationError('');
       setPhase('form');
       setJobId(null);
@@ -87,7 +96,7 @@ export default function AttachmentBulkImportDialog({
     } else if (defaultParentDirectoryId !== undefined) {
       setParentDirectoryId(defaultParentDirectoryId ?? '');
     }
-  }, [open, defaultParentDirectoryId]);
+  }, [open, defaultParentDirectoryId, defaultAccessLevels.join(',')]);
 
   // Poll job status when processing
   useEffect(() => {
@@ -248,18 +257,18 @@ export default function AttachmentBulkImportDialog({
           <div className="space-y-2">
             <Label>Access levels</Label>
             <div className="flex flex-wrap gap-4">
-              {['dealer', 'end_user'].map((level) => (
-                <label key={level} className="flex items-center gap-2 text-sm">
+              {accessTypeOptions.map((opt) => (
+                <label key={opt.code} className="flex items-center gap-2 text-sm">
                   <Checkbox
-                    checked={accessLevels.includes(level)}
+                    checked={accessLevels.includes(opt.code)}
                     onCheckedChange={(checked) => {
                       const next = new Set(accessLevels);
-                      if (checked) next.add(level);
-                      else next.delete(level);
+                      if (checked) next.add(opt.code);
+                      else next.delete(opt.code);
                       setAccessLevels(Array.from(next));
                     }}
                   />
-                  {level === 'dealer' ? 'Dealer' : 'End User'}
+                  {opt.name || opt.code}
                 </label>
               ))}
             </div>

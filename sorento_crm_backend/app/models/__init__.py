@@ -13,7 +13,7 @@ from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManua
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog
 from app.models.resources import Attachment, AttachmentType
-from app.models.access import AccessAgent, ContactAgentAccess
+from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondAccessTypeMapping, RespondContact
 from app.models.integration import IntegrationLog
 from app.models.import_log import ImportLog
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
@@ -76,6 +76,9 @@ __all__ = [
     "AttachmentType",
     "AccessAgent",
     "ContactAgentAccess",
+    "ContactAccessType",
+    "RespondAccessTypeMapping",
+    "RespondContact",
     "IntegrationLog",
     "ImportLog",
     "ImportJob",

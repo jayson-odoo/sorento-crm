@@ -126,6 +126,20 @@ class RespondClient:
             response.raise_for_status()
             return response.json() if response.content else {"items": [], "pagination": {}}
 
+    def get_message(self, identifier: str, message_id: int | str) -> dict:
+        """
+        Get a single message by ID for a contact.
+        GET /v2/contact/{identifier}/message/{messageId}
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}/message/{message_id}"
+        with httpx.Client(timeout=15) as client:
+            response = client.get(url, headers=self._headers())
+            response.raise_for_status()
+            return response.json() if response.content else {}
+
     def set_conversation_assignee(self, identifier: str, assignee_id: str) -> dict:
         """
         Set the conversation assignee for a contact. POST /v2/contact/{identifier}/conversation/assignee.

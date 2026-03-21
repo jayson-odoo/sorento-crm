@@ -617,6 +617,46 @@ class ConversationSLATrackingService:
         )
         return tracking
 
+    # Map source_entity_type (on tracking) to access agent code for tier-based escalation.
+    ENTITY_TYPE_TO_AGENT_CODE = {
+        "complaint": "complaint",
+        "stock_inquiry": "lead_time_enquiries",
+        "purchase_request": "purchase_request",
+    }
+
+    def get_escalation_assignee_for_tier(
+        self, source_entity_type: Optional[str], target_tier: int
+    ) -> dict:
+        """
+        Resolve the next assignee for escalation to the given tier using agent tier-team and round-robin.
+        source_entity_type comes from tracking (e.g. complaint, stock_inquiry, purchase_request).
+        Returns dict with id, email, name, respond_user_id. Raises if agent or tier team not configured.
+        """
+        from app.services.user_service import AccessAgentService
+
+        agent_code = self.ENTITY_TYPE_TO_AGENT_CODE.get(
+            (source_entity_type or "").strip().lower()
+        ) or "complaint"
+        agent_svc = AccessAgentService(self.db)
+        agent_id = agent_svc.get_agent_id_by_code(agent_code)
+        if not agent_id:
+            raise handle_validation_error(
+                f"No access agent found with code '{agent_code}'. Cannot resolve escalation assignee. "
+                "Create the Access Agent and assign tier teams (tier 1, 2, 3)."
+            )
+        team_id = agent_svc.get_team_id_by_tier(agent_id, target_tier)
+        if not team_id:
+            raise handle_validation_error(
+                f"No team assigned for agent '{agent_code}' with tier {target_tier}. "
+                f"Add a Team Assignment with Tier = {target_tier} for this agent."
+            )
+        assignee = agent_svc.get_next_assignee(agent_id, team_id)
+        if not assignee:
+            raise handle_validation_error(
+                f"No assignee in team for agent '{agent_code}' tier {target_tier}. Ensure the team has members."
+            )
+        return assignee
+
     def escalate_tracking(
         self,
         respond_contact_id: str,

@@ -198,6 +198,29 @@ class ComplaintService:
         rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
         return [str(r[0]) for r in rows if r and r[0]]
 
+    def _get_team_user_ids_for_agent_tier(
+        self, agent_code: str, tier: int
+    ) -> List[str]:
+        """Return user IDs of the team assigned to the agent with the given tier (1=initial, 2/3=escalation)."""
+        from app.services.user_service import AccessAgentService
+        from app.models.access import TeamMember
+
+        agent_svc = AccessAgentService(self.db)
+        agent_id = agent_svc.get_agent_id_by_code(agent_code)
+        if not agent_id:
+            logging.getLogger(__name__).debug("No access agent found for code=%s", agent_code)
+            return []
+        team_id = agent_svc.get_team_id_by_tier(agent_id, tier)
+        if not team_id:
+            logging.getLogger(__name__).debug(
+                "No team assignment found for agent %s with tier=%s",
+                agent_code,
+                tier,
+            )
+            return []
+        rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
+        return [str(r[0]) for r in rows if r and r[0]]
+
     def _build_complaint_view_url(self, complaint_id: str, base_url_override: Optional[str] = None) -> str:
         """Build shareable (no-auth) frontend link for a complaint using view token."""
         from app.models.user import SystemSetting
@@ -218,24 +241,27 @@ class ComplaintService:
         base_url_override: Optional[str] = None,
         sync_email: bool = False,
     ) -> None:
-        """Notify project_sales team under complaint agent when complaint is created externally (in-app + one email to all). Email is enqueued by default so API returns quickly."""
+        """Notify tier 1 team under complaint agent (fallback project_sales) when complaint is created externally (in-app + one email to all). Email is enqueued by default so API returns quickly."""
         from datetime import datetime
         from app.models.user import User
         from app.models.notification import Notification, NotificationDelivery
         from app.services.notification_service import NotificationService
 
         logger = logging.getLogger(__name__)
-        user_ids = self._get_team_user_ids_for_agent_team_assignment("complaint", "project_sales")
+        user_ids = (
+            self._get_team_user_ids_for_agent_tier("complaint", 1)
+            or self._get_team_user_ids_for_agent_team_assignment("complaint", "project_sales")
+        )
         if not user_ids:
             logger.warning(
-                "No team members found for agent 'complaint' with assignment 'project_sales'. "
-                "Create an Access Agent with code 'complaint' and a Team Assignment with code 'project_sales'."
+                "No team members found for agent 'complaint' with Tier 1 or 'project_sales'. "
+                "Create an Access Agent with code 'complaint' and a Team Assignment with Tier = 1 (or code 'project_sales')."
             )
             return
         users = self.db.query(User).filter(User.id.in_(user_ids)).all()
         emails = [u.email for u in users if getattr(u, "email", None) and str(u.email).strip()]
         if not emails:
-            logger.warning("Team members for complaint/project_sales have no email addresses; skipping email.")
+            logger.warning("Team members for complaint (Tier 1 / project_sales) have no email addresses; skipping email.")
         title = "New Complaint created"
         intro_plain = (
             "Dear Project Sales Team,\n\n"

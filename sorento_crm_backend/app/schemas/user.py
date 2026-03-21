@@ -29,7 +29,8 @@ class RespondContactResponse(RespondContactBase):
     updated_at: datetime
     created_by: Optional[str] = None
     respond_io_id: Optional[str] = None
-    
+    access_type_code: Optional[str] = None  # Resolved from user_type via catalog/mappings
+
     class Config:
         from_attributes = True
 
@@ -284,9 +285,64 @@ class TeamMemberResponse(BaseModel):
 class AgentTeamAssignment(BaseModel):
     code: str
     team_id: str
+    tier: Optional[int] = None  # 1=initial, 2/3=escalation; one team per tier per agent
 
 
 class AgentTeamsUpdate(BaseModel):
     """Legacy: team_ids for backwards compat. Use assignments instead."""
     team_ids: list[str] | None = None
     assignments: list[AgentTeamAssignment] | None = None
+
+
+# Contact access type catalog (admin CRUD)
+class ContactAccessTypeBase(BaseModel):
+    code: str
+    name: str
+    description: Optional[str] = None
+    is_active: bool = True
+    sort_order: Optional[int] = None
+
+
+class ContactAccessTypeCreate(ContactAccessTypeBase):
+    pass
+
+
+class ContactAccessTypeUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+class ContactAccessTypeResponse(ContactAccessTypeBase):
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# Respond access type mapping (admin CRUD)
+class RespondAccessTypeMappingBase(BaseModel):
+    source_key: str
+    access_type_code: str
+    is_active: bool = True
+
+
+class RespondAccessTypeMappingCreate(RespondAccessTypeMappingBase):
+    pass
+
+
+class RespondAccessTypeMappingUpdate(BaseModel):
+    source_key: Optional[str] = None
+    access_type_code: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class RespondAccessTypeMappingResponse(RespondAccessTypeMappingBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True

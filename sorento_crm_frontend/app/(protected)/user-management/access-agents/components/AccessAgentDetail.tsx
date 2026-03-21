@@ -22,7 +22,7 @@ import { formatDate } from '@/lib/helpers';
 import AccessAgentDeleteDialog from './access-agent-delete-dialog';
 import ContactAccessAgentsTable from './ContactAccessAgentsTable';
 import RecordNavigation from '@/components/common/RecordNavigation';
-import type { AgentTeamMemberInfo } from '../services/accessAgentService';
+import type { AgentTeamMemberInfo, AgentTeamAssignment } from '../services/accessAgentService';
 
 interface AccessAgentDetailProps {
   accessAgentId: string;
@@ -231,8 +231,15 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                               )}
                             </div>
                             <div className="text-left flex-1">
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-3 flex-wrap">
                                 <span className="font-mono text-sm font-medium">{a.code}</span>
+                                {typeof (a as AgentTeamAssignment).tier === 'number' &&
+                                  (a as AgentTeamAssignment).tier! >= 1 &&
+                                  (a as AgentTeamAssignment).tier! <= 3 && (
+                                  <Badge variant="secondary" className="text-xs font-normal">
+                                    Tier {(a as AgentTeamAssignment).tier}
+                                  </Badge>
+                                )}
                                 <span className="text-sm text-muted-foreground">•</span>
                                 <span className="font-medium">
                                   {a.team_name ?? teamNameMap.get(a.team_id) ?? a.team_id}

@@ -689,7 +689,7 @@ export default function StockInquiryDetail({
             <div className="flex-1 min-h-0 pt-2">
               <StockInquiryConversationPanel
                 inquiryId={inquiryId}
-                canReply={inquiry.status === 'pending_purchasing'}
+                canReply={inquiry.status === 'pending_purchasing' || inquiry.status === 'responded'}
                 respondInboxUrl={inquiry.respond_inbox_url}
                 showAsPopup
                 purchasingResponse={inquiry.purchasing_response}

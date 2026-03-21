@@ -33,9 +33,7 @@ import { PromotionSchema, type PromotionSchemaType } from '../forms/promotion-sc
 import type { PromotionFormData } from '../types/promotion.types';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 import RecordNavigation from '@/components/common/RecordNavigation';
-
-type AccessLevel = 'dealer' | 'end_user';
-const ACCESS_LEVELS: AccessLevel[] = ['dealer', 'end_user'];
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 /** Safe date to YYYY-MM-DD for <input type="date">; avoids Invalid time value when date is invalid. */
 function toDateInputValue(value: Date | string | null | undefined): string {
@@ -67,6 +65,8 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
   );
   const { data: navigationData } = usePromotions(navigationParams);
   const navigationItems = navigationData?.data ?? [];
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
 
   const form = useForm<PromotionSchemaType>({
     resolver: zodResolver(PromotionSchema),
@@ -78,7 +78,7 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
       start_date: new Date(),
       end_date: new Date(),
       is_active: true,
-      access_levels: ACCESS_LEVELS,
+      access_levels: defaultAccessLevels,
     },
     mode: 'onSubmit',
   });
@@ -104,7 +104,7 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
           is_active: promotion.is_active,
           access_levels: promotion.access_levels && promotion.access_levels.length > 0
             ? (promotion.access_levels as AccessLevel[])
-            : ACCESS_LEVELS,
+            : defaultAccessLevels,
         });
         setFormInitialized(true);
       }, 0);
@@ -256,23 +256,23 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                     Choose who can view this promotion.
                   </FormDescription>
                   <div className="mt-2 flex flex-wrap gap-4">
-                    {ACCESS_LEVELS.map((level) => {
-                      const checked = field.value?.includes(level);
+                    {accessTypeOptions.map((opt) => {
+                      const checked = field.value?.includes(opt.code);
                       return (
-                        <label key={level} className="flex items-center gap-2 text-sm">
+                        <label key={opt.code} className="flex items-center gap-2 text-sm">
                           <Checkbox
                             checked={checked}
                             onCheckedChange={(value) => {
                               const next = new Set(field.value || []);
                               if (value) {
-                                next.add(level);
+                                next.add(opt.code);
                               } else {
-                                next.delete(level);
+                                next.delete(opt.code);
                               }
-                              field.onChange(Array.from(next) as AccessLevel[]);
+                              field.onChange(Array.from(next));
                             }}
                           />
-                          {level === 'dealer' ? 'Dealer' : 'End User'}
+                          {opt.name || opt.code}
                         </label>
                       );
                     })}

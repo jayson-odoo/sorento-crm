@@ -19,7 +19,7 @@ export const PromotionSchema = z.object({
   start_date: z.date({ required_error: 'Start date is required.' }),
   end_date: z.date({ required_error: 'End date is required.' }),
   is_active: z.boolean(),
-  access_levels: z.array(z.enum(['dealer', 'end_user'])).min(1, {
+  access_levels: z.array(z.string()).min(1, {
     message: 'Select at least one access level.',
   }),
 }).refine((data) => data.end_date >= data.start_date, {

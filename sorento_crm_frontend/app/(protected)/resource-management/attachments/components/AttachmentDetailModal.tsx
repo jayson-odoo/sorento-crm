@@ -54,6 +54,7 @@ import { getProducts } from '@/app/(protected)/master-data-management/products/s
 import { getPromotions } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
 import { getPackingLists } from '@/app/(protected)/procurement-management/packing-lists/services/packingListService';
 import { linkAttachmentToPackingList, deleteAttachmentLink, unlinkPackingListFromAttachment } from '../services/attachmentService';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 const ENTITY_ROUTES = {
   product: { label: 'Product', path: '/master-data-management/products' },
@@ -61,11 +62,6 @@ const ENTITY_ROUTES = {
   form: { label: 'Form', path: '/forms-management/forms' },
   packing_list: { label: 'Packing List', path: '/procurement-management/packing-lists' },
 } as const;
-
-const ACCESS_LEVEL_OPTIONS = [
-  { value: 'dealer', label: 'Dealer' },
-  { value: 'end_user', label: 'End User' },
-] as const;
 
 function LinkagesTable({
   type,
@@ -151,9 +147,11 @@ function LinkagesTable({
 function LinkagesTabs({
   attachment,
   onRefetch,
+  defaultAccessLevels = ['dealer', 'end_user'],
 }: {
   attachment: Attachment;
   onRefetch: () => void;
+  defaultAccessLevels?: string[];
 }) {
   const queryClient = useQueryClient();
   const [linkDialogTab, setLinkDialogTab] = useState<keyof typeof ENTITY_ROUTES | null>(null);
@@ -230,7 +228,7 @@ function LinkagesTabs({
   const handleLinkProduct = () => {
     if (!linkProductId || !attachment.id) return;
     createProductLink.mutate(
-      { product_id: linkProductId, attachment_id: attachment.id, access_levels: ['dealer', 'end_user'] },
+      { product_id: linkProductId, attachment_id: attachment.id, access_levels: defaultAccessLevels },
       {
         onSuccess: () => {
           invalidate();
@@ -780,6 +778,10 @@ export default function AttachmentDetailModal({
   const [descriptionEdit, setDescriptionEdit] = useState<string | null>(null);
   const [accessLevelsEdit, setAccessLevelsEdit] = useState<string[] | null>(null);
 
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
+  const codeToName = Object.fromEntries(accessTypeOptions.map((o) => [o.code, o.name || o.code]));
+
   const { data: attachment, isLoading } = useQuery({
     queryKey: ['attachment-metadata', attachmentId],
     queryFn: () => getAttachmentMetadata(attachmentId!),
@@ -1012,19 +1014,19 @@ export default function AttachmentDetailModal({
                       {accessLevelsEdit !== null ? (
                         <div className="space-y-2">
                           <div className="flex flex-wrap gap-4">
-                            {ACCESS_LEVEL_OPTIONS.map((opt) => (
-                              <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+                            {accessTypeOptions.map((opt) => (
+                              <label key={opt.code} className="flex items-center gap-2 cursor-pointer">
                                 <Checkbox
-                                  checked={accessLevelsEdit.includes(opt.value)}
+                                  checked={accessLevelsEdit.includes(opt.code)}
                                   onCheckedChange={(checked) => {
                                     setAccessLevelsEdit((prev) => {
                                       const arr = prev ?? [];
-                                      if (checked) return arr.includes(opt.value) ? arr : [...arr, opt.value];
-                                      return arr.filter((v) => v !== opt.value);
+                                      if (checked) return arr.includes(opt.code) ? arr : [...arr, opt.code];
+                                      return arr.filter((v) => v !== opt.code);
                                     });
                                   }}
                                 />
-                                <span className="text-sm">{opt.label}</span>
+                                <span className="text-sm">{opt.name || opt.code}</span>
                               </label>
                             ))}
                           </div>
@@ -1032,7 +1034,7 @@ export default function AttachmentDetailModal({
                             <Button
                               size="sm"
                               onClick={() => {
-                                const levels = accessLevelsEdit?.length ? accessLevelsEdit : ['dealer', 'end_user'];
+                                const levels = accessLevelsEdit?.length ? accessLevelsEdit : defaultAccessLevels;
                                 updateMutation.mutate(
                                   { attachmentId: attachment.id, data: { access_levels: levels } },
                                   {
@@ -1060,12 +1062,12 @@ export default function AttachmentDetailModal({
                             ) : (
                               (attachment.access_levels ?? []).map((level) => (
                                 <Badge key={level} variant="secondary">
-                                  {level === 'dealer' ? 'Dealer' : 'End User'}
+                                  {codeToName[level] ?? level}
                                 </Badge>
                               ))
                             )}
                           </div>
-                          <Button variant="ghost" size="sm" onClick={() => setAccessLevelsEdit(attachment.access_levels ?? ['dealer', 'end_user'])}>
+                          <Button variant="ghost" size="sm" onClick={() => setAccessLevelsEdit(attachment.access_levels ?? defaultAccessLevels)}>
                             Edit
                           </Button>
                         </div>
@@ -1079,7 +1081,7 @@ export default function AttachmentDetailModal({
                     <CardTitle className="text-base">Linkages</CardTitle>
                   </CardHeader>
                   <CardContent className="pt-0">
-                    <LinkagesTabs attachment={attachment} onRefetch={() => queryClient.invalidateQueries({ queryKey: ['attachments'] })} />
+                    <LinkagesTabs attachment={attachment} onRefetch={() => queryClient.invalidateQueries({ queryKey: ['attachments'] })} defaultAccessLevels={defaultAccessLevels} />
                   </CardContent>
                 </Card>
               </div>

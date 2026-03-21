@@ -611,9 +611,15 @@ class AttachmentService:
             attachment_dict["uploaded_by"] = str(uploaded_by)
         else:
             attachment_dict["uploaded_by"] = str(uploaded_by) if uploaded_by else None
-        # Let DB server_default apply for access_levels if not provided
-        if attachment_dict.get("access_levels") is None:
-            attachment_dict.pop("access_levels", None)
+        # Validate access_levels against catalog or use default
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        access_svc = ContactAccessTypeService(self.db)
+        if attachment_dict.get("access_levels"):
+            attachment_dict["access_levels"] = access_svc.validate_access_levels(
+                attachment_dict["access_levels"], field_name="access_levels"
+            )
+        else:
+            attachment_dict["access_levels"] = access_svc.get_default_access_levels()
 
         # Compute and set full_directory_path when directory_id is provided
         directory_id = attachment_dict.get("directory_id")
@@ -640,7 +646,13 @@ class AttachmentService:
         attachment = self.get_attachment(attachment_id)
         
         update_data = attachment_data.model_dump(exclude_unset=True)
-        
+        if "access_levels" in update_data and update_data["access_levels"]:
+            from app.services.contact_access_type_service import ContactAccessTypeService
+            access_svc = ContactAccessTypeService(self.db)
+            update_data["access_levels"] = access_svc.validate_access_levels(
+                update_data["access_levels"], field_name="access_levels"
+            )
+
         # Recalculate full_directory_path when directory_id is updated
         if "directory_id" in update_data:
             new_directory_id = update_data["directory_id"]

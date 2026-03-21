@@ -219,3 +219,17 @@ export async function importDeliveryOrderDetail(file: File): Promise<{ job_id: s
   }
   return response.json();
 }
+
+export async function validateDeliveryOrderDetail(file: File): Promise<ValidateImportResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiFetch('/api/v1/order-management/orders/import-order-lines?validate_only=true', {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Validation failed' }));
+    throw new Error(error.detail || error.message || 'Validation failed');
+  }
+  return response.json();
+}

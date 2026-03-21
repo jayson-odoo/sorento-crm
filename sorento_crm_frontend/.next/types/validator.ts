@@ -1919,6 +1919,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/user-management/contact-access-types/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/user-management/contact-access-types">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/user-management/contact-access-types/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/(protected)/user-management/contacts/[id]/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/user-management/contacts/[id]">> = Specific

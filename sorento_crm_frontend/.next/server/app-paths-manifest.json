@@ -1,14 +1,6 @@
 {
-  "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/api/user-management/access-agents/[id]/contact-access/route": "app/api/user-management/access-agents/[id]/contact-access/route.js",
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/api/v1/external/[...path]/route": "app/api/v1/external/[...path]/route.js",
-  "/api/v1/procurement/[...path]/route": "app/api/v1/procurement/[...path]/route.js",
-  "/api/v1/complaints-management/complaints/route": "app/api/v1/complaints-management/complaints/route.js",
-  "/(protected)/user-management/access-agents/[id]/page": "app/(protected)/user-management/access-agents/[id]/page.js",
-  "/(protected)/system-management/scheduled-tasks/page": "app/(protected)/system-management/scheduled-tasks/page.js",
-  "/(protected)/user-management/access-agents/page": "app/(protected)/user-management/access-agents/page.js",
-  "/(protected)/system-management/outgoing-mails/page": "app/(protected)/system-management/outgoing-mails/page.js",
-  "/(protected)/system-management/scheduled-tasks/[id]/page": "app/(protected)/system-management/scheduled-tasks/[id]/page.js",
-  "/(protected)/complaint-management/complaints/page": "app/(protected)/complaint-management/complaints/page.js"
+  "/api/auth/token/route": "app/api/auth/token/route.js",
+  "/(protected)/page": "app/(protected)/page.js",
+  "/(auth)/signin/page": "app/(auth)/signin/page.js"
 }

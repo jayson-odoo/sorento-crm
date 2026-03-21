@@ -1212,13 +1212,13 @@ class AccessAgentService:
         }
 
     def list_agent_teams(self, agent_id: str) -> list[dict]:
-        """Return list of {code, team_id} assignments for this agent."""
+        """Return list of {code, team_id, tier} assignments for this agent."""
         rows = (
-            self.db.query(AgentTeam.code, AgentTeam.team_id)
+            self.db.query(AgentTeam.code, AgentTeam.team_id, AgentTeam.tier)
             .filter(AgentTeam.agent_id == agent_id)
             .all()
         )
-        return [{"code": r[0], "team_id": str(r[1])} for r in rows]
+        return [{"code": r[0], "team_id": str(r[1]), "tier": r[2]} for r in rows]
 
     def _user_info(self, user: Optional[User]) -> Optional[dict]:
         """Return {id, name, email} for display; None if user is None."""
@@ -1258,14 +1258,14 @@ class AccessAgentService:
         return last_id, user_ids[next_idx]
 
     def list_agent_teams_with_round_robin_state(self, agent_id: str) -> list[dict]:
-        """Return assignments with team name, members (ordered), last_assigned, next_in_line (read-only peek)."""
+        """Return assignments with team name, tier, members (ordered), last_assigned, next_in_line (read-only peek)."""
         rows = (
-            self.db.query(AgentTeam.code, AgentTeam.team_id)
+            self.db.query(AgentTeam.code, AgentTeam.team_id, AgentTeam.tier)
             .filter(AgentTeam.agent_id == agent_id)
             .all()
         )
         result = []
-        for code, team_id in rows:
+        for code, team_id, tier in rows:
             team_id_str = str(team_id)
             team = self.db.query(Team).filter(Team.id == team_id).first()
             team_name = team.name if team else team_id_str
@@ -1285,6 +1285,7 @@ class AccessAgentService:
             result.append({
                 "code": code,
                 "team_id": team_id_str,
+                "tier": tier,
                 "team_name": team_name,
                 "members": member_infos,
                 "last_assigned": self._user_info(last_user) if last_id else None,
@@ -1293,13 +1294,16 @@ class AccessAgentService:
         return result
 
     def set_agent_teams(self, agent_id: str, assignments: list[dict]) -> None:
-        """Replace agent's team links with the given assignments [{code, team_id}...]."""
+        """Replace agent's team links with the given assignments [{code, team_id, tier?}...]."""
         self.db.query(AgentTeam).filter(AgentTeam.agent_id == agent_id).delete()
         for a in assignments or []:
             code = a.get("code")
             team_id = a.get("team_id")
+            tier = a.get("tier")
+            if tier is not None and (tier < 1 or tier > 3):
+                tier = None
             if code and team_id:
-                self.db.add(AgentTeam(agent_id=agent_id, code=code, team_id=team_id))
+                self.db.add(AgentTeam(agent_id=agent_id, code=code, team_id=team_id, tier=tier))
         self.db.commit()
 
     def get_team_id_by_code(self, agent_id: str, code: str) -> str | None:
@@ -1307,6 +1311,17 @@ class AccessAgentService:
         row = (
             self.db.query(AgentTeam.team_id)
             .filter(AgentTeam.agent_id == agent_id, AgentTeam.code == code)
+            .first()
+        )
+        return str(row[0]) if row else None
+
+    def get_team_id_by_tier(self, agent_id: str, tier: int) -> str | None:
+        """Resolve team_id for agent+tier (1=initial, 2/3=escalation). Returns None if not found."""
+        if tier is None or tier < 1 or tier > 3:
+            return None
+        row = (
+            self.db.query(AgentTeam.team_id)
+            .filter(AgentTeam.agent_id == agent_id, AgentTeam.tier == tier)
             .first()
         )
         return str(row[0]) if row else None

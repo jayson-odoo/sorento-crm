@@ -160,19 +160,21 @@ async def set_agent_teams(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Set the team assignments for this agent (replaces existing). Body: assignments=[{code, team_id}]."""
+    """Set the team assignments for this agent (replaces existing). Body: assignments=[{code, team_id, tier?}]."""
     try:
         service = AccessAgentService(db)
         if body.assignments is not None:
-            payload = [{"code": a.code, "team_id": a.team_id} for a in body.assignments]
+            payload = [{"code": a.code, "team_id": a.team_id, "tier": getattr(a, "tier", None)} for a in body.assignments]
             service.set_agent_teams(agent_id, payload)
-            return {"assignments": payload}
+            assignments_with_state = service.list_agent_teams_with_round_robin_state(agent_id)
+            return {"assignments": assignments_with_state}
         if body.team_ids is not None:
             payload = [{"code": tid, "team_id": tid} for tid in body.team_ids]
             service.set_agent_teams(agent_id, payload)
-            return {"assignments": payload}
-        service.set_agent_teams(agent_id, [])
-        return {"assignments": []}
+        else:
+            service.set_agent_teams(agent_id, [])
+        assignments_with_state = service.list_agent_teams_with_round_robin_state(agent_id)
+        return {"assignments": assignments_with_state}
     except Exception as e:
         raise handle_internal_error(str(e))
 

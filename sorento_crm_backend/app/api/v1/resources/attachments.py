@@ -410,21 +410,23 @@ async def create_attachment(
 
         # Parse access levels for attachment record and webhook (JSON array string expected).
         # For promotion uploads, use the promotion's access_levels when entity_id is provided.
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        access_svc = ContactAccessTypeService(db)
         access_levels_payload = None
         if access_levels:
             try:
                 parsed = json.loads(access_levels)
                 if isinstance(parsed, list):
-                    access_levels_payload = parsed
+                    access_levels_payload = access_svc.validate_access_levels(parsed, field_name="access_levels")
             except Exception:
                 logger.warning("Invalid access_levels payload; expected JSON array.")
         if not access_levels_payload and (entity_type or "").strip().lower() == "promotion" and entity_id:
             from app.models.marketing import Promotion
             promo = db.query(Promotion).filter(Promotion.id == entity_id).first()
             if promo and getattr(promo, "access_levels", None) and isinstance(promo.access_levels, list):
-                access_levels_payload = list(promo.access_levels)
+                access_levels_payload = access_svc.validate_access_levels(list(promo.access_levels), field_name="access_levels")
         if not access_levels_payload:
-            access_levels_payload = ["dealer", "end_user"]
+            access_levels_payload = access_svc.get_default_access_levels()
 
         # Create attachment record. file_path stored as CloudFront base URL for consistency with other attachments.
         attachment_data = AttachmentCreate(
@@ -545,7 +547,9 @@ async def replace_latest_stock_list(
             )
 
         stored_file_path = s3_service.get_cloudfront_base_url(s3_key)
-        access_levels_payload = ["dealer", "end_user"]
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        access_svc = ContactAccessTypeService(db)
+        access_levels_payload = access_svc.get_default_access_levels()
         attachment_data = AttachmentCreate(
             attachment_type_id=str(attachment_type.id),
             original_filename=original_filename,

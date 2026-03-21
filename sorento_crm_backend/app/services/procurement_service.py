@@ -1482,6 +1482,29 @@ class StockInquiryService:
         rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
         return [str(r[0]) for r in rows if r and r[0]]
 
+    def _get_team_user_ids_for_agent_tier(
+        self, agent_code: str, tier: int
+    ) -> List[str]:
+        """Return user IDs of the team assigned to the agent with the given tier (1=initial, 2/3=escalation)."""
+        from app.services.user_service import AccessAgentService
+        from app.models.access import TeamMember
+
+        agent_svc = AccessAgentService(self.db)
+        agent_id = agent_svc.get_agent_id_by_code(agent_code)
+        if not agent_id:
+            logger.debug("No access agent found for code=%s", agent_code)
+            return []
+        team_id = agent_svc.get_team_id_by_tier(agent_id, tier)
+        if not team_id:
+            logger.debug(
+                "No team assignment found for agent %s with tier=%s",
+                agent_code,
+                tier,
+            )
+            return []
+        rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
+        return [str(r[0]) for r in rows if r and r[0]]
+
     def _build_stock_inquiry_view_url(self, inquiry_id: str, base_url_override: Optional[str] = None) -> str:
         """Build a shareable (no-auth) frontend link for a stock inquiry using view token."""
         from app.models.user import SystemSetting
@@ -1516,12 +1539,18 @@ class StockInquiryService:
         from datetime import datetime
 
         if team_assignment_code:
-            user_ids = self._get_team_user_ids_for_agent_team_assignment(agent_code, team_assignment_code)
+            if team_assignment_code == "project_sales":
+                user_ids = (
+                    self._get_team_user_ids_for_agent_tier(agent_code, 1)
+                    or self._get_team_user_ids_for_agent_team_assignment(agent_code, "project_sales")
+                )
+            else:
+                user_ids = self._get_team_user_ids_for_agent_team_assignment(agent_code, team_assignment_code)
         else:
             user_ids = self._get_team_user_ids_for_agent_code(agent_code)
         if not user_ids:
             logger.warning(
-                "No team members found for agent code '%s'%s. Assign a team under Team Assignments.",
+                "No team members found for agent code '%s'%s. Assign a team under Team Assignments (Tier 1 or code project_sales).",
                 agent_code,
                 f" with assignment code '{team_assignment_code}'" if team_assignment_code else "",
             )
@@ -1894,6 +1923,7 @@ class StockInquiryService:
         All integration calls are logged via IntegrationLogService.
         """
         import logging
+        import time
         from datetime import datetime, timezone
         from app.services.integration_service import RespondClient, IntegrationLogService
         from app.schemas.integration import IntegrationLogCreate
@@ -1904,10 +1934,11 @@ class StockInquiryService:
         log_service = IntegrationLogService(self.db)
 
         inquiry = self.get_inquiry(inquiry_id)
-        if inquiry.status != "pending_purchasing":
+        allowed_statuses = {"pending_purchasing", "responded"}
+        if inquiry.status not in allowed_statuses:
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(
-                "Update & Reply is only allowed when inquiry is pending purchasing review. "
+                "Update & Reply is only allowed when inquiry is pending purchasing review or responded. "
                 "Current status: " + (inquiry.status or "unknown")
             )
 
@@ -1943,6 +1974,72 @@ class StockInquiryService:
         try:
             client = RespondClient()
             response = client.send_message(identifier, message_to_send)
+
+            # Verify delivery status from Respond message endpoint and surface failed delivery to UI.
+            message_id = response.get("messageId") if isinstance(response, dict) else None
+            delivery_failed_message = None
+            if message_id is not None:
+                for attempt in range(3):
+                    try:
+                        sent_message = client.get_message(identifier, message_id)
+                        log_service.create_integration_log(
+                            IntegrationLogCreate(
+                                integration_channel="respond_io",
+                                business_table="stock_inquiries",
+                                business_id=inquiry_id,
+                                external_reference=f"{identifier}:{message_id}",
+                                direction="outbound",
+                                endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message/{message_id}",
+                                http_method="GET",
+                                status="success",
+                                response_payload=str(sent_message)[:50000] if sent_message else None,
+                            ),
+                        )
+
+                        statuses = sent_message.get("status") if isinstance(sent_message, dict) else None
+                        if isinstance(statuses, list):
+                            failed_status = next(
+                                (
+                                    s for s in statuses
+                                    if isinstance(s, dict) and str(s.get("value", "")).lower() == "failed"
+                                ),
+                                None,
+                            )
+                            if failed_status:
+                                delivery_failed_message = (failed_status.get("message") or "").strip()
+                                break
+                            # Status array exists and no failure -> no need to poll longer.
+                            break
+                    except Exception as status_check_err:
+                        log_service.create_integration_log(
+                            IntegrationLogCreate(
+                                integration_channel="respond_io",
+                                business_table="stock_inquiries",
+                                business_id=inquiry_id,
+                                external_reference=f"{identifier}:{message_id}",
+                                direction="outbound",
+                                endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message/{message_id}",
+                                http_method="GET",
+                                status="failed",
+                                error_message=str(status_check_err),
+                            ),
+                        )
+                        if attempt == 2:
+                            logger.warning(
+                                "Unable to verify Respond message status for stock_inquiry %s (message_id=%s): %s",
+                                inquiry_id,
+                                message_id,
+                                status_check_err,
+                            )
+                    if attempt < 2:
+                        time.sleep(0.6)
+
+            if delivery_failed_message:
+                from app.services.error_handler import handle_validation_error
+                raise handle_validation_error(
+                    delivery_failed_message or "Respond.io failed to deliver the message."
+                )
+
             log_service.create_integration_log(
                 IntegrationLogCreate(
                     integration_channel="respond_io",
@@ -1958,6 +2055,9 @@ class StockInquiryService:
                 request_payload_dict={"message": {"type": "text", "text": message_to_send}},
             )
         except Exception as e:
+            from app.services.error_handler import AppException
+            if isinstance(e, AppException):
+                raise
             logger.exception("Respond.io send_message failed for stock_inquiry %s", inquiry_id)
             log_service.create_integration_log(
                 IntegrationLogCreate(
@@ -2426,23 +2526,26 @@ class PurchaseRequestService:
         base_url_override: Optional[str] = None,
         sync_email: bool = False,
     ) -> None:
-        """Notify the project_sales team under agent purchase_request: one email to all, plus in-app for each. Email is enqueued by default so API returns quickly."""
+        """Notify tier 1 team under agent purchase_request (fallback project_sales): one email to all, plus in-app for each. Email is enqueued by default so API returns quickly."""
         from app.models.user import User, SystemSetting
         from app.models.notification import Notification, NotificationDelivery
         from app.services.notification_service import NotificationService
         from datetime import datetime
 
-        user_ids = self._get_team_user_ids_for_agent_team_assignment_pr("purchase_request", "project_sales")
+        user_ids = (
+            self._get_team_user_ids_for_agent_tier("purchase_request", 1)
+            or self._get_team_user_ids_for_agent_team_assignment_pr("purchase_request", "project_sales")
+        )
         if not user_ids:
             logger.warning(
-                "No team members found for agent 'purchase_request' with assignment 'project_sales'. "
-                "Create an Access Agent with code 'purchase_request' and a Team Assignment with code 'project_sales'."
+                "No team members found for agent 'purchase_request' with Tier 1 or 'project_sales'. "
+                "Create an Access Agent with code 'purchase_request' and a Team Assignment with Tier = 1 (or code 'project_sales')."
             )
             return
         users = self.db.query(User).filter(User.id.in_(user_ids)).all()
         emails = [u.email for u in users if getattr(u, "email", None) and str(u.email).strip()]
         if not emails:
-            logger.warning("Team members for purchase_request/project_sales have no email addresses; skipping email.")
+            logger.warning("Team members for purchase_request (Tier 1 / project_sales) have no email addresses; skipping email.")
         type_label = "Purchase Request" if request_type == "purchase_request" else "Sponsorship Form"
         title = f"New {type_label} created"
         view_token = self.get_or_create_view_token(header_id)

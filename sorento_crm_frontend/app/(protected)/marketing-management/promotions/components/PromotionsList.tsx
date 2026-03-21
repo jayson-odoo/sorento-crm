@@ -41,9 +41,16 @@ import type { Promotion } from '../types/promotion.types';
 import { formatDate } from '@/lib/helpers';
 import PromotionBulkDeleteDialog from './PromotionBulkDeleteDialog';
 import PromotionBulkAccessLevelsDialog from './PromotionBulkAccessLevelsDialog';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 export default function PromotionsList() {
   const router = useRouter();
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  const accessLevelNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    accessTypeOptions.forEach((o) => m.set(o.code, o.name || o.code));
+    return m;
+  }, [accessTypeOptions]);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -156,7 +163,7 @@ export default function PromotionsList() {
             <div className="flex flex-wrap gap-2">
               {levels.map((level) => (
                 <Badge key={level} variant="secondary">
-                  {level === 'dealer' ? 'Dealer' : 'End User'}
+                  {accessLevelNameMap.get(level) ?? level}
                 </Badge>
               ))}
             </div>
@@ -200,7 +207,7 @@ export default function PromotionsList() {
         size: 40,
       },
     ],
-    [selectedPromotionIds, isAllSelected, pagePromotions.length],
+    [selectedPromotionIds, isAllSelected, pagePromotions.length, accessLevelNameMap],
   );
 
   const handleRowClick = (row: Promotion) => {
@@ -278,8 +285,11 @@ export default function PromotionsList() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All</SelectItem>
-                        <SelectItem value="dealer">Dealer</SelectItem>
-                        <SelectItem value="end_user">End User</SelectItem>
+                        {accessTypeOptions.map((opt) => (
+                          <SelectItem key={opt.code} value={opt.code}>
+                            {opt.name || opt.code}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>

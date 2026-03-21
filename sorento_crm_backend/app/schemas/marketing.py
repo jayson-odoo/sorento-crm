@@ -24,7 +24,7 @@ class PromotionCreate(PromotionBase):
 
 
 class PromotionUpdate(BaseModel):
-    promo_code: Optional[str] = None  # editable; must be unique (no duplicate in system)
+    promo_code: Optional[str] = None  # editable; unique together with access_levels set
     name: Optional[str] = None
     promo_type: Optional[str] = None
     description: Optional[str] = None

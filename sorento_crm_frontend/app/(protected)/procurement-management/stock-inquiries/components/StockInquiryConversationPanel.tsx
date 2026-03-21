@@ -221,7 +221,7 @@ export default function StockInquiryConversationPanel({
         </div>
         {!canReply && (
           <p className="text-xs text-muted-foreground">
-            Update & Reply is only available when the inquiry is pending purchasing review. You can still compose and use the buttons above; send when the inquiry is in pending purchasing.
+            Reply is only available when the inquiry is pending purchasing review or responded.
           </p>
         )}
       </CardContent>

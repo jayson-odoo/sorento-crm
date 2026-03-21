@@ -312,6 +312,7 @@ async def import_order_tracking(
 @router.post("/import-order-lines", status_code=status.HTTP_202_ACCEPTED)
 async def import_delivery_order_detail(
     file: UploadFile = File(...),
+    validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("order_management.orders.import")),
     db: Session = Depends(get_db),
 ):
@@ -323,6 +324,18 @@ async def import_delivery_order_detail(
                 detail="Invalid file type. Please upload an Excel file (.xlsx or .xls)."
             )
         file_data = await file.read()
+        if validate_only:
+            service = OrderService(db)
+            result = service.validate_delivery_order_detail_excel(file_data)
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "valid": result["valid"],
+                    "errors": result["errors"],
+                    "warnings": result["warnings"],
+                    "summary": result.get("summary"),
+                },
+            )
 
         from app.services.job_service import JobService
         from app.services.queue_service import enqueue_job

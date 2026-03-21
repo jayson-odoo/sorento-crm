@@ -38,7 +38,7 @@ import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { TemplateDownloadDialog } from '@/components/template/TemplateDownloadDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
-import { exportOrders, bulkImportOrders, importOrderTracking, validateOrderTracking } from '../services/orderService';
+import { exportOrders, bulkImportOrders, importOrderTracking, validateOrderTracking, validateDeliveryOrderDetail } from '../services/orderService';
 import { OrderTrackingUploadDialog } from './OrderTrackingUploadDialog';
 import { OrderLinesImportDialog } from './OrderLinesImportDialog';
 import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
@@ -411,6 +411,7 @@ export default function OrdersList() {
       <OrderLinesImportDialog
         open={orderLinesImportOpen}
         onOpenChange={setOrderLinesImportOpen}
+        onTest={validateDeliveryOrderDetail}
         onSuccess={() => queryClient.invalidateQueries({ queryKey: ['orders'] })}
       />
       <OrderBulkDeleteDialog

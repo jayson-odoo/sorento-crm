@@ -65,7 +65,7 @@ export default function AccessAgentFormModal({
   const { data: respondUsers } = useRespondSyncedUsers();
   const { data: agentTeamsData } = useAgentTeams(isEditMode ? accessAgentId ?? null : null);
   const { data: teamsList = [] } = useTeams();
-  const [localAssignments, setLocalAssignments] = useState<{ code: string; team_id: string }[]>([]);
+  const [localAssignments, setLocalAssignments] = useState<{ code: string; team_id: string; tier: number | null }[]>([]);
 
   const form = useForm<AccessAgentSchemaType>({
     resolver: zodResolver(AccessAgentSchema),
@@ -98,7 +98,15 @@ export default function AccessAgentFormModal({
 
   useEffect(() => {
     const fromServer = agentTeamsData?.assignments;
-    setLocalAssignments(fromServer ? [...fromServer] : []);
+    setLocalAssignments(
+      fromServer
+        ? fromServer.map((a: { code: string; team_id: string; tier?: number | null }) => ({
+            code: a.code,
+            team_id: a.team_id,
+            tier: a.tier != null && a.tier >= 1 && a.tier <= 3 ? a.tier : null,
+          }))
+        : []
+    );
   }, [agentTeamsData?.assignments]);
 
   useEffect(() => {
@@ -120,7 +128,11 @@ export default function AccessAgentFormModal({
         await updateMutation.mutateAsync({ id: accessAgentId, data: formData });
         const validAssignments = localAssignments
           .filter((a) => a.code.trim() && a.team_id)
-          .map((a) => ({ code: String(a.code).trim(), team_id: String(a.team_id) }));
+          .map((a) => ({
+            code: String(a.code).trim(),
+            team_id: String(a.team_id),
+            tier: a.tier != null && a.tier >= 1 && a.tier <= 3 ? a.tier : undefined,
+          }));
         await setAgentTeams(accessAgentId, validAssignments);
         queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
       } else {
@@ -270,7 +282,7 @@ export default function AccessAgentFormModal({
                         <div className="space-y-3 p-3">
                           {localAssignments.map((a, idx) => (
                             <div key={idx} className="flex flex-wrap items-center gap-3 rounded-md border p-3">
-                              <div className="flex-1 min-w-[120px]">
+                              <div className="flex-1 min-w-[100px]">
                                 <label className="text-xs text-muted-foreground mb-1 block">Code</label>
                                 <Input
                                   placeholder="e.g. marketing"
@@ -283,6 +295,28 @@ export default function AccessAgentFormModal({
                                   }}
                                   className="font-mono text-sm"
                                 />
+                              </div>
+                              <div className="w-[100px]">
+                                <label className="text-xs text-muted-foreground mb-1 block">Tier</label>
+                                <Select
+                                  value={a.tier != null ? String(a.tier) : '__none__'}
+                                  disabled={isLoading}
+                                  onValueChange={(v) => {
+                                    const next = [...localAssignments];
+                                    next[idx] = { ...next[idx], tier: v === '__none__' ? null : Number(v) };
+                                    setLocalAssignments(next);
+                                  }}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="—" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">—</SelectItem>
+                                    <SelectItem value="1">1</SelectItem>
+                                    <SelectItem value="2">2</SelectItem>
+                                    <SelectItem value="3">3</SelectItem>
+                                  </SelectContent>
+                                </Select>
                               </div>
                               <div className="flex-1 min-w-[160px]">
                                 <label className="text-xs text-muted-foreground mb-1 block">Team</label>
@@ -326,7 +360,10 @@ export default function AccessAgentFormModal({
                         variant="outline"
                         disabled={isLoading || teamsList.length === 0}
                         onClick={() =>
-                          setLocalAssignments([...localAssignments, { code: '', team_id: teamsList[0]?.id ?? '' }])
+                          setLocalAssignments([
+                            ...localAssignments,
+                            { code: '', team_id: teamsList[0]?.id ?? '', tier: null },
+                          ])
                         }
                       >
                         <Plus className="mr-2 size-4" />

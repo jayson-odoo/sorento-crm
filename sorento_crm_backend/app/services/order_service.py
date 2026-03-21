@@ -3,6 +3,7 @@ import logging
 import uuid
 import time
 from typing import Optional
+from io import BytesIO
 
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
@@ -912,6 +913,108 @@ class OrderService:
             "kpi_warnings": kpi_warnings,
             "master_rows": master_rows,
             "tracking_rows": tracking_rows,
+        }
+
+    def validate_delivery_order_detail_excel(self, file_data: bytes) -> dict:
+        """Validate delivery order detail import file (order lines) without writing to DB."""
+        import openpyxl
+        from app.api.v1.external.utils import normalize_code
+
+        def _normalize_header(value) -> str:
+            if value is None:
+                return ""
+            return str(value).strip().lower()
+
+        def _find(row_d: dict, *candidates: str):
+            for c in candidates:
+                key = c.lower().strip()
+                if key in row_d:
+                    return row_d.get(key)
+            return None
+
+        try:
+            workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
+        except Exception as exc:
+            raise ValueError(f"Failed to read Excel file: {exc}") from exc
+
+        sheet = workbook.active
+        if not sheet:
+            raise ValueError("Workbook has no active sheet")
+
+        headers = [_normalize_header(cell.value) for cell in sheet[1]]
+        parsed_rows = []
+        all_doc_nos = set()
+        all_product_codes = set()
+        all_locations = set()
+        errors: list[str] = []
+
+        for row_idx, row in enumerate(sheet.iter_rows(min_row=2, values_only=True), start=2):
+            if not any(cell is not None and str(cell).strip() for cell in row):
+                continue
+
+            row_data: dict = {}
+            for idx, value in enumerate(row):
+                if idx < len(headers) and headers[idx]:
+                    row_data[headers[idx]] = value
+
+            doc_no = (_find(row_data, "doc no", "doc number", "order number") and str(_find(row_data, "doc no", "doc number", "order number")).strip()) or None
+            item_code = (_find(row_data, "item code", "product code") and str(_find(row_data, "item code", "product code")).strip()) or None
+            location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
+
+            if not doc_no:
+                errors.append(f"Row {row_idx}: Missing doc no")
+            if not item_code:
+                errors.append(f"Row {row_idx}: Missing item code")
+            if not location:
+                errors.append(f"Row {row_idx}: Missing location")
+
+            if doc_no:
+                all_doc_nos.add(doc_no)
+            if item_code:
+                all_product_codes.add(item_code)
+            if location:
+                all_locations.add(location)
+
+            parsed_rows.append((row_idx, doc_no, item_code, location))
+
+        orders_by_number = {}
+        if all_doc_nos:
+            for order in self.db.query(Order).filter(Order.order_number.in_(all_doc_nos), Order.deleted_at.is_(None)).all():
+                orders_by_number[order.order_number] = order
+
+        products_by_code = {}
+        if all_product_codes:
+            for product in self.db.query(Product).filter(Product.product_code.in_(all_product_codes)).all():
+                products_by_code[(product.product_code or "").strip()] = product
+
+        warehouses_map = {}
+        if all_locations:
+            all_warehouses = self.db.query(Warehouse).all()
+            for wh in all_warehouses:
+                if wh.warehouse_code:
+                    warehouses_map[normalize_code(wh.warehouse_code)] = wh
+                if wh.warehouse_name:
+                    warehouses_map[normalize_code(wh.warehouse_name)] = wh
+
+        for row_idx, doc_no, item_code, location in parsed_rows:
+            if not doc_no or not item_code or not location:
+                continue
+            if doc_no not in orders_by_number:
+                errors.append(f"Row {row_idx}: Order not found: {doc_no}")
+            if item_code not in products_by_code:
+                errors.append(f"Row {row_idx}: Product not found: {item_code}")
+            if normalize_code(location) not in warehouses_map:
+                errors.append(f"Row {row_idx}: Warehouse not found: {location}")
+
+        total_rows = len(parsed_rows)
+        return {
+            "valid": len(errors) == 0,
+            "errors": errors,
+            "warnings": [],
+            "summary": {
+                "rows": total_rows,
+                "error_count": len(errors),
+            },
         }
 
 

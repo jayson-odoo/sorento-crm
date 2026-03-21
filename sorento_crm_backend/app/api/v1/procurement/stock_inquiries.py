@@ -249,7 +249,7 @@ async def update_stock_inquiry_and_reply(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Update inquiry, send purchasing response to customer via Respond.io, and mark SLA as responded. Allowed only when status is pending_purchasing."""
+    """Update inquiry, send purchasing response to customer via Respond.io, and mark SLA as responded. Allowed when status is pending_purchasing or responded."""
     try:
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = StockInquiryService(db)

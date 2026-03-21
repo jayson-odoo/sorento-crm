@@ -7,13 +7,57 @@ from app.database import Base
 import uuid
 
 
+class ContactAccessType(Base):
+    """Configurable catalog for contact access types (e.g. end_user, dealer, sorento_dealer). Used for promotion/attachment visibility and contact classification."""
+    __tablename__ = "contact_access_types"
+
+    code = Column(String(50), primary_key=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    sort_order = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    respond_mappings = relationship(
+        "RespondAccessTypeMapping",
+        back_populates="access_type",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_contact_access_types_is_active", "is_active"),
+    )
+
+
+class RespondAccessTypeMapping(Base):
+    """Maps Respond.io raw values (e.g. custom field) to a configured contact_access_type code."""
+    __tablename__ = "respond_access_type_mappings"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_key = Column(String(255), nullable=False)  # Raw value from Respond (e.g. "Dealer", "End User")
+    access_type_code = Column(String(50), ForeignKey("contact_access_types.code", ondelete="CASCADE"), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    access_type = relationship("ContactAccessType", back_populates="respond_mappings")
+
+    __table_args__ = (
+        Index("ix_respond_access_type_mappings_source_key", "source_key"),
+        Index("ix_respond_access_type_mappings_access_type_code", "access_type_code"),
+        Index("uq_respond_access_type_mappings_source_key", "source_key", unique=True),
+    )
+
+
 class RespondContact(Base):
     __tablename__ = "respond_contacts"
 
     id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
     phone_number = Column(Text, unique=True, nullable=False)
     name = Column(Text, nullable=True)
-    user_type = Column(Text, nullable=True)
+    user_type = Column(Text, nullable=True)  # Raw value from Respond; kept for display/sync
+    access_type_code = Column(String(50), ForeignKey("contact_access_types.code", ondelete="SET NULL"), nullable=True)  # Resolved catalog code (one per contact)
     respond_io_id = Column(Text, nullable=True)  # Respond.io contact id for inbox URL
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -24,10 +68,12 @@ class RespondContact(Base):
         back_populates="contact",
         cascade="all, delete-orphan",
     )
+    access_type = relationship("ContactAccessType", foreign_keys=[access_type_code])
 
     __table_args__ = (
         Index("ix_respond_contacts_phone_number", "phone_number"),
         Index("ix_respond_contacts_user_type", "user_type"),
+        Index("ix_respond_contacts_access_type_code", "access_type_code"),
         Index("ix_respond_contacts_respond_io_id", "respond_io_id"),
     )
 
@@ -121,13 +167,14 @@ class TeamMember(Base):
 
 
 class AgentTeam(Base):
-    """Link access agent to a team with a context code (e.g. marketing -> Marketing Team)."""
+    """Link access agent to a team with a context code and optional tier (1=initial, 2/3=escalation)."""
     __tablename__ = "agent_teams"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="CASCADE"), nullable=False)
-    code = Column(Text, nullable=False)  # Context code (e.g. marketing, sales)
+    code = Column(Text, nullable=False)  # Context code (e.g. marketing, tier_1, project_sales)
     team_id = Column(UUID(as_uuid=False), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    tier = Column(Integer, nullable=True)  # Explicit tier: 1=initial notifications, 2/3=escalation (one per agent)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     agent = relationship("AccessAgent", back_populates="agent_teams")
@@ -137,6 +184,7 @@ class AgentTeam(Base):
         Index("ix_agent_teams_agent_id", "agent_id"),
         Index("ix_agent_teams_team_id", "team_id"),
         Index("ix_agent_teams_code", "code"),
+        Index("ix_agent_teams_tier", "tier"),
         Index("uq_agent_teams_agent_code", "agent_id", "code", unique=True),
     )
 

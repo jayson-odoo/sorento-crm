@@ -11,6 +11,7 @@ from app.schemas.marketing import (
     CampaignTypeCreate, CampaignTypeUpdate, MarketingCampaignCreate, MarketingCampaignUpdate
 )
 from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.contact_access_type_service import ContactAccessTypeService
 
 
 class PromotionService:
@@ -18,6 +19,34 @@ class PromotionService:
     
     def __init__(self, db: Session):
         self.db = db
+
+    @staticmethod
+    def _canonical_access_levels(access_levels: Optional[list[str]]) -> tuple[str, ...]:
+        """Canonicalize access levels for uniqueness checks (order-insensitive, deduplicated)."""
+        if not access_levels:
+            return tuple()
+        return tuple(sorted({(a or "").strip() for a in access_levels if (a or "").strip()}))
+
+    def _ensure_promo_code_access_levels_unique(
+        self,
+        promo_code: str,
+        access_levels: list[str],
+        exclude_id: Optional[str] = None,
+    ) -> None:
+        """
+        Enforce uniqueness on (promo_code + access level set).
+        Same promo_code is allowed only when access level set is different.
+        """
+        target = self._canonical_access_levels(access_levels)
+        q = self.db.query(Promotion).filter(Promotion.promo_code == promo_code)
+        if exclude_id:
+            q = q.filter(Promotion.id != exclude_id)
+        for existing in q.all():
+            if self._canonical_access_levels(existing.access_levels) == target:
+                raise handle_conflict(
+                    "Promo code already exists for the same access types. "
+                    "Use a different promo code or change access types."
+                )
     
     def list_promotions(
         self,
@@ -109,15 +138,23 @@ class PromotionService:
         return promotion
     
     def create_promotion(self, promotion_data: PromotionCreate, created_by: str):
-        """Create a new promotion."""
-        existing = self.db.query(Promotion).filter(
-            Promotion.promo_code == promotion_data.promo_code
-        ).first()
-        if existing:
-            raise handle_conflict("Promo code already exists.")
-        
+        """Create a new promotion. Validates access_levels against catalog; defaults to all active types if missing."""
+        access_svc = ContactAccessTypeService(self.db)
         promotion_dict = promotion_data.model_dump()
+        promotion_dict["promo_code"] = (promotion_dict.get("promo_code") or "").strip()
+        if not promotion_dict["promo_code"]:
+            raise handle_conflict("Promo code cannot be empty.")
         promotion_dict["created_by"] = created_by
+        if promotion_dict.get("access_levels"):
+            promotion_dict["access_levels"] = access_svc.validate_access_levels(
+                promotion_dict["access_levels"], field_name="access_levels"
+            )
+        else:
+            promotion_dict["access_levels"] = access_svc.get_default_access_levels()
+        self._ensure_promo_code_access_levels_unique(
+            promo_code=promotion_dict["promo_code"],
+            access_levels=promotion_dict["access_levels"],
+        )
         promotion = Promotion(**promotion_dict)
         self.db.add(promotion)
         self.db.commit()
@@ -125,22 +162,29 @@ class PromotionService:
         return promotion
     
     def update_promotion(self, promotion_id: str, promotion_data: PromotionUpdate):
-        """Update a promotion. Promo code is editable as long as it does not duplicate another promotion."""
+        """Update a promotion. Enforces uniqueness on promo_code + access level set."""
         promotion = self.get_promotion(promotion_id)
 
         update_data = promotion_data.model_dump(exclude_unset=True)
+        access_svc = ContactAccessTypeService(self.db)
+        if "access_levels" in update_data and update_data["access_levels"]:
+            update_data["access_levels"] = access_svc.validate_access_levels(
+                update_data["access_levels"], field_name="access_levels"
+            )
 
         if "promo_code" in update_data:
             new_code = (update_data["promo_code"] or "").strip()
             if not new_code:
                 raise handle_conflict("Promo code cannot be empty.")
-            existing = (
-                self.db.query(Promotion)
-                .filter(Promotion.promo_code == new_code, Promotion.id != promotion_id)
-                .first()
-            )
-            if existing:
-                raise handle_conflict("Promo code already exists.")
+            update_data["promo_code"] = new_code
+
+        final_code = update_data.get("promo_code", promotion.promo_code)
+        final_access_levels = update_data.get("access_levels", promotion.access_levels)
+        self._ensure_promo_code_access_levels_unique(
+            promo_code=final_code,
+            access_levels=final_access_levels or [],
+            exclude_id=promotion_id,
+        )
 
         for key, value in update_data.items():
             setattr(promotion, key, value)
@@ -164,18 +208,35 @@ class PromotionService:
         return {"message": f"{deleted} promotion(s) deleted", "deleted_count": deleted}
 
     def bulk_update_access_levels(self, promotion_ids: list[str], access_levels: list[str]):
-        """Set access_levels on multiple promotions. Returns count updated."""
+        """Set access_levels on multiple promotions. Returns count updated. Validates against contact access type catalog."""
         if not promotion_ids:
             return {"message": "No promotions selected", "updated_count": 0}
-        if not access_levels:
-            raise handle_conflict("At least one access level must be selected.")
-        allowed = {"dealer", "end_user"}
-        invalid = [a for a in access_levels if (a or "").strip().lower() not in allowed]
-        if invalid:
-            raise handle_conflict(f"Invalid access level(s): {invalid}. Allowed: dealer, end_user.")
-        normalized = [a.strip().lower() for a in access_levels if (a or "").strip()]
-        if not normalized:
-            raise handle_conflict("At least one access level must be selected.")
+        access_svc = ContactAccessTypeService(self.db)
+        normalized = access_svc.validate_access_levels(access_levels, field_name="access_levels")
+        target_canonical = self._canonical_access_levels(normalized)
+
+        selected_promotions = self.db.query(Promotion).filter(Promotion.id.in_(promotion_ids)).all()
+        selected_ids = {p.id for p in selected_promotions}
+        selected_codes = {p.promo_code for p in selected_promotions}
+
+        if selected_codes:
+            code_conflict_scope = self.db.query(Promotion).filter(Promotion.promo_code.in_(selected_codes)).all()
+            by_code: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
+            for p in code_conflict_scope:
+                canonical = target_canonical if p.id in selected_ids else self._canonical_access_levels(p.access_levels)
+                by_code.setdefault(p.promo_code, []).append((p.id, canonical))
+
+            for code, rows in by_code.items():
+                seen: dict[tuple[str, ...], str] = {}
+                for row_id, canonical in rows:
+                    existing_id = seen.get(canonical)
+                    if existing_id and existing_id != row_id:
+                        raise handle_conflict(
+                            f"Bulk update would create duplicate promo code/access types for code '{code}'. "
+                            "Adjust selection or access types."
+                        )
+                    seen[canonical] = row_id
+
         updated = (
             self.db.query(Promotion)
             .filter(Promotion.id.in_(promotion_ids))

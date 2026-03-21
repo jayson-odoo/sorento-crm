@@ -13,11 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useBulkUpdatePromotionAccessLevels } from '../hooks/usePromotions';
-
-const ACCESS_LEVELS = [
-  { value: 'dealer', label: 'Dealer' },
-  { value: 'end_user', label: 'End User' },
-] as const;
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 interface PromotionBulkAccessLevelsDialogProps {
   open: boolean;
@@ -32,14 +28,16 @@ export default function PromotionBulkAccessLevelsDialog({
   promotionIds,
   onSuccess,
 }: PromotionBulkAccessLevelsDialogProps) {
-  const [selected, setSelected] = useState<Set<string>>(new Set(['dealer', 'end_user']));
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  const defaultCodes = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
+  const [selected, setSelected] = useState<Set<string>>(new Set(defaultCodes));
   const bulkUpdateMutation = useBulkUpdatePromotionAccessLevels();
 
   useEffect(() => {
     if (open) {
-      setSelected(new Set(['dealer', 'end_user']));
+      setSelected(new Set(defaultCodes));
     }
-  }, [open]);
+  }, [open, defaultCodes.join(',')]);
 
   const toggle = (value: string) => {
     setSelected((prev) => {
@@ -77,14 +75,14 @@ export default function PromotionBulkAccessLevelsDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-wrap gap-4 py-4">
-          {ACCESS_LEVELS.map(({ value, label }) => (
-            <label key={value} className="flex items-center gap-2 text-sm cursor-pointer">
+          {accessTypeOptions.map((opt) => (
+            <label key={opt.code} className="flex items-center gap-2 text-sm cursor-pointer">
               <Checkbox
-                checked={selected.has(value)}
-                onCheckedChange={() => toggle(value)}
-                aria-label={label}
+                checked={selected.has(opt.code)}
+                onCheckedChange={() => toggle(opt.code)}
+                aria-label={opt.name || opt.code}
               />
-              {label}
+              {opt.name || opt.code}
             </label>
           ))}
         </div>

@@ -1,10 +1,5 @@
 {
   "pages": {
-    "/api/v1/procurement/[...path]/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/v1/procurement/[...path]/route.js"
-    ],
     "/layout": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
@@ -16,85 +11,30 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/layout.js"
     ],
-    "/(protected)/master-data-management/products/layout": [
+    "/(protected)/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/layout.js"
-    ],
-    "/(protected)/master-data-management/products/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/master-data-management/products/page.js"
+      "static/chunks/app/(protected)/page.js"
     ],
     "/api/auth/[...nextauth]/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/[...nextauth]/route.js"
     ],
+    "/(auth)/layout": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(auth)/layout.js"
+    ],
+    "/(auth)/signin/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(auth)/signin/page.js"
+    ],
     "/api/auth/token/route": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/auth/token/route.js"
-    ],
-    "/(protected)/procurement-management/stock-inquiries/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/stock-inquiries/page.js"
-    ],
-    "/(protected)/procurement-management/stock-inquiries/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/procurement-management/stock-inquiries/[id]/page.js"
-    ],
-    "/(protected)/system-management/outgoing-mails/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/system-management/outgoing-mails/page.js"
-    ],
-    "/(protected)/system-management/scheduled-tasks/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/system-management/scheduled-tasks/page.js"
-    ],
-    "/(protected)/system-management/scheduled-tasks/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/system-management/scheduled-tasks/[id]/page.js"
-    ],
-    "/(protected)/user-management/access-agents/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/access-agents/page.js"
-    ],
-    "/(protected)/user-management/access-agents/[id]/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/access-agents/[id]/page.js"
-    ],
-    "/api/user-management/access-agents/[id]/contact-access/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/user-management/access-agents/[id]/contact-access/route.js"
-    ],
-    "/api/v1/external/[...path]/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/v1/external/[...path]/route.js"
-    ],
-    "/api/v1/complaints-management/complaints/route": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/api/v1/complaints-management/complaints/route.js"
-    ],
-    "/(protected)/complaint-management/complaints/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/complaint-management/complaints/page.js"
-    ],
-    "/(protected)/user-management/teams/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(protected)/user-management/teams/page.js"
     ]
   }
 }
