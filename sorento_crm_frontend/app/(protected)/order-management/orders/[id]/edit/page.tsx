@@ -1,7 +1,7 @@
 'use client';
 
 import { use } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft } from 'lucide-react';
 import {
@@ -20,6 +20,10 @@ import OrderForm from '../../components/OrderForm';
 export default function EditOrderPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const listQs = searchParams.toString();
+  const detailHref = listQs ? `/order-management/orders/${id}?${listQs}` : `/order-management/orders/${id}`;
+  const ordersListHref = listQs ? `/order-management/orders?${listQs}` : '/order-management/orders';
 
   return (
     <>
@@ -38,18 +42,18 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href="/order-management/orders">Orders</BreadcrumbLink>
+                  <BreadcrumbLink href={ordersListHref}>Orders</BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href={`/order-management/orders/${id}`}>Order</BreadcrumbLink>
+                  <BreadcrumbLink href={detailHref}>Order</BreadcrumbLink>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
             <Button asChild variant="outline">
-              <Link href={`/order-management/orders/${id}`}>
+              <Link href={detailHref}>
                 <MoveLeft /> Back to order
               </Link>
             </Button>
@@ -60,7 +64,7 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
         <OrderForm
           orderId={id}
           onSuccess={() => {
-            router.push(`/order-management/orders/${id}`);
+            router.push(detailHref);
           }}
         />
       </Container>

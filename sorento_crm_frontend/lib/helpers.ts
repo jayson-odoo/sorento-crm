@@ -75,6 +75,31 @@ export function toAbsoluteUrl(pathname: string): string {
   }
 }
 
+const DEFAULT_USER_AVATAR_PATH = '/media/avatars/300-2.png';
+
+/**
+ * Avatar src for <img>: full URLs (CloudFront, OAuth) unchanged; app-relative paths via toAbsoluteUrl.
+ */
+export function resolveUserAvatarSrc(
+  avatar: string | null | undefined,
+  fallback: string = DEFAULT_USER_AVATAR_PATH,
+): string {
+  const raw =
+    avatar != null && String(avatar).trim()
+      ? String(avatar).trim()
+      : fallback;
+  if (
+    raw.startsWith('http://') ||
+    raw.startsWith('https://') ||
+    raw.startsWith('data:') ||
+    raw.startsWith('blob:')
+  ) {
+    return raw;
+  }
+  const path = raw.startsWith('/') ? raw : `/${raw}`;
+  return toAbsoluteUrl(path);
+}
+
 export function timeAgo(date: Date | string): string {
   const now = new Date();
   const inputDate = typeof date === 'string' ? new Date(date) : date;

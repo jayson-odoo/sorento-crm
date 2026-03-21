@@ -1,0 +1,138 @@
+"""Dynamic list query metadata, advanced search, and export."""
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.dependencies import get_current_user
+from app.models.list_query_metadata import ListQueryField
+from app.schemas.list_query import (
+    ListExportRequest,
+    ListQueryFieldResponse,
+    ListQueryResourceResponse,
+    ListSearchRequest,
+)
+from app.schemas.order import OrderResponse
+from app.schemas.product import ProductResponse
+from app.schemas.procurement import SupplierResponse
+from app.services.error_handler import handle_internal_error
+from app.services.list_query_export_service import ListQueryExportService
+from app.services.list_query_metadata_service import ListQueryMetadataService
+from app.services.list_query_search_service import ListQuerySearchService
+from app.services.user_service import UserPermissionService
+
+router = APIRouter()
+
+
+def _orders_export_ui_meta(f: ListQueryField) -> tuple[str | None, str | None]:
+    """Derive export dialog hierarchy for orders (order vs line → product / warehouse)."""
+    if not f.is_line_field:
+        return "order", None
+    fk = (f.field_key or "").lower()
+    if fk.startswith("line_product"):
+        return "line", "product"
+    if fk.startswith("line_warehouse"):
+        return "line", "warehouse"
+    return "line", None
+
+
+VIEW_SLUG = {
+    "orders": "order_management.orders.view",
+    "products": "master_data.products.view",
+    "suppliers": "procurement.suppliers.view",
+}
+EXPORT_SLUG = {
+    "orders": "order_management.orders.export",
+    "products": "master_data.products.export",
+    "suppliers": "procurement.suppliers.export",
+}
+
+
+def _can_view(db: Session, user_id: str, resource_key: str) -> bool:
+    slug = VIEW_SLUG.get(resource_key)
+    if not slug:
+        return False
+    return UserPermissionService(db).check_user_has_permission(user_id, slug)
+
+
+@router.get("/resources", response_model=List[ListQueryResourceResponse])
+async def list_resources(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    svc = ListQueryMetadataService(db)
+    all_r = svc.list_resources()
+    uid = current_user["id"]
+    return [r for r in all_r if _can_view(db, uid, r.resource_key)]
+
+
+@router.get("/resources/{resource_key}/fields", response_model=List[ListQueryFieldResponse])
+async def list_fields(
+    resource_key: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not _can_view(db, current_user["id"], resource_key):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+    svc = ListQueryMetadataService(db)
+    fields = svc.list_fields(resource_key)
+    if not fields and not svc.get_resource(resource_key):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown resource")
+    out: list[ListQueryFieldResponse] = []
+    for f in fields:
+        base = ListQueryFieldResponse.model_validate(f)
+        sec, sub = (None, None)
+        if resource_key == "orders":
+            sec, sub = _orders_export_ui_meta(f)
+        out.append(base.model_copy(update={"export_section": sec, "export_subgroup": sub}))
+    return out
+
+
+@router.post("/search")
+async def advanced_search(
+    body: ListSearchRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not _can_view(db, current_user["id"], body.resource):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+    try:
+        result = ListQuerySearchService(db).search(body)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+    if body.resource == "orders":
+        data = [OrderResponse.model_validate(o) for o in result["data"]]
+    elif body.resource == "products":
+        data = [ProductResponse.model_validate(p) for p in result["data"]]
+    elif body.resource == "suppliers":
+        data = [SupplierResponse.model_validate(s) for s in result["data"]]
+    else:
+        data = result["data"]
+
+    return {
+        "data": data,
+        "pagination": result["pagination"],
+        "empty": result["empty"],
+    }
+
+
+@router.post("/export")
+async def export_rows(
+    body: ListExportRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    slug = EXPORT_SLUG.get(body.resource)
+    if not slug or not UserPermissionService(db).check_user_has_permission(current_user["id"], slug):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Export permission required")
+    try:
+        rows = ListQueryExportService(db).export_rows(body)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise handle_internal_error(str(e))
+    return {"data": rows, "total": len(rows)}

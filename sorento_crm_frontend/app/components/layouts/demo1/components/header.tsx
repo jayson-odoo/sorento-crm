@@ -8,6 +8,7 @@ import { SearchDialog } from '@/partials/dialogs/search/search-dialog';
 import { AppsDropdownMenu } from '@/partials/topbar/apps-dropdown-menu';
 import { NotificationsSheet } from '@/partials/topbar/notifications-sheet';
 import { UserDropdownMenu } from '@/partials/topbar/user-dropdown-menu';
+import { SessionUserAvatar } from '@/partials/topbar/session-user-avatar';
 import {
   Bell,
   LayoutGrid,
@@ -189,11 +190,7 @@ export function Header() {
               />
               <UserDropdownMenu
                 trigger={
-                  <img
-                    className="size-9 rounded-full border-2 border-green-500 shrink-0 cursor-pointer"
-                    src={toAbsoluteUrl('/media/avatars/300-2.png')}
-                    alt="User Avatar"
-                  />
+                  <SessionUserAvatar className="size-9 rounded-full border-2 border-green-500 shrink-0 cursor-pointer" />
                 }
               />
             </>

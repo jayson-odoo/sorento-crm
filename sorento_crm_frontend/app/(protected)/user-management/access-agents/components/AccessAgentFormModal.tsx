@@ -36,7 +36,6 @@ import {
   useCreateAccessAgent,
   useUpdateAccessAgent,
   useAccessAgent,
-  useRespondSyncedUsers,
   useAgentTeams,
   useTeams,
 } from '../hooks/useAccessAgents';
@@ -62,7 +61,6 @@ export default function AccessAgentFormModal({
   const { data: accessAgent, isLoading: isLoadingAccessAgent } = useAccessAgent(accessAgentId || null);
   const createMutation = useCreateAccessAgent();
   const updateMutation = useUpdateAccessAgent();
-  const { data: respondUsers } = useRespondSyncedUsers();
   const { data: agentTeamsData } = useAgentTeams(isEditMode ? accessAgentId ?? null : null);
   const { data: teamsList = [] } = useTeams();
   const [localAssignments, setLocalAssignments] = useState<{ code: string; team_id: string; tier: number | null }[]>([]);
@@ -73,7 +71,6 @@ export default function AccessAgentFormModal({
       code: '',
       name: '',
       description: '',
-      pic_respond_user_id: '',
       is_active: true,
       assign_to_new_internal_contacts: false,
     },
@@ -88,7 +85,6 @@ export default function AccessAgentFormModal({
         code: accessAgent.code,
         name: accessAgent.name,
         description: accessAgent.description || '',
-        pic_respond_user_id: accessAgent.pic_respond_user_id || null,
         is_active: accessAgent.is_active,
         assign_to_new_internal_contacts: accessAgent.assign_to_new_internal_contacts ?? false,
       });
@@ -119,7 +115,6 @@ export default function AccessAgentFormModal({
         code: data.code,
         name: data.name,
         description: data.description || undefined,
-        pic_respond_user_id: data.pic_respond_user_id && data.pic_respond_user_id !== '__none__' ? data.pic_respond_user_id : undefined,
         is_active: data.is_active,
         assign_to_new_internal_contacts: data.assign_to_new_internal_contacts,
       };
@@ -213,36 +208,6 @@ export default function AccessAgentFormModal({
               />
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="pic_respond_user_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>PIC Respond User</FormLabel>
-                      <FormControl>
-                        <Select
-                          value={field.value || '__none__'}
-                          onValueChange={(v) => field.onChange(v === '__none__' ? null : v)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select user" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">Unassigned</SelectItem>
-                            {(respondUsers || [])
-                              .filter((u) => !!u.respond_user_id)
-                              .map((u) => (
-                                <SelectItem key={u.id} value={u.respond_user_id as string}>
-                                  {u.name || u.email}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
                 <FormField
                   control={form.control}
                   name="is_active"

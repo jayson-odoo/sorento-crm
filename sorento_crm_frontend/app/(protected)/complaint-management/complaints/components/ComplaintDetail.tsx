@@ -27,6 +27,7 @@ import ComplaintNavigation from './ComplaintNavigation';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
 import AuditTrail from '@/components/audit/AuditTrail';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 
 interface ComplaintDetailProps {
   complaintId: string;
@@ -45,6 +46,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const [replyMessage, setReplyMessage] = useState('');
   const [replyViewUrl, setReplyViewUrl] = useState('');
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
+  const publicViewLinksEnabled = usePublicViewLinksEnabled();
   const [editTechnicalResponseOpen, setEditTechnicalResponseOpen] = useState(false);
   const [editTechnicalResponseValue, setEditTechnicalResponseValue] = useState('');
   
@@ -125,49 +127,57 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               <Edit className="size-4" />
               Edit
             </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={viewLinkCopying}
-              onClick={async () => {
-                try {
-                  setViewLinkCopying(true);
-                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                  const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
-                  await navigator.clipboard.writeText(view_url);
-                  toast.success('View link copied to clipboard');
-                } catch {
-                  toast.error('Failed to copy view link');
-                } finally {
-                  setViewLinkCopying(false);
-                }
-              }}
-            >
-              <Link2 className="size-4" />
-              {viewLinkCopying ? 'Copying…' : 'Copy view link'}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={async () => {
-                try {
-                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                  const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
-                  window.open(view_url, '_blank');
-                } catch {
-                  toast.error('Failed to open view link');
-                }
-              }}
-            >
-              <ExternalLink className="size-4" />
-              View in system
-            </DropdownMenuItem>
+            {publicViewLinksEnabled && (
+              <DropdownMenuItem
+                disabled={viewLinkCopying}
+                onClick={async () => {
+                  try {
+                    setViewLinkCopying(true);
+                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                    const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+                    await navigator.clipboard.writeText(view_url);
+                    toast.success('View link copied to clipboard');
+                  } catch {
+                    toast.error('Failed to copy view link');
+                  } finally {
+                    setViewLinkCopying(false);
+                  }
+                }}
+              >
+                <Link2 className="size-4" />
+                {viewLinkCopying ? 'Copying…' : 'Copy view link'}
+              </DropdownMenuItem>
+            )}
+            {publicViewLinksEnabled && (
+              <DropdownMenuItem
+                onClick={async () => {
+                  try {
+                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                    const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+                    window.open(view_url, '_blank');
+                  } catch {
+                    toast.error('Failed to open view link');
+                  }
+                }}
+              >
+                <ExternalLink className="size-4" />
+                View in system
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               disabled={updateAndReplyMutation.isPending}
               onClick={async () => {
                 let viewUrl = '';
-                try {
-                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                  const res = await getOrCreateComplaintViewLink(complaintId, baseUrl);
-                  viewUrl = res.view_url ?? '';
-                  setReplyViewUrl(viewUrl);
-                } catch {
+                if (publicViewLinksEnabled) {
+                  try {
+                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                    const res = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+                    viewUrl = res.view_url ?? '';
+                    setReplyViewUrl(viewUrl);
+                  } catch {
+                    setReplyViewUrl('');
+                  }
+                } else {
                   setReplyViewUrl('');
                 }
                 const doNumber = (complaint.delivery_order_number ?? '').toString().trim();

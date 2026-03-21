@@ -13,7 +13,6 @@ export const AccessAgentSchema = z.object({
     .min(3, { message: 'Access agent name must be at least 3 characters long.' })
     .max(255, { message: 'Access agent name must not exceed 255 characters.' }),
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
-  pic_respond_user_id: z.string().optional().nullable(),
   is_active: z.boolean(),
   assign_to_new_internal_contacts: z.boolean(),
 });

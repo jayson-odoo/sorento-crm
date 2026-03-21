@@ -166,6 +166,7 @@ def require_permission(permission_slug: str):
     """
     Dependency that requires the current user to have the given permission (or superadmin/admin role).
     Deny by default; raises 403 if the user lacks the permission.
+    When MODULE_GUARD_STRICT is on, also requires the mapped installable module to be enabled (superadmin/admin bypass).
     """
 
     async def _require(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
@@ -175,6 +176,26 @@ def require_permission(permission_slug: str):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission required: {permission_slug}",
             )
+        if getattr(settings, "module_guard_strict", False):
+            from app.modules.runtime.installer import (
+                DEFAULT_TENANT_ID,
+                is_module_enabled,
+                tenant_has_any_module_row,
+            )
+            from app.modules.runtime.permission_module_map import module_for_permission
+
+            uid = current_user["id"]
+            if not (
+                service.get_user_role_slugs(uid)
+                & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}
+            ):
+                mod = module_for_permission(permission_slug)
+                if mod and tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
+                    if not is_module_enabled(db, DEFAULT_TENANT_ID, mod):
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Module not enabled: {mod}",
+                        )
         return current_user
 
     return _require
@@ -184,11 +205,39 @@ def require_any_permission(permission_slugs: List[str]):
     """
     Dependency that requires the current user to have at least one of the given permissions
     (or superadmin/admin role). Deny by default; raises 403 if the user has none.
+    Under strict module guard, user must satisfy at least one slug that is also allowed by module state.
     """
 
     async def _require(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
         service = UserPermissionService(db)
-        if not service.check_user_has_any_permission(current_user["id"], permission_slugs):
+        uid = current_user["id"]
+        if service.get_user_role_slugs(uid) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
+            return current_user
+        user_slugs = service.get_user_permission_slugs(uid)
+        if getattr(settings, "module_guard_strict", False):
+            from app.modules.runtime.installer import (
+                DEFAULT_TENANT_ID,
+                is_module_enabled,
+                tenant_has_any_module_row,
+            )
+            from app.modules.runtime.permission_module_map import module_for_permission
+
+            if tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
+                allowed = False
+                for slug in permission_slugs:
+                    if slug not in user_slugs:
+                        continue
+                    mod = module_for_permission(slug)
+                    if not mod or is_module_enabled(db, DEFAULT_TENANT_ID, mod):
+                        allowed = True
+                        break
+                if not allowed:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"One of these permissions required (module may be disabled): {', '.join(permission_slugs)}",
+                    )
+                return current_user
+        if not any(s in user_slugs for s in permission_slugs):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"One of these permissions required: {', '.join(permission_slugs)}",

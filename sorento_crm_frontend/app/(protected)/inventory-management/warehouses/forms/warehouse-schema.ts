@@ -4,10 +4,7 @@ export const WarehouseSchema = z.object({
   warehouse_code: z
     .string()
     .min(1, { message: 'Warehouse code is required.' })
-    .max(50, { message: 'Warehouse code must not exceed 50 characters.' })
-    .regex(/^[A-Za-z0-9_-]+$/, {
-      message: 'Warehouse code can only contain alphanumeric characters, dashes, and underscores.',
-    }),
+    .max(50, { message: 'Warehouse code must not exceed 50 characters.' }),
   warehouse_name: z
     .string()
     .min(1, { message: 'Warehouse name is required.' })

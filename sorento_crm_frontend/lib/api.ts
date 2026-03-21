@@ -84,6 +84,8 @@ export async function apiFetch(
         // Keep this list explicit to avoid catching similarly named FastAPI routes.
         const nextJsOnlyPrefixes = [
           '/api/user-management/contact-access-agents',
+          // Next.js BFF: proxies GET to /users/me, POST profile, logs, etc. — not a FastAPI path
+          '/api/user-management/account',
         ];
         const isNextJsRoute =
           nextJsOnlyPrefixes.some((prefix) => input.startsWith(prefix)) ||

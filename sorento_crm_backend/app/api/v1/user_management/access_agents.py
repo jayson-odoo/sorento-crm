@@ -130,7 +130,7 @@ async def delete_access_agent(
     """Delete an access agent."""
     try:
         service = AccessAgentService(db)
-        # Implement delete logic
+        service.delete_agent(agent_id)
         return {"message": "Access agent deleted successfully"}
     except HTTPException:
         raise

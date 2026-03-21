@@ -39,7 +39,7 @@ import { LoaderCircleIcon } from 'lucide-react';
 
 export default function AccountDetails() {
   const queryClient = useQueryClient();
-  const { data: session, update: updateSession } = useSession();
+  const { update: updateSession } = useSession();
   const { user } = useAccount();
 
   const [avatarExistingPreview, setAvatarExistingPreview] = useState<
@@ -92,14 +92,46 @@ export default function AccountDetails() {
       });
 
       if (!response.ok) {
-        const { message } = await response.json();
-        throw new Error(message);
+        const err = await response.json().catch(() => ({}));
+        const msg =
+          (typeof err?.message === 'string' && err.message) ||
+          (typeof err?.detail === 'string' && err.detail) ||
+          (Array.isArray(err?.detail) && err.detail[0]?.msg) ||
+          'Failed to update profile';
+        throw new Error(msg);
       }
 
       return response.json();
     },
     onSuccess: (updatedUser) => {
+      const u = updatedUser as Record<string, unknown>;
+      const payload = updatedUser as { avatar?: string | null };
+      setAvatarAttachedPreview(null);
+      setAvatarExistingPreview(
+        payload.avatar !== undefined && payload.avatar !== null
+          ? payload.avatar
+          : null,
+      );
+
       queryClient.invalidateQueries({ queryKey: ['account-profile'] });
+
+      // Keep header / dropdown in sync with profile (NextAuth session)
+      void updateSession({
+        user: {
+          id: String(u.id ?? ''),
+          email: typeof u.email === 'string' ? u.email : '',
+          name: typeof u.name === 'string' ? u.name : '',
+          avatar:
+            u.avatar === null
+              ? null
+              : typeof u.avatar === 'string'
+                ? u.avatar
+                : undefined,
+          roles: Array.isArray(u.roles)
+            ? (u.roles as { id: string; name: string }[])
+            : undefined,
+        },
+      });
 
       toast.custom(() => (
         <Alert variant="mono" icon="success">
@@ -109,15 +141,6 @@ export default function AccountDetails() {
           <AlertTitle>Account updated successfully</AlertTitle>
         </Alert>
       ));
-
-      setTimeout(() => {
-        // Update user session and reload app
-        if (session) {
-          updateSession({
-            user: updatedUser,
-          });
-        }
-      }, 1000);
     },
     onError: (error: Error) => {
       toast.custom(
@@ -186,7 +209,9 @@ export default function AccountDetails() {
       <CardHeader className="py-4">
         <CardHeading>
           <CardTitle>Profile</CardTitle>
-          <CardDescription>Manage profile information</CardDescription>
+          <CardDescription>
+            Update your display name and profile picture. Changes apply across the app after you save.
+          </CardDescription>
         </CardHeading>
       </CardHeader>
       <CardContent className="py-8">

@@ -133,6 +133,7 @@ class InboundShipmentBase(BaseModel):
     shipment_date: date
     expected_arrival_date: Optional[date] = None
     actual_arrival_date: Optional[date] = None
+    eta: Optional[date] = None
     bill_of_lading_number: Optional[str] = None
     shipping_container_number: Optional[str] = None
     invoice_number: Optional[str] = None
@@ -152,6 +153,7 @@ class InboundShipmentUpdate(BaseModel):
     shipment_date: Optional[date] = None
     expected_arrival_date: Optional[date] = None
     actual_arrival_date: Optional[date] = None
+    eta: Optional[date] = None
     bill_of_lading_number: Optional[str] = None
     shipping_container_number: Optional[str] = None
     invoice_number: Optional[str] = None

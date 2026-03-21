@@ -78,7 +78,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
   const updateMutation = useUpdateOrder();
 
   const defaultOrderDate = new Date();
-  const defaultPromisedDate = (() => {
+  const defaultEstimatedDeliveryDate = (() => {
     const d = new Date(defaultOrderDate);
     d.setDate(d.getDate() + 2);
     return d;
@@ -89,7 +89,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
     defaultValues: {
       order_number: '',
       order_date: defaultOrderDate,
-      promised_delivery_date: defaultPromisedDate,
+      promised_delivery_date: defaultEstimatedDeliveryDate,
       actual_delivery_date: undefined,
       customer_id: '',
       order_status_id: '',
@@ -379,7 +379,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                     name="promised_delivery_date"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Promised Delivery Date</FormLabel>
+                        <FormLabel>Estimated Delivery Date</FormLabel>
                         <FormControl>
                           <Input
                             type="date"

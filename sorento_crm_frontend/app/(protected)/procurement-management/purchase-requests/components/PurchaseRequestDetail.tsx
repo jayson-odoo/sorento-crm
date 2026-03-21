@@ -56,6 +56,7 @@ import { toast } from 'sonner';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
 import PurchaseRequestConversationPanel from './PurchaseRequestConversationPanel';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
@@ -106,6 +107,7 @@ export default function PurchaseRequestDetail({
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const updateAndReplyMutation = useUpdatePurchaseRequestAndReply();
+  const publicViewLinksEnabled = usePublicViewLinksEnabled();
 
   const { data: usersForApprover = [] } = useQuery({
     queryKey: ['users-for-approver'],
@@ -220,31 +222,33 @@ export default function PurchaseRequestDetail({
                 {settingPending ? 'Updating…' : 'Change to pending approval'}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem
-              disabled={viewLinkCopying}
-              onClick={async (e) => {
-                e.preventDefault();
-                if (!requestId) return;
-                setViewLinkCopying(true);
-                try {
-                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                  const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
-                  if (view_url) {
-                    await navigator.clipboard.writeText(view_url);
-                    toast.success('View link copied to clipboard');
-                  } else {
+            {publicViewLinksEnabled && (
+              <DropdownMenuItem
+                disabled={viewLinkCopying}
+                onClick={async (e) => {
+                  e.preventDefault();
+                  if (!requestId) return;
+                  setViewLinkCopying(true);
+                  try {
+                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                    const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
+                    if (view_url) {
+                      await navigator.clipboard.writeText(view_url);
+                      toast.success('View link copied to clipboard');
+                    } else {
+                      toast.error('Could not generate view link');
+                    }
+                  } catch {
                     toast.error('Could not generate view link');
+                  } finally {
+                    setViewLinkCopying(false);
                   }
-                } catch {
-                  toast.error('Could not generate view link');
-                } finally {
-                  setViewLinkCopying(false);
-                }
-              }}
-            >
-              <Link2 className="size-4" />
-              {viewLinkCopying ? 'Generating…' : 'Copy view link'}
-            </DropdownMenuItem>
+                }}
+              >
+                <Link2 className="size-4" />
+                {viewLinkCopying ? 'Generating…' : 'Copy view link'}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               disabled={exportingExcel}
               onClick={async (e) => {
@@ -282,7 +286,7 @@ export default function PurchaseRequestDetail({
                     let defaultReply =
                       `This is the form number ${request.request_number ?? ''} for ${typeLabelVal} for project title ${request.project_title ?? ''}.`;
                     try {
-                      if (requestId) {
+                      if (requestId && publicViewLinksEnabled) {
                         const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
                         const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
                         if (view_url) {

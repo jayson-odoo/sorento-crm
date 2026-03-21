@@ -7,13 +7,13 @@ import { AppsDropdownMenu } from '@/partials/topbar/apps-dropdown-menu';
 import { ChatSheet } from '@/partials/topbar/chat-sheet';
 import { NotificationsSheet } from '@/partials/topbar/notifications-sheet';
 import { UserDropdownMenu } from '@/partials/topbar/user-dropdown-menu';
+import { SessionUserAvatar } from '@/partials/topbar/session-user-avatar';
 import {
   LayoutGrid,
   MessageCircleMore,
   MessageSquareDot,
   Search,
 } from 'lucide-react';
-import { toAbsoluteUrl } from '@/lib/helpers';
 import { Button } from '@/components/ui/button';
 import { StoreClientTopbar } from '@/app/(protected)/store-client/components/common/topbar';
 
@@ -80,11 +80,7 @@ export function HeaderTopbar() {
             />
             <UserDropdownMenu
               trigger={
-                <img
-                  className="size-9 rounded-full border-2 border-input shrink-0 cursor-pointer"
-                  src={toAbsoluteUrl('/media/avatars/gray/5.png')}
-                  alt="User Avatar"
-                />
+                <SessionUserAvatar className="size-9 rounded-full border-2 border-input shrink-0 cursor-pointer" />
               }
             />
           </>

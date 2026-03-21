@@ -69,6 +69,7 @@ def create_packing_list(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid shipment_date")
 
     try:
+        eta = parse_date_value(payload.packing_list.eta)
         expected_arrival_date = parse_date_value(payload.packing_list.expected_arrival_date)
         actual_arrival_date = parse_date_value(payload.packing_list.actual_arrival_date)
     except ValueError as exc:
@@ -78,6 +79,7 @@ def create_packing_list(
         shipment_number=payload.packing_list.shipment_number,
         supplier_id=payload.packing_list.supplier_id or None,
         shipment_date=shipment_date,
+        eta=eta,
         expected_arrival_date=expected_arrival_date,
         actual_arrival_date=actual_arrival_date,
         bill_of_lading_number=payload.packing_list.bill_of_lading_number,

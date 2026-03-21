@@ -55,6 +55,7 @@ import {
 } from '../forms/purchase-request-schema';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
+import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 
 const PURCHASE_REQUESTS_EDIT = '/procurement-management/purchase-requests';
 const SPONSORSHIP_FORMS_EDIT = '/procurement-management/sponsorship-forms';
@@ -90,6 +91,7 @@ export default function PurchaseRequestForm({
   const updateAndReplyMutation = useUpdatePurchaseRequestAndReply();
   const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
   const [replyMessage, setReplyMessage] = useState('');
+  const publicViewLinksEnabled = usePublicViewLinksEnabled();
 
   // Redirect to the correct edit page if record type doesn't match (e.g. opened purchase-request edit but record is sponsorship_form)
   useEffect(() => {
@@ -706,12 +708,14 @@ export default function PurchaseRequestForm({
                 const typeLabel =
                   REQUEST_TYPE_LABELS[values.request_type ?? ''] ?? values.request_type ?? 'Request';
                 let defaultReply = `This is the form number ${values.request_number ?? ''} for ${typeLabel} for project title ${values.project_title ?? ''}.`;
-                try {
-                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                  const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
-                  if (view_url) defaultReply += `\n\nView full details: ${view_url}`;
-                } catch {
-                  // leave message as-is, user can add link
+                if (publicViewLinksEnabled) {
+                  try {
+                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                    const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
+                    if (view_url) defaultReply += `\n\nView full details: ${view_url}`;
+                  } catch {
+                    // leave message as-is, user can add link
+                  }
                 }
                 setReplyMessage(defaultReply);
                 setUpdateAndReplyDialogOpen(true);
@@ -753,7 +757,7 @@ export default function PurchaseRequestForm({
             <DialogHeader>
               <DialogTitle>Update & Reply</DialogTitle>
               <DialogDescription>
-                This message will be sent to the conversation in Respond. It is pre-filled for this {form.watch('request_type') === 'sponsorship_form' ? 'Sponsorship Form' : 'Purchase Request'}. You can edit it below; the view link is included by default.
+                This message will be sent to the conversation in Respond. It is pre-filled for this {form.watch('request_type') === 'sponsorship_form' ? 'Sponsorship Form' : 'Purchase Request'}. You can edit it below. A shareable view link is included only when the Public view links module is enabled in App Store.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">

@@ -102,9 +102,10 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
           start_date: Number.isNaN(startDate.getTime()) ? new Date() : startDate,
           end_date: Number.isNaN(endDate.getTime()) ? new Date() : endDate,
           is_active: promotion.is_active,
-          access_levels: promotion.access_levels && promotion.access_levels.length > 0
-            ? (promotion.access_levels as AccessLevel[])
-            : defaultAccessLevels,
+          access_levels:
+            promotion.access_levels && promotion.access_levels.length > 0
+              ? promotion.access_levels
+              : defaultAccessLevels,
         });
         setFormInitialized(true);
       }, 0);

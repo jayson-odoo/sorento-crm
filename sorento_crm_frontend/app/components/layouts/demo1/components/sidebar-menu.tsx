@@ -7,6 +7,7 @@ import { MENU_SIDEBAR } from '@/config/menu.config';
 import { MenuConfig, MenuItem } from '@/config/types';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenantModules } from '@/hooks/useTenantModules';
 import {
   AccordionMenu,
   AccordionMenuClassNames,
@@ -39,13 +40,37 @@ function filterMenuByPermission(items: MenuConfig, permissionSet: Set<string>): 
   });
 }
 
+/** Hide menu branches tied to disabled tenant modules (null = still loading / error — show all). */
+function filterMenuByModule(items: MenuConfig, enabledModuleKeys: Set<string> | null): MenuConfig {
+  if (!enabledModuleKeys) return items;
+  return items
+    .filter((item: MenuItem) => {
+      if (item.heading) return true;
+      if (item.moduleKey && !enabledModuleKeys.has(item.moduleKey)) return false;
+      if (item.children?.length) {
+        const filtered = filterMenuByModule(item.children, enabledModuleKeys);
+        return filtered.length > 0;
+      }
+      return true;
+    })
+    .map((item: MenuItem) => {
+      if (item.children?.length) {
+        return { ...item, children: filterMenuByModule(item.children, enabledModuleKeys) };
+      }
+      return item;
+    });
+}
+
 export function SidebarMenu() {
   const pathname = usePathname();
   const { permissionSet, isLoading } = usePermissions();
-  const effectiveMenu = useMemo(
-    () => (isLoading ? MENU_SIDEBAR : filterMenuByPermission(MENU_SIDEBAR, permissionSet)),
-    [permissionSet, isLoading]
-  );
+  const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
+  const effectiveMenu = useMemo(() => {
+    if (isLoading) return MENU_SIDEBAR;
+    const byPerm = filterMenuByPermission(MENU_SIDEBAR, permissionSet);
+    if (modulesLoading) return byPerm;
+    return filterMenuByModule(byPerm, enabledModuleKeys);
+  }, [permissionSet, isLoading, enabledModuleKeys, modulesLoading]);
 
   // Memoize matchPath to prevent unnecessary re-renders
   const matchPath = useCallback(

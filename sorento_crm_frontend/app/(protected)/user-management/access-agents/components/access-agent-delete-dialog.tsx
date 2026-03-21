@@ -1,6 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { useDeleteAccessAgent } from '../hooks/useAccessAgents';
 import type { AccessAgent } from '../types/accessAgent.types';
@@ -19,6 +20,7 @@ export default function AccessAgentDeleteDialog({
   onSuccess,
 }: AccessAgentDeleteDialogProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const deleteMutation = useDeleteAccessAgent();
 
   const handleDelete = async () => {
@@ -37,11 +39,15 @@ export default function AccessAgentDeleteDialog({
         </>
       }
       onDelete={handleDelete}
-      queryKeysToInvalidate={[['access-agents'], ['access-agent', accessAgent.id]]}
+      queryKeysToInvalidate={[['access-agents']]}
       successMessage="Access agent deleted successfully"
       onSuccess={() => {
         onSuccess?.();
         router.push('/user-management/access-agents');
+        // After leaving the detail route, drop caches (avoid refetch-404 noise if user was still subscribed briefly).
+        queryClient.removeQueries({ queryKey: ['access-agent', accessAgent.id] });
+        queryClient.removeQueries({ queryKey: ['agent-teams', accessAgent.id] });
+        queryClient.removeQueries({ queryKey: ['contact-access-agents', accessAgent.id] });
       }}
     />
   );

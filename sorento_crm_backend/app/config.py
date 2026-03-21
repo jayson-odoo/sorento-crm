@@ -56,6 +56,9 @@ class Settings(BaseSettings):
 
     # Feature flags (progressive rollout)
     notifications_v1_enabled: bool = True  # NOTIFICATIONS_V1_ENABLED
+    # When False (default), module guards allow all API routes if tenant has no module rows yet (legacy).
+    # When True, disabled modules return 403 from guarded routers.
+    module_guard_strict: bool = False  # MODULE_GUARD_STRICT
 
     model_config = ConfigDict(
         env_file=".env",

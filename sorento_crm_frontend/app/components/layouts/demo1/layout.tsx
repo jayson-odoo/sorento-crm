@@ -6,6 +6,7 @@ import { useSettings } from '@/providers/settings-provider';
 import { Footer } from './components/footer';
 import { Header } from './components/header';
 import { Sidebar } from './components/sidebar';
+import { ModuleRouteGuard } from '@/app/components/module-route-guard';
 
 export function Demo1Layout({ children }: { children: ReactNode }) {
   const isMobile = useIsMobile();
@@ -50,7 +51,7 @@ export function Demo1Layout({ children }: { children: ReactNode }) {
   }, []); // Runs only once on mount
 
   return (
-    <>
+    <ModuleRouteGuard>
       {!isMobile && <Sidebar />}
 
       <div className="wrapper flex grow flex-col">
@@ -62,7 +63,7 @@ export function Demo1Layout({ children }: { children: ReactNode }) {
 
         <Footer />
       </div>
-    </>
+    </ModuleRouteGuard>
   );
 }
 

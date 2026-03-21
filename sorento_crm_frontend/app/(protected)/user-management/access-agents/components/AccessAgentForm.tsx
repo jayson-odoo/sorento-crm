@@ -27,7 +27,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useQueryClient } from '@tanstack/react-query';
-import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useRespondSyncedUsers, useAccessAgents, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
+import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useAccessAgents, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
 import { setAgentTeams } from '../services/accessAgentService';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
 import type { AccessAgentFormData } from '../types/accessAgent.types';
@@ -45,7 +45,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
   const { data: accessAgent, isLoading: isLoadingAccessAgent } = useAccessAgent(accessAgentId || null);
   const createMutation = useCreateAccessAgent();
   const updateMutation = useUpdateAccessAgent();
-  const { data: respondUsers, isLoading: isLoadingRespondUsers } = useRespondSyncedUsers();
   const navigationParams = useMemo(
     () => ({
       pageIndex: 0,
@@ -74,7 +73,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
       code: '',
       name: '',
       description: '',
-      pic_respond_user_id: '',
       is_active: true,
       assign_to_new_internal_contacts: false,
     },
@@ -93,7 +91,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
           code: accessAgent.code,
           name: accessAgent.name,
           description: accessAgent.description || '',
-          pic_respond_user_id: accessAgent.pic_respond_user_id || null,
           is_active: accessAgent.is_active,
           assign_to_new_internal_contacts: accessAgent.assign_to_new_internal_contacts ?? false,
         });
@@ -115,7 +112,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
         code: data.code,
         name: data.name,
         description: data.description || undefined,
-        pic_respond_user_id: data.pic_respond_user_id && data.pic_respond_user_id !== '__none__' ? data.pic_respond_user_id : undefined,
         is_active: data.is_active,
         assign_to_new_internal_contacts: data.assign_to_new_internal_contacts,
       };
@@ -226,59 +222,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <FormField
                 control={form.control}
-                name="pic_respond_user_id"
-                render={({ field }) => {
-                  // Find the selected user to display their name
-                  const selectedUser = respondUsers?.find(
-                    (user) => user.respond_user_id === field.value
-                  );
-                  const displayValue = selectedUser 
-                    ? (selectedUser.name || selectedUser.email || field.value)
-                    : field.value || '';
-                  
-                  return (
-                    <FormItem>
-                      <FormLabel>PIC Respond User</FormLabel>
-                      <FormControl>
-                        <Select
-                          value={field.value || '__none__'}
-                          onValueChange={(value) => {
-                            // Convert "__none__" to null/empty for optional field
-                            field.onChange(value === '__none__' ? null : value);
-                          }}
-                          disabled={isLoadingRespondUsers}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select user" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">Unassigned</SelectItem>
-                            {(respondUsers || [])
-                              .filter((user) => !!user.respond_user_id)
-                              .map((user) => (
-                                <SelectItem key={user.id} value={user.respond_user_id as string}>
-                                  {user.name || user.email}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
-                      </FormControl>
-                      <FormDescription>
-                        Person in charge for responding
-                        {selectedUser && (
-                          <span className="block mt-1 text-xs text-muted-foreground">
-                            Selected: {selectedUser.name || selectedUser.email}
-                          </span>
-                        )}
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  );
-                }}
-              />
-
-              <FormField
-                control={form.control}
                 name="is_active"
                 render={({ field }) => (
                   <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
@@ -305,9 +248,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                   <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                     <div className="space-y-0.5">
                       <FormLabel className="text-base">Assign to new internal users</FormLabel>
-                      <FormDescription>
-                        When enabled, this agent is automatically assigned to new internal users created by the Respond.io contact sync
-                      </FormDescription>
                     </div>
                     <FormControl>
                       <Switch

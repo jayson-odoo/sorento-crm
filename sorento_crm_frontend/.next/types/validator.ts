@@ -1766,6 +1766,24 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/system-management/app-store/bundles/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/system-management/app-store/bundles">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/system-management/app-store/bundles/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/system-management/app-store/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/system-management/app-store">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/system-management/app-store/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/(protected)/system-management/import-jobs/[id]/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/system-management/import-jobs/[id]">> = Specific

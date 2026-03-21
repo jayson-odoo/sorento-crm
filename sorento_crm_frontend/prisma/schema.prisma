@@ -761,7 +761,6 @@ model AccessAgent {
   updatedAt         DateTime  @updatedAt @map("updated_at")
   syncedToExcel     Boolean   @default(false) @map("synced_to_excel")
   lastSyncedToExcel DateTime? @map("last_synced_to_excel")
-  picRespondUserId  String?   @map("pic_respond_user_id") @db.Text
 
   contactAccesses ContactAgentAccess[]
   userAccesses    UserAgentAccess[]

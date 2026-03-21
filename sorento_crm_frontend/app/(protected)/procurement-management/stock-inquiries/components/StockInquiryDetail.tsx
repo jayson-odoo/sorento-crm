@@ -42,6 +42,7 @@ import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
 import StockInquiryConversationPanel from './StockInquiryConversationPanel';
 import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 
 interface StockInquiryDetailProps {
   inquiryId: string;
@@ -81,6 +82,7 @@ export default function StockInquiryDetail({
   const canProjectSalesReject = useHasPermission('procurement.stock_inquiries.project_sales_reject');
   const canPurchasingReject = useHasPermission('procurement.stock_inquiries.purchasing_reject');
   const canReopen = useHasPermission('procurement.stock_inquiries.reopen');
+  const publicViewLinksEnabled = usePublicViewLinksEnabled();
 
   const handleExportExcel = async () => {
     if (!inquiry) return;
@@ -212,12 +214,14 @@ export default function StockInquiryDetail({
                   disabled={updateAndReplyMutation.isPending}
                   onClick={async () => {
                     let viewUrl = '';
-                    try {
-                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                      const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-                      viewUrl = res.view_url ?? '';
-                    } catch {
-                      // continue
+                    if (publicViewLinksEnabled) {
+                      try {
+                        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                        const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+                        viewUrl = res.view_url ?? '';
+                      } catch {
+                        // continue
+                      }
                     }
                     const purchasingResponse = (inquiry.purchasing_response ?? '').trim();
                     const linkPart = viewUrl ? ` ${viewUrl}` : '';
@@ -280,50 +284,56 @@ export default function StockInquiryDetail({
                 Chat records
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem
-              disabled={viewLinkCopying}
-              onClick={async () => {
-                try {
-                  setViewLinkCopying(true);
-                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                  const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-                  await navigator.clipboard.writeText(view_url);
-                  toast.success('View link copied to clipboard');
-                } catch {
-                  toast.error('Failed to copy view link');
-                } finally {
-                  setViewLinkCopying(false);
-                }
-              }}
-            >
-              <Link2 className="size-4" />
-              {viewLinkCopying ? 'Copying…' : 'Copy view link'}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={async () => {
-                try {
-                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                  const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-                  window.open(view_url, '_blank');
-                } catch {
-                  toast.error('Failed to open view link');
-                }
-              }}
-            >
-              <ExternalLink className="size-4" />
-              View in system
-            </DropdownMenuItem>
+            {publicViewLinksEnabled && (
+              <DropdownMenuItem
+                disabled={viewLinkCopying}
+                onClick={async () => {
+                  try {
+                    setViewLinkCopying(true);
+                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                    const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+                    await navigator.clipboard.writeText(view_url);
+                    toast.success('View link copied to clipboard');
+                  } catch {
+                    toast.error('Failed to copy view link');
+                  } finally {
+                    setViewLinkCopying(false);
+                  }
+                }}
+              >
+                <Link2 className="size-4" />
+                {viewLinkCopying ? 'Copying…' : 'Copy view link'}
+              </DropdownMenuItem>
+            )}
+            {publicViewLinksEnabled && (
+              <DropdownMenuItem
+                onClick={async () => {
+                  try {
+                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                    const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+                    window.open(view_url, '_blank');
+                  } catch {
+                    toast.error('Failed to open view link');
+                  }
+                }}
+              >
+                <ExternalLink className="size-4" />
+                View in system
+              </DropdownMenuItem>
+            )}
             {inquiry.respond_inbox_url && inquiry.status === 'pending_purchasing' && (
               <DropdownMenuItem
                 disabled={updateAndReplyMutation.isPending}
                 onClick={async () => {
                   let viewUrl = '';
-                  try {
-                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-                    viewUrl = res.view_url ?? '';
-                  } catch {
-                    // continue without view link
+                  if (publicViewLinksEnabled) {
+                    try {
+                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                      const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+                      viewUrl = res.view_url ?? '';
+                    } catch {
+                      // continue without view link
+                    }
                   }
                   const purchasingResponse = (inquiry.purchasing_response ?? '').trim();
                   const linkPart = viewUrl ? ` ${viewUrl}` : '';
@@ -693,11 +703,15 @@ export default function StockInquiryDetail({
                 respondInboxUrl={inquiry.respond_inbox_url}
                 showAsPopup
                 purchasingResponse={inquiry.purchasing_response}
-                onGetViewLink={async () => {
-                  const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                  const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-                  return res.view_url ?? '';
-                }}
+                onGetViewLink={
+                  publicViewLinksEnabled
+                    ? async () => {
+                        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                        const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+                        return res.view_url ?? '';
+                      }
+                    : undefined
+                }
               />
             </div>
           </SheetContent>

@@ -41,6 +41,7 @@ import { ComplaintSchema, type ComplaintSchemaType } from '../forms/complaint-sc
 import type { ComplaintFormData, ComplaintAttachment } from '../types/complaint.types';
 import ComplaintNavigation from './ComplaintNavigation';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
+import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 
 interface ComplaintFormProps {
   complaintId?: string;
@@ -88,6 +89,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
   const [messageToSend, setMessageToSend] = useState('');
   const [previewPreparing, setPreviewPreparing] = useState(false);
   const updateAndReplyMutation = useUpdateComplaintAndReply();
+  const publicViewLinksEnabled = usePublicViewLinksEnabled();
 
   // Load complaint data when editing (normalize dates so schema validation passes)
   useEffect(() => {
@@ -177,7 +179,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         await updateMutation.mutateAsync({ id: complaintId, data: formData });
       } else {
         const created = await createMutation.mutateAsync(formData);
-        if (created?.id) {
+        if (created?.id && publicViewLinksEnabled) {
           try {
             const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
             const { view_url } = await getOrCreateComplaintViewLink(created.id, baseUrl);
@@ -206,12 +208,17 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
     }
     setPreviewPreparing(true);
     try {
-      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-      const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
       const doNumber = (form.getValues().delivery_order_number ?? '').toString().trim();
       const doPart = doNumber ? ` for delivery order ${doNumber}` : '';
       const technicalResponse = (form.getValues().technical_team_response ?? '').trim();
-      const fullMessage = `There has been an update regarding your complaint${doPart} ${view_url}: ${technicalResponse}`;
+      let viewUrl = '';
+      if (publicViewLinksEnabled) {
+        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+        const { view_url } = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+        viewUrl = view_url ?? '';
+      }
+      const linkPart = viewUrl ? ` ${viewUrl}` : '';
+      const fullMessage = `There has been an update regarding your complaint${doPart}${linkPart}: ${technicalResponse}`;
       setMessageToSend(fullMessage);
       setUpdateAndReplyDialogOpen(true);
     } catch {

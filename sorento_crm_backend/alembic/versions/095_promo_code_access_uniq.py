@@ -1,14 +1,16 @@
 """Drop global unique promo_code to allow uniqueness by code + access level set in service.
 
-Revision ID: 095_promotion_code_access_levels_uniqueness
+Revision ID: 095_promo_code_access_uniq
 Revises: 094_contact_access_types
 Create Date: 2026-03-19
+
+Note: revision id must fit alembic_version.version_num (VARCHAR(32) in this project).
 """
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = "095_promotion_code_access_levels_uniqueness"
+revision = "095_promo_code_access_uniq"
 down_revision = "094_contact_access_types"
 branch_labels = None
 depends_on = None

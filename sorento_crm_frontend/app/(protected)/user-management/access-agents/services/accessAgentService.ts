@@ -1,8 +1,7 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError, buildDataGridParams } from '@/lib/api-client';
-import type { AccessAgent, AccessAgentFormData, AccessAgentDetail, ContactAgentAccess, ContactAgentAccessFormData, RespondSyncedUser } from '../types/accessAgent.types';
+import type { AccessAgent, AccessAgentFormData, AccessAgentDetail, ContactAgentAccess, ContactAgentAccessFormData } from '../types/accessAgent.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
-import { getUsersSelect } from '@/services/userSelectService';
 import { getTeams } from '@/app/(protected)/user-management/teams/services/teamService';
 
 export async function getAccessAgents(params: DataGridApiFetchParams & { status?: string }): Promise<DataGridApiResponse<AccessAgent>> {
@@ -12,8 +11,11 @@ export async function getAccessAgents(params: DataGridApiFetchParams & { status?
   return response.json();
 }
 
-export async function getAccessAgent(id: string): Promise<AccessAgentDetail> {
+export async function getAccessAgent(id: string): Promise<AccessAgentDetail | null> {
   const response = await apiFetch(`/api/user-management/access-agents/${id}`);
+  if (response.status === 404) {
+    return null;
+  }
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to fetch access agent'));
   return response.json();
 }
@@ -36,10 +38,6 @@ export async function updateAccessAgent(id: string, data: Partial<AccessAgentFor
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to update access agent'));
   return response.json();
-}
-
-export async function getRespondSyncedUsers(query?: string): Promise<RespondSyncedUser[]> {
-  return getUsersSelect({ respond_synced: 'successful', query });
 }
 
 export async function deleteAccessAgent(id: string): Promise<void> {

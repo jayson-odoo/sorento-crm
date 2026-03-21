@@ -20,6 +20,8 @@ class PackingListHeader(BaseModel):
     shipment_date: str | date
     shipping_container_number: Optional[str] = None
     attachment_id: str
+    # Estimated time of arrival → inbound_shipments.eta (parsed like other date fields)
+    eta: Optional[str | date] = None
     expected_arrival_date: Optional[str | date] = None
     actual_arrival_date: Optional[str | date] = None
     bill_of_lading_number: Optional[str] = None

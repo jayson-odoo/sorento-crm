@@ -40,6 +40,7 @@ import {
 } from '../forms/stock-inquiry-schema';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
 import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
+import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 
 interface StockInquiryFormProps {
   inquiryId?: string;
@@ -61,6 +62,7 @@ export default function StockInquiryForm({
   const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
   const [replyMessage, setReplyMessage] = useState('');
   const [previewPreparing, setPreviewPreparing] = useState(false);
+  const publicViewLinksEnabled = usePublicViewLinksEnabled();
 
   const form = useForm<StockInquirySchemaType>({
     resolver: zodResolver(StockInquirySchema),
@@ -113,10 +115,14 @@ export default function StockInquiryForm({
     if (!valid || !inquiryId) return;
     setPreviewPreparing(true);
     try {
-      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-      const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
       const purchasingResponse = (form.getValues().purchasing_response ?? '').trim();
-      const linkPart = view_url ? ` ${view_url}` : '';
+      let viewUrl = '';
+      if (publicViewLinksEnabled) {
+        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+        const { view_url } = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+        viewUrl = view_url ?? '';
+      }
+      const linkPart = viewUrl ? ` ${viewUrl}` : '';
       const fullMessage = `There is a response to your stock inquiry${linkPart}: ${purchasingResponse}`;
       setReplyMessage(fullMessage);
       setUpdateAndReplyDialogOpen(true);
@@ -175,7 +181,7 @@ export default function StockInquiryForm({
         await updateMutation.mutateAsync({ id: inquiryId, data: formData });
       } else {
         const created = await createMutation.mutateAsync(formData);
-        if (created?.id) {
+        if (created?.id && publicViewLinksEnabled) {
           try {
             const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
             const { view_url } = await getOrCreateStockInquiryViewLink(created.id, baseUrl);

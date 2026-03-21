@@ -137,25 +137,6 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
               <p className="font-medium">{accessAgent.name}</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">PIC Respond User</p>
-              <div className="space-y-1">
-                {accessAgent.pic_respond_user_id ? (
-                  <>
-                    <p className="font-medium">
-                      {accessAgent.pic_respond_user_name || accessAgent.pic_respond_user_id}
-                    </p>
-                    {accessAgent.pic_respond_user_name && (
-                      <p className="text-xs text-muted-foreground font-mono">
-                        ID: {accessAgent.pic_respond_user_id}
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <p className="font-medium text-muted-foreground">-</p>
-                )}
-              </div>
-            </div>
-            <div>
               <p className="text-sm text-muted-foreground">Status</p>
               <Badge variant={accessAgent.is_active ? 'success' : 'secondary'} appearance="ghost">
                 <BadgeDot />
@@ -167,11 +148,6 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
               <p className="font-medium">
                 {accessAgent.assign_to_new_internal_contacts ? 'Yes' : 'No'}
               </p>
-              {accessAgent.assign_to_new_internal_contacts && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  This agent is automatically assigned when new internal users are created by the Respond.io sync
-                </p>
-              )}
             </div>
             {accessAgent.description && (
               <div className="md:col-span-2">

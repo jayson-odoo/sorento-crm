@@ -3,8 +3,8 @@
 import { AppsDropdownMenu } from '@/partials/topbar/apps-dropdown-menu';
 import { ChatSheet } from '@/partials/topbar/chat-sheet';
 import { UserDropdownMenu } from '@/partials/topbar/user-dropdown-menu';
+import { SessionUserAvatar } from '@/partials/topbar/session-user-avatar';
 import { LayoutGrid, MessageCircleMore } from 'lucide-react';
-import { toAbsoluteUrl } from '@/lib/helpers';
 import { Button } from '@/components/ui/button';
 
 export function SidebarFooter() {
@@ -37,11 +37,7 @@ export function SidebarFooter() {
 
       <UserDropdownMenu
         trigger={
-          <img
-            className="size-8 rounded-lg border-2 border-mono/30 shrink-0 cursor-pointer"
-            src={toAbsoluteUrl('/media/avatars/300-2.png')}
-            alt="User Avatar"
-          />
+          <SessionUserAvatar className="size-8 rounded-lg border-2 border-mono/30 shrink-0 cursor-pointer object-cover" />
         }
       />
     </div>

@@ -180,7 +180,6 @@ class AccessAgentBase(BaseModel):
     description: Optional[str] = None
     is_active: bool = True
     assign_to_new_internal_contacts: bool = False
-    pic_respond_user_id: Optional[str] = None
 
 
 class AccessAgentCreate(AccessAgentBase):
@@ -192,15 +191,13 @@ class AccessAgentUpdate(BaseModel):
     description: Optional[str] = None
     is_active: Optional[bool] = None
     assign_to_new_internal_contacts: Optional[bool] = None
-    pic_respond_user_id: Optional[str] = None
 
 
 class AccessAgentResponse(AccessAgentBase):
     id: str
     created_at: datetime
     updated_at: datetime
-    pic_respond_user_name: Optional[str] = None  # User name from users table
-    
+
     class Config:
         from_attributes = True
 

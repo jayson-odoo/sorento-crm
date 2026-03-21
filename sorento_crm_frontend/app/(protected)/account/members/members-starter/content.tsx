@@ -34,7 +34,7 @@ export function AccountMembersStarterContent() {
           </Fragment>
         }
         engage={{
-          path: '/account/home/user-profile',
+          path: '/user-management/account',
           label: 'Add New Member',
           btnColor: 'btn-primary',
         }}

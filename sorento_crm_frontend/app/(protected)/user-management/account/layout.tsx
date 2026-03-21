@@ -31,7 +31,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const { data: user, isLoading } = useQuery({
+  const { data: user, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['account-profile'],
     queryFn: async () => {
       const response = await apiFetch('/api/user-management/account/');
@@ -95,6 +95,32 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     return <ContentLoader className="mt-[30%]" />;
   }
 
+  // Failed request or empty payload: isLoading is false but user is still undefined
+  if (isError || user == null) {
+    const message =
+      error instanceof Error ? error.message : 'Could not load your account.';
+    return (
+      <Container>
+        <Toolbar>
+          <ToolbarHeading>
+            <ToolbarTitle>Account</ToolbarTitle>
+          </ToolbarHeading>
+          <ToolbarActions />
+        </Toolbar>
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-6 text-center text-sm">
+          <p className="text-destructive font-medium">{message}</p>
+          <button
+            type="button"
+            className="mt-3 text-primary underline underline-offset-4"
+            onClick={() => void refetch()}
+          >
+            Try again
+          </button>
+        </div>
+      </Container>
+    );
+  }
+
   return (
     <AccountProvider user={user}>
       <Container>
@@ -107,10 +133,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="flex flex-col gap-5 lg:flex-row">
           <div className="space-y-7 lg:w-[200px] shrink-0 pt-6">
             <div className="flex items-center gap-2.5">
-              <Avatar key={user.avatar} className="size-12">
-                {user.avatar && (
+              <Avatar key={user.avatar ?? 'no-avatar'} className="size-12">
+                {user.avatar ? (
                   <AvatarImage src={user.avatar} alt={user.name || ''} />
-                )}
+                ) : null}
                 <AvatarFallback className="text-lg">
                   {getInitials(user.name || user.email)}
                 </AvatarFallback>
