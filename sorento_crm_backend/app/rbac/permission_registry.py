@@ -45,6 +45,7 @@ PERMISSION_REGISTRY.extend([
 # Order Management
 PERMISSION_REGISTRY.extend(_crud("order_management", "orders", "Orders"))
 PERMISSION_REGISTRY.append({"slug": "order_management.orders.import", "name": "Import Orders", "description": "Permission to bulk import orders."})
+PERMISSION_REGISTRY.append({"slug": "order_management.orders.export", "name": "Export Orders", "description": "Permission to export orders with dynamic fields."})
 PERMISSION_REGISTRY.append({"slug": "order_management.orders.bulk_delete", "name": "Bulk Delete Orders", "description": "Permission to bulk delete orders."})
 PERMISSION_REGISTRY.extend(_crud("order_management", "order_statuses", "Order Statuses"))
 PERMISSION_REGISTRY.extend(_crud("order_management", "customers", "Customers"))
@@ -60,6 +61,7 @@ PERMISSION_REGISTRY.extend(_crud("sla_management", "escalation_logs", "SLA Event
 # Master Data (Products)
 PERMISSION_REGISTRY.extend(_crud("master_data", "products", "Products"))
 PERMISSION_REGISTRY.append({"slug": "master_data.products.import", "name": "Import Products", "description": "Permission to bulk import products."})
+PERMISSION_REGISTRY.append({"slug": "master_data.products.export", "name": "Export Products", "description": "Permission to export products with dynamic fields."})
 PERMISSION_REGISTRY.append({"slug": "master_data.products.bulk_delete", "name": "Bulk Delete Products", "description": "Permission to bulk delete products."})
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_attachments", "Product Attachments"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product Categories"))
@@ -68,6 +70,7 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Me
 
 # Procurement
 PERMISSION_REGISTRY.extend(_crud("procurement", "suppliers", "Suppliers"))
+PERMISSION_REGISTRY.append({"slug": "procurement.suppliers.export", "name": "Export Suppliers", "description": "Permission to export suppliers with dynamic fields."})
 PERMISSION_REGISTRY.extend(_crud("procurement", "product_suppliers", "Product-Suppliers"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "packing_lists", "Packing Lists"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "spo_allocations", "SPO Allocations"))
@@ -128,6 +131,11 @@ PERMISSION_REGISTRY.extend([
     {"slug": "system.numbering_rules.view", "name": "View Running Numbers", "description": "Permission to view document numbering rules."},
     {"slug": "system.numbering_rules.edit", "name": "Edit Running Numbers", "description": "Permission to edit document numbering rules."},
 ])
+PERMISSION_REGISTRY.append({
+    "slug": "system.modules.manage",
+    "name": "Manage App Store Modules",
+    "description": "Install, enable, and disable application modules for the tenant.",
+})
 
 # Menu / Quick Access
 PERMISSION_REGISTRY.append({

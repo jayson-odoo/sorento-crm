@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getRespondSyncedUsers, getAgentTeams, setAgentTeams, getTeams } from '../services/accessAgentService';
+import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams } from '../services/accessAgentService';
 import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/accessAgent.types';
 
 export function useAccessAgents(params: DataGridApiFetchParams & { status?: string }) {
@@ -23,7 +23,8 @@ export function useAccessAgent(id: string | null) {
       return getAccessAgent(id);
     },
     enabled: !!id,
-    retry: 1,
+    // After delete, a refetch would 404 — treat as empty data, not a thrown error (no error toast).
+    retry: false,
   });
 }
 
@@ -58,7 +59,6 @@ export function useDeleteAccessAgent() {
     mutationFn: (id: string) => deleteAccessAgent(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['access-agents'] });
-      toast.success('Access agent deleted successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete access agent'),
   });
@@ -120,15 +120,6 @@ export function useDeleteContactAgentAccess() {
       toast.success('Contact access agent deleted successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete contact access agent'),
-  });
-}
-
-export function useRespondSyncedUsers(query?: string) {
-  return useQuery({
-    queryKey: ['respond-synced-users', query],
-    queryFn: () => getRespondSyncedUsers(query),
-    staleTime: 1000 * 60 * 5,
-    retry: 1,
   });
 }
 

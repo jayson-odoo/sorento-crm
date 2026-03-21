@@ -100,7 +100,7 @@ export function OrderLinesImportDialog({
       onOpenChange(false);
       setFile(null);
       onSuccess?.();
-      toast.success('Import job queued. Check "Latest order lines import" below for status.', {
+      toast.success('Import job queued. Check System → Import jobs for status.', {
         duration: 5000,
         action: {
           label: 'View job',

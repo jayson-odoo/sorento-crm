@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { ArrowUpRight, Search } from 'lucide-react';
 import { MENU_SIDEBAR } from '@/config/menu.config';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenantModules } from '@/hooks/useTenantModules';
 import {
   CommandDialog,
   CommandEmpty,
@@ -36,6 +37,7 @@ export function SearchDialog({ trigger }: { trigger: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { permissions } = usePermissions();
+  const { enabledModuleKeys } = useTenantModules();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [groupedResults, setGroupedResults] = useState<
@@ -72,14 +74,17 @@ export function SearchDialog({ trigger }: { trigger: ReactNode }) {
     let cancelled = false;
     const permissionSet = new Set(permissions);
     const run = async () => {
-      const next = await runUniversalSearch(query, providers, { permissionSet });
+      const next = await runUniversalSearch(query, providers, {
+        permissionSet,
+        enabledModuleKeys,
+      });
       if (!cancelled) setGroupedResults(next);
     };
     run();
     return () => {
       cancelled = true;
     };
-  }, [query, providers, permissions]);
+  }, [query, providers, permissions, enabledModuleKeys]);
 
   const hasAnyResults = useMemo(
     () => Object.values(groupedResults).some((items) => items.length > 0),

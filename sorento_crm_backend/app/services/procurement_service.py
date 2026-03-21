@@ -66,17 +66,28 @@ class SupplierService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_suppliers(self, page: int = 1, limit: int = 50, query: Optional[str] = None, sort_field: str = "created_at", sort_dir: str = "asc"):
+    def list_suppliers(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        sort_field: str = "created_at",
+        sort_dir: str = "asc",
+        advanced_filter_clause=None,
+    ):
         """List suppliers."""
         q = self.db.query(Supplier)
-        
+
         if query:
             q = q.filter(
                 or_(
                     Supplier.supplier_code.ilike(f"%{query}%"),
-                    Supplier.supplier_name.ilike(f"%{query}%")
+                    Supplier.supplier_name.ilike(f"%{query}%"),
                 )
             )
+
+        if advanced_filter_clause is not None:
+            q = q.filter(advanced_filter_clause)
         
         sort_map = {
             "created_at": Supplier.created_at,

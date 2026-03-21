@@ -30,6 +30,10 @@ async def get_orders(
     query: Optional[str] = Query(None),
     customer_id: Optional[str] = Query(None),
     order_status_id: Optional[str] = Query(None),
+    has_order_lines: Optional[str] = Query(
+        None,
+        description="Filter by lines: 'yes' = at least one line, 'no' = no lines, omit = all",
+    ),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     current_user: dict = Depends(get_current_user),
@@ -44,6 +48,7 @@ async def get_orders(
             query=query,
             customer_id=customer_id,
             order_status_id=order_status_id,
+            has_order_lines=has_order_lines,
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
         )

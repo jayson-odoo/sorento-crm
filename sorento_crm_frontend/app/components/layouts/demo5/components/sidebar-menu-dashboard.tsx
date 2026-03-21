@@ -53,7 +53,7 @@ export function SidebarMenuDashboard() {
     () => [
       {
         title: 'Client API',
-        path: '/account/home/user-profile',
+        path: '/user-management/account',
         icon: SquareCode,
         active: true,
       },
@@ -101,7 +101,7 @@ export function SidebarMenuDashboard() {
         path: '/account/security/current-sessions',
       },
       { title: 'Fetching Data', path: '/account/members/team-info' },
-      { title: 'Custom Reports', path: '/account/home/user-profile' },
+      { title: 'Custom Reports', path: '/user-management/account' },
       {
         title: 'Real Time Analytics',
         path: '/account/home/settings-enterprise',

@@ -73,6 +73,7 @@ class InboundShipment(Base):
     shipment_date = Column(Date, nullable=False)
     expected_arrival_date = Column(Date, nullable=True)
     actual_arrival_date = Column(Date, nullable=True)
+    eta = Column(Date, nullable=True)
     bill_of_lading_number = Column(String(100), nullable=True)
     shipping_container_number = Column(String(100), nullable=True)
     invoice_number = Column(String(100), nullable=True)

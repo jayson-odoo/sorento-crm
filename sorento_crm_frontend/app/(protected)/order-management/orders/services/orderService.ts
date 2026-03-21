@@ -2,8 +2,14 @@ import { apiFetch } from '@/lib/api';
 import type { Order, OrderFormData, OrderDetail, OrderLine, OrderLineFormData } from '../types/order.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-export async function getOrders(params: DataGridApiFetchParams & { customer_id?: string; order_status_id?: string }): Promise<DataGridApiResponse<Order>> {
-  const { pageIndex, pageSize, sorting, searchQuery, customer_id, order_status_id } = params;
+export async function getOrders(
+  params: DataGridApiFetchParams & {
+    customer_id?: string;
+    order_status_id?: string;
+    has_order_lines?: 'all' | 'yes' | 'no';
+  },
+): Promise<DataGridApiResponse<Order>> {
+  const { pageIndex, pageSize, sorting, searchQuery, customer_id, order_status_id, has_order_lines } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -13,6 +19,7 @@ export async function getOrders(params: DataGridApiFetchParams & { customer_id?:
     ...(searchQuery ? { query: searchQuery } : {}),
     ...(customer_id ? { customer_id } : {}),
     ...(order_status_id ? { order_status_id } : {}),
+    ...(has_order_lines && has_order_lines !== 'all' ? { has_order_lines } : {}),
   });
   const response = await apiFetch(`/api/v1/order-management/orders?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch orders');
@@ -75,7 +82,11 @@ export async function bulkDeleteOrders(ids: string[]): Promise<{ message: string
 /**
  * Export all orders to Excel (fetches all data by paginating through all pages)
  */
-export async function exportOrders(params?: { customer_id?: string; order_status_id?: string }): Promise<Order[]> {
+export async function exportOrders(params?: {
+  customer_id?: string;
+  order_status_id?: string;
+  has_order_lines?: 'all' | 'yes' | 'no';
+}): Promise<Order[]> {
   const allOrders: Order[] = [];
   let page = 1;
   const limit = 100; // Backend maximum limit
@@ -87,6 +98,9 @@ export async function exportOrders(params?: { customer_id?: string; order_status
       limit: String(limit),
       ...(params?.customer_id ? { customer_id: params.customer_id } : {}),
       ...(params?.order_status_id ? { order_status_id: params.order_status_id } : {}),
+      ...(params?.has_order_lines && params.has_order_lines !== 'all'
+        ? { has_order_lines: params.has_order_lines }
+        : {}),
     });
 
     const response = await apiFetch(`/api/v1/order-management/orders?${queryParams.toString()}`);

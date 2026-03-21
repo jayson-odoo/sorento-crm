@@ -205,7 +205,19 @@ const authOptions: NextAuthOptions = {
       trigger?: 'signIn' | 'signUp' | 'update';
     }) {
       if (trigger === 'update' && session?.user) {
-        token = session.user;
+        // Merge profile fields from update(); do not replace the whole token (loses exp/iat/sub).
+        const u = session.user as Record<string, unknown>;
+        if (typeof u.avatar === 'string' || u.avatar === null) {
+          token.avatar = u.avatar as string | null | undefined;
+        }
+        if (typeof u.name === 'string') token.name = u.name;
+        if (typeof u.email === 'string') token.email = u.email;
+        if (typeof u.id === 'string') token.id = u.id;
+        if (Array.isArray(u.roles)) {
+          const ids = (u.roles as { id: string }[]).map((r) => r.id);
+          token.roleIds = ids;
+          token.roleId = ids[0] ?? null;
+        }
       } else {
         if (user) {
           const role = user.roleId

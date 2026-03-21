@@ -91,8 +91,7 @@ class AccessAgent(Base):
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
-    pic_respond_user_id = Column(Text, nullable=True)
-    
+
     contact_accesses = relationship("ContactAgentAccess", back_populates="agent")
     agent_teams = relationship("AgentTeam", back_populates="agent", cascade="all, delete-orphan")
 

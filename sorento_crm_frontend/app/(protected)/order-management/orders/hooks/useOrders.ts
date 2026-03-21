@@ -12,12 +12,55 @@ import {
   updateOrderLine,
   deleteOrderLine,
 } from '../services/orderService';
-import type { OrderFormData, OrderLineFormData } from '../types/order.types';
+import type { Order, OrderFormData, OrderLineFormData } from '../types/order.types';
+import { postListQuerySearch } from '@/lib/list-query/listQueryService';
+import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 
-export function useOrders(params: DataGridApiFetchParams & { customer_id?: string; order_status_id?: string }) {
+export function useOrders(
+  params: DataGridApiFetchParams & {
+    customer_id?: string;
+    order_status_id?: string;
+    has_order_lines?: 'all' | 'yes' | 'no';
+    advancedFilter?: ListQueryFilterGroup | null;
+  },
+) {
   return useQuery({
-    queryKey: ['orders', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.customer_id, params.order_status_id],
-    queryFn: () => getOrders(params),
+    queryKey: [
+      'orders',
+      params.pageIndex,
+      params.pageSize,
+      params.sorting,
+      params.searchQuery,
+      params.customer_id,
+      params.order_status_id,
+      params.has_order_lines,
+      params.advancedFilter,
+    ],
+    queryFn: async () => {
+      if (params.advancedFilter) {
+        const sortField = params.sorting?.[0]?.id || '';
+        const sortDirection = params.sorting?.[0]?.desc ? 'desc' : 'asc';
+        return postListQuerySearch<Order>({
+          resource: 'orders',
+          filter: params.advancedFilter,
+          page: params.pageIndex + 1,
+          limit: params.pageSize,
+          sort: sortField || 'created_at',
+          dir: sortDirection,
+          quick_search: params.searchQuery || undefined,
+          order_status_id:
+            params.order_status_id && params.order_status_id !== 'all'
+              ? params.order_status_id
+              : undefined,
+          has_order_lines:
+            params.has_order_lines && params.has_order_lines !== 'all'
+              ? params.has_order_lines
+              : undefined,
+          customer_id: params.customer_id,
+        });
+      }
+      return getOrders(params);
+    },
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,

@@ -1,8 +1,9 @@
 """System-level API routes."""
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from app.api.v1.system import import_logs, jobs, calendar, outgoing_mails, scheduled_tasks, numbering_rules
+from app.modules.runtime.guards import require_module_enabled
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_module_enabled("base"))])
 
 router.include_router(import_logs.router, tags=["import-logs"])
 router.include_router(jobs.router, tags=["jobs"])

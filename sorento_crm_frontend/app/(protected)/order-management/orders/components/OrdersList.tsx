@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -11,9 +11,30 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Download, Upload, AlertTriangle, Trash2 } from 'lucide-react';
+import {
+  Plus,
+  Search,
+  X,
+  ChevronRight,
+  Download,
+  Upload,
+  AlertTriangle,
+  Trash2,
+  Filter,
+  SlidersHorizontal,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -36,74 +57,62 @@ import {
 } from '@/components/ui/select';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
-import { TemplateDownloadDialog } from '@/components/template/TemplateDownloadDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
-import { exportOrders, bulkImportOrders, importOrderTracking, validateOrderTracking, validateDeliveryOrderDetail } from '../services/orderService';
+import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
+import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
+import { bulkImportOrders, importOrderTracking, validateOrderTracking, validateDeliveryOrderDetail } from '../services/orderService';
 import { OrderTrackingUploadDialog } from './OrderTrackingUploadDialog';
 import { OrderLinesImportDialog } from './OrderLinesImportDialog';
-import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { ColumnOption } from '@/lib/excel-utils';
+import {
+  buildOrderDetailSearch,
+  parseOrderListNavFromSearchParams,
+  type OrderListNavState,
+} from '../utils/orderListNavQuery';
+import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 
 export default function OrdersList() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [trackingUploadOpen, setTrackingUploadOpen] = useState(false);
   const [orderLinesImportOpen, setOrderLinesImportOpen] = useState(false);
-  const [exportData, setExportData] = useState<Order[]>([]);
-  const [isLoadingExport, setIsLoadingExport] = useState(false);
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set());
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [linesFilter, setLinesFilter] = useState<'all' | 'yes' | 'no'>('all');
 
   const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
 
-  const { data, isLoading } = useOrders({
+  /** Restore list state when returning from order detail/edit (same query string as detail URLs). */
+  const listNavSearchKey = useMemo(() => searchParams.toString(), [searchParams]);
+  useEffect(() => {
+    const nav = parseOrderListNavFromSearchParams(new URLSearchParams(listNavSearchKey));
+    setPagination({ pageIndex: nav.pageIndex, pageSize: nav.pageSize });
+    setSorting(nav.sorting);
+    setSearchQuery(nav.searchQuery);
+    setStatusFilter(nav.orderStatusId ?? 'all');
+    setLinesFilter(nav.hasOrderLines);
+    setAdvancedFilter(nav.advancedFilter ?? null);
+  }, [listNavSearchKey]);
+
+  const { data, isLoading, isError, error } = useOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
     order_status_id: statusFilter === 'all' ? undefined : statusFilter,
+    has_order_lines: linesFilter,
+    advancedFilter: advancedFilter ?? undefined,
   });
-
-  // Define column options for export
-  const columnOptions: ColumnOption[] = useMemo(() => [
-    { key: 'id', label: 'ID', selected: true },
-    { key: 'order_number', label: 'Order Number', selected: true },
-    { key: 'order_date', label: 'Order Date', selected: true },
-    { key: 'debtor_code', label: 'Debtor Code', selected: true },
-    { key: 'debtor_name', label: 'Debtor Name', selected: true },
-    { key: 'agent', label: 'Agent', selected: true },
-    { key: 'is_cancelled', label: 'Cancelled', selected: true },
-    { key: 'remarks_cs', label: 'Remarks CS', selected: true },
-    { key: 'order_type', label: 'Order Type', selected: true },
-    { key: 'order_status.status_name', label: 'Status', selected: true },
-    { key: 'promised_delivery_date', label: 'Promised Delivery Date', selected: true },
-    { key: 'total_amount', label: 'Total Amount', selected: true },
-    { key: 'subtotal_amount', label: 'Subtotal Amount', selected: false },
-    { key: 'discount_amount', label: 'Discount Amount', selected: false },
-    { key: 'tax_amount', label: 'Tax Amount', selected: false },
-    { key: 'remarks', label: 'Remarks', selected: false },
-  ], []);
-
-  const handleDownloadTemplate = async () => {
-    setIsLoadingExport(true);
-    try {
-      const allOrders = await exportOrders();
-      setExportData(allOrders);
-      setDownloadDialogOpen(true);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to load orders for export');
-    } finally {
-      setIsLoadingExport(false);
-    }
-  };
 
   const handleUploadTemplate = async (data: any[]) => {
     try {
@@ -127,11 +136,16 @@ export default function OrdersList() {
 
   const handleRowClick = (row: Order) => {
     const orderId = row.id;
-    const params = new URLSearchParams({
-      page: String(pagination.pageIndex),
-      pageSize: String(pagination.pageSize),
-    });
-    router.push(`/order-management/orders/${orderId}?${params.toString()}`);
+    const listNav: OrderListNavState = {
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      orderStatusId: statusFilter === 'all' ? undefined : statusFilter,
+      hasOrderLines: linesFilter,
+      searchQuery,
+      sorting,
+      advancedFilter,
+    };
+    router.push(`/order-management/orders/${orderId}${buildOrderDetailSearch(listNav)}`);
   };
 
   const toggleOrderSelection = (orderId: string) => {
@@ -199,7 +213,7 @@ export default function OrdersList() {
       },
       {
         accessorKey: 'promised_delivery_date',
-        header: ({ column }) => <DataGridColumnHeader title="Promised Delivery" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Estimated Delivery" column={column} />,
         cell: ({ row }) => row.original.promised_delivery_date ? formatDate(new Date(row.original.promised_delivery_date)) : '-',
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
@@ -290,6 +304,8 @@ export default function OrdersList() {
     [selectedOrderIds, isAllSelected],
   );
 
+  const quickFilterActive = statusFilter !== 'all' || linesFilter !== 'all';
+
   const table = useReactTable({
     columns,
     data: data?.data || [],
@@ -317,15 +333,15 @@ export default function OrdersList() {
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <div className="flex items-center gap-2">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
               <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
               <Input
                 placeholder="Search orders..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-9 w-64"
+                className="ps-9 w-64 max-w-full"
               />
               {searchQuery && (
                 <Button
@@ -338,21 +354,93 @@ export default function OrdersList() {
                 </Button>
               )}
             </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                {orderStatuses.map((status) => (
-                  <SelectItem key={status.id} value={status.id}>
-                    {status.status_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="relative shrink-0"
+                  title="Quick filters — status & order lines"
+                  aria-label="Quick filters"
+                >
+                  <SlidersHorizontal className="size-4" />
+                  {quickFilterActive ? (
+                    <span
+                      className="absolute end-1 top-1 size-2 rounded-full bg-primary"
+                      aria-hidden
+                    />
+                  ) : null}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80" align="start">
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-semibold leading-none">Quick filters</h4>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="orders-quick-status" className="text-xs">
+                      Status
+                    </Label>
+                    <Select
+                      value={statusFilter}
+                      onValueChange={(v) => {
+                        setStatusFilter(v);
+                        setPagination((p) => ({ ...p, pageIndex: 0 }));
+                      }}
+                    >
+                      <SelectTrigger id="orders-quick-status" className="w-full">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        {orderStatuses.map((status) => (
+                          <SelectItem key={status.id} value={status.id}>
+                            {status.status_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="orders-quick-lines" className="text-xs">
+                      Order lines
+                    </Label>
+                    <Select
+                      value={linesFilter}
+                      onValueChange={(v) => {
+                        setLinesFilter(v as 'all' | 'yes' | 'no');
+                        setPagination((p) => ({ ...p, pageIndex: 0 }));
+                      }}
+                    >
+                      <SelectTrigger id="orders-quick-lines" className="w-full">
+                        <SelectValue placeholder="Order lines" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All orders</SelectItem>
+                        <SelectItem value="yes">With order lines</SelectItem>
+                        <SelectItem value="no">Without order lines</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+            <Button variant="outline" size="sm" onClick={() => setFilterDialogOpen(true)} className="gap-1">
+              <Filter className="size-4" />
+              Filters
+              {advancedFilter ? (
+                <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
+                  On
+                </Badge>
+              ) : null}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setExportDialogOpen(true)} className="gap-1">
+              <Download className="size-4" />
+              Export
+            </Button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {selectedOrderIds.size > 0 && (
               <Button
                 variant="outline"
@@ -364,22 +452,40 @@ export default function OrdersList() {
                 Bulk Delete ({selectedOrderIds.size})
               </Button>
             )}
-            <Button variant="outline" onClick={() => setTrackingUploadOpen(true)}>
-              <Upload className="size-4" />
-              Import Tracking
-            </Button>
-            <Button variant="outline" onClick={() => setOrderLinesImportOpen(true)}>
-              <Upload className="size-4" />
-              Import order lines
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  title="Import"
+                  aria-label="Import"
+                >
+                  <Upload className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Import</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setTrackingUploadOpen(true)}>
+                  Import tracking
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setOrderLinesImportOpen(true)}>
+                  Import order lines
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button onClick={() => router.push('/order-management/orders/new')}>
               <Plus />
               Create Order
             </Button>
           </div>
         </CardHeader>
-        <LatestImportStatusPanel jobType="order_tracking_import" title="Latest order tracking import" className="mx-5 mb-2" />
-        <LatestImportStatusPanel jobType="delivery_order_detail_import" title="Latest order lines import" className="mx-5 mb-2" showWhenEmpty />
+        {isError ? (
+          <div className="px-5 pb-2 text-sm text-destructive">
+            {error instanceof Error ? error.message : 'Failed to load orders'}
+          </div>
+        ) : null}
         <CardTable>
           <ScrollArea>
             <DataGridTable />
@@ -390,12 +496,30 @@ export default function OrdersList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
-      <TemplateDownloadDialog
-        open={downloadDialogOpen}
-        onOpenChange={setDownloadDialogOpen}
-        data={exportData}
-        columns={columnOptions}
+      <ListQueryFilterDialog
+        resourceKey="orders"
+        open={filterDialogOpen}
+        onOpenChange={setFilterDialogOpen}
+        initialFilter={advancedFilter}
+        onApply={(f) => {
+          setAdvancedFilter(f);
+          setPagination((p) => ({ ...p, pageIndex: 0 }));
+        }}
+      />
+      <ListQueryExportDialog
+        resourceKey="orders"
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
         filename="orders_export.xlsx"
+        selectedRecordIds={
+          selectedOrderIds.size > 0 ? Array.from(selectedOrderIds) : undefined
+        }
+        getPayload={() => ({
+          filter: advancedFilter ?? undefined,
+          quick_search: searchQuery || undefined,
+          order_status_id: statusFilter === 'all' ? undefined : statusFilter,
+          has_order_lines: linesFilter === 'all' ? undefined : linesFilter,
+        })}
       />
       <TemplateUploadDialog
         open={uploadDialogOpen}

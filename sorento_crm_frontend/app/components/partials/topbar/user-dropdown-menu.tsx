@@ -11,11 +11,11 @@ import {
   Settings,
   Shield,
   User,
-  UserCircle,
   Users,
 } from 'lucide-react';
 import { signOut, useSession } from 'next-auth/react';
 import { useTheme } from 'next-themes';
+import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import { useLanguage } from '@/providers/i18n-provider';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,8 @@ import { Switch } from '@/components/ui/switch';
 
 export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
   const { data: session } = useSession();
+  const { avatarSrc: headerAvatarSrc, displayName, displayEmail } =
+    useAccountProfileForHeader();
   const { changeLanguage, language } = useLanguage();
   const { theme, setTheme } = useTheme();
 
@@ -54,8 +56,9 @@ export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
         <div className="flex items-center justify-between p-3">
           <div className="flex items-center gap-2">
             <img
+              key={headerAvatarSrc}
               className="w-9 h-9 rounded-full border border-border"
-              src={'/media/avatars/300-2.png'}
+              src={headerAvatarSrc}
               alt="User avatar"
             />
             <div className="flex flex-col">
@@ -63,13 +66,17 @@ export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
                 href="/account/home/get-started"
                 className="text-sm text-mono hover:text-primary font-semibold"
               >
-                {session?.user.name || ''}
+                {displayName || session?.user.name || ''}
               </Link>
               <Link
-                href="mailto:c.fisher@gmail.com"
+                href={
+                  displayEmail || session?.user.email
+                    ? `mailto:${displayEmail || session?.user.email}`
+                    : '#'
+                }
                 className="text-xs text-muted-foreground hover:text-primary"
               >
-                {session?.user.email || ''}
+                {displayEmail || session?.user.email || ''}
               </Link>
             </div>
           </div>
@@ -83,20 +90,11 @@ export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
         {/* Menu Items */}
         <DropdownMenuItem asChild>
           <Link
-            href="/public-profile/profiles/default"
-            className="flex items-center gap-2"
-          >
-            <UserCircle />
-            Public Profile
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link
-            href="/account/home/user-profile"
+            href="/user-management/account"
             className="flex items-center gap-2"
           >
             <User />
-            My Profile
+            My profile
           </Link>
         </DropdownMenuItem>
 
@@ -118,11 +116,11 @@ export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
               <Link
-                href="/account/home/user-profile"
+                href="/user-management/account"
                 className="flex items-center gap-2"
               >
                 <FileText />
-                My Profile
+                My profile
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>

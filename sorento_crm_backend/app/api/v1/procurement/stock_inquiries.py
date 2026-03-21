@@ -18,6 +18,7 @@ from app.schemas.procurement import (
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 from app.config import settings as app_settings
+from app.modules.runtime.guards import require_public_view_links_enabled
 
 router = APIRouter()
 
@@ -167,7 +168,11 @@ async def link_attachment_to_stock_inquiry(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{inquiry_id}/view-link", response_model=ViewLinkResponse)
+@router.post(
+    "/{inquiry_id}/view-link",
+    response_model=ViewLinkResponse,
+    dependencies=[Depends(require_public_view_links_enabled())],
+)
 async def get_or_create_stock_inquiry_view_link(
     inquiry_id: str,
     data: Optional[ViewLinkRequest] = Body(None),

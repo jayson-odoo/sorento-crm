@@ -7,9 +7,24 @@ import { getToken } from 'next-auth/jwt';
 import jwt from 'jsonwebtoken';
 
 /**
+ * Base URL for server-side calls from Next.js to FastAPI (not browser-facing).
+ */
+export function getBackendBaseUrl(): string {
+  return (
+    process.env.FASTAPI_INTERNAL_URL?.replace(/\/$/, '') ||
+    process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ||
+    (process.env.NODE_ENV === 'production'
+      ? 'http://backend:8000'
+      : 'http://localhost:8000')
+  );
+}
+
+/**
  * Get JWT token for FastAPI from NextAuth session
  */
-async function getFastAPIToken(request: NextRequest): Promise<string | null> {
+export async function getFastAPITokenForRequest(
+  request: NextRequest,
+): Promise<string | null> {
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret) return null;
 
@@ -59,14 +74,7 @@ export async function proxyToFastAPI(
     requireAuth?: boolean; // If false, allows requests without NextAuth token
   } = {}
 ): Promise<NextResponse> {
-  // Use internal URL for server-side calls (from Next.js to FastAPI)
-  // In production (Docker), use the service name 'backend' from docker-compose
-  // In development, use localhost
-  // FASTAPI_INTERNAL_URL should be set in production to http://backend:8000 (or the internal service URL)
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 
-                 (process.env.NODE_ENV === 'production' 
-                   ? 'http://backend:8000'  // Docker service name
-                   : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000');
+  const apiUrl = getBackendBaseUrl();
   const method = options.method || request.method;
   
   // Build URL with query params
@@ -100,7 +108,7 @@ export async function proxyToFastAPI(
     // Try to get NextAuth token if auth is required and no API key provided
     const requireAuth = options.requireAuth !== false; // Default to true
     if (requireAuth && !apiKey) {
-      const token = await getFastAPIToken(request);
+      const token = await getFastAPITokenForRequest(request);
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }

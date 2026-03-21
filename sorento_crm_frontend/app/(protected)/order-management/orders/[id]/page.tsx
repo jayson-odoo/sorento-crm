@@ -1,6 +1,6 @@
 'use client';
 
-import { use } from 'react';
+import { use, useMemo } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { MoveLeft } from 'lucide-react';
@@ -16,12 +16,17 @@ import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';
 import { Toolbar, ToolbarActions, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
 import OrderDetail from '../components/OrderDetail';
+import { buildOrderDetailSearch, parseOrderListNavFromSearchParams } from '../utils/orderListNavQuery';
 
 export default function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const searchParams = useSearchParams();
-  const listPageIndex = searchParams.get('page') != null ? parseInt(searchParams.get('page')!, 10) : 0;
-  const listPageSize = searchParams.get('pageSize') != null ? parseInt(searchParams.get('pageSize')!, 10) : 50;
+  const listQueryString = searchParams.toString();
+  const listNav = useMemo(
+    () => parseOrderListNavFromSearchParams(new URLSearchParams(listQueryString)),
+    [listQueryString],
+  );
+  const ordersListHref = `/order-management/orders${buildOrderDetailSearch(listNav)}`;
 
   return (
     <>
@@ -40,14 +45,14 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href="/order-management/orders">Orders</BreadcrumbLink>
+                  <BreadcrumbLink href={ordersListHref}>Orders</BreadcrumbLink>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
           </ToolbarHeading>
           <ToolbarActions>
             <Button asChild variant="outline">
-              <Link href="/order-management/orders">
+              <Link href={ordersListHref}>
                 <MoveLeft /> Back to orders
               </Link>
             </Button>
@@ -55,7 +60,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
         </Toolbar>
       </Container>
       <Container>
-        <OrderDetail orderId={id} listPageIndex={listPageIndex} listPageSize={listPageSize} />
+        <OrderDetail orderId={id} listNav={listNav} />
       </Container>
     </>
   );

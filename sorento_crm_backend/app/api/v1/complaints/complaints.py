@@ -19,6 +19,7 @@ from app.schemas.common import ListResponse
 from app.schemas.procurement import ViewLinkRequest, ViewLinkResponse
 from app.services.error_handler import handle_internal_error
 from app.config import settings as app_settings
+from app.modules.runtime.guards import require_public_view_links_enabled
 
 router = APIRouter()
 
@@ -136,7 +137,11 @@ async def get_complaint(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{complaint_id}/view-link", response_model=ViewLinkResponse)
+@router.post(
+    "/{complaint_id}/view-link",
+    response_model=ViewLinkResponse,
+    dependencies=[Depends(require_public_view_links_enabled())],
+)
 async def get_or_create_complaint_view_link(
     complaint_id: str,
     data: Optional[ViewLinkRequest] = Body(None),

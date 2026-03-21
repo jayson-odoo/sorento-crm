@@ -2,7 +2,7 @@
 from datetime import datetime
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func
-from typing import Optional, List, Callable
+from typing import Any, Optional, List, Callable
 from decimal import Decimal
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
 from app.models.procurement import ProductSupplier, Supplier
@@ -34,7 +34,8 @@ class ProductService:
         price_max: Optional[float] = None,
         item_type: Optional[str] = None,
         sort_field: str = "created_at",
-        sort_dir: str = "asc"
+        sort_dir: str = "asc",
+        advanced_filter_clause: Optional[Any] = None,
     ):
         """List products with filtering and pagination."""
         # Build query
@@ -70,7 +71,10 @@ class ProductService:
                     Product.product_name.ilike(f"%{query}%")
                 )
             )
-        
+
+        if advanced_filter_clause is not None:
+            filters.append(advanced_filter_clause)
+
         if filters:
             q = q.filter(and_(*filters))
         

@@ -307,7 +307,7 @@ export default function ContactAccessTypesAdmin() {
                           <TableCell>{row.sort_order ?? '—'}</TableCell>
                           <TableCell>
                             {row.is_active ? (
-                              <Badge variant="default">Active</Badge>
+                              <Badge variant="primary">Active</Badge>
                             ) : (
                               <Badge variant="secondary">Inactive</Badge>
                             )}
@@ -383,7 +383,7 @@ export default function ContactAccessTypesAdmin() {
                           <TableCell>{row.access_type_code}</TableCell>
                           <TableCell>
                             {row.is_active ? (
-                              <Badge variant="default">Active</Badge>
+                              <Badge variant="primary">Active</Badge>
                             ) : (
                               <Badge variant="secondary">Inactive</Badge>
                             )}

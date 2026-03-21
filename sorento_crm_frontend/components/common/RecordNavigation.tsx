@@ -33,6 +33,8 @@ export interface RecordNavigationListProps {
   circular?: boolean;
   /** When provided, display total uses this (e.g. API pagination total) instead of items.length */
   totalCount?: number;
+  /** 0-based index of the first row on this page within the full filtered list (pageIndex × pageSize). */
+  pageItemOffset?: number;
 }
 
 export type RecordNavigationProps = RecordNavigationIdsProps | RecordNavigationListProps;
@@ -53,7 +55,7 @@ export default function RecordNavigation(props: RecordNavigationProps) {
   const router = useRouter();
   const { basePath, ariaLabel = 'record', className, onSelect } = props;
 
-  const { previousId, nextId, currentIndex, totalCount } = useMemo(() => {
+  const { previousId, nextId, currentIndex, totalCount, positionUnknown } = useMemo(() => {
     if (isIdsProps(props)) {
       const total =
         props.totalCount != null && props.currentIndex != null
@@ -66,24 +68,33 @@ export default function RecordNavigation(props: RecordNavigationProps) {
         nextId: props.nextId,
         currentIndex: current,
         totalCount: total,
+        positionUnknown: false,
       };
     }
-    const { currentId, items, circular = true, totalCount: totalOverride } = props;
+    const {
+      currentId,
+      items,
+      circular = true,
+      totalCount: totalOverride,
+      pageItemOffset = 0,
+    } = props;
     const listLength = items.length;
     const displayTotal = totalOverride != null ? totalOverride : listLength;
     const idx = items.findIndex((item) => item.id === currentId);
-    const currentOneBased = idx >= 0 ? idx + 1 : 0;
+    const currentOneBased =
+      idx >= 0 ? pageItemOffset + idx + 1 : null;
+    const positionUnknown = listLength > 0 && idx < 0;
 
     let previousId: string | null;
     let nextId: string | null;
-    if (listLength === 0) {
+    if (listLength === 0 || idx < 0) {
       previousId = null;
       nextId = null;
     } else if (circular) {
       previousId =
         idx <= 0 ? items[listLength - 1].id : items[idx - 1].id;
       nextId =
-        idx < 0 || idx >= listLength - 1 ? items[0].id : items[idx + 1].id;
+        idx >= listLength - 1 ? items[0].id : items[idx + 1].id;
     } else {
       previousId = idx > 0 ? items[idx - 1].id : null;
       nextId =
@@ -95,12 +106,19 @@ export default function RecordNavigation(props: RecordNavigationProps) {
       nextId,
       currentIndex: currentOneBased,
       totalCount: displayTotal,
+      positionUnknown,
     };
   }, [props]);
 
-  const showCounter =
-    totalCount != null && totalCount > 0 && currentIndex != null;
-  const counterLabel = showCounter ? `${currentIndex} / ${totalCount}` : null;
+  const counterLabel =
+    totalCount != null && totalCount > 0
+      ? positionUnknown
+        ? `— / ${totalCount}`
+        : currentIndex != null && currentIndex > 0
+          ? `${currentIndex} / ${totalCount}`
+          : null
+      : null;
+  const showCounter = counterLabel != null;
 
   const handleNavigate = (id: string) => {
     if (onSelect) onSelect(id);
@@ -124,7 +142,11 @@ export default function RecordNavigation(props: RecordNavigationProps) {
       {showCounter && (
         <span
           className="min-w-[3rem] text-center text-sm text-muted-foreground tabular-nums"
-          aria-label={`${currentIndex} of ${totalCount} records`}
+          aria-label={
+            positionUnknown
+              ? `Position unknown within ${totalCount} records on this page`
+              : `${currentIndex} of ${totalCount} records`
+          }
         >
           {counterLabel}
         </span>

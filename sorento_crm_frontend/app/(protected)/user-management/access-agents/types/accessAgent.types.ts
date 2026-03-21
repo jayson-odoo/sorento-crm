@@ -9,25 +9,14 @@ export interface AccessAgent {
   updated_at: Date;
   synced_to_excel: boolean;
   last_synced_to_excel?: Date | null;
-  pic_respond_user_id?: string | null;
-  pic_respond_user_name?: string | null;
 }
 
 export interface AccessAgentFormData {
   code: string;
   name: string;
   description?: string;
-  pic_respond_user_id?: string;
   is_active: boolean;
   assign_to_new_internal_contacts: boolean;
-}
-
-export interface RespondSyncedUser {
-  id: string;
-  name?: string | null;
-  email: string;
-  respond_user_id?: string | null;
-  respond_synced?: string | null;
 }
 
 export interface AccessAgentDetail extends AccessAgent {

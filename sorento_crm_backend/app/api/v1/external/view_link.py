@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.dependencies import get_external_api_user
+from app.modules.runtime.guards import ensure_public_view_links_allowed
 from app.schemas.procurement import ViewLinkResponse
 from app.services.complaints_service import ComplaintService
 from app.services.procurement_service import StockInquiryService, PurchaseRequestService
@@ -67,6 +68,8 @@ def get_view_link(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="entity_id is required.",
         )
+
+    ensure_public_view_links_allowed(db, current_user_id=None)
 
     # Normalize: sponsorship_form uses purchase_request token/path
     token_entity_type = "purchase_request" if entity_type == "sponsorship_form" else entity_type

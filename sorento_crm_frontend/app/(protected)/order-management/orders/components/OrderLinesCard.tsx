@@ -23,7 +23,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Trash2, Plus, Upload } from 'lucide-react';
-import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
 import { useCreateOrderLine, useDeleteOrderLine } from '../hooks/useOrders';
 import { importDeliveryOrderDetail } from '../services/orderService';
 import type { OrderLine } from '../types/order.types';
@@ -99,7 +98,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
       await importDeliveryOrderDetail(importFile);
       queryClient.invalidateQueries({ queryKey: ['order', orderId] });
       queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast.success('Import queued. Check status above.');
+      toast.success('Import queued. Check System → Import jobs for status.');
       setImportDialogOpen(false);
       setImportFile(null);
     } catch (e) {
@@ -129,7 +128,6 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <LatestImportStatusPanel jobType="delivery_order_detail_import" title="Latest order lines import" />
           {lines.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4">No order lines. Import from Excel or add manually.</p>
           ) : (

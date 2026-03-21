@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -11,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, SlidersHorizontal, Download } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -24,18 +24,29 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSuppliers } from '../hooks/useSuppliers';
 import type { Supplier } from '../types/supplier.types';
+import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
+import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
+import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 
 export default function SuppliersList() {
   const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
-  const { data, isLoading } = useSuppliers({
+  useEffect(() => {
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [advancedFilter]);
+
+  const { data, isLoading, isError, error } = useSuppliers({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
+    advancedFilter: advancedFilter ?? undefined,
   });
 
   const handleRowClick = (row: Supplier) => {
@@ -126,31 +137,51 @@ export default function SuppliersList() {
       onRowClick={handleRowClick}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search suppliers..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
-            />
-            {searchQuery && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
-              </Button>
-            )}
+        <CardHeader className="flex-row items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+              <Input
+                placeholder="Search suppliers..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="ps-9 w-64"
+              />
+              {searchQuery && (
+                <Button
+                  mode="icon"
+                  variant="dim"
+                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                  onClick={() => setSearchQuery('')}
+                >
+                  <X />
+                </Button>
+              )}
+            </div>
+            <Button variant="outline" size="sm" className="gap-1" onClick={() => setFilterDialogOpen(true)}>
+              <SlidersHorizontal className="size-4" />
+              Filters
+              {advancedFilter ? (
+                <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
+                  On
+                </Badge>
+              ) : null}
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1" onClick={() => setExportDialogOpen(true)}>
+              <Download className="size-4" />
+              Export
+            </Button>
           </div>
           <Button onClick={() => router.push('/procurement-management/suppliers/new')}>
             <Plus />
             Create Supplier
           </Button>
         </CardHeader>
+        {isError ? (
+          <div className="px-5 pb-2 text-sm text-destructive">
+            {error instanceof Error ? error.message : 'Failed to load suppliers'}
+          </div>
+        ) : null}
         <CardTable>
           <ScrollArea>
             <DataGridTable />
@@ -161,6 +192,23 @@ export default function SuppliersList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+      <ListQueryFilterDialog
+        resourceKey="suppliers"
+        open={filterDialogOpen}
+        onOpenChange={setFilterDialogOpen}
+        initialFilter={advancedFilter}
+        onApply={setAdvancedFilter}
+      />
+      <ListQueryExportDialog
+        resourceKey="suppliers"
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        filename="suppliers_export.xlsx"
+        getPayload={() => ({
+          filter: advancedFilter ?? undefined,
+          quick_search: searchQuery || undefined,
+        })}
+      />
     </DataGrid>
   );
 }

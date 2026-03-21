@@ -1,9 +1,12 @@
 """Users API routes."""
 import logging
+import re
 import secrets
+import uuid
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Body, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
@@ -18,6 +21,7 @@ from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserSelectRes
 from app.services.error_handler import handle_internal_error
 from app.services.notification_email import send_notification_email, _smtp_config_from_settings
 from app.services.user_service import UserService, UserPermissionService
+from app.services.user_avatar_url import resolve_avatar_url_for_client
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +84,7 @@ async def get_users(
                 "respond_synced": user.respond_synced,
                 "superior_id": user.superior_id,
                 "tier": getattr(user, "tier", None),
-                "avatar": user.avatar,
+                "avatar": resolve_avatar_url_for_client(user.avatar),
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
                 "last_sign_in_at": user.last_sign_in_at,
@@ -229,7 +233,8 @@ async def get_current_user_profile(
             "respond_user_id": user.respond_user_id,
             "respond_synced": user.respond_synced,
             "superior_id": user.superior_id,
-            "avatar": user.avatar,
+            "tier": getattr(user, "tier", None),
+            "avatar": resolve_avatar_url_for_client(user.avatar),
             "created_at": user.created_at,
             "updated_at": user.updated_at,
             "last_sign_in_at": user.last_sign_in_at,
@@ -316,7 +321,7 @@ async def get_user(
             "respond_synced": user.respond_synced,
             "superior_id": user.superior_id,
             "tier": getattr(user, "tier", None),
-            "avatar": user.avatar,
+            "avatar": resolve_avatar_url_for_client(user.avatar),
             "created_at": user.created_at,
             "updated_at": user.updated_at,
             "last_sign_in_at": user.last_sign_in_at,
@@ -555,25 +560,140 @@ async def sync_respond_user(
 
 @router.put("/me/profile", response_model=UserResponse)
 async def update_current_user_profile(
-    profile_data: ProfileUpdateRequest,
+    request: Request,
     current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Update current user's profile."""
+    """Update current user's profile (JSON or multipart form from CRM)."""
     try:
         from app.schemas.user import UserUpdate
-        
-        # Create update data - only include fields that are provided
-        update_dict = {}
-        if profile_data.name is not None:
-            update_dict["name"] = profile_data.name
-        if profile_data.avatar is not None:
-            update_dict["avatar"] = profile_data.avatar
-        
+
         service = UserService(db)
+        user_id = current_user["id"]
+        content_type = (request.headers.get("content-type") or "").lower()
+        update_dict: dict = {}
+
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            name_raw = form.get("name")
+            if name_raw is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Name is required",
+                )
+            name_str = name_raw if isinstance(name_raw, str) else str(name_raw)
+            name_str = name_str.strip()
+            if not name_str or len(name_str) > 50:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Name is required and must be at most 50 characters",
+                )
+            update_dict["name"] = name_str
+
+            raw_action = form.get("avatarAction")
+            if isinstance(raw_action, str):
+                avatar_action = raw_action.strip()
+            elif raw_action is not None:
+                avatar_action = str(raw_action).strip()
+            else:
+                avatar_action = ""
+
+            avatar_upload = form.get("avatarFile")
+
+            if avatar_action == "remove":
+                update_dict["avatar"] = None
+            elif avatar_action == "save":
+                filename = getattr(avatar_upload, "filename", None) if avatar_upload is not None else None
+                if not avatar_upload or not filename:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Avatar file is required when saving a new picture",
+                    )
+                content = await avatar_upload.read()
+                if len(content) > 1024 * 1024:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Avatar must be 1MB or smaller",
+                    )
+                ctype = getattr(avatar_upload, "content_type", None) or "application/octet-stream"
+                if ctype not in ("image/jpeg", "image/png", "image/gif"):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Only JPG, PNG or GIF images are allowed",
+                    )
+                orig = Path(filename).name or "avatar.jpg"
+                stem = re.sub(r"[^a-zA-Z0-9._-]", "_", Path(orig).stem)[:80] or "avatar"
+                ext = (Path(orig).suffix[:10] or ".jpg").lower()
+                if ext not in (".jpg", ".jpeg", ".png", ".gif"):
+                    ext = ".jpg"
+                s3_path = f"avatars/{uuid.uuid4().hex}_{stem}{ext}"
+
+                try:
+                    from app.services.s3_service import S3Service
+
+                    s3 = S3Service()
+                    s3_key, _ = s3.upload_file(
+                        content, s3_path, content_type=ctype
+                    )
+                    update_dict["avatar"] = s3.get_cloudfront_base_url(s3_key)
+                except ValueError as cfg_err:
+                    logger.error("Avatar upload configuration error: %s", cfg_err)
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="File storage is not configured. Contact an administrator.",
+                    )
+                except Exception as upload_err:
+                    logger.exception("Avatar upload failed: %s", upload_err)
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to upload avatar. Please try again.",
+                    )
+        else:
+            try:
+                body = await request.json()
+            except Exception:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid JSON body",
+                )
+            profile_data = ProfileUpdateRequest(**body)
+            if profile_data.name is not None:
+                update_dict["name"] = profile_data.name
+            if profile_data.avatar is not None:
+                update_dict["avatar"] = profile_data.avatar
+
+        if not update_dict:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No profile fields to update",
+            )
+
         update_data = UserUpdate(**update_dict)
-        user = service.update_user(current_user["id"], update_data)
-        return user
+        user = service.update_user(user_id, update_data)
+
+        roles = service.list_user_roles(user_id)
+        user_dict = {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "status": user.status,
+            "country": user.country,
+            "timezone": user.timezone,
+            "respond_user_id": user.respond_user_id,
+            "respond_synced": user.respond_synced,
+            "superior_id": user.superior_id,
+            "tier": getattr(user, "tier", None),
+            "avatar": resolve_avatar_url_for_client(user.avatar),
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+            "last_sign_in_at": user.last_sign_in_at,
+            "email_verified_at": user.email_verified_at,
+            "is_trashed": user.is_trashed,
+            "is_protected": user.is_protected,
+            "roles": [{"id": r.id, "name": r.name} for r in roles],
+            "superior_name": user.superior.name if user.superior else None,
+        }
+        return UserResponse(**user_dict)
     except HTTPException:
         raise
     except Exception as e:

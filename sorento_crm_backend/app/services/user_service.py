@@ -761,8 +761,7 @@ class AccessAgentService:
         self.db = db
     
     def list_agents(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
-        """List access agents with PIC user name resolved."""
-        from app.models.user import User
+        """List access agents."""
         q = self.db.query(AccessAgent)
         
         if query:
@@ -777,16 +776,8 @@ class AccessAgentService:
         offset = (page - 1) * limit
         agents = q.offset(offset).limit(limit).all()
         
-        # Enrich each agent with pic_respond_user_name
         data = []
         for agent in agents:
-            pic_respond_user_name = None
-            if agent.pic_respond_user_id:
-                user = self.db.query(User).filter(
-                    User.respond_user_id == agent.pic_respond_user_id
-                ).first()
-                if user:
-                    pic_respond_user_name = user.name or user.email
             data.append({
                 "id": str(agent.id),
                 "code": agent.code,
@@ -798,8 +789,6 @@ class AccessAgentService:
                 "updated_at": agent.updated_at,
                 "synced_to_excel": agent.synced_to_excel,
                 "last_synced_to_excel": agent.last_synced_to_excel,
-                "pic_respond_user_id": agent.pic_respond_user_id,
-                "pic_respond_user_name": pic_respond_user_name,
             })
         
         return {
@@ -810,37 +799,22 @@ class AccessAgentService:
     
     def get_agent(self, agent_id: str):
         """Get an access agent by ID."""
-        from app.models.user import User
         agent = self.db.query(AccessAgent).filter(AccessAgent.id == agent_id).first()
         if not agent:
             raise handle_not_found("Access Agent", agent_id)
-        
-        # Get PIC respond user name if pic_respond_user_id exists
-        pic_respond_user_name = None
-        if agent.pic_respond_user_id:
-            user = self.db.query(User).filter(
-                User.respond_user_id == agent.pic_respond_user_id
-            ).first()
-            if user:
-                pic_respond_user_name = user.name or user.email
-        
-        # Add the user name as a dynamic attribute for the response
-        # We'll use model_validate with a dict to include the extra field
-        agent_dict = {
-            'id': str(agent.id),
-            'code': agent.code,
-            'name': agent.name,
-            'description': agent.description,
-            'is_active': agent.is_active,
-            'assign_to_new_internal_contacts': agent.assign_to_new_internal_contacts,
-            'created_at': agent.created_at,
-            'updated_at': agent.updated_at,
-            'synced_to_excel': agent.synced_to_excel,
-            'last_synced_to_excel': agent.last_synced_to_excel,
-            'pic_respond_user_id': agent.pic_respond_user_id,
-            'pic_respond_user_name': pic_respond_user_name,
+
+        return {
+            "id": str(agent.id),
+            "code": agent.code,
+            "name": agent.name,
+            "description": agent.description,
+            "is_active": agent.is_active,
+            "assign_to_new_internal_contacts": agent.assign_to_new_internal_contacts,
+            "created_at": agent.created_at,
+            "updated_at": agent.updated_at,
+            "synced_to_excel": agent.synced_to_excel,
+            "last_synced_to_excel": agent.last_synced_to_excel,
         }
-        return agent_dict
     
     def create_agent(self, agent_data: AccessAgentCreate):
         """Create a new access agent."""
@@ -867,6 +841,14 @@ class AccessAgentService:
         self.db.commit()
         self.db.refresh(agent)
         return agent
+
+    def delete_agent(self, agent_id: str) -> None:
+        """Delete an access agent. Related rows cascade (contact access, agent_teams, cursors, user_agent_access)."""
+        agent = self.db.query(AccessAgent).filter(AccessAgent.id == agent_id).first()
+        if not agent:
+            raise handle_not_found("Access Agent", agent_id)
+        self.db.delete(agent)
+        self.db.commit()
 
     def list_agents_assign_to_new_internal_contacts(self):
         """Return access agents that should be assigned to newly created internal contacts (from sync)."""

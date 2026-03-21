@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from app.database import get_db
 from app.services.complaints_service import ComplaintService
 from app.services.error_handler import handle_internal_error
+from app.modules.runtime.guards import ensure_public_view_links_allowed
 
 router = APIRouter()
 
@@ -15,6 +16,7 @@ async def get_view_complaint(
 ):
     """Return read-only complaint summary for the given view token. No auth required."""
     try:
+        ensure_public_view_links_allowed(db, current_user_id=None)
         service = ComplaintService(db)
         summary = service.get_complaint_summary_by_token(token)
         return summary

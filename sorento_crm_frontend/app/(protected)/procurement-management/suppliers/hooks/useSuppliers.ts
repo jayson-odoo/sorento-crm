@@ -2,12 +2,48 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getSuppliers, getSupplier, createSupplier, updateSupplier, deleteSupplier } from '../services/supplierService';
-import type { SupplierFormData } from '../types/supplier.types';
+import type { Supplier, SupplierFormData } from '../types/supplier.types';
+import { postListQuerySearch } from '@/lib/list-query/listQueryService';
+import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 
-export function useSuppliers(params: DataGridApiFetchParams & { country?: string; city?: string; payment_terms_days?: number; status?: string }) {
+export function useSuppliers(
+  params: DataGridApiFetchParams & {
+    country?: string;
+    city?: string;
+    payment_terms_days?: number;
+    status?: string;
+    advancedFilter?: ListQueryFilterGroup | null;
+  },
+) {
   return useQuery({
-    queryKey: ['suppliers', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.country, params.city, params.payment_terms_days, params.status],
-    queryFn: () => getSuppliers(params),
+    queryKey: [
+      'suppliers',
+      params.pageIndex,
+      params.pageSize,
+      params.sorting,
+      params.searchQuery,
+      params.country,
+      params.city,
+      params.payment_terms_days,
+      params.status,
+      params.advancedFilter,
+    ],
+    queryFn: async () => {
+      if (params.advancedFilter) {
+        const sortField = params.sorting?.[0]?.id || '';
+        const sortDirection = params.sorting?.[0]?.desc ? 'desc' : 'asc';
+        return postListQuerySearch<Supplier>({
+          resource: 'suppliers',
+          filter: params.advancedFilter,
+          page: params.pageIndex + 1,
+          limit: params.pageSize,
+          sort: sortField || 'created_at',
+          dir: sortDirection,
+          quick_search: params.searchQuery || undefined,
+        });
+      }
+      return getSuppliers(params);
+    },
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,

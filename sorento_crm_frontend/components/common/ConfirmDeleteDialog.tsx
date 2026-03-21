@@ -57,10 +57,11 @@ export function ConfirmDeleteDialog({
         ),
         { position: 'top-center', duration: 5000 },
       );
+      // Let callers navigate/unmount before invalidating (avoids refetching deleted entity detail).
+      onSuccess?.();
       queryKeysToInvalidate.forEach((key) => {
         queryClient.invalidateQueries({ queryKey: key });
       });
-      onSuccess?.();
       onOpenChange(false);
     },
     onError: (error: Error) => {

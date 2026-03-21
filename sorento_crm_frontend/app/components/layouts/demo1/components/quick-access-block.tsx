@@ -15,6 +15,8 @@ import {
 import { Sortable, SortableItem, SortableItemHandle } from '@/components/ui/sortable';
 import { cn } from '@/lib/utils';
 import { flattenMenuItems, getTitleForPath } from '@/lib/menu-utils';
+import { moduleKeyForPath } from '@/lib/route-module-map';
+import { useTenantModules } from '@/hooks/useTenantModules';
 import { MENU_SIDEBAR } from '@/config/menu.config';
 import {
   useQuickAccess,
@@ -30,16 +32,24 @@ const QUICK_ACCESS_VALUE = 'quick-access';
 export function QuickAccessBlock() {
   const canUseQuickAccess = useHasAnyPermission(['menu.quick_access.pin', 'menu.quick_access.unpin']);
   const { data: items = [], isLoading } = useQuickAccess();
+  const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
   const addMutation = useAddQuickAccess();
   const removeMutation = useRemoveQuickAccess();
   const reorderMutation = useReorderQuickAccess();
 
   const flattened = useMemo(() => flattenMenuItems(MENU_SIDEBAR), []);
   const pinnedPaths = useMemo(() => new Set(items.map((i) => i.path)), [items]);
-  const pinnableMenuItems = useMemo(
-    () => flattened.filter((m) => !pinnedPaths.has(m.path)),
-    [flattened, pinnedPaths]
-  );
+  const pinnableMenuItems = useMemo(() => {
+    let list = flattened.filter((m) => !pinnedPaths.has(m.path));
+    if (!modulesLoading && enabledModuleKeys) {
+      list = list.filter((m) => {
+        const mk = moduleKeyForPath(m.path);
+        if (!mk) return true;
+        return enabledModuleKeys.has(mk);
+      });
+    }
+    return list;
+  }, [flattened, pinnedPaths, enabledModuleKeys, modulesLoading]);
 
   const [addShortcutSearch, setAddShortcutSearch] = useState('');
   const filteredPinnableItems = useMemo(() => {

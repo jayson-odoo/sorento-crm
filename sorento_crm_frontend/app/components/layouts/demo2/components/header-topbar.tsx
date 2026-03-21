@@ -5,8 +5,8 @@ import { SearchDialog } from '@/partials/dialogs/search/search-dialog';
 import { ChatSheet } from '@/partials/topbar/chat-sheet';
 import { NotificationsSheet } from '@/partials/topbar/notifications-sheet';
 import { UserDropdownMenu } from '@/partials/topbar/user-dropdown-menu';
+import { SessionUserAvatar } from '@/partials/topbar/session-user-avatar';
 import { MessageCircleMore, MessageSquareDot, Search } from 'lucide-react';
-import { toAbsoluteUrl } from '@/lib/helpers';
 import { Button } from '@/components/ui/button';
 import { StoreClientTopbar } from '@/app/(protected)/store-client/components/common/topbar';
 
@@ -60,11 +60,7 @@ export function HeaderTopbar() {
           </div>
           <UserDropdownMenu
             trigger={
-              <img
-                className="cursor-pointer size-9 rounded-full justify-center border border-gray-500 shrink-0"
-                src={toAbsoluteUrl('/media/avatars/gray/5.png')}
-                alt=""
-              />
+              <SessionUserAvatar className="cursor-pointer size-9 rounded-full justify-center border border-gray-500 shrink-0" />
             }
           />
         </div>

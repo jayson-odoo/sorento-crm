@@ -14,6 +14,8 @@ export interface UniversalSearchResult {
 
 export interface UniversalSearchContext {
   permissionSet: Set<string>;
+  /** When set, menu items with moduleKey outside this set are excluded. null = skip module filter. */
+  enabledModuleKeys?: Set<string> | null;
 }
 
 export interface UniversalSearchProvider {
@@ -30,7 +32,14 @@ function normalize(value: string): string {
 }
 
 /** User can see this menu item only if it has no permission or their permissionSet includes it. */
-function isAllowed(item: MenuItem, permissionSet: Set<string>): boolean {
+function isAllowed(
+  item: MenuItem,
+  permissionSet: Set<string>,
+  enabledModuleKeys: Set<string> | null | undefined,
+): boolean {
+  if (enabledModuleKeys && item.moduleKey && !enabledModuleKeys.has(item.moduleKey)) {
+    return false;
+  }
   if (!item.permission) return true;
   return permissionSet.has(item.permission);
 }
@@ -38,12 +47,13 @@ function isAllowed(item: MenuItem, permissionSet: Set<string>): boolean {
 function collectMenuItems(
   items: MenuConfig,
   permissionSet: Set<string>,
+  enabledModuleKeys: Set<string> | null | undefined,
   parents: string[] = [],
 ): UniversalSearchResult[] {
   const results: UniversalSearchResult[] = [];
 
   for (const item of items) {
-    if (item.heading || item.disabled || !isAllowed(item, permissionSet)) {
+    if (item.heading || item.disabled || !isAllowed(item, permissionSet, enabledModuleKeys)) {
       continue;
     }
 
@@ -63,7 +73,7 @@ function collectMenuItems(
     }
 
     if (item.children?.length) {
-      results.push(...collectMenuItems(item.children, permissionSet, nextParents));
+      results.push(...collectMenuItems(item.children, permissionSet, enabledModuleKeys, nextParents));
     }
   }
 
@@ -88,7 +98,11 @@ export function createMenuSearchProvider(menu: MenuConfig): UniversalSearchProvi
     id: 'menu',
     label: 'Menus',
     search: (query, context) => {
-      const records = collectMenuItems(menu, context.permissionSet);
+      const records = collectMenuItems(
+        menu,
+        context.permissionSet,
+        context.enabledModuleKeys,
+      );
       return searchFromKeywords(query, records);
     },
   };

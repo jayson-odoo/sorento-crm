@@ -250,7 +250,6 @@ export default function SLATrackingDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-amber-600">{metrics.overdue_at_response_count ?? 0}</div>
-            <p className="text-xs text-muted-foreground mt-1">Past due_at, not yet responded</p>
           </CardContent>
         </Card>
 
@@ -260,7 +259,6 @@ export default function SLATrackingDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-orange-600">{metrics.overdue_at_resolution_count ?? 0}</div>
-            <p className="text-xs text-muted-foreground mt-1">Past due_at_resolution, not yet resolved</p>
           </CardContent>
         </Card>
 

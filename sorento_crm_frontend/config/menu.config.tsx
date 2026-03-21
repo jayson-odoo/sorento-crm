@@ -67,7 +67,6 @@ export const MENU_SIDEBAR: MenuConfig = [
     icon: LayoutGrid,
     children: [
       { title: 'Light Sidebar', path: '/' },
-      { title: 'Dark Sidebar', path: '/dark-sidebar' },
     ],
   },
   { heading: 'User' },
@@ -132,7 +131,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   //       title: 'Account',
   //       children: [
   //         { title: 'Get Started', path: '/account/home/get-started' },
-  //         { title: 'User Profile', path: '/account/home/user-profile' },
+  //         { title: 'User Profile', path: '/user-management/account' },
   //         { title: 'Company Profile', path: '/account/home/company-profile' },
   //         {
   //           title: 'Settings - With Sidebar',
@@ -291,6 +290,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'User Management',
     icon: ShieldUser,
+    moduleKey: 'base',
     children: [
       {
         title: 'Administrative Users',
@@ -345,6 +345,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Order Management',
     icon: ShoppingCart,
+    moduleKey: 'order',
     children: [
       {
         title: 'Orders',
@@ -366,6 +367,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Complaint Management',
     icon: AlertCircle,
+    moduleKey: 'complaints',
     children: [
       {
         title: 'Complaints',
@@ -376,6 +378,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'SLA Management',
     icon: Clock,
+    moduleKey: 'sla',
     children: [
       {
         title: 'SLA Policies',
@@ -394,6 +397,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Product Management',
     icon: Package,
+    moduleKey: 'product',
     children: [
     {
       title: 'Products',
@@ -430,6 +434,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Procurement',
     icon: ShoppingBag,
+    moduleKey: 'procurement',
     children: [
       {
         title: 'Suppliers',
@@ -481,6 +486,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Inventory Management',
     icon: Warehouse,
+    moduleKey: 'inventory',
     children: [
       {
         title: 'Warehouses',
@@ -512,6 +518,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Marketing Management',
     icon: Megaphone,
+    moduleKey: 'marketing',
     children: [
       {
         title: 'Promotions',
@@ -539,6 +546,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Forms Management',
     icon: FileText,
+    moduleKey: 'forms',
     children: [
       {
         title: 'Forms',
@@ -553,6 +561,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Resource Management',
     icon: Folder,
+    moduleKey: 'resources',
     children: [
       {
         title: 'Files',
@@ -571,6 +580,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Integration Management',
     icon: Plug,
+    moduleKey: 'base',
     children: [
       {
         title: 'Integration Logs',
@@ -581,7 +591,18 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'System Management',
     icon: Settings,
+    moduleKey: 'base',
     children: [
+      {
+        title: 'App Store',
+        path: '/system-management/app-store',
+        permission: 'system.modules.manage',
+      },
+      {
+        title: 'Module bundles',
+        path: '/system-management/app-store/bundles',
+        permission: 'system.modules.manage',
+      },
       {
         title: 'Import Jobs',
         path: '/system-management/import-jobs',
@@ -810,7 +831,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Account',
         children: [
           { title: 'Get Started', path: '/account/home/get-started' },
-          { title: 'User Profile', path: '/account/home/user-profile' },
+          { title: 'User Profile', path: '/user-management/account' },
           { title: 'Company Profile', path: '/account/home/company-profile' },
           {
             title: 'Settings - With Sidebar',
@@ -980,6 +1001,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
   {
     title: 'User Management',
     icon: ShieldUser,
+    moduleKey: 'base',
     children: [
       {
         title: 'Administrative Users',
@@ -1026,6 +1048,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
   {
     title: 'Order Management',
     icon: ShoppingCart,
+    moduleKey: 'order',
     children: [
       {
         title: 'Orders',
@@ -1044,6 +1067,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
   {
     title: 'Complaint Management',
     icon: AlertCircle,
+    moduleKey: 'complaints',
     children: [
       {
         title: 'Complaints',
@@ -1054,6 +1078,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
   {
     title: 'SLA Management',
     icon: Clock,
+    moduleKey: 'sla',
     children: [
       {
         title: 'SLA Policies',
@@ -1072,6 +1097,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
   {
     title: 'Product Management',
     icon: Package,
+    moduleKey: 'product',
     children: [
     {
       title: 'Products',
@@ -1108,6 +1134,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
   {
     title: 'Procurement',
     icon: ShoppingBag,
+    moduleKey: 'procurement',
     children: [
       {
         title: 'Suppliers',
@@ -1159,6 +1186,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
   {
     title: 'Inventory Management',
     icon: Warehouse,
+    moduleKey: 'inventory',
     children: [
       {
         title: 'Warehouses',
@@ -1190,6 +1218,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
   {
     title: 'Marketing Management',
     icon: Megaphone,
+    moduleKey: 'marketing',
     children: [
       {
         title: 'Promotions',
@@ -1217,6 +1246,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
   {
     title: 'Forms Management',
     icon: FileText,
+    moduleKey: 'forms',
     children: [
       {
         title: 'Forms',
@@ -1231,6 +1261,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
   {
     title: 'Resource Management',
     icon: Folder,
+    moduleKey: 'resources',
     children: [
       {
         title: 'Files',
@@ -1249,6 +1280,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
   {
     title: 'Integration Management',
     icon: Plug,
+    moduleKey: 'base',
     children: [
       {
         title: 'Integration Logs',
@@ -1457,7 +1489,7 @@ export const MENU_MEGA: MenuConfig = [
             title: 'Account Home',
             children: [
               { title: 'Get Started', path: '/account/home/get-started' },
-              { title: 'User Profile', path: '/account/home/user-profile' },
+              { title: 'User Profile', path: '/user-management/account' },
               {
                 title: 'Company Profile',
                 path: '/account/home/company-profile',
@@ -1814,7 +1846,7 @@ export const MENU_MEGA_MOBILE: MenuConfig = [
             title: 'Account Home',
             children: [
               { title: 'Get Started', path: '/account/home/get-started' },
-              { title: 'User Profile', path: '/account/home/user-profile' },
+              { title: 'User Profile', path: '/user-management/account' },
               {
                 title: 'Company Profile',
                 path: '/account/home/company-profile',

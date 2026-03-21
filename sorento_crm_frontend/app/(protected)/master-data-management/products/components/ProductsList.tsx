@@ -13,7 +13,20 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, X, Edit, Trash2, Copy, Upload, Download, Filter, Settings } from 'lucide-react';
+import {
+  ChevronRight,
+  Plus,
+  Search,
+  X,
+  Edit,
+  Trash2,
+  Copy,
+  Upload,
+  Download,
+  Filter,
+  Settings,
+  SlidersHorizontal,
+} from 'lucide-react';
 import { formatDate, formatDateTime } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -57,6 +70,10 @@ import ProductDeleteDialog from './product-delete-dialog';
 import ProductBulkDeleteDialog from './ProductBulkDeleteDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
+import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
+import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
+import { postListQuerySearch } from '@/lib/list-query/listQueryService';
+import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { generateExcelFile } from '@/lib/excel-utils';
@@ -142,6 +159,9 @@ const ProductsList = () => {
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
+  const [advancedFilterDialogOpen, setAdvancedFilterDialogOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   const selectedRowIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
 
@@ -185,7 +205,7 @@ const ProductsList = () => {
   };
 
   // Products query
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: [
       'products',
       pagination,
@@ -194,9 +214,28 @@ const ProductsList = () => {
       selectedCategory,
       selectedBrand,
       selectedStatus,
+      advancedFilter,
     ],
-    queryFn: () =>
-      fetchProducts({
+    queryFn: async () => {
+      if (advancedFilter) {
+        const sortField = sorting?.[0]?.id || '';
+        const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
+        return postListQuerySearch<ProductListItem>({
+          resource: 'products',
+          filter: advancedFilter,
+          page: pagination.pageIndex + 1,
+          limit: pagination.pageSize,
+          sort: sortField || 'created_at',
+          dir: sortDirection,
+          quick_search: searchQuery || undefined,
+          category_id:
+            selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
+          brand_id: selectedBrand && selectedBrand !== 'all' ? selectedBrand : undefined,
+          product_status:
+            selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
+        });
+      }
+      return fetchProducts({
         pageIndex: pagination.pageIndex,
         pageSize: pagination.pageSize,
         sorting,
@@ -204,7 +243,8 @@ const ProductsList = () => {
         selectedCategory,
         selectedBrand,
         selectedStatus,
-      }),
+      });
+    },
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
     refetchOnWindowFocus: false,
@@ -235,8 +275,13 @@ const ProductsList = () => {
     setSelectedCategory(null);
     setSelectedBrand(null);
     setSelectedStatus('all');
+    setAdvancedFilter(null);
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   };
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [advancedFilter]);
 
   const buildProductDetailUrl = (productId: string) => {
     const params = new URLSearchParams();
@@ -672,6 +717,28 @@ const ProductsList = () => {
             </div>
           </PopoverContent>
         </Popover>
+        <Button
+          variant="outline"
+          size="icon"
+          disabled={isLoading}
+          title="Advanced filters"
+          className="relative"
+          onClick={() => setAdvancedFilterDialogOpen(true)}
+        >
+          <SlidersHorizontal className="size-4" />
+          {advancedFilter ? (
+            <span className="absolute -top-1 -end-1 size-2.5 rounded-full bg-primary" />
+          ) : null}
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          disabled={isLoading}
+          title="Export"
+          onClick={() => setExportDialogOpen(true)}
+        >
+          <Download className="size-4" />
+        </Button>
         <div className="flex items-center gap-2 ml-auto">
           {selectedRowIds.length > 0 && (
             <Button
@@ -743,6 +810,11 @@ const ProductsList = () => {
     >
       <Card>
         <DataGridToolbar />
+        {isError ? (
+          <div className="px-5 pb-2 text-sm text-destructive">
+            {error instanceof Error ? error.message : 'Failed to load products'}
+          </div>
+        ) : null}
         <LatestImportStatusPanel jobType="product_import" title="Latest products import" className="mx-5 mb-2" />
         <CardTable>
           <ScrollArea>
@@ -783,6 +855,27 @@ const ProductsList = () => {
           queryClient.invalidateQueries({ queryKey: ['products'] });
         }}
         accept=".xlsx,.xls"
+      />
+      <ListQueryFilterDialog
+        resourceKey="products"
+        open={advancedFilterDialogOpen}
+        onOpenChange={setAdvancedFilterDialogOpen}
+        initialFilter={advancedFilter}
+        onApply={setAdvancedFilter}
+      />
+      <ListQueryExportDialog
+        resourceKey="products"
+        open={exportDialogOpen}
+        onOpenChange={setExportDialogOpen}
+        filename="products_export.xlsx"
+        selectedRecordIds={selectedRowIds.length > 0 ? selectedRowIds : undefined}
+        getPayload={() => ({
+          filter: advancedFilter ?? undefined,
+          quick_search: searchQuery || undefined,
+          category_id: selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
+          brand_id: selectedBrand && selectedBrand !== 'all' ? selectedBrand : undefined,
+          product_status: selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
+        })}
       />
       <ProductBulkDeleteDialog
         open={bulkDeleteDialogOpen}

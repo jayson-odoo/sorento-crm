@@ -2,11 +2,11 @@
 import logging
 import uuid
 import time
-from typing import Optional
+from typing import Any, Optional
 from io import BytesIO
 
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, and_, func, exists
 from decimal import Decimal
 from app.models.order import Order, OrderStatus, Customer, OrderLine
 from app.models.product import Product
@@ -36,8 +36,10 @@ class OrderService:
         query: Optional[str] = None,
         customer_id: Optional[str] = None,
         order_status_id: Optional[str] = None,
+        has_order_lines: Optional[str] = None,
         sort_field: str = "created_at",
-        sort_dir: str = "asc"
+        sort_dir: str = "asc",
+        advanced_filter_clause: Optional[Any] = None,
     ):
         """List orders with filtering and pagination."""
         q = self.db.query(Order).filter(Order.deleted_at.is_(None))
@@ -49,6 +51,12 @@ class OrderService:
         
         if order_status_id and order_status_id != "all":
             filters.append(Order.order_status_id == order_status_id)
+
+        hol = (has_order_lines or "").strip().lower()
+        if hol == "yes":
+            filters.append(exists().where(OrderLine.order_id == Order.id))
+        elif hol == "no":
+            filters.append(~exists().where(OrderLine.order_id == Order.id))
         
         if query:
             filters.append(
@@ -58,7 +66,10 @@ class OrderService:
                     Order.customer.has(Customer.customer_code.ilike(f"%{query}%"))
                 )
             )
-        
+
+        if advanced_filter_clause is not None:
+            filters.append(advanced_filter_clause)
+
         if filters:
             q = q.filter(and_(*filters))
         
@@ -322,7 +333,8 @@ class OrderService:
             'order_date': 'order_date',
             'Order Date': 'order_date',
             'promised_delivery_date': 'promised_delivery_date',
-            'Promised Delivery Date': 'promised_delivery_date',
+            'Estimated Delivery Date': 'promised_delivery_date',
+            'Promised Delivery Date': 'promised_delivery_date',  # legacy Excel headers
             'actual_delivery_date': 'actual_delivery_date',
             'Actual Delivery Date': 'actual_delivery_date',
             'customer_id': 'customer_id',
