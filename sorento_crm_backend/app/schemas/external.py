@@ -243,8 +243,6 @@ class PromotionGroupItem(BaseModel):
             "Omitted on a line uses this value; line-level dealer_discount overrides."
         ),
     )
-    purchase_quantity_for_foc: Optional[int] = None
-    foc_quantity: Optional[int] = None
     foc_tiers: Optional[List[PromotionGroupFocTierItem]] = None
     foc_rules: Optional[List[PromotionGroupFocRuleItem]] = None
     promotion_products: List[PromotionGroupProductItem]

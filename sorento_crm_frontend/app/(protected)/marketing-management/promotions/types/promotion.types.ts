@@ -63,9 +63,6 @@ export interface PromotionGroup {
   sort_order: number;
   /** Multiple tiers, e.g. buy 10 get 1 and buy 25 get 5. */
   foc_tiers?: FocTier[] | null;
-  /** Legacy: mirrors first tier when present. */
-  purchase_quantity_for_foc?: number | null;
-  foc_quantity?: number | null;
   promotion_products?: PromotionProduct[];
 }
 

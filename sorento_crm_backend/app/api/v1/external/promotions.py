@@ -40,32 +40,23 @@ def _date_to_datetime(value: str | date) -> datetime:
     return datetime.combine(parsed, datetime.min.time())
 
 
-def _foc_tiers_from_external_group(
-    grp: PromotionGroupItem,
-) -> tuple[Optional[list], Optional[int], Optional[int]]:
+def _foc_tiers_from_external_group(grp: PromotionGroupItem) -> Optional[list]:
     """
-    Build promotion_groups.foc_tiers JSON and legacy first-tier columns.
+    Build promotion_groups.foc_tiers JSON.
 
-    Priority: foc_rules (integration payload) → foc_tiers (CRM) → single legacy pair.
+    Priority: foc_rules (integration payload) → foc_tiers (CRM-style keys).
     """
     if grp.foc_rules:
-        foc_tiers_json = [
+        return [
             {"purchase_quantity": int(r.purchase_quantity_for_foc), "foc_quantity": int(r.foc_quantity)}
             for r in grp.foc_rules
         ]
-        return foc_tiers_json, foc_tiers_json[0]["purchase_quantity"], foc_tiers_json[0]["foc_quantity"]
     if grp.foc_tiers:
-        foc_tiers_json = [
+        return [
             {"purchase_quantity": int(t.purchase_quantity), "foc_quantity": int(t.foc_quantity)}
             for t in grp.foc_tiers
         ]
-        return foc_tiers_json, foc_tiers_json[0]["purchase_quantity"], foc_tiers_json[0]["foc_quantity"]
-    if grp.purchase_quantity_for_foc is not None and grp.foc_quantity is not None:
-        pq = int(grp.purchase_quantity_for_foc)
-        fq = int(grp.foc_quantity)
-        foc_tiers_json = [{"purchase_quantity": pq, "foc_quantity": fq}]
-        return foc_tiers_json, pq, fq
-    return None, None, None
+    return None
 
 
 def _promotion_product_values(product, selling_price, discount_amount, discount_percent, dealer_discount):
@@ -106,10 +97,9 @@ def create_promotion(
     Optional `dealer_discount` per line (0.37 = 37% off list) stores dealer_cost and list-to-dealer margin.
     Per group you may set `dealer_discount` as default for all lines; line `dealer_discount` overrides.
 
-    FOC tiers per group (one of):
+    FOC tiers per group (optional; one of):
     - `foc_rules`: `[{ "purchase_quantity_for_foc", "foc_quantity" }, ...]` (integration shape), or
-    - `foc_tiers`: `[{ "purchase_quantity", "foc_quantity" }, ...]`, or
-    - legacy single pair `purchase_quantity_for_foc` + `foc_quantity`.
+    - `foc_tiers`: `[{ "purchase_quantity", "foc_quantity" }, ...]`.
 
     Notifications (in-app + email): same as before for attachments + notify_user_id.
     """
@@ -184,15 +174,13 @@ def create_promotion(
 
     if payload.promotion_groups:
         for gi, grp in enumerate(payload.promotion_groups):
-            foc_tiers_json, pq_legacy, fq_legacy = _foc_tiers_from_external_group(grp)
+            foc_tiers_json = _foc_tiers_from_external_group(grp)
             group_dealer_discount = grp.dealer_discount
             pg = PromotionGroup(
                 promotion_id=promotion.id,
                 group_name=(grp.group_name or "").strip() or f"Group {gi + 1}",
                 sort_order=gi,
                 foc_tiers=foc_tiers_json,
-                purchase_quantity_for_foc=pq_legacy,
-                foc_quantity=fq_legacy,
             )
             db.add(pg)
             db.flush()
@@ -235,8 +223,6 @@ def create_promotion(
             promotion_id=promotion.id,
             group_name="Default",
             sort_order=0,
-            purchase_quantity_for_foc=None,
-            foc_quantity=None,
             foc_tiers=None,
         )
         db.add(default_group)

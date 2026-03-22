@@ -70,8 +70,6 @@ class PromotionGroup(Base):
     promotion_id = Column(UUID(as_uuid=False), ForeignKey("promotions.id", ondelete="CASCADE"), nullable=False)
     group_name = Column(String(255), nullable=False)
     sort_order = Column(Integer, default=0, nullable=False)
-    purchase_quantity_for_foc = Column(Integer, nullable=True)
-    foc_quantity = Column(Integer, nullable=True)
     foc_tiers = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)

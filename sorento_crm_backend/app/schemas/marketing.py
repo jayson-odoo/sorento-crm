@@ -48,8 +48,6 @@ class PromotionGroupResponse(BaseModel):
     promotion_id: str
     group_name: str
     sort_order: int = 0
-    purchase_quantity_for_foc: Optional[int] = None
-    foc_quantity: Optional[int] = None
     foc_tiers: Optional[list[FocTier]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -73,8 +71,7 @@ class PromotionGroupCreate(BaseModel):
 
     group_name: str
     sort_order: Optional[int] = None
-    purchase_quantity_for_foc: Optional[int] = None
-    foc_quantity: Optional[int] = None
+    foc_tiers: Optional[list[FocTier]] = None
 
     @field_validator("group_name", mode="before")
     @classmethod
@@ -85,13 +82,11 @@ class PromotionGroupCreate(BaseModel):
 
 
 class PromotionGroupUpdate(BaseModel):
-    """Update group name, sort order, or FOC rule."""
+    """Update group name, sort order, or FOC tiers."""
 
     group_name: Optional[str] = None
     sort_order: Optional[int] = None
     foc_tiers: Optional[list[FocTier]] = None
-    purchase_quantity_for_foc: Optional[int] = None
-    foc_quantity: Optional[int] = None
 
     @field_validator("group_name", mode="before")
     @classmethod

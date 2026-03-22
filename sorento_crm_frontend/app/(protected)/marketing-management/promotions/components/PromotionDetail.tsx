@@ -57,19 +57,11 @@ function focTiersToRows(g: PromotionGroup): FocTierRow[] {
       foc: String(t.foc_quantity),
     }));
   }
-  if (g.purchase_quantity_for_foc != null && g.foc_quantity != null) {
-    return [{ purchase: String(g.purchase_quantity_for_foc), foc: String(g.foc_quantity) }];
-  }
   return [emptyFocTierRow()];
 }
 
 function formatFocTiersLabel(group: PromotionGroup): string | null {
-  const tiers =
-    group.foc_tiers?.length
-      ? group.foc_tiers
-      : group.purchase_quantity_for_foc != null && group.foc_quantity != null
-        ? [{ purchase_quantity: group.purchase_quantity_for_foc, foc_quantity: group.foc_quantity }]
-        : [];
+  const tiers = group.foc_tiers ?? [];
   if (!tiers.length) return null;
   return tiers.map((t) => `Buy ${t.purchase_quantity} get ${t.foc_quantity} free`).join(' · ');
 }

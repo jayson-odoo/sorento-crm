@@ -128,8 +128,6 @@ export function useCreatePromotionGroup() {
         group_name: string;
         sort_order?: number | null;
         foc_tiers?: { purchase_quantity: number; foc_quantity: number }[] | null;
-        purchase_quantity_for_foc?: number | null;
-        foc_quantity?: number | null;
       };
     }) => createPromotionGroup(promotionId, data),
     onSuccess: (_, v) => {
@@ -156,8 +154,6 @@ export function useUpdatePromotionGroup() {
         group_name?: string;
         sort_order?: number | null;
         foc_tiers?: { purchase_quantity: number; foc_quantity: number }[] | null;
-        purchase_quantity_for_foc?: number | null;
-        foc_quantity?: number | null;
       };
     }) => updatePromotionGroup(promotionId, groupId, data),
     onSuccess: (_, v) => {

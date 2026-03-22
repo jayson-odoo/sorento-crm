@@ -112,8 +112,6 @@ export async function createPromotionGroup(
     group_name: string;
     sort_order?: number | null;
     foc_tiers?: FocTier[] | null;
-    purchase_quantity_for_foc?: number | null;
-    foc_quantity?: number | null;
   },
 ): Promise<PromotionGroup> {
   const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/groups`, {
@@ -135,8 +133,6 @@ export async function updatePromotionGroup(
     group_name?: string;
     sort_order?: number | null;
     foc_tiers?: FocTier[] | null;
-    purchase_quantity_for_foc?: number | null;
-    foc_quantity?: number | null;
   },
 ): Promise<PromotionGroup> {
   const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/groups/${groupId}`, {
