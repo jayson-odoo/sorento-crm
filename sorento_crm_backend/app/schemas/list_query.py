@@ -43,6 +43,7 @@ class ListSearchRequest(BaseModel):
         "orders",
         "products",
         "suppliers",
+        "promotions",
         "workflow_form_definitions",
         "workflow_form_submissions",
     ]
@@ -67,6 +68,10 @@ class ListSearchRequest(BaseModel):
     workflow_definition_is_active: Optional[bool] = None
     workflow_form_definition_id: Optional[str] = None
     workflow_submission_state_code: Optional[str] = None
+    # Promotions (list-query + UI quick filters)
+    promotion_status: Optional[str] = None
+    promotion_promo_type: Optional[str] = None
+    promotion_access_level: Optional[str] = None
 
 
 class ExportFieldSelection(BaseModel):
@@ -78,6 +83,7 @@ class ListExportRequest(BaseModel):
         "orders",
         "products",
         "suppliers",
+        "promotions",
         "workflow_form_definitions",
         "workflow_form_submissions",
     ]
@@ -98,6 +104,9 @@ class ListExportRequest(BaseModel):
     workflow_definition_is_active: Optional[bool] = None
     workflow_form_definition_id: Optional[str] = None
     workflow_submission_state_code: Optional[str] = None
+    promotion_status: Optional[str] = None
+    promotion_promo_type: Optional[str] = None
+    promotion_access_level: Optional[str] = None
 
 
 class ListQueryFieldResponse(BaseModel):

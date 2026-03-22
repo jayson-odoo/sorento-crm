@@ -1,4 +1,5 @@
 """External API for promotions."""
+import logging
 from datetime import datetime, date
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,8 +17,10 @@ from app.services.marketing_service import (
     clamp_discount_percent_for_db,
     raise_promotion_product_unique_violation,
 )
+from app.services.attachment_notification_helper import notify_after_external_promotion_created
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _date_to_datetime(value: str | date) -> datetime:
@@ -39,6 +42,11 @@ def create_promotion(
     If promo_code already exists, returns success with already_existed=true and conflict detail in message.
     Duplicate product codes in promotion_products: the first row per code is applied; later rows are skipped
     and listed in warnings (product_code and selling_price).
+
+    Notifications (in-app + email, logged under Outgoing Mails):
+    - Linked attachments: notifies each attachment uploader (uploaded_by) when attachment_id(s) are provided.
+    - Optional notify_user_id: CRM user UUID to notify when the API key is system (created_by is null). Use n8n
+      to pass the uploader from the attachment step. If omitted and uploaders cannot be resolved, no email is sent.
     """
     if not payload.promotion_products:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No promotion products provided")
@@ -168,6 +176,22 @@ def create_promotion(
         raise_promotion_product_unique_violation(db, e)
 
     db.refresh(promotion)
+
+    # Notify: attachment uploaders (if linked + uploaded_by) and/or notify_user_id (system API key has no created_by).
+    try:
+        notify_after_external_promotion_created(
+            db,
+            promotion,
+            attachment_ids,
+            payload.notify_user_id,
+        )
+    except Exception as e:
+        logger.warning(
+            "External promotion created but notification failed: %s",
+            e,
+            exc_info=True,
+        )
+
     return PromotionCreateResponse(
         promotion=PromotionResponse.model_validate(promotion),
         already_existed=False,

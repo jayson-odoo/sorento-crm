@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
@@ -11,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Trash2, Users, Filter } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Trash2, Users, Filter, SlidersHorizontal, Download } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -36,15 +37,23 @@ import {
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { usePromotions } from '../hooks/usePromotions';
+import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
+import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
+import { useTenantModules } from '@/hooks/useTenantModules';
+import { getPromotions } from '../services/promotionService';
 import type { Promotion } from '../types/promotion.types';
 import { formatDate } from '@/lib/helpers';
+import { postListQuerySearch, type ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import PromotionBulkDeleteDialog from './PromotionBulkDeleteDialog';
 import PromotionBulkAccessLevelsDialog from './PromotionBulkAccessLevelsDialog';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 export default function PromotionsList() {
   const router = useRouter();
+  const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
+  const listQueryToolsEnabled =
+    modulesLoading || enabledModuleKeys == null || enabledModuleKeys.has('marketing');
+
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const accessLevelNameMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -60,18 +69,60 @@ export default function PromotionsList() {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterAccessLevel, setFilterAccessLevel] = useState<string>('all');
   const [filterPromoType, setFilterPromoType] = useState<string>('all');
+  const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
 
   const hasActiveFilters = filterStatus !== 'all' || filterAccessLevel !== 'all' || filterPromoType !== 'all';
 
-  const { data, isLoading } = usePromotions({
-    pageIndex: pagination.pageIndex,
-    pageSize: pagination.pageSize,
-    sorting,
-    searchQuery,
-    status: filterStatus === 'all' ? undefined : filterStatus,
-    user_type: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
-    promo_type: filterPromoType === 'all' ? undefined : filterPromoType,
+  const { data, isLoading } = useQuery({
+    queryKey: [
+      'promotions',
+      pagination.pageIndex,
+      pagination.pageSize,
+      sorting,
+      searchQuery,
+      filterStatus,
+      filterAccessLevel,
+      filterPromoType,
+      advancedFilter,
+    ],
+    queryFn: async () => {
+      if (advancedFilter) {
+        const sortField = sorting?.[0]?.id || '';
+        const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
+        return postListQuerySearch<Promotion>({
+          resource: 'promotions',
+          filter: advancedFilter,
+          page: pagination.pageIndex + 1,
+          limit: pagination.pageSize,
+          sort: sortField || 'created_at',
+          dir: sortDirection,
+          quick_search: searchQuery || undefined,
+          promotion_status: filterStatus === 'all' ? undefined : filterStatus,
+          promotion_promo_type: filterPromoType === 'all' ? undefined : filterPromoType,
+          promotion_access_level: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
+        });
+      }
+      return getPromotions({
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+        status: filterStatus === 'all' ? undefined : filterStatus,
+        user_type: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
+        promo_type: filterPromoType === 'all' ? undefined : filterPromoType,
+      });
+    },
+    staleTime: Infinity,
+    gcTime: 1000 * 60 * 60,
+    refetchOnWindowFocus: false,
+    retry: 1,
   });
+
+  useEffect(() => {
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [advancedFilter, filterStatus, filterAccessLevel, filterPromoType]);
 
   const pagePromotions = data?.data ?? [];
   const togglePromotionSelection = (promotionId: string) => {
@@ -198,6 +249,9 @@ export default function PromotionsList() {
       {
         accessorKey: 'products_count',
         header: ({ column }) => <DataGridColumnHeader title="Products" column={column} />,
+        cell: ({ row }) => (
+          <span className="tabular-nums">{row.original.products_count ?? 0}</span>
+        ),
         size: 100,
       },
       {
@@ -257,7 +311,12 @@ export default function PromotionsList() {
             </div>
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" size="icon" className={hasActiveFilters ? 'border-primary' : ''} title="Filters">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className={hasActiveFilters ? 'border-primary' : ''}
+                  title="Quick filters"
+                >
                   <Filter className="size-4" />
                 </Button>
               </PopoverTrigger>
@@ -320,12 +379,36 @@ export default function PromotionsList() {
                         setFilterPromoType('all');
                       }}
                     >
-                      Clear filters
+                      Clear quick filters
                     </Button>
                   )}
                 </div>
               </PopoverContent>
             </Popover>
+            {listQueryToolsEnabled ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  title="Advanced filters"
+                  className="relative"
+                  onClick={() => setFilterDialogOpen(true)}
+                >
+                  <SlidersHorizontal className="size-4" />
+                  {advancedFilter ? (
+                    <span className="absolute -top-1 -end-1 size-2.5 rounded-full bg-primary" />
+                  ) : null}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  title="Export"
+                  onClick={() => setExportDialogOpen(true)}
+                >
+                  <Download className="size-4" />
+                </Button>
+              </>
+            ) : null}
           </div>
           <div className="flex items-center gap-2">
             {selectedPromotionIds.size > 0 && (
@@ -383,6 +466,33 @@ export default function PromotionsList() {
         promotionIds={Array.from(selectedPromotionIds)}
         onSuccess={() => setSelectedPromotionIds(new Set())}
       />
+      {listQueryToolsEnabled ? (
+        <>
+          <ListQueryFilterDialog
+            resourceKey="promotions"
+            open={filterDialogOpen}
+            onOpenChange={setFilterDialogOpen}
+            initialFilter={advancedFilter}
+            onApply={setAdvancedFilter}
+          />
+          <ListQueryExportDialog
+            resourceKey="promotions"
+            filename="promotions-export"
+            open={exportDialogOpen}
+            onOpenChange={setExportDialogOpen}
+            getPayload={() => ({
+              filter: advancedFilter ?? undefined,
+              quick_search: searchQuery || undefined,
+              promotion_status: filterStatus === 'all' ? undefined : filterStatus,
+              promotion_promo_type: filterPromoType === 'all' ? undefined : filterPromoType,
+              promotion_access_level: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
+            })}
+            selectedRecordIds={
+              selectedPromotionIds.size > 0 ? Array.from(selectedPromotionIds) : undefined
+            }
+          />
+        </>
+      ) : null}
     </DataGrid>
   );
 }

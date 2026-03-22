@@ -893,6 +893,7 @@ async def resubmit_attachment_webhook(
         payload_dict["attachment_id"] = str(attachment.id)
         payload_dict["attachment_filename"] = attachment.original_filename
         payload_dict["attachment_mime_type"] = attachment.mime_type
+        payload_dict["file_size"] = getattr(attachment, "file_size_bytes", None)
         if getattr(attachment, "attachment_type", None) is not None:
             payload_dict["attachment_type"] = attachment.attachment_type.type_name
 

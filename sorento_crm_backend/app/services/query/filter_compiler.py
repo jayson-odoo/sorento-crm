@@ -8,6 +8,7 @@ from sqlalchemy import ColumnElement, Numeric, and_, cast, exists, func, or_, se
 
 from app.models.list_query_metadata import ListQueryField
 from app.models.inventory import Warehouse
+from app.models.marketing import Promotion
 from app.models.order import Order, OrderLine
 from app.models.product import Product
 from app.models.procurement import Supplier
@@ -164,6 +165,24 @@ def _compile_suppliers(node: Union[FilterGroup, FilterCondition], field_by_key: 
     return _apply_scalar(_supplier_column(meta.compile_key), node.op, node.value, meta.data_type)
 
 
+def _promotion_column(compile_key: str) -> Any:
+    _, name = compile_key.split(".", 1)
+    return getattr(Promotion, name)
+
+
+def _compile_promotions(node: Union[FilterGroup, FilterCondition], field_by_key: Dict[str, ListQueryField]) -> ColumnElement:
+    if isinstance(node, FilterGroup):
+        parts = [_compile_promotions(c, field_by_key) for c in node.children]
+        return and_(*parts) if node.op == "and" else or_(*parts)
+    meta = field_by_key.get(node.field_key)
+    if not meta or not meta.filterable:
+        raise ValueError(f"unknown or non-filterable field: {node.field_key}")
+    allowed = meta.allowed_operators or []
+    if node.op not in allowed:
+        raise ValueError(f"operator {node.op} not allowed for field {node.field_key}")
+    return _apply_scalar(_promotion_column(meta.compile_key), node.op, node.value, meta.data_type)
+
+
 def _workflow_def_column(compile_key: str) -> Any:
     _, name = compile_key.split(".", 1)
     return getattr(WorkflowFormDefinition, name)
@@ -288,6 +307,8 @@ def compile_filter(
         return _compile_products(root, field_by_key)
     if resource == "suppliers":
         return _compile_suppliers(root, field_by_key)
+    if resource == "promotions":
+        return _compile_promotions(root, field_by_key)
     if resource == "workflow_form_definitions":
         return _compile_workflow_form_definitions(root, field_by_key)
     if resource == "workflow_form_submissions":

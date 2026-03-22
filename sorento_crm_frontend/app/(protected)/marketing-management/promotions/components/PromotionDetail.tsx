@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Edit, Trash2, Plus, ExternalLink } from 'lucide-react';
+import { Edit, Trash2, Plus, ExternalLink, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -63,6 +63,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [promotionPrice, setPromotionPrice] = useState<string>('');
   const [editingProduct, setEditingProduct] = useState<{ id: string; product_id: string; promotion_price: number | null } | null>(null);
+  const [productCodeSearch, setProductCodeSearch] = useState('');
 
   // Fetch all products for the add product dialog
   const productsParams: GetProductsParams = {
@@ -76,6 +77,13 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const allProducts = productsData?.data || [];
   const existingProductIds = promotion?.products?.map(p => p.product_id) || [];
   const availableProducts = allProducts.filter(p => !existingProductIds.includes(p.id));
+
+  const filteredPromotionProducts = useMemo(() => {
+    const list = promotion?.products ?? [];
+    const q = productCodeSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((pp) => (pp.product?.product_code || '').toLowerCase().includes(q));
+  }, [promotion?.products, productCodeSearch]);
 
   if (isLoading) {
     return (
@@ -259,6 +267,32 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
         <CardContent>
           {promotion.products && promotion.products.length > 0 ? (
             <div className="space-y-4">
+              <div className="relative max-w-sm">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search by product code..."
+                  value={productCodeSearch}
+                  onChange={(e) => setProductCodeSearch(e.target.value)}
+                  className="ps-9"
+                  aria-label="Filter products by product code"
+                />
+                {productCodeSearch ? (
+                  <Button
+                    type="button"
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setProductCodeSearch('')}
+                  >
+                    <X className="size-4" />
+                  </Button>
+                ) : null}
+              </div>
+              {filteredPromotionProducts.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No products match &quot;{productCodeSearch.trim()}&quot;. Clear the search to see all products.
+                </p>
+              ) : (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
@@ -273,7 +307,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {promotion.products.map((pp) => {
+                    {filteredPromotionProducts.map((pp) => {
                       const listPrice = pp.product?.list_price || 0;
                       const promoPrice = pp.promotion_price || listPrice;
                       const discount = listPrice - promoPrice;
@@ -377,6 +411,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                   </tbody>
                 </table>
               </div>
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">No products in this promotion yet.</p>

@@ -8,6 +8,7 @@ from urllib.parse import urlparse, unquote
 from sqlalchemy.orm import Session
 
 from app.services.integration_service import IntegrationLogService
+from app.services.attachment_notification_helper import notify_uploader_after_attachment_webhook
 from app.schemas.integration import IntegrationLogCreate
 
 logger = logging.getLogger(__name__)
@@ -74,12 +75,18 @@ def create_and_send_webhook(
         "attachment_id": attachment.id,
         "attachment_filename": attachment.original_filename,
         "attachment_mime_type": attachment.mime_type,
+        "file_size": getattr(attachment, "file_size_bytes", None),
         "attachment_type": attachment_type.type_name if attachment_type else None,
         "access_levels": access_levels_payload,
     }
     integration_log.request_payload = json.dumps(webhook_payload)
     db.commit()
     db.refresh(integration_log)
+
+    try:
+        notify_uploader_after_attachment_webhook(db, attachment, current_user_id)
+    except Exception as e:
+        logger.warning("Attachment webhook uploader notification failed: %s", e, exc_info=True)
 
     def send_webhook_async():
         try:

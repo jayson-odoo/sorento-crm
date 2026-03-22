@@ -2,9 +2,9 @@
 import math
 import re
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, exists
+from sqlalchemy import func, or_, exists, select
 from sqlalchemy.exc import IntegrityError
-from typing import Optional
+from typing import Any, Optional
 from app.models.marketing import Promotion, PromotionProduct, PromotionAttachment, CampaignType, MarketingCampaign
 from app.models.product import Product
 from app.models.resources import Attachment, AttachmentType
@@ -113,6 +113,9 @@ class PromotionService:
         query: Optional[str] = None,
         status: Optional[str] = None,
         promo_type: Optional[str] = None,
+        sort_field: Optional[str] = None,
+        sort_dir: Optional[str] = "desc",
+        advanced_filter_clause: Optional[Any] = None,
     ):
         """List promotions. When query is set, filter by promo_code, name, or product code of linked products."""
         q = self.db.query(Promotion)
@@ -144,10 +147,44 @@ class PromotionService:
         if promo_type and (promo_type := (promo_type or "").strip()):
             q = q.filter(Promotion.promo_type == promo_type)
 
-        q = q.order_by(Promotion.created_at.desc())
-
         if user_type:
             q = q.filter(Promotion.access_levels.contains([user_type]))
+
+        if advanced_filter_clause is not None:
+            q = q.filter(advanced_filter_clause)
+
+        sort_key = (sort_field or "created_at").strip() or "created_at"
+        dir_norm = (sort_dir or "desc").lower()
+        if dir_norm not in ("asc", "desc"):
+            dir_norm = "desc"
+
+        sort_map = {
+            "promo_code": Promotion.promo_code,
+            "name": Promotion.name,
+            "promo_type": Promotion.promo_type,
+            "start_date": Promotion.start_date,
+            "end_date": Promotion.end_date,
+            "is_active": Promotion.is_active,
+            "created_at": Promotion.created_at,
+            "access_levels": Promotion.access_levels,
+        }
+
+        pc_subq = None
+        if sort_key == "products_count":
+            pc_subq = (
+                select(
+                    PromotionProduct.promotion_id.label("pid"),
+                    func.count(PromotionProduct.id).label("pcnt"),
+                )
+                .group_by(PromotionProduct.promotion_id)
+                .subquery()
+            )
+            q = q.outerjoin(pc_subq, Promotion.id == pc_subq.c.pid)
+            order_col = func.coalesce(pc_subq.c.pcnt, 0)
+        else:
+            order_col = sort_map.get(sort_key, Promotion.created_at)
+
+        q = q.order_by(order_col.asc() if dir_norm == "asc" else order_col.desc())
 
         total = q.count()
         offset = (page - 1) * limit

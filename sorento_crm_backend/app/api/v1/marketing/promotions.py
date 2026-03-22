@@ -30,6 +30,8 @@ async def get_promotions(
     user_type: Optional[str] = Query(None, description="Filter by access level: dealer, end_user"),
     status: Optional[str] = Query(None, description="Filter by status: active, inactive, all"),
     promo_type: Optional[str] = Query(None, description="Filter by promotion type e.g. price_override"),
+    sort: Optional[str] = Query(None, description="Sort field e.g. created_at, promo_code, products_count"),
+    dir: Optional[str] = Query("desc", description="asc or desc"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -43,6 +45,8 @@ async def get_promotions(
             query=query,
             status=status,
             promo_type=promo_type,
+            sort_field=sort,
+            sort_dir=dir,
         )
         return result
     except Exception as e:

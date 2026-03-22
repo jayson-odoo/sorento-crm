@@ -13,6 +13,7 @@ from app.schemas.list_query import (
     ListQueryResourceResponse,
     ListSearchRequest,
 )
+from app.schemas.marketing import PromotionResponse
 from app.schemas.order import OrderResponse
 from app.schemas.product import ProductResponse
 from app.schemas.procurement import SupplierResponse
@@ -46,6 +47,7 @@ VIEW_SLUG = {
     "orders": "order_management.orders.view",
     "products": "master_data.products.view",
     "suppliers": "procurement.suppliers.view",
+    "promotions": "marketing.promotions.view",
     "workflow_form_definitions": "workflow_forms.definitions.view",
     "workflow_form_submissions": "workflow_forms.submissions.view",
 }
@@ -53,6 +55,8 @@ EXPORT_SLUG = {
     "orders": "order_management.orders.export",
     "products": "master_data.products.export",
     "suppliers": "procurement.suppliers.export",
+    # No dedicated export slug yet; align with list access.
+    "promotions": "marketing.promotions.view",
     "workflow_form_definitions": "workflow_forms.definitions.export",
     "workflow_form_submissions": "workflow_forms.submissions.export",
 }
@@ -144,6 +148,8 @@ async def advanced_search(
         data = [ProductResponse.model_validate(p) for p in result["data"]]
     elif body.resource == "suppliers":
         data = [SupplierResponse.model_validate(s) for s in result["data"]]
+    elif body.resource == "promotions":
+        data = [PromotionResponse.model_validate(p) for p in result["data"]]
     elif body.resource == "workflow_form_definitions":
         data = [WorkflowFormDefinitionOut.model_validate(x) for x in result["data"]]
     elif body.resource == "workflow_form_submissions":

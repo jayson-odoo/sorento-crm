@@ -1,6 +1,6 @@
 """Configuration settings for the FastAPI application."""
-from pydantic_settings import BaseSettings
-from pydantic import ConfigDict, field_validator
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Union
 
 
@@ -60,11 +60,12 @@ class Settings(BaseSettings):
     # When True, disabled modules return 403 from guarded routers.
     module_guard_strict: bool = False  # MODULE_GUARD_STRICT
 
-    model_config = ConfigDict(
+    model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,
-        extra="ignore"  # Ignore extra environment variables (like AWS_* variables)
+        extra="ignore",  # Ignore extra environment variables (like AWS_* variables)
     )
 
 
-settings = Settings()
+# Values come from environment / .env at runtime; static analysis cannot infer required env vars.
+settings = Settings()  # type: ignore[call-arg]

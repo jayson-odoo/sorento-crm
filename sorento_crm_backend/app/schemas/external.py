@@ -209,6 +209,9 @@ class PromotionRequest(BaseModel):
     promotion_products: List[PromotionProductItem]
     access_levels: Optional[List[str]] = None  # e.g. ["end_user"], ["dealer", "end_user"]; if omitted, DB default applies
     attachment_id: Optional[str] = None  # single attachment UUID to link to the promotion (alternative to promotions.attachment_id list)
+    # CRM user UUID to notify when promotion is created. Use when the caller is the system API key (created_by is null).
+    # n8n can pass the uploader's user id from a previous step. Omit if attachment-linked uploaders should be notified only.
+    notify_user_id: Optional[str] = None
 
 
 class PromotionCreateResponse(BaseModel):

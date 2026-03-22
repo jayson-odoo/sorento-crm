@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.schemas.list_query import ListSearchRequest
 from app.services.list_query_metadata_service import ListQueryMetadataService
+from app.services.marketing_service import PromotionService
 from app.services.order_service import OrderService
 from app.services.product_service import ProductService
 from app.services.procurement_service import SupplierService
@@ -75,6 +76,19 @@ class ListQuerySearchService:
                 query=req.quick_search,
                 sort_field=sort_field,
                 sort_dir=sort_dir,
+                advanced_filter_clause=clause,
+            )
+        if req.resource == "promotions":
+            svc = PromotionService(self.db)
+            return svc.list_promotions(
+                page=req.page,
+                limit=req.limit,
+                query=req.quick_search,
+                status=req.promotion_status,
+                promo_type=req.promotion_promo_type,
+                user_type=req.promotion_access_level,
+                sort_field=sort_field or "created_at",
+                sort_dir=sort_dir or "desc",
                 advanced_filter_clause=clause,
             )
         if req.resource == "workflow_form_definitions":

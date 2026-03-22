@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from sqlalchemy import and_, exists, not_, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.models.marketing import Promotion, PromotionProduct
 from app.models.order import Customer, Order, OrderLine
 from app.models.product import Product
 from app.models.procurement import Supplier
@@ -285,6 +286,70 @@ class ListQueryExportService:
             for m in selected:
                 key = m.export_column_name or m.field_key
                 row[key] = _value_from_obj(s, m.compile_key)
+            out.append(row)
+        return out
+
+    def _export_promotions(
+        self,
+        selected: list,
+        clause: Optional[Any],
+        req: ListExportRequest,
+    ) -> List[Dict[str, Any]]:
+        q = self.db.query(Promotion)
+
+        pst = req.promotion_status
+        if pst and pst != "all":
+            if pst == "active":
+                q = q.filter(Promotion.is_active.is_(True))
+            elif pst == "inactive":
+                q = q.filter(Promotion.is_active.is_(False))
+
+        if req.promotion_promo_type and (pt := (req.promotion_promo_type or "").strip()):
+            q = q.filter(Promotion.promo_type == pt)
+
+        if req.promotion_access_level and (ut := (req.promotion_access_level or "").strip()):
+            q = q.filter(Promotion.access_levels.contains([ut]))
+
+        if req.quick_search and (qs := req.quick_search.strip()):
+            search_term = f"%{qs}%"
+            has_product_match = exists().where(
+                PromotionProduct.promotion_id == Promotion.id
+            ).where(
+                PromotionProduct.product_id == Product.id
+            ).where(
+                Product.product_code.ilike(search_term)
+            )
+            q = q.filter(
+                or_(
+                    Promotion.promo_code.ilike(search_term),
+                    Promotion.name.ilike(search_term),
+                    has_product_match,
+                )
+            )
+
+        if clause is not None:
+            q = q.filter(clause)
+
+        id_list = _dedupe_record_ids(req.record_ids)
+        if id_list:
+            q = q.filter(Promotion.id.in_(id_list))
+
+        promotions = q.all()
+        if id_list:
+            by_id = {str(p.id): p for p in promotions}
+            promotions = [by_id[i] for i in id_list if i in by_id]
+        else:
+            promotions = sorted(
+                promotions,
+                key=lambda p: p.created_at or datetime.min,
+                reverse=True,
+            )
+        out = []
+        for p in promotions:
+            row = {}
+            for m in selected:
+                key = m.export_column_name or m.field_key
+                row[key] = _value_from_obj(p, m.compile_key)
             out.append(row)
         return out
 

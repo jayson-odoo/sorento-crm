@@ -93,8 +93,9 @@ async def push_subscribe(
             .first()
         )
         if existing:
-            existing.p256dh = body.p256dh
-            existing.auth = body.auth
+            # ORM instance attributes; Column-typed fields confuse static analysis on direct assignment.
+            setattr(existing, "p256dh", body.p256dh)
+            setattr(existing, "auth", body.auth)
             db.commit()
             return {"message": "Subscription updated"}
         sub = PushSubscription(

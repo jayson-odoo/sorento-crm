@@ -4,6 +4,7 @@ export type ListQueryResourceKey =
   | 'orders'
   | 'products'
   | 'suppliers'
+  | 'promotions'
   | 'workflow_form_definitions'
   | 'workflow_form_submissions';
 
