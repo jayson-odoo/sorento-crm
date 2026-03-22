@@ -12,7 +12,10 @@ from app.schemas.marketing import PromotionResponse
 from app.models.marketing import Promotion, PromotionProduct, PromotionAttachment
 from app.models.resources import Attachment
 from app.api.v1.external.utils import parse_date_value, get_products_by_code_exact
-from app.services.marketing_service import raise_promotion_product_unique_violation
+from app.services.marketing_service import (
+    clamp_discount_percent_for_db,
+    raise_promotion_product_unique_violation,
+)
 
 router = APIRouter()
 
@@ -112,6 +115,7 @@ def create_promotion(
             promo_price_float = float(promo_price)
             discount_amount = list_price - promo_price_float
             discount_percent = (discount_amount / list_price * 100) if list_price > 0 else 0
+        discount_percent = clamp_discount_percent_for_db(discount_percent)
         db.add(
             PromotionProduct(
                 promotion_id=promotion.id,

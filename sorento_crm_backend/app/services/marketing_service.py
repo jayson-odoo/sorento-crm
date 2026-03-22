@@ -1,4 +1,5 @@
 """Marketing service for business logic."""
+import math
 import re
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, exists
@@ -50,6 +51,24 @@ def raise_promotion_product_unique_violation(db: Session, exc: Exception) -> Non
     raise handle_conflict(
         f"Product already on this promotion: {label}. Remove duplicate rows or use one line per product."
     )
+
+
+# promotion_products.discount_percent is NUMERIC(5,2) → |value| must be < 10**3 (max ±999.99).
+_MAX_DISCOUNT_PERCENT = 999.99
+
+
+def clamp_discount_percent_for_db(value: Optional[float]) -> Optional[float]:
+    """Clamp discount % to DB range so bulk inserts do not raise NumericValueOutOfRange."""
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(v):
+        return None
+    v = max(-_MAX_DISCOUNT_PERCENT, min(_MAX_DISCOUNT_PERCENT, v))
+    return round(v, 2)
 
 
 class PromotionService:
@@ -291,14 +310,12 @@ class PromotionProductService:
         self.db = db
 
     def _compute_discount_values(self, list_price: float, promo_price: float) -> tuple[float, float]:
-        """Compute discount amount/percent and guard DB precision for discount_percent NUMERIC(5,2)."""
+        """Compute discount amount/percent; clamp percent to NUMERIC(5,2) range."""
         discount_amount = list_price - promo_price
         discount_percent = (discount_amount / list_price * 100) if list_price > 0 else 0
-        # DB column is NUMERIC(5,2) -> absolute value must be < 1000
-        if abs(discount_percent) >= 1000:
-            raise handle_conflict(
-                "Promotion price causes discount percent overflow. Please use a price that results in discount percentage between -999.99% and 999.99%."
-            )
+        discount_percent = clamp_discount_percent_for_db(discount_percent)
+        if discount_percent is None:
+            discount_percent = 0.0
         return discount_amount, discount_percent
     
     def list_promotion_products(self, promotion_id: Optional[str] = None, page: int = 1, limit: int = 50, sort_field: str = "created_at", sort_dir: str = "asc", query: Optional[str] = None):
