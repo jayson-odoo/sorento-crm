@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 
 export interface TenantModuleState {
   module_key: string;
@@ -36,8 +37,7 @@ export interface ModuleInstallEvent {
 export async function fetchMyModules(): Promise<MyModulesPayload> {
   const res = await apiFetch('/api/v1/system/modules/me');
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Failed to load modules (${res.status})`);
+    throw new Error(await extractApiError(res, `Failed to load modules (${res.status})`));
   }
   return res.json();
 }
