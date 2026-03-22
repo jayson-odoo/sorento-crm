@@ -1,5 +1,7 @@
 """External API for packing lists (inbound shipments)."""
+import html
 import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -11,6 +13,10 @@ from app.services.procurement_service import InboundShipmentService
 from app.models.procurement import Supplier, InboundShipment
 from app.models.resources import Attachment
 from app.api.v1.external.utils import parse_date_value, get_products_by_code, normalize_code
+from app.services.attachment_notification_helper import (
+    build_packing_list_detail_url,
+    notify_after_external_attachment_entity,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -103,6 +109,32 @@ def create_packing_list(
     created_by = current_user["id"] if current_user.get("id") != "system" else None
     service = InboundShipmentService(db)
     created = service.create_shipment(shipment, created_by=created_by)
+
+    try:
+        sn = (payload.packing_list.shipment_number or "").strip() or "—"
+        aid = payload.packing_list.attachment_id
+        summary_plain = (
+            f'Packing list / inbound shipment "{sn}" was created in Sorento CRM via the external integration API '
+            "(for example n8n)."
+        )
+        summary_html = (
+            f"<p>Packing list / inbound shipment <strong>{html.escape(sn)}</strong> was created "
+            "in Sorento CRM via the external integration API (for example n8n).</p>"
+        )
+        notify_after_external_attachment_entity(
+            db,
+            [aid],
+            payload.notify_user_id,
+            notif_type="external_packing_list_created",
+            title=f"Packing list created: {sn}",
+            summary_plain=summary_plain,
+            summary_html=summary_html,
+            entity_url=build_packing_list_detail_url(str(created.id)),
+            entity_link_text="Open packing list in Sorento CRM",
+        )
+    except Exception as e:
+        logger.warning("External packing list notification failed: %s", e, exc_info=True)
+
     return PackingListCreateResponse(
         shipment=InboundShipmentResponse.model_validate(created),
         skipped_product_codes=skipped_product_codes,

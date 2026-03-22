@@ -1,4 +1,7 @@
 """External API for forms."""
+import html
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -9,8 +12,13 @@ from app.models.resources import Attachment
 from app.schemas.external import FormCreateRequest, FormCreateResponse
 from app.schemas.forms import FormCreate, FormResponse
 from app.services.forms_service import FormService
+from app.services.attachment_notification_helper import (
+    build_form_detail_url,
+    notify_after_external_attachment_entity,
+)
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/", response_model=FormCreateResponse)
@@ -47,6 +55,32 @@ def create_form(
     existing = db.query(Form).filter(Form.code == form_data.code).first()
     if existing:
         db.refresh(existing)
+        if attachment_id:
+            try:
+                code = (existing.code or "").strip() or "—"
+                name = (existing.name or "").strip() or code
+                summary_plain = (
+                    f'Form "{name}" ({code}) was recorded in Sorento CRM via the external integration API '
+                    "(for example n8n). The form code already existed."
+                )
+                summary_html = (
+                    f"<p>Form <strong>{html.escape(name)}</strong> (<strong>{html.escape(code)}</strong>) was "
+                    "recorded in Sorento CRM via the external integration API (for example n8n). "
+                    "The form code already existed.</p>"
+                )
+                notify_after_external_attachment_entity(
+                    db,
+                    [attachment_id],
+                    payload.notify_user_id,
+                    notif_type="external_form_created",
+                    title=f"Form: {code}",
+                    summary_plain=summary_plain,
+                    summary_html=summary_html,
+                    entity_url=build_form_detail_url(str(existing.id)),
+                    entity_link_text="Open form in Sorento CRM",
+                )
+            except Exception as e:
+                logger.warning("External form notification failed (already_existed): %s", e, exc_info=True)
         return FormCreateResponse(
             form=FormResponse.model_validate(existing),
             already_existed=True,
@@ -57,6 +91,31 @@ def create_form(
     created_by = current_user.get("id") or "system"
     try:
         form = service.create_form(form_data, created_by)
+        if attachment_id:
+            try:
+                code = (form.code or "").strip() or "—"
+                name = (form.name or "").strip() or code
+                summary_plain = (
+                    f'Form "{name}" ({code}) was created in Sorento CRM via the external integration API '
+                    "(for example n8n)."
+                )
+                summary_html = (
+                    f"<p>Form <strong>{html.escape(name)}</strong> (<strong>{html.escape(code)}</strong>) was "
+                    "created in Sorento CRM via the external integration API (for example n8n).</p>"
+                )
+                notify_after_external_attachment_entity(
+                    db,
+                    [attachment_id],
+                    payload.notify_user_id,
+                    notif_type="external_form_created",
+                    title=f"Form created: {code}",
+                    summary_plain=summary_plain,
+                    summary_html=summary_html,
+                    entity_url=build_form_detail_url(str(form.id)),
+                    entity_link_text="Open form in Sorento CRM",
+                )
+            except Exception as e:
+                logger.warning("External form notification failed: %s", e, exc_info=True)
         return FormCreateResponse(
             form=FormResponse.model_validate(form),
             already_existed=False,

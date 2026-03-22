@@ -40,6 +40,8 @@ class PackingListProduct(BaseModel):
 class PackingListRequest(BaseModel):
     packing_list: PackingListHeader
     packing_list_products: List[PackingListProduct]
+    # CRM user UUID when uploaders cannot be resolved from attachment(s); same pattern as /external/promotions.
+    notify_user_id: Optional[str] = None
 
 
 class PackingListCreateResponse(BaseModel):
@@ -129,6 +131,7 @@ class ProductAttachmentBulkLinkRequest(BaseModel):
     attachment_id: str
     products: List[str]
     access_levels: Optional[List[str]] = None
+    notify_user_id: Optional[str] = None
 
 
 class ProductAttachmentLinkRequestAny(BaseModel):
@@ -142,6 +145,7 @@ class ProductAttachmentLinkRequestAny(BaseModel):
     sort_order: Optional[int] = None
     is_primary: Optional[bool] = None
     access_levels: Optional[List[str]] = None
+    notify_user_id: Optional[str] = None
 
     @field_validator("products", mode="after")
     @classmethod
@@ -266,6 +270,7 @@ class FormCreateRequest(BaseModel):
     form_sections: Optional[List[FormSectionInput]] = None
     form_fields: Optional[List[FormFieldInput]] = None
     attachment_id: Optional[str] = None  # root-level; used if form.attachment_id not set
+    notify_user_id: Optional[str] = None
 
 
 class FormCreateResponse(BaseModel):

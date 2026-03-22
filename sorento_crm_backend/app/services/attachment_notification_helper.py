@@ -13,6 +13,13 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _user_id_str(value: object) -> str:
+    """Normalize user id from ORM/API (str or UUID); avoids .strip() on UUID."""
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 def flush_notification_email_deliveries(notification_ids: list[str]) -> None:
     """
     Process pending email (and web_push) deliveries immediately.
@@ -49,6 +56,283 @@ def build_promotion_detail_url(promotion_id: str) -> str:
     return f"{base}{path}" if base else path
 
 
+def build_product_detail_url(product_id: str) -> str:
+    base = (settings.frontend_base_url or "").strip().rstrip("/")
+    path = f"/master-data-management/products/{product_id}"
+    return f"{base}{path}" if base else path
+
+
+def build_form_detail_url(form_id: str) -> str:
+    base = (settings.frontend_base_url or "").strip().rstrip("/")
+    path = f"/forms-management/forms/{form_id}"
+    return f"{base}{path}" if base else path
+
+
+def build_packing_list_detail_url(shipment_id: str) -> str:
+    base = (settings.frontend_base_url or "").strip().rstrip("/")
+    path = f"/procurement-management/packing-lists/{shipment_id}"
+    return f"{base}{path}" if base else path
+
+
+def notify_uploaders_after_external_attachment_event(
+    db: Session,
+    attachment_ids: list[str],
+    *,
+    notification_batch_id: str,
+    notif_type: str,
+    title: str,
+    summary_plain: str,
+    summary_html: str,
+    entity_url: str,
+    entity_link_text: str,
+    event_type: str = "external_attachment_uploader_notice",
+) -> tuple[list[str], set[str]]:
+    """
+    In-app + email for attachment uploaders when an external API links or creates an entity using their file(s).
+    Same pattern as external promotions: one batch id per API call, grouped by uploaded_by.
+    """
+    empty: tuple[list[str], set[str]] = ([], set())
+    if not getattr(settings, "notifications_v1_enabled", True):
+        return empty
+
+    deduped: list[str] = []
+    for aid in attachment_ids or []:
+        s = (str(aid) if aid is not None else "").strip()
+        if s and s not in deduped:
+            deduped.append(s)
+    if not deduped:
+        return empty
+
+    from app.models.resources import Attachment
+    from app.models.user import User
+    from app.services.notification_service import NotificationService
+
+    atts = db.query(Attachment).filter(Attachment.id.in_(deduped)).all()
+    by_user: dict[str, list] = {}
+    for a in atts:
+        uid = _user_id_str(getattr(a, "uploaded_by", None))
+        if not uid:
+            logger.debug("External attachment event notify: attachment %s has no uploaded_by", a.id)
+            continue
+        by_user.setdefault(uid, []).append(a)
+
+    if not by_user:
+        return empty
+
+    notification_ids: list[str] = []
+    uploader_ids: set[str] = set()
+    notify_source_id = f"{notif_type}_{notification_batch_id}"
+    notif_svc = NotificationService(db)
+    entity_href = html.escape(entity_url, quote=True)
+    link_label_esc = html.escape(entity_link_text)
+
+    for uid, user_atts in by_user.items():
+        user = db.query(User).filter(User.id == uid).first()
+        if not user:
+            logger.debug("External attachment event notify: user %s not found", uid)
+            continue
+
+        names = [getattr(x, "original_filename", None) or "file" for x in user_atts]
+        att_lines_plain = "\n".join(
+            f'  - "{n}": {build_attachment_detail_url(str(x.id))}' for n, x in zip(names, user_atts)
+        )
+        att_li_html = "".join(
+            f'<li><a href="{html.escape(build_attachment_detail_url(str(x.id)), quote=True)}">{html.escape(n)}</a></li>'
+            for n, x in zip(names, user_atts)
+        )
+
+        body_plain = (
+            f"{summary_plain}\n\n"
+            f"{entity_link_text}:\n{entity_url}\n\n"
+            f"Your attachment(s):\n{att_lines_plain}\n\n"
+            "This is a system generated email. Please do not reply."
+        )
+        body_html = (
+            f"{summary_html}"
+            f'<p><a href="{entity_href}">{link_label_esc}</a></p>'
+            f"<p>Your attachment(s):</p><ul>{att_li_html}</ul>"
+            f'<p style="color:#666;font-size:12px;margin-top:1.5em;">This is a system generated email. '
+            "Please do not reply.</p>"
+        )
+
+        data = {
+            "body_html": body_html,
+            "entity_url": entity_url,
+            "attachment_ids": [str(x.id) for x in user_atts],
+        }
+
+        email = (getattr(user, "email", None) or "").strip()
+        try:
+            if email:
+                n = notif_svc.create(
+                    user_id=uid,
+                    type=notif_type,
+                    title=title,
+                    body=body_plain,
+                    data=data,
+                    source_entity_type="external_api",
+                    source_entity_id=notify_source_id,
+                    event_type=event_type,
+                )
+                if n:
+                    notification_ids.append(str(n.id))
+                    uploader_ids.add(uid)
+            else:
+                notif_svc.create_in_app_only(
+                    user_id=uid,
+                    type=notif_type,
+                    title=title,
+                    body=body_plain,
+                    source_entity_type="external_api",
+                    source_entity_id=notify_source_id,
+                    event_type=event_type,
+                )
+                uploader_ids.add(uid)
+        except Exception as e:
+            logger.warning(
+                "Failed to notify uploader %s for external %s: %s",
+                uid,
+                notif_type,
+                e,
+                exc_info=True,
+            )
+
+    return notification_ids, uploader_ids
+
+
+def notify_external_api_explicit_user(
+    db: Session,
+    *,
+    user_id: str,
+    notification_batch_id: str,
+    notif_type: str,
+    title: str,
+    body_plain: str,
+    body_html: str,
+    data: dict,
+    event_type: str = "external_api_explicit_notify",
+) -> list[str]:
+    """Notify a CRM user by id when external API used system key and uploaders could not be notified."""
+    if not getattr(settings, "notifications_v1_enabled", True):
+        return []
+
+    uid = _user_id_str(user_id)
+    if not uid:
+        return []
+
+    from app.models.user import User
+    from app.services.notification_service import NotificationService
+
+    user = db.query(User).filter(User.id == uid).first()
+    if not user:
+        logger.warning("external_api explicit notify: user not found: %s", uid)
+        return []
+
+    notify_source_id = f"{notif_type}_{notification_batch_id}_{uid}"
+    notif_svc = NotificationService(db)
+    email = (getattr(user, "email", None) or "").strip()
+    try:
+        if email:
+            n = notif_svc.create(
+                user_id=uid,
+                type=notif_type,
+                title=title,
+                body=body_plain,
+                data=data,
+                source_entity_type="external_api",
+                source_entity_id=notify_source_id,
+                event_type=event_type,
+            )
+            return [str(n.id)] if n else []
+        notif_svc.create_in_app_only(
+            user_id=uid,
+            type=notif_type,
+            title=title,
+            body=body_plain,
+            source_entity_type="external_api",
+            source_entity_id=notify_source_id,
+            event_type=event_type,
+        )
+        return []
+    except Exception as e:
+        logger.warning("Failed explicit external_api notify for %s: %s", uid, e, exc_info=True)
+        return []
+
+
+def notify_after_external_attachment_entity(
+    db: Session,
+    attachment_ids: list[str],
+    notify_user_id: Optional[str],
+    *,
+    notif_type: str,
+    title: str,
+    summary_plain: str,
+    summary_html: str,
+    entity_url: str,
+    entity_link_text: str,
+) -> None:
+    """
+    Notify attachment uploaders and/or notify_user_id after external APIs (product attachment, form, packing list).
+    Mirrors notify_after_external_promotion_created (batch id + flush).
+    """
+    if not getattr(settings, "notifications_v1_enabled", True):
+        return
+
+    batch_id = uuid.uuid4().hex[:16]
+    ids: list[str] = []
+    uploaders: set[str] = set()
+
+    try:
+        n_ids, up = notify_uploaders_after_external_attachment_event(
+            db,
+            attachment_ids,
+            notification_batch_id=batch_id,
+            notif_type=notif_type,
+            title=title,
+            summary_plain=summary_plain,
+            summary_html=summary_html,
+            entity_url=entity_url,
+            entity_link_text=entity_link_text,
+        )
+        ids.extend(n_ids)
+        uploaders.update(up)
+    except Exception as e:
+        logger.warning("External attachment entity uploader notification failed: %s", e, exc_info=True)
+
+    nu = _user_id_str(notify_user_id)
+    if nu and nu not in uploaders:
+        try:
+            entity_href = html.escape(entity_url, quote=True)
+            link_label_esc = html.escape(entity_link_text)
+            explicit_plain = (
+                f"{summary_plain}\n\n{entity_link_text}:\n{entity_url}\n\n"
+                "This is a system generated email. Please do not reply."
+            )
+            explicit_html = (
+                f"{summary_html}"
+                f'<p><a href="{entity_href}">{link_label_esc}</a></p>'
+                f'<p style="color:#666;font-size:12px;margin-top:1.5em;">This is a system generated email. '
+                "Please do not reply.</p>"
+            )
+            ids.extend(
+                notify_external_api_explicit_user(
+                    db,
+                    user_id=nu,
+                    notification_batch_id=batch_id,
+                    notif_type=notif_type,
+                    title=title,
+                    body_plain=explicit_plain,
+                    body_html=explicit_html,
+                    data={"body_html": explicit_html, "entity_url": entity_url},
+                )
+            )
+        except Exception as e:
+            logger.warning("External attachment entity notify_user_id failed: %s", e, exc_info=True)
+
+    if ids:
+        flush_notification_email_deliveries(ids)
+
+
 def notify_uploaders_after_external_promotion_created(
     db: Session,
     attachment_ids: list[str],
@@ -83,7 +367,7 @@ def notify_uploaders_after_external_promotion_created(
     atts = db.query(Attachment).filter(Attachment.id.in_(deduped)).all()
     by_user: dict[str, list] = {}
     for a in atts:
-        uid = (getattr(a, "uploaded_by", None) or "").strip()
+        uid = _user_id_str(getattr(a, "uploaded_by", None))
         if not uid:
             logger.debug("External promotion notify: attachment %s has no uploaded_by", a.id)
             continue
@@ -125,7 +409,6 @@ def notify_uploaders_after_external_promotion_created(
         body_plain = (
             f'A promotion "{promo_name}" ({promo_code}) was created in Sorento CRM using your uploaded file(s): '
             f"{names_list}.\n\n"
-            f"This was triggered by the external integration (for example n8n) after your attachment(s) were processed.\n\n"
             f"View promotion:\n{promo_url}\n\n"
             f"Your attachment(s):\n{att_lines_plain}\n\n"
             f"This is a system generated email. Please do not reply."
@@ -134,7 +417,6 @@ def notify_uploaders_after_external_promotion_created(
             f"<p>A promotion <strong>{html.escape(promo_name)}</strong> "
             f"(<strong>{html.escape(promo_code)}</strong>) was created in Sorento CRM using your uploaded file(s): "
             f"{safe_names_html}.</p>"
-            f"<p>This was triggered by the external integration (for example n8n) after your attachment(s) were processed.</p>"
             f'<p><a href="{html.escape(promo_url, quote=True)}">Open promotion in Sorento CRM</a></p>'
             f"<p>Your attachment(s):</p><ul>{att_li_html}</ul>"
             f'<p style="color:#666;font-size:12px;margin-top:1.5em;">This is a system generated email. '
@@ -201,7 +483,7 @@ def notify_external_promotion_explicit_user(
     if not getattr(settings, "notifications_v1_enabled", True):
         return []
 
-    uid = (user_id or "").strip()
+    uid = _user_id_str(user_id)
     if not uid:
         return []
 
@@ -297,7 +579,7 @@ def notify_after_external_promotion_created(
     except Exception as e:
         logger.warning("External promotion uploader notification failed: %s", e, exc_info=True)
 
-    nu = (notify_user_id or "").strip()
+    nu = _user_id_str(notify_user_id)
     if nu and nu not in uploaders:
         try:
             ids.extend(notify_external_promotion_explicit_user(db, promotion, nu, notification_batch_id=batch_id))
@@ -348,7 +630,7 @@ def notify_uploader_after_attachment_webhook(
     if not getattr(settings, "notifications_v1_enabled", True):
         return
 
-    uid = (getattr(attachment, "uploaded_by", None) or actor_user_id or "").strip()
+    uid = _user_id_str(getattr(attachment, "uploaded_by", None)) or _user_id_str(actor_user_id)
     if not uid:
         logger.debug("Skipping attachment webhook notification: no uploader user id")
         return
