@@ -23,6 +23,14 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _attachment_ids_from_promotion_payload(payload: PromotionRequest) -> list[str]:
+    """Root-level attachment_id and promotions.attachment_id list (same rules as create body)."""
+    ids = list(payload.promotions.attachment_id or [])
+    if payload.attachment_id and payload.attachment_id not in ids:
+        ids.insert(0, payload.attachment_id)
+    return ids
+
+
 def _date_to_datetime(value: str | date) -> datetime:
     parsed = parse_date_value(value)
     if not parsed:
@@ -62,6 +70,21 @@ def create_promotion(
     existing = db.query(Promotion).filter(Promotion.promo_code == payload.promotions.promo_code).first()
     if existing:
         db.refresh(existing)
+        # Still notify uploaders (and optional notify_user_id) when the API is called with attachment_id(s),
+        # e.g. n8n retries / resubmit with the same promo code — same as successful create path.
+        try:
+            notify_after_external_promotion_created(
+                db,
+                existing,
+                _attachment_ids_from_promotion_payload(payload),
+                payload.notify_user_id,
+            )
+        except Exception as e:
+            logger.warning(
+                "External promotion already_existed branch: notification failed: %s",
+                e,
+                exc_info=True,
+            )
         return PromotionCreateResponse(
             promotion=PromotionResponse.model_validate(existing),
             already_existed=True,
@@ -145,9 +168,7 @@ def create_promotion(
         )
 
     # Link attachments to the promotion if provided (root-level attachment_id or promotions.attachment_id list)
-    attachment_ids = list(payload.promotions.attachment_id or [])
-    if payload.attachment_id and payload.attachment_id not in attachment_ids:
-        attachment_ids.insert(0, payload.attachment_id)
+    attachment_ids = _attachment_ids_from_promotion_payload(payload)
     if attachment_ids:
         created_by_uuid = created_by
         found = db.query(Attachment).filter(Attachment.id.in_(attachment_ids)).all()

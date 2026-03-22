@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import logging
+import uuid
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -52,10 +53,14 @@ def notify_uploaders_after_external_promotion_created(
     db: Session,
     attachment_ids: list[str],
     promotion,
+    *,
+    notification_batch_id: str,
 ) -> tuple[list[str], set[str]]:
     """
     In-app + email when POST /external/promotions succeeds and links attachment(s).
-    Notifies each distinct uploader (uploaded_by) once per promotion, with links to the promotion and their file(s).
+    Notifies each distinct uploader (uploaded_by) for this API invocation, with links to the promotion and their file(s).
+
+    notification_batch_id scopes idempotency so each external API call can notify again (e.g. same promo code / resubmit).
 
     Returns (notification_ids_for_email_flush, uploader_user_ids_notified).
     """
@@ -94,6 +99,7 @@ def notify_uploaders_after_external_promotion_created(
     promo_code = (getattr(promotion, "promo_code", None) or "").strip() or "—"
     promo_name = (getattr(promotion, "name", None) or "").strip() or promo_code
     promo_url = build_promotion_detail_url(promo_id)
+    notify_source_id = f"{promo_id}_{notification_batch_id}"
 
     notif_svc = NotificationService(db)
 
@@ -152,7 +158,7 @@ def notify_uploaders_after_external_promotion_created(
                     body=body_plain,
                     data=data,
                     source_entity_type="promotion",
-                    source_entity_id=promo_id,
+                    source_entity_id=notify_source_id,
                     event_type="external_attachment_uploader_notice",
                 )
                 if n:
@@ -165,7 +171,7 @@ def notify_uploaders_after_external_promotion_created(
                     title=title,
                     body=body_plain,
                     source_entity_type="promotion",
-                    source_entity_id=promo_id,
+                    source_entity_id=notify_source_id,
                     event_type="external_attachment_uploader_notice",
                 )
                 uploader_ids.add(uid)
@@ -185,6 +191,8 @@ def notify_external_promotion_explicit_user(
     db: Session,
     promotion,
     user_id: str,
+    *,
+    notification_batch_id: str,
 ) -> list[str]:
     """
     Notify a CRM user by id that a promotion was created via the external API (no attachment uploader path).
@@ -226,6 +234,7 @@ def notify_external_promotion_explicit_user(
         f"Please do not reply.</p>"
     )
     data = {"body_html": body_html, "promotion_url": promo_url, "promotion_id": promo_id}
+    notify_source_id = f"{promo_id}_{notification_batch_id}"
 
     notif_svc = NotificationService(db)
     email = (getattr(user, "email", None) or "").strip()
@@ -238,7 +247,7 @@ def notify_external_promotion_explicit_user(
                 body=body_plain,
                 data=data,
                 source_entity_type="promotion",
-                source_entity_id=promo_id,
+                source_entity_id=notify_source_id,
                 event_type="external_promotion_explicit_notify",
             )
             return [str(n.id)] if n else []
@@ -248,7 +257,7 @@ def notify_external_promotion_explicit_user(
             title=title,
             body=body_plain,
             source_entity_type="promotion",
-            source_entity_id=promo_id,
+            source_entity_id=notify_source_id,
             event_type="external_promotion_explicit_notify",
         )
         return []
@@ -272,11 +281,17 @@ def notify_after_external_promotion_created(
     if not getattr(settings, "notifications_v1_enabled", True):
         return
 
+    batch_id = uuid.uuid4().hex[:16]
     ids: list[str] = []
     uploaders: set[str] = set()
 
     try:
-        n_ids, up = notify_uploaders_after_external_promotion_created(db, attachment_ids, promotion)
+        n_ids, up = notify_uploaders_after_external_promotion_created(
+            db,
+            attachment_ids,
+            promotion,
+            notification_batch_id=batch_id,
+        )
         ids.extend(n_ids)
         uploaders.update(up)
     except Exception as e:
@@ -285,7 +300,7 @@ def notify_after_external_promotion_created(
     nu = (notify_user_id or "").strip()
     if nu and nu not in uploaders:
         try:
-            ids.extend(notify_external_promotion_explicit_user(db, promotion, nu))
+            ids.extend(notify_external_promotion_explicit_user(db, promotion, nu, notification_batch_id=batch_id))
         except Exception as e:
             logger.warning("External promotion notify_user_id failed: %s", e, exc_info=True)
 

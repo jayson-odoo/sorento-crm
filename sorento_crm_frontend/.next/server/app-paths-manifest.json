@@ -1,11 +1,9 @@
 {
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/api/user-management/account/route": "app/api/user-management/account/route.js",
-  "/(auth)/signin/page": "app/(auth)/signin/page.js",
-  "/(protected)/workflow-forms-management/submissions/[id]/page": "app/(protected)/workflow-forms-management/submissions/[id]/page.js",
-  "/(protected)/resource-management/attachment-directories/page": "app/(protected)/resource-management/attachment-directories/page.js",
-  "/(protected)/system-management/outgoing-mails/page": "app/(protected)/system-management/outgoing-mails/page.js",
+  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
+  "/(protected)/marketing-management/promotions/[id]/page": "app/(protected)/marketing-management/promotions/[id]/page.js",
   "/(protected)/marketing-management/promotions/page": "app/(protected)/marketing-management/promotions/page.js",
-  "/(protected)/marketing-management/promotions/[id]/page": "app/(protected)/marketing-management/promotions/[id]/page.js"
+  "/(protected)/system-management/outgoing-mails/page": "app/(protected)/system-management/outgoing-mails/page.js",
+  "/(protected)/page": "app/(protected)/page.js",
+  "/(auth)/signin/page": "app/(auth)/signin/page.js"
 }

@@ -14,6 +14,11 @@ export const metadata: Metadata = {
     template: '%s | Sorento',
     default: 'Sorento', // a default is required when creating a template
   },
+  /** Browser tab icon (served from /public). Override by replacing the file or changing this path. */
+  icons: {
+    icon: [{ url: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT0W8EVfDgMH4jzzsPWOuT94DxFjJ47M2WkZg&s', type: 'image/svg+xml' }],
+    shortcut: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT0W8EVfDgMH4jzzsPWOuT94DxFjJ47M2WkZg&s',
+  },
 };
 
 export default async function RootLayout({

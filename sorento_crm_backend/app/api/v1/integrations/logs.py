@@ -6,7 +6,7 @@ import logging
 import traceback
 from datetime import datetime
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_or_api_key
 from app.services.integration_service import IntegrationLogService
 from app.schemas.integration import IntegrationLogResponse, IntegrationLogUpdateRequest, IntegrationLogCreate
 from app.schemas.common import ListResponse
@@ -24,7 +24,7 @@ async def get_integration_logs(
     integration_channel: Optional[str] = Query(None),
     business_table: Optional[str] = Query(None),
     business_id: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get integration logs with pagination and filtering."""
@@ -51,7 +51,7 @@ async def get_integration_logs(
 @router.get("/{log_id}", response_model=IntegrationLogResponse)
 async def get_integration_log(
     log_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single integration log by ID."""
@@ -68,7 +68,7 @@ async def get_integration_log(
 @router.get("/{log_id}/status", response_model=IntegrationLogResponse)
 async def get_integration_log_status(
     log_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get integration log status (same as GET /{log_id}; allows GET .../status for polling/links)."""
@@ -86,7 +86,7 @@ async def get_integration_log_status(
 async def update_integration_log(
     log_id: str,
     update_data: IntegrationLogUpdateRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """
@@ -96,10 +96,10 @@ async def update_integration_log(
     """
     try:
         service = IntegrationLogService(db)
-        
+
         # Prepare update data with processed timestamp
         from app.schemas.integration import IntegrationLogUpdate
-        
+
         update_payload = IntegrationLogUpdate(
             status=update_data.status,
             status_code=update_data.status_code,
@@ -108,7 +108,7 @@ async def update_integration_log(
             error_message=update_data.error_message,
             processed_at=datetime.utcnow() if update_data.status in ["success", "failed"] else None
         )
-        
+
         service.update_integration_log(log_id, update_payload)
         log = service.get_integration_log_response(log_id)
         return log
@@ -165,7 +165,7 @@ async def update_integration_log_status(
 @router.post("/{log_id}/retry", response_model=IntegrationLogResponse)
 async def retry_integration_log(
     log_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Manually retry sending webhook for an integration log."""

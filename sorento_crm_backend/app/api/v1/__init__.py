@@ -108,14 +108,15 @@ api_router.include_router(
     integrations.logs.router,
     prefix="/integrations/logs",
     tags=["integrations"],
-    dependencies=[Depends(require_module_enabled("base"))],
+    # JWT or X-API-Key so n8n / external tools can call logs (same key as /external/*)
+    dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
 # Alias so /api/v1/integration-management/integration-logs/* works when requests hit backend directly (e.g. nginx)
 api_router.include_router(
     integrations.logs.router,
     prefix="/integration-management/integration-logs",
     tags=["integrations"],
-    dependencies=[Depends(require_module_enabled("base"))],
+    dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
 api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(test_auth.router, tags=["test"])
