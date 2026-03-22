@@ -2,3 +2,4 @@
 alwaysApply: true
 ---
 Do not include explaination of the feature in the system UI itself, all these should be under documentation, FAQ etc.
+Do not put UUID in the frontend of the system

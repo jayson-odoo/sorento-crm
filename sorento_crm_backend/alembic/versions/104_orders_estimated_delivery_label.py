@@ -1,7 +1,7 @@
 """Rename orders list field label promised_delivery_date → Estimated delivery.
 
 Revision ID: 104_orders_estimated_delivery_label
-Revises: 103_inbound_shipment_eta
+Revises: 103b_widen_alembic_ver_len
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "104_orders_estimated_delivery_label"
-down_revision = "103_inbound_shipment_eta"
+down_revision = "103b_widen_alembic_ver_len"
 branch_labels = None
 depends_on = None
 

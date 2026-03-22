@@ -367,25 +367,32 @@ class IntegrationLogService:
         self.db.refresh(log)
         return log
     
-    def send_webhook_for_log(self, log_id: str) -> tuple[bool, Optional[str]]:
+    def send_webhook_for_log(
+        self,
+        log_id: str,
+        *,
+        force_resend: bool = False,
+    ) -> tuple[bool, Optional[str]]:
         """
         Send webhook request for a specific integration log.
-        
+
         Args:
             log_id: Integration log ID
-            
+            force_resend: If True, send even when status is success/sent and skip max-retry guard
+                (used for manual attachment "Resubmit" with a refreshed payload).
+
         Returns:
             Tuple of (success: bool, error_message: Optional[str])
         """
         log = self.get_integration_log(log_id)
-        
+
         # Check if already sent or processed successfully
-        if log.status in ["success", "sent"]:
+        if not force_resend and log.status in ["success", "sent"]:
             logger.info(f"Integration log {log_id} already sent or processed (status: {log.status})")
             return True, None
-        
+
         # Check retry limit
-        if log.retry_count >= log.max_retry_allowed:
+        if not force_resend and log.retry_count >= log.max_retry_allowed:
             logger.warning(f"Integration log {log_id} exceeded max retries ({log.max_retry_allowed})")
             self.update_integration_log(
                 log_id,
@@ -428,6 +435,9 @@ class IntegrationLogService:
         if response_data:
             response_payload_str = json.dumps(response_data)
         
+        # Manual resubmit should not consume automatic retry budget
+        next_retry_count = log.retry_count if force_resend else log.retry_count + 1
+
         # Update log with response
         update_data = IntegrationLogUpdate(
             status="sent" if success else "failed",  # Changed from "success" to "sent" - n8n will call back to update to success/failed
@@ -436,7 +446,7 @@ class IntegrationLogService:
             response_headers=response_headers_str,
             error_code=error_code,
             error_message=error_message,
-            retry_count=log.retry_count + 1
+            retry_count=next_retry_count,
         )
         
         if success:

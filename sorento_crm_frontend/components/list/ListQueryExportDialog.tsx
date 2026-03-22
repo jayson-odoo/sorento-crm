@@ -39,6 +39,8 @@ export type ListQueryExportDialogProps = {
   getPayload: () => Record<string, unknown>;
   /** When non-empty, export only these row ids (server still applies list filters). */
   selectedRecordIds?: string[];
+  /** Workflow submissions: include form-field columns from this definition's published schema. */
+  workflowDefinitionId?: string | null;
 };
 
 function ExportFieldRow({
@@ -193,10 +195,15 @@ export function ListQueryExportDialog({
   onOpenChange,
   getPayload,
   selectedRecordIds,
+  workflowDefinitionId,
 }: ListQueryExportDialogProps) {
   const { data: fields = [], isLoading } = useQuery({
-    queryKey: ['list-query-fields', resourceKey],
-    queryFn: () => fetchListQueryFields(resourceKey),
+    queryKey: ['list-query-fields', resourceKey, workflowDefinitionId ?? ''],
+    queryFn: () =>
+      fetchListQueryFields(resourceKey, {
+        definitionId:
+          resourceKey === 'workflow_form_submissions' ? workflowDefinitionId ?? undefined : undefined,
+      }),
     enabled: open,
     staleTime: 60_000,
   });
@@ -215,7 +222,7 @@ export function ListQueryExportDialog({
   useEffect(() => {
     if (!open) return;
     setSelected(new Set(exportable.map((f) => f.field_key)));
-  }, [open, exportable.map((f) => f.field_key).join('|')]);
+  }, [open, exportable]);
 
   const toggle = (key: string) => {
     setSelected((prev) => {

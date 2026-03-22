@@ -1,6 +1,8 @@
 """Marketing service for business logic."""
+import re
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, exists
+from sqlalchemy.exc import IntegrityError
 from typing import Optional
 from app.models.marketing import Promotion, PromotionProduct, PromotionAttachment, CampaignType, MarketingCampaign
 from app.models.product import Product
@@ -10,8 +12,44 @@ from app.schemas.marketing import (
     PromotionAttachmentCreate, PromotionAttachmentUpdate,
     CampaignTypeCreate, CampaignTypeUpdate, MarketingCampaignCreate, MarketingCampaignUpdate
 )
-from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error
 from app.services.contact_access_type_service import ContactAccessTypeService
+
+
+def _product_display_label(db: Session, product_id: str) -> str:
+    """Human-readable product label (code and name) for error messages."""
+    p = db.query(Product).filter(Product.id == product_id).first()
+    if not p:
+        return product_id
+    code = (p.product_code or "").strip()
+    name = (p.product_name or "").strip()
+    if code and name:
+        return f"{code} — {name}"
+    return code or name or product_id
+
+
+def raise_promotion_product_unique_violation(db: Session, exc: Exception) -> None:
+    """
+    Turn promotion_products unique constraint failures into 409 with product details.
+    Call after session.rollback() when handling IntegrityError from commit/flush.
+    """
+    if not isinstance(exc, IntegrityError):
+        raise exc
+    orig = str(getattr(exc, "orig", exc) or exc)
+    if "uq_promotion" not in orig.lower() and "promotion_products" not in orig.lower():
+        raise handle_internal_error(
+            "Could not save promotion product due to a database constraint."
+        )
+    m = re.search(r"Key \(promotion_id, product_id\)=\([^,]+,\s*([^)]+)\)", orig)
+    if not m:
+        raise handle_conflict(
+            "This product is already linked to this promotion, or the request contains duplicate products."
+        )
+    product_id = m.group(1).strip()
+    label = _product_display_label(db, product_id)
+    raise handle_conflict(
+        f"Product already on this promotion: {label}. Remove duplicate rows or use one line per product."
+    )
 
 
 class PromotionService:
@@ -340,7 +378,8 @@ class PromotionProductService:
             PromotionProduct.product_id == product_data.product_id
         ).first()
         if existing:
-            raise handle_conflict("Product already added to this promotion.")
+            label = _product_display_label(self.db, product_data.product_id)
+            raise handle_conflict(f"Product already on this promotion: {label}.")
         
         # Get the product to calculate discount
         product = self.db.query(Product).filter(Product.id == product_data.product_id).first()
@@ -365,9 +404,13 @@ class PromotionProductService:
             discount_percent=discount_percent
         )
         self.db.add(promotion_product)
-        self.db.commit()
-        self.db.refresh(promotion_product)
-        
+        try:
+            self.db.commit()
+            self.db.refresh(promotion_product)
+        except IntegrityError as e:
+            self.db.rollback()
+            raise_promotion_product_unique_violation(self.db, e)
+
         # Reload with product and promotion relationships
         return self.db.query(PromotionProduct).options(
             joinedload(PromotionProduct.product),

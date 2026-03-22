@@ -39,7 +39,13 @@ FilterGroup.model_rebuild()
 
 
 class ListSearchRequest(BaseModel):
-    resource: Literal["orders", "products", "suppliers"]
+    resource: Literal[
+        "orders",
+        "products",
+        "suppliers",
+        "workflow_form_definitions",
+        "workflow_form_submissions",
+    ]
     filter: Optional[FilterGroup] = None
     page: int = Field(1, ge=1)
     limit: int = Field(50, ge=1, le=1000)
@@ -57,6 +63,10 @@ class ListSearchRequest(BaseModel):
     price_min: Optional[float] = None
     price_max: Optional[float] = None
     item_type: Optional[str] = None
+    # Workflow forms (list-query + UI quick filters)
+    workflow_definition_is_active: Optional[bool] = None
+    workflow_form_definition_id: Optional[str] = None
+    workflow_submission_state_code: Optional[str] = None
 
 
 class ExportFieldSelection(BaseModel):
@@ -64,7 +74,13 @@ class ExportFieldSelection(BaseModel):
 
 
 class ListExportRequest(BaseModel):
-    resource: Literal["orders", "products", "suppliers"]
+    resource: Literal[
+        "orders",
+        "products",
+        "suppliers",
+        "workflow_form_definitions",
+        "workflow_form_submissions",
+    ]
     filter: Optional[FilterGroup] = None
     quick_search: Optional[str] = None
     fields: List[ExportFieldSelection] = Field(..., min_length=1)
@@ -79,6 +95,9 @@ class ListExportRequest(BaseModel):
     price_min: Optional[float] = None
     price_max: Optional[float] = None
     item_type: Optional[str] = None
+    workflow_definition_is_active: Optional[bool] = None
+    workflow_form_definition_id: Optional[str] = None
+    workflow_submission_state_code: Optional[str] = None
 
 
 class ListQueryFieldResponse(BaseModel):

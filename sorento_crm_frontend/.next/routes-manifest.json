@@ -671,6 +671,14 @@
       "namedRegex": "^/api/v1/user\\-management/(?<nxtPpath>.+?)(?:/)?$"
     },
     {
+      "page": "/api/v1/workflow-forms/[...path]",
+      "regex": "^/api/v1/workflow\\-forms/(.+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPpath": "nxtPpath"
+      },
+      "namedRegex": "^/api/v1/workflow\\-forms/(?<nxtPpath>.+?)(?:/)?$"
+    },
+    {
       "page": "/complaint-management/complaints/[id]",
       "regex": "^/complaint\\-management/complaints/([^/]+?)(?:/)?$",
       "routeKeys": {
@@ -1078,6 +1086,38 @@
         "nxtPid": "nxtPid"
       },
       "namedRegex": "^/user\\-management/users/(?<nxtPid>[^/]+?)/logs(?:/)?$"
+    },
+    {
+      "page": "/workflow-forms-management/definitions/[id]",
+      "regex": "^/workflow\\-forms\\-management/definitions/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPid": "nxtPid"
+      },
+      "namedRegex": "^/workflow\\-forms\\-management/definitions/(?<nxtPid>[^/]+?)(?:/)?$"
+    },
+    {
+      "page": "/workflow-forms-management/forms/[definitionId]/new",
+      "regex": "^/workflow\\-forms\\-management/forms/([^/]+?)/new(?:/)?$",
+      "routeKeys": {
+        "nxtPdefinitionId": "nxtPdefinitionId"
+      },
+      "namedRegex": "^/workflow\\-forms\\-management/forms/(?<nxtPdefinitionId>[^/]+?)/new(?:/)?$"
+    },
+    {
+      "page": "/workflow-forms-management/forms/[definitionId]/submissions",
+      "regex": "^/workflow\\-forms\\-management/forms/([^/]+?)/submissions(?:/)?$",
+      "routeKeys": {
+        "nxtPdefinitionId": "nxtPdefinitionId"
+      },
+      "namedRegex": "^/workflow\\-forms\\-management/forms/(?<nxtPdefinitionId>[^/]+?)/submissions(?:/)?$"
+    },
+    {
+      "page": "/workflow-forms-management/submissions/[id]",
+      "regex": "^/workflow\\-forms\\-management/submissions/([^/]+?)(?:/)?$",
+      "routeKeys": {
+        "nxtPid": "nxtPid"
+      },
+      "namedRegex": "^/workflow\\-forms\\-management/submissions/(?<nxtPid>[^/]+?)(?:/)?$"
     }
   ],
   "staticRoutes": [
@@ -1350,12 +1390,6 @@
       "regex": "^/forms\\-management/forms(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/forms\\-management/forms(?:/)?$"
-    },
-    {
-      "page": "/forms-management/kol-video-request",
-      "regex": "^/forms\\-management/kol\\-video\\-request(?:/)?$",
-      "routeKeys": {},
-      "namedRegex": "^/forms\\-management/kol\\-video\\-request(?:/)?$"
     },
     {
       "page": "/i18n-test",
@@ -2130,6 +2164,24 @@
       "regex": "^/view/stock\\-inquiry(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/view/stock\\-inquiry(?:/)?$"
+    },
+    {
+      "page": "/workflow-forms-management/definitions",
+      "regex": "^/workflow\\-forms\\-management/definitions(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/workflow\\-forms\\-management/definitions(?:/)?$"
+    },
+    {
+      "page": "/workflow-forms-management/submissions",
+      "regex": "^/workflow\\-forms\\-management/submissions(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/workflow\\-forms\\-management/submissions(?:/)?$"
+    },
+    {
+      "page": "/workflow-forms-management/submissions/new",
+      "regex": "^/workflow\\-forms\\-management/submissions/new(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/workflow\\-forms\\-management/submissions/new(?:/)?$"
     }
   ],
   "dataRoutes": [],

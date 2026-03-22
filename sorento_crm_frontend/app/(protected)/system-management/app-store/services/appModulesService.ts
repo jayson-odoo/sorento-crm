@@ -95,6 +95,7 @@ export const MODULES_WITH_DATA_PURGE: string[] = [
   'audit',
   'sla',
   'forms',
+  'workflow_forms',
   'marketing',
   'complaints',
   'public_view_links',
@@ -157,6 +158,16 @@ export const MODULE_PURGE_TABLES: Record<
     tables: ['view_tokens'],
     description:
       'Shareable public-view tokens only. Related records (stock inquiries, purchase requests, complaints, etc.) are not deleted.',
+  },
+  workflow_forms: {
+    tables: [
+      'workflow_submission_transition_logs',
+      'workflow_submission_lines',
+      'workflow_submissions',
+      'workflow_form_versions',
+      'workflow_form_definitions',
+    ],
+    description: 'Workflow form definitions, published versions, submissions, and history.',
   },
 };
 

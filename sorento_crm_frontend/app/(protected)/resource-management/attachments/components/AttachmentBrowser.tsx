@@ -89,7 +89,7 @@ export default function AttachmentBrowser() {
       setPendingResubmitIds((prev) => new Set(prev).add(id));
       try {
         await resubmitAttachmentWebhook(id);
-        toast.success('Webhook resubmitted successfully');
+        toast.success('Webhook resent with a fresh signed URL');
         queryClient.invalidateQueries({ queryKey: ['attachments'] });
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to resubmit webhook');
@@ -178,7 +178,7 @@ export default function AttachmentBrowser() {
     setIsResubmittingBulk(false);
     queryClient.invalidateQueries({ queryKey: ['attachments'] });
     if (failCount === 0) {
-      toast.success(`Webhook resubmitted for ${successCount} attachment(s)`);
+      toast.success(`Webhook resent with fresh signed URLs for ${successCount} attachment(s)`);
       setRowSelection({});
     } else if (successCount === 0) {
       toast.error(`Failed to resubmit webhook for ${failCount} attachment(s)`);

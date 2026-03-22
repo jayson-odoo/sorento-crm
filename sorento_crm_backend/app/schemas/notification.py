@@ -1,7 +1,7 @@
 """Notification API schemas."""
 from datetime import datetime
 from typing import Optional, Any
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 def _str_uuid(v: Any) -> Optional[str]:
@@ -41,3 +41,8 @@ class PushSubscribeRequest(BaseModel):
     endpoint: str
     p256dh: str
     auth: str
+
+
+class BulkDeleteNotificationsRequest(BaseModel):
+    """Permanently delete multiple notifications owned by the current user."""
+    ids: list[str] = Field(..., min_length=1, max_length=100)

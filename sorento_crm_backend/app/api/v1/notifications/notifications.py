@@ -9,7 +9,12 @@ from app.dependencies import get_current_user
 from app.services.notification_service import NotificationService
 from app.services.audit_service import log_audit
 from app.models.notification import PushSubscription
-from app.schemas.notification import NotificationResponse, UnreadCountResponse, PushSubscribeRequest
+from app.schemas.notification import (
+    NotificationResponse,
+    UnreadCountResponse,
+    PushSubscribeRequest,
+    BulkDeleteNotificationsRequest,
+)
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
@@ -219,6 +224,84 @@ async def archive_all(
         log_audit(db, "notification", "00000000-0000-0000-0000-000000000000", "UPDATE", user_id=current_user["id"], new_values={"operation": "archive_all", "count": count})
         db.commit()
         return {"message": "Archived", "count": count}
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_notifications(
+    body: BulkDeleteNotificationsRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete multiple notifications for the current user."""
+    _require_notifications_enabled()
+    try:
+        service = NotificationService(db)
+        count = service.delete_many(body.ids, current_user["id"])
+        log_audit(
+            db,
+            "notification",
+            "00000000-0000-0000-0000-000000000000",
+            "DELETE",
+            user_id=current_user["id"],
+            new_values={"operation": "bulk_delete", "count": count},
+        )
+        db.commit()
+        return {"message": "Deleted", "count": count}
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/delete-all")
+async def delete_all_notifications(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete all notifications for the current user."""
+    _require_notifications_enabled()
+    try:
+        service = NotificationService(db)
+        count = service.delete_all(current_user["id"])
+        log_audit(
+            db,
+            "notification",
+            "00000000-0000-0000-0000-000000000000",
+            "DELETE",
+            user_id=current_user["id"],
+            new_values={"operation": "delete_all", "count": count},
+        )
+        db.commit()
+        return {"message": "Deleted", "count": count}
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/{notification_id}")
+async def delete_notification(
+    notification_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete a single notification."""
+    _require_notifications_enabled()
+    try:
+        service = NotificationService(db)
+        ok = service.delete(notification_id, current_user["id"])
+        if not ok:
+            raise HTTPException(status_code=404, detail="Notification not found")
+        log_audit(
+            db,
+            "notification",
+            notification_id,
+            "DELETE",
+            user_id=current_user["id"],
+            new_values={"operation": "delete"},
+        )
+        db.commit()
+        return {"message": "Deleted"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 

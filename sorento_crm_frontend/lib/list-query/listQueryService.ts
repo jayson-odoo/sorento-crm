@@ -1,6 +1,11 @@
 import { apiFetch } from '@/lib/api';
 
-export type ListQueryResourceKey = 'orders' | 'products' | 'suppliers';
+export type ListQueryResourceKey =
+  | 'orders'
+  | 'products'
+  | 'suppliers'
+  | 'workflow_form_definitions'
+  | 'workflow_form_submissions';
 
 export type ListQueryFilterCondition = {
   field_key: string;
@@ -30,8 +35,19 @@ export type ListQueryFieldMeta = {
   export_subgroup?: 'product' | 'warehouse' | null;
 };
 
-export async function fetchListQueryFields(resourceKey: ListQueryResourceKey): Promise<ListQueryFieldMeta[]> {
-  const r = await apiFetch(`/api/v1/list-query/resources/${resourceKey}/fields`);
+export type FetchListQueryFieldsOptions = {
+  /** Workflow submissions: published schema fields for this definition (header / line JSON). */
+  definitionId?: string | null;
+};
+
+export async function fetchListQueryFields(
+  resourceKey: ListQueryResourceKey,
+  options?: FetchListQueryFieldsOptions,
+): Promise<ListQueryFieldMeta[]> {
+  const sp = new URLSearchParams();
+  if (options?.definitionId) sp.set('definition_id', options.definitionId);
+  const q = sp.toString();
+  const r = await apiFetch(`/api/v1/list-query/resources/${resourceKey}/fields${q ? `?${q}` : ''}`);
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
     throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to load list fields');

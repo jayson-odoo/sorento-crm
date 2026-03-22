@@ -11,6 +11,7 @@ export const ROUTE_MODULE_PREFIXES: { prefix: string; moduleKey: string }[] = [
   { prefix: '/inventory-management', moduleKey: 'inventory' },
   { prefix: '/marketing-management', moduleKey: 'marketing' },
   { prefix: '/forms-management', moduleKey: 'forms' },
+  { prefix: '/workflow-forms-management', moduleKey: 'workflow_forms' },
   { prefix: '/resource-management', moduleKey: 'resources' },
   { prefix: '/integration-management', moduleKey: 'base' },
   { prefix: '/system-management', moduleKey: 'base' },

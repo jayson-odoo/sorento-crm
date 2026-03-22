@@ -20,6 +20,7 @@ from app.api.v1 import (
     public,
     notifications,
     list_query,
+    workflow_forms,
 )
 from app.api.v1.system import modules_runtime
 from app.modules.runtime.guards import require_module_enabled, require_module_enabled_with_api_key
@@ -72,6 +73,12 @@ api_router.include_router(
     prefix="/forms-management",
     tags=["forms"],
     dependencies=[Depends(require_module_enabled("forms"))],
+)
+api_router.include_router(
+    workflow_forms.router,
+    prefix="/workflow-forms",
+    tags=["workflow-forms"],
+    dependencies=[Depends(require_module_enabled("workflow_forms"))],
 )
 api_router.include_router(
     complaints.router,

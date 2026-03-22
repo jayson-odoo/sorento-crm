@@ -4,7 +4,9 @@ import { JSX, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { MENU_SIDEBAR } from '@/config/menu.config';
+import { injectPublishedWorkflowForms } from '@/config/workflow-forms-dynamic-menu';
 import { MenuConfig, MenuItem } from '@/config/types';
+import { usePublishedWorkflowDefinitionsForSubmissionQuery } from '@/app/(protected)/workflow-forms-management/hooks/useWorkflowForms';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenantModules } from '@/hooks/useTenantModules';
@@ -65,12 +67,28 @@ export function SidebarMenu() {
   const pathname = usePathname();
   const { permissionSet, isLoading } = usePermissions();
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
+  const wfModuleEnabled = enabledModuleKeys?.has('workflow_forms') ?? false;
+  const { data: publishedFormsRes } = usePublishedWorkflowDefinitionsForSubmissionQuery({
+    enabled: wfModuleEnabled && !modulesLoading,
+  });
+
+  const menuWithPublishedForms = useMemo(
+    () => injectPublishedWorkflowForms(MENU_SIDEBAR, publishedFormsRes?.data ?? []),
+    [publishedFormsRes?.data],
+  );
+
   const effectiveMenu = useMemo(() => {
-    if (isLoading) return MENU_SIDEBAR;
-    const byPerm = filterMenuByPermission(MENU_SIDEBAR, permissionSet);
+    if (isLoading) return menuWithPublishedForms;
+    const byPerm = filterMenuByPermission(menuWithPublishedForms, permissionSet);
     if (modulesLoading) return byPerm;
     return filterMenuByModule(byPerm, enabledModuleKeys);
-  }, [permissionSet, isLoading, enabledModuleKeys, modulesLoading]);
+  }, [
+    permissionSet,
+    isLoading,
+    enabledModuleKeys,
+    modulesLoading,
+    menuWithPublishedForms,
+  ]);
 
   // Memoize matchPath to prevent unnecessary re-renders
   const matchPath = useCallback(

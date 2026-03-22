@@ -25,6 +25,7 @@ import {
   Folder,
   Ghost,
   Gift,
+  GitBranch,
   Grid,
   Heart,
   HelpCircle,
@@ -552,9 +553,17 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Forms',
         path: '/forms-management/forms',
       },
+    ],
+  },
+  {
+    title: 'Workflow Forms',
+    icon: GitBranch,
+    moduleKey: 'workflow_forms',
+    children: [
       {
-        title: 'KOL Video Request',
-        path: '/forms-management/kol-video-request',
+        title: 'Definitions',
+        path: '/workflow-forms-management/definitions',
+        permission: 'workflow_forms.definitions.view',
       },
     ],
   },
@@ -1252,9 +1261,17 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Forms',
         path: '/forms-management/forms',
       },
+    ],
+  },
+  {
+    title: 'Workflow Forms',
+    icon: GitBranch,
+    moduleKey: 'workflow_forms',
+    children: [
       {
-        title: 'KOL Video Request',
-        path: '/forms-management/kol-video-request',
+        title: 'Definitions',
+        path: '/workflow-forms-management/definitions',
+        permission: 'workflow_forms.definitions.view',
       },
     ],
   },

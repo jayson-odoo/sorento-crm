@@ -77,6 +77,18 @@ def test_rejects_unknown_field():
         compile_filter("orders", fg, {})
 
 
+def test_compile_workflow_submission_header_json_contains():
+    fg = FilterGroup(
+        op="and",
+        children=[FilterCondition(field_key="hdr:f1", op="contains", value="abc")],
+    )
+    meta = {
+        "hdr:f1": _field("hdr:f1", "wf_hdr:f1", "string", ["contains", "eq"]),
+    }
+    expr = compile_filter("workflow_form_submissions", fg, meta)
+    assert expr is not None
+
+
 def test_rejects_disallowed_operator():
     meta = {
         "order_number": _field("order_number", "order.order_number", "string", ["eq"]),

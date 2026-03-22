@@ -14,6 +14,13 @@ from sqlalchemy.orm import Session
 from app.models.audit import AuditLog
 from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment
 from app.models.forms import Form, FormField, FormSection, FormSubmission, FormVersion
+from app.models.workflow_forms import (
+    WorkflowFormDefinition,
+    WorkflowFormVersion,
+    WorkflowSubmission,
+    WorkflowSubmissionLine,
+    WorkflowSubmissionTransitionLog,
+)
 from app.models.marketing import CampaignType, MarketingCampaign, Promotion, PromotionAttachment, PromotionProduct
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
 from app.models.procurement import ViewToken
@@ -86,6 +93,21 @@ def purge_public_view_links(db: Session) -> Dict[str, int]:
     return {"view_tokens": _count_deleted(db, ViewToken, "view_tokens")}
 
 
+def purge_workflow_forms(db: Session) -> Dict[str, int]:
+    """Workflow form definitions, versions, submissions, lines, transition logs."""
+    out: Dict[str, int] = {}
+    out["workflow_submission_transition_logs"] = _count_deleted(
+        db, WorkflowSubmissionTransitionLog, "workflow_submission_transition_logs"
+    )
+    out["workflow_submission_lines"] = _count_deleted(db, WorkflowSubmissionLine, "workflow_submission_lines")
+    out["workflow_submissions"] = _count_deleted(db, WorkflowSubmission, "workflow_submissions")
+    db.query(WorkflowFormDefinition).update({WorkflowFormDefinition.published_version_id: None}, synchronize_session=False)
+    db.commit()
+    out["workflow_form_versions"] = _count_deleted(db, WorkflowFormVersion, "workflow_form_versions")
+    out["workflow_form_definitions"] = _count_deleted(db, WorkflowFormDefinition, "workflow_form_definitions")
+    return out
+
+
 # Module key -> purge function (must match app_modules_catalog.module_key).
 # Table lists shown in App Store uninstall UI: MODULE_PURGE_TABLES in
 # sorento_crm_frontend/.../app-store/services/appModulesService.ts — keep in sync.
@@ -97,6 +119,7 @@ MODULE_PURGE_HANDLERS: Dict[str, PurgeFn] = {
     "marketing": purge_marketing,
     "complaints": purge_complaints,
     "public_view_links": purge_public_view_links,
+    "workflow_forms": purge_workflow_forms,
 }
 
 
