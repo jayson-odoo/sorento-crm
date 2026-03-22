@@ -220,10 +220,33 @@ class PromotionGroupProductItem(BaseModel):
     dealer_discount: Optional[float] = None
 
 
+class PromotionGroupFocTierItem(BaseModel):
+    """CRM-style tier: purchase_quantity / foc_quantity."""
+
+    purchase_quantity: int = Field(ge=1)
+    foc_quantity: int = Field(ge=0)
+
+
+class PromotionGroupFocRuleItem(BaseModel):
+    """External / integration payload: same keys as DB legacy columns per tier."""
+
+    purchase_quantity_for_foc: int = Field(ge=1)
+    foc_quantity: int = Field(ge=0)
+
+
 class PromotionGroupItem(BaseModel):
     group_name: str
+    dealer_discount: Optional[float] = Field(
+        None,
+        description=(
+            "Default fraction off list for every product line in this group (e.g. 0.37). "
+            "Omitted on a line uses this value; line-level dealer_discount overrides."
+        ),
+    )
     purchase_quantity_for_foc: Optional[int] = None
     foc_quantity: Optional[int] = None
+    foc_tiers: Optional[List[PromotionGroupFocTierItem]] = None
+    foc_rules: Optional[List[PromotionGroupFocRuleItem]] = None
     promotion_products: List[PromotionGroupProductItem]
 
 

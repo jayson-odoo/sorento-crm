@@ -46,6 +46,34 @@ import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import type { PromotionProduct, PromotionGroup } from '../types/promotion.types';
 
+type FocTierRow = { purchase: string; foc: string };
+
+const emptyFocTierRow = (): FocTierRow => ({ purchase: '', foc: '' });
+
+function focTiersToRows(g: PromotionGroup): FocTierRow[] {
+  if (g.foc_tiers?.length) {
+    return g.foc_tiers.map((t) => ({
+      purchase: String(t.purchase_quantity),
+      foc: String(t.foc_quantity),
+    }));
+  }
+  if (g.purchase_quantity_for_foc != null && g.foc_quantity != null) {
+    return [{ purchase: String(g.purchase_quantity_for_foc), foc: String(g.foc_quantity) }];
+  }
+  return [emptyFocTierRow()];
+}
+
+function formatFocTiersLabel(group: PromotionGroup): string | null {
+  const tiers =
+    group.foc_tiers?.length
+      ? group.foc_tiers
+      : group.purchase_quantity_for_foc != null && group.foc_quantity != null
+        ? [{ purchase_quantity: group.purchase_quantity_for_foc, foc_quantity: group.foc_quantity }]
+        : [];
+  if (!tiers.length) return null;
+  return tiers.map((t) => `Buy ${t.purchase_quantity} get ${t.foc_quantity} free`).join(' · ');
+}
+
 interface PromotionDetailProps {
   promotionId: string;
 }
@@ -79,8 +107,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const [groupEditTarget, setGroupEditTarget] = useState<PromotionGroup | null>(null);
   const [groupFormName, setGroupFormName] = useState('');
   const [groupFormSort, setGroupFormSort] = useState('');
-  const [groupFormPurchase, setGroupFormPurchase] = useState('');
-  const [groupFormFoc, setGroupFormFoc] = useState('');
+  const [focTierRows, setFocTierRows] = useState<FocTierRow[]>([emptyFocTierRow()]);
   const [editProductDialogOpen, setEditProductDialogOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [promotionPrice, setPromotionPrice] = useState<string>('');
@@ -274,8 +301,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     setGroupEditTarget(null);
     setGroupFormName('');
     setGroupFormSort('');
-    setGroupFormPurchase('');
-    setGroupFormFoc('');
+    setFocTierRows([emptyFocTierRow()]);
     setGroupDialogOpen(true);
   };
 
@@ -283,10 +309,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     setGroupEditTarget(g);
     setGroupFormName(g.group_name);
     setGroupFormSort(g.sort_order != null ? String(g.sort_order) : '');
-    setGroupFormPurchase(
-      g.purchase_quantity_for_foc != null ? String(g.purchase_quantity_for_foc) : '',
-    );
-    setGroupFormFoc(g.foc_quantity != null ? String(g.foc_quantity) : '');
+    setFocTierRows(focTiersToRows(g));
     setGroupDialogOpen(true);
   };
 
@@ -304,27 +327,27 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
         return;
       }
     }
-    let pq: number | null | undefined;
-    if (groupFormPurchase.trim() === '') {
-      pq = groupEditTarget ? null : undefined;
-    } else {
-      const v = parseInt(groupFormPurchase, 10);
-      if (Number.isNaN(v)) {
-        toast.error('Invalid purchase quantity (FOC)');
+
+    const focTiers: { purchase_quantity: number; foc_quantity: number }[] = [];
+    for (const row of focTierRows) {
+      const p = row.purchase.trim();
+      const f = row.foc.trim();
+      if (p === '' && f === '') continue;
+      if (p === '' || f === '') {
+        toast.error('Complete both purchase qty and FOC qty for each row, or clear the row.');
         return;
       }
-      pq = v;
-    }
-    let fq: number | null | undefined;
-    if (groupFormFoc.trim() === '') {
-      fq = groupEditTarget ? null : undefined;
-    } else {
-      const v = parseInt(groupFormFoc, 10);
-      if (Number.isNaN(v)) {
-        toast.error('Invalid FOC quantity');
+      const pq = parseInt(p, 10);
+      const fq = parseInt(f, 10);
+      if (Number.isNaN(pq) || pq < 1) {
+        toast.error('Purchase quantity must be at least 1.');
         return;
       }
-      fq = v;
+      if (Number.isNaN(fq) || fq < 0) {
+        toast.error('FOC quantity must be 0 or more.');
+        return;
+      }
+      focTiers.push({ purchase_quantity: pq, foc_quantity: fq });
     }
 
     try {
@@ -335,8 +358,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           data: {
             group_name: name,
             ...(sortOrder !== undefined ? { sort_order: sortOrder } : {}),
-            purchase_quantity_for_foc: pq ?? null,
-            foc_quantity: fq ?? null,
+            foc_tiers: focTiers,
           },
         });
       } else {
@@ -345,8 +367,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           data: {
             group_name: name,
             ...(sortOrder !== undefined ? { sort_order: sortOrder } : {}),
-            ...(pq !== undefined && pq !== null ? { purchase_quantity_for_foc: pq } : {}),
-            ...(fq !== undefined && fq !== null ? { foc_quantity: fq } : {}),
+            ...(focTiers.length ? { foc_tiers: focTiers } : {}),
           },
         });
       }
@@ -354,8 +375,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
       setGroupEditTarget(null);
       setGroupFormName('');
       setGroupFormSort('');
-      setGroupFormPurchase('');
-      setGroupFormFoc('');
+      setFocTierRows([emptyFocTierRow()]);
     } catch {
       /* toast in hook */
     }
@@ -434,7 +454,6 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           {dd != null && !Number.isNaN(dd) ? <span className="text-muted-foreground">{(dd * 100).toFixed(0)}%</span> : '-'}
         </td>
         <td className="p-2 text-sm text-right">{dealerCost != null ? fmtMoney(dealerCost) : '-'}</td>
-        <td className="p-2 text-sm text-right">{margin != null ? fmtMoney(margin) : '-'}</td>
         <td className="p-2 text-right">
           <div className="flex justify-end gap-2">
             {productHref && (
@@ -621,7 +640,9 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
               </div>
               {filteredPromotionGroups.length > 0 ? (
                 <div className="space-y-8">
-                  {filteredPromotionGroups.map((group) => (
+                  {filteredPromotionGroups.map((group) => {
+                    const focTiersLabel = formatFocTiersLabel(group);
+                    return (
                     <Collapsible key={group.id} defaultOpen>
                       <div className="space-y-0 rounded-lg border bg-card/50">
                         <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
@@ -634,10 +655,8 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                               <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-200" />
                               <div className="flex min-w-0 flex-wrap items-baseline gap-2">
                                 <h3 className="font-semibold text-base">{group.group_name}</h3>
-                                {group.purchase_quantity_for_foc != null && group.foc_quantity != null ? (
-                                  <span className="text-sm text-muted-foreground">
-                                    Buy {group.purchase_quantity_for_foc} get {group.foc_quantity} free (FOC)
-                                  </span>
+                                {focTiersLabel ? (
+                                  <span className="text-sm text-muted-foreground">{focTiersLabel}</span>
                                 ) : null}
                                 <span className="text-xs text-muted-foreground tabular-nums">
                                   ({group.promotion_products.length} line
@@ -698,7 +717,8 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                         </CollapsibleContent>
                       </div>
                     </Collapsible>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : filteredPromotionProducts.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
@@ -866,8 +886,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
             setGroupEditTarget(null);
             setGroupFormName('');
             setGroupFormSort('');
-            setGroupFormPurchase('');
-            setGroupFormFoc('');
+            setFocTierRows([emptyFocTierRow()]);
           }
         }}
       >
@@ -875,8 +894,8 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           <DialogHeader>
             <DialogTitle>{groupEditTarget ? 'Edit promotion group' : 'New promotion group'}</DialogTitle>
             <DialogDescription>
-              Set a name and optional FOC rule (buy N paid units, get M free). Leave FOC fields empty if not
-              applicable.
+              Set a name and optional FOC rule(s). Add multiple rows for different buy / free combinations (e.g.
+              buy 10 get 1, buy 25 get 5). Leave all rows empty if no FOC rule applies.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -895,29 +914,77 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
               />
               <p className="text-xs text-muted-foreground">Lower numbers appear first.</p>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Purchase qty (FOC)</Label>
-                <Input
-                  type="number"
-                  step="1"
-                  min="0"
-                  placeholder="e.g. 10"
-                  value={groupFormPurchase}
-                  onChange={(e) => setGroupFormPurchase(e.target.value)}
-                />
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label>FOC tiers (buy / free)</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() => setFocTierRows((rows) => [...rows, emptyFocTierRow()])}
+                >
+                  <Plus className="size-4" />
+                  Add tier
+                </Button>
               </div>
-              <div className="space-y-2">
-                <Label>FOC qty</Label>
-                <Input
-                  type="number"
-                  step="1"
-                  min="0"
-                  placeholder="e.g. 1"
-                  value={groupFormFoc}
-                  onChange={(e) => setGroupFormFoc(e.target.value)}
-                />
+              <div className="space-y-3">
+                {focTierRows.map((row, idx) => (
+                  <div key={idx} className="border rounded-md p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">Tier {idx + 1}</span>
+                      {focTierRows.length > 1 ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-destructive"
+                          onClick={() => setFocTierRows((rows) => rows.filter((_, i) => i !== idx))}
+                        >
+                          Remove
+                        </Button>
+                      ) : null}
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-0.5">
+                        <Label className="text-xs">Purchase qty</Label>
+                        <Input
+                          type="number"
+                          step="1"
+                          min="1"
+                          placeholder="e.g. 10"
+                          value={row.purchase}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setFocTierRows((rows) =>
+                              rows.map((r, i) => (i === idx ? { ...r, purchase: v } : r)),
+                            );
+                          }}
+                        />
+                      </div>
+                      <div className="space-y-0.5">
+                        <Label className="text-xs">FOC qty</Label>
+                        <Input
+                          type="number"
+                          step="1"
+                          min="0"
+                          placeholder="e.g. 1"
+                          value={row.foc}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setFocTierRows((rows) =>
+                              rows.map((r, i) => (i === idx ? { ...r, foc: v } : r)),
+                            );
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
+              <p className="text-xs text-muted-foreground">
+                When editing, saving with no tiers clears all FOC rules for this group.
+              </p>
             </div>
           </div>
           <DialogFooter>

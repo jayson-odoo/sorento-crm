@@ -62,7 +62,7 @@ class Promotion(Base):
 
 
 class PromotionGroup(Base):
-    """Bundle / FOC group: products in the same group share the same buy-N-get-M free rule."""
+    """Bundle / FOC group: optional multiple buy-N-get-M free tier combinations (foc_tiers)."""
 
     __tablename__ = "promotion_groups"
 
@@ -72,6 +72,7 @@ class PromotionGroup(Base):
     sort_order = Column(Integer, default=0, nullable=False)
     purchase_quantity_for_foc = Column(Integer, nullable=True)
     foc_quantity = Column(Integer, nullable=True)
+    foc_tiers = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

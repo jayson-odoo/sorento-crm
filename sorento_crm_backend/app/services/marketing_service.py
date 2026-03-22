@@ -74,6 +74,37 @@ def raise_promotion_product_unique_violation(db: Session, exc: Exception) -> Non
 _MAX_DISCOUNT_PERCENT = 999.99
 
 
+def _first_tier_legacy_columns(tiers: Optional[list[dict]]) -> tuple[Optional[int], Optional[int]]:
+    if not tiers:
+        return None, None
+    first = tiers[0]
+    return int(first["purchase_quantity"]), int(first["foc_quantity"])
+
+
+def _tiers_from_create_data(data: PromotionGroupCreate) -> Optional[list[dict]]:
+    """Build normalized foc_tiers JSON from create payload (prefers foc_tiers over legacy pair)."""
+    if data.foc_tiers:
+        out: list[dict] = []
+        for t in data.foc_tiers:
+            pq = int(t.purchase_quantity)
+            fq = int(t.foc_quantity)
+            if pq < 1:
+                raise handle_conflict("FOC purchase quantity must be at least 1.")
+            if fq < 0:
+                raise handle_conflict("FOC free quantity cannot be negative.")
+            out.append({"purchase_quantity": pq, "foc_quantity": fq})
+        return out
+    if data.purchase_quantity_for_foc is not None and data.foc_quantity is not None:
+        pq = int(data.purchase_quantity_for_foc)
+        fq = int(data.foc_quantity)
+        if pq < 1:
+            raise handle_conflict("FOC purchase quantity must be at least 1.")
+        if fq < 0:
+            raise handle_conflict("FOC free quantity cannot be negative.")
+        return [{"purchase_quantity": pq, "foc_quantity": fq}]
+    return None
+
+
 def dealer_cost_and_margin_from_list(
     list_price: Optional[float],
     dealer_discount_percent: Optional[float],
@@ -256,6 +287,11 @@ class PromotionService:
             raise handle_not_found("Promotion", promotion_id)
 
         groups = sorted(promotion.promotion_groups or [], key=lambda g: (g.sort_order, g.created_at))
+        for g in groups:
+            if not getattr(g, "foc_tiers", None) and g.purchase_quantity_for_foc is not None and g.foc_quantity is not None:
+                g.foc_tiers = [
+                    {"purchase_quantity": int(g.purchase_quantity_for_foc), "foc_quantity": int(g.foc_quantity)}
+                ]
         flat: list = []
         for g in groups:
             for pp in sorted(g.promotion_products or [], key=lambda x: x.created_at):
@@ -389,12 +425,15 @@ class PromotionService:
             .scalar()
         )
         sort_order = data.sort_order if data.sort_order is not None else (int(max_so) + 1)
+        tiers = _tiers_from_create_data(data)
+        pq, fq = _first_tier_legacy_columns(tiers)
         g = PromotionGroup(
             promotion_id=promotion_id,
             group_name=name,
             sort_order=sort_order,
-            purchase_quantity_for_foc=data.purchase_quantity_for_foc,
-            foc_quantity=data.foc_quantity,
+            foc_tiers=tiers,
+            purchase_quantity_for_foc=pq,
+            foc_quantity=fq,
         )
         self.db.add(g)
         self.db.commit()
@@ -416,6 +455,45 @@ class PromotionService:
             if not nm:
                 raise handle_conflict("Group name cannot be empty.")
             update_data["group_name"] = nm
+
+        if "foc_tiers" in update_data:
+            raw = update_data.pop("foc_tiers")
+            if raw is None or raw == []:
+                g.foc_tiers = None
+                g.purchase_quantity_for_foc = None
+                g.foc_quantity = None
+            else:
+                tiers: list[dict] = []
+                for t in raw:
+                    if isinstance(t, dict):
+                        pq = int(t["purchase_quantity"])
+                        fq = int(t["foc_quantity"])
+                    else:
+                        pq = int(t.purchase_quantity)
+                        fq = int(t.foc_quantity)
+                    if pq < 1:
+                        raise handle_conflict("FOC purchase quantity must be at least 1.")
+                    if fq < 0:
+                        raise handle_conflict("FOC free quantity cannot be negative.")
+                    tiers.append({"purchase_quantity": pq, "foc_quantity": fq})
+                g.foc_tiers = tiers
+                g.purchase_quantity_for_foc, g.foc_quantity = _first_tier_legacy_columns(tiers)
+        elif "purchase_quantity_for_foc" in update_data or "foc_quantity" in update_data:
+            pq = update_data.pop("purchase_quantity_for_foc", g.purchase_quantity_for_foc)
+            fq = update_data.pop("foc_quantity", g.foc_quantity)
+            if pq is not None and fq is not None:
+                if int(pq) < 1:
+                    raise handle_conflict("FOC purchase quantity must be at least 1.")
+                if int(fq) < 0:
+                    raise handle_conflict("FOC free quantity cannot be negative.")
+                g.foc_tiers = [{"purchase_quantity": int(pq), "foc_quantity": int(fq)}]
+                g.purchase_quantity_for_foc = int(pq)
+                g.foc_quantity = int(fq)
+            else:
+                g.foc_tiers = None
+                g.purchase_quantity_for_foc = None
+                g.foc_quantity = None
+
         for key, value in update_data.items():
             setattr(g, key, value)
         self.db.commit()
@@ -481,6 +559,7 @@ class PromotionProductService:
             sort_order=0,
             purchase_quantity_for_foc=None,
             foc_quantity=None,
+            foc_tiers=None,
         )
         self.db.add(g)
         self.db.flush()

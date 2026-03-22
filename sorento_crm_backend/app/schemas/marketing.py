@@ -1,7 +1,7 @@
 """Marketing management schemas."""
 from __future__ import annotations
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
 from decimal import Decimal
@@ -34,6 +34,13 @@ class PromotionUpdate(BaseModel):
     access_levels: Optional[list[str]] = None
 
 
+class FocTier(BaseModel):
+    """One buy-N paid units, get M free combination within a group."""
+
+    purchase_quantity: int = Field(ge=1, description="Paid units purchased (e.g. 10)")
+    foc_quantity: int = Field(ge=0, description="Free units (e.g. 1)")
+
+
 class PromotionGroupResponse(BaseModel):
     """FOC / bundle group within a promotion."""
 
@@ -43,6 +50,7 @@ class PromotionGroupResponse(BaseModel):
     sort_order: int = 0
     purchase_quantity_for_foc: Optional[int] = None
     foc_quantity: Optional[int] = None
+    foc_tiers: Optional[list[FocTier]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     promotion_products: Optional[list["PromotionProductResponse"]] = None
@@ -81,6 +89,7 @@ class PromotionGroupUpdate(BaseModel):
 
     group_name: Optional[str] = None
     sort_order: Optional[int] = None
+    foc_tiers: Optional[list[FocTier]] = None
     purchase_quantity_for_foc: Optional[int] = None
     foc_quantity: Optional[int] = None
 

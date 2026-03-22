@@ -50,11 +50,20 @@ export interface PromotionProduct {
   list_to_dealer_margin_amount?: number | null;
 }
 
+/** One buy-N paid, get M free combination within a promotion group. */
+export interface FocTier {
+  purchase_quantity: number;
+  foc_quantity: number;
+}
+
 export interface PromotionGroup {
   id: string;
   promotion_id: string;
   group_name: string;
   sort_order: number;
+  /** Multiple tiers, e.g. buy 10 get 1 and buy 25 get 5. */
+  foc_tiers?: FocTier[] | null;
+  /** Legacy: mirrors first tier when present. */
   purchase_quantity_for_foc?: number | null;
   foc_quantity?: number | null;
   promotion_products?: PromotionProduct[];

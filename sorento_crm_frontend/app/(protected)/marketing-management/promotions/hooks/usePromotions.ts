@@ -127,6 +127,7 @@ export function useCreatePromotionGroup() {
       data: {
         group_name: string;
         sort_order?: number | null;
+        foc_tiers?: { purchase_quantity: number; foc_quantity: number }[] | null;
         purchase_quantity_for_foc?: number | null;
         foc_quantity?: number | null;
       };
@@ -154,6 +155,7 @@ export function useUpdatePromotionGroup() {
       data: {
         group_name?: string;
         sort_order?: number | null;
+        foc_tiers?: { purchase_quantity: number; foc_quantity: number }[] | null;
         purchase_quantity_for_foc?: number | null;
         foc_quantity?: number | null;
       };

@@ -5,6 +5,7 @@ import type {
   PromotionDetail,
   PromotionProduct,
   PromotionGroup,
+  FocTier,
 } from '../types/promotion.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
@@ -110,6 +111,7 @@ export async function createPromotionGroup(
   data: {
     group_name: string;
     sort_order?: number | null;
+    foc_tiers?: FocTier[] | null;
     purchase_quantity_for_foc?: number | null;
     foc_quantity?: number | null;
   },
@@ -132,6 +134,7 @@ export async function updatePromotionGroup(
   data: {
     group_name?: string;
     sort_order?: number | null;
+    foc_tiers?: FocTier[] | null;
     purchase_quantity_for_foc?: number | null;
     foc_quantity?: number | null;
   },
