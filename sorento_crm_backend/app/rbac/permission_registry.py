@@ -105,7 +105,31 @@ PERMISSION_REGISTRY.extend(_crud("marketing", "campaigns", "Campaigns"))
 
 # Forms
 PERMISSION_REGISTRY.extend(_crud("forms", "forms", "Forms"))
-PERMISSION_REGISTRY.extend(_crud("forms", "kol_video_request", "KOL Video Request"))
+
+# Workflow forms (standalone module: builder + submissions / approvals)
+PERMISSION_REGISTRY.extend(_crud("workflow_forms", "definitions", "Workflow form definitions"))
+PERMISSION_REGISTRY.append(
+    {
+        "slug": "workflow_forms.definitions.export",
+        "name": "Export workflow form definitions",
+        "description": "Permission to export workflow form definitions (dynamic list export).",
+    }
+)
+PERMISSION_REGISTRY.extend(_crud("workflow_forms", "submissions", "Workflow form submissions"))
+PERMISSION_REGISTRY.append(
+    {
+        "slug": "workflow_forms.submissions.export",
+        "name": "Export workflow form submissions",
+        "description": "Permission to export workflow form submissions (dynamic list export).",
+    }
+)
+PERMISSION_REGISTRY.append(
+    {
+        "slug": "workflow_forms.submissions.transition",
+        "name": "Transition workflow submissions",
+        "description": "Move a workflow submission to another state (approve, reject, submit, etc.).",
+    }
+)
 
 # Resource Management (Attachments)
 PERMISSION_REGISTRY.extend(_crud("resource", "attachments", "Attachments"))

@@ -28,6 +28,7 @@ def module_for_permission(permission_slug: str) -> Optional[str]:
         "complaint_management": "complaints",
         "sla_management": "sla",
         "forms": "forms",
+        "workflow_forms": "workflow_forms",
         "resource": "resources",
         "audit": "audit",
     }

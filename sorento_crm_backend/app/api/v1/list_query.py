@@ -1,7 +1,7 @@
 """Dynamic list query metadata, advanced search, and export."""
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -16,11 +16,16 @@ from app.schemas.list_query import (
 from app.schemas.order import OrderResponse
 from app.schemas.product import ProductResponse
 from app.schemas.procurement import SupplierResponse
+from app.schemas.workflow_forms import WorkflowFormDefinitionOut, WorkflowSubmissionOut
 from app.services.error_handler import handle_internal_error
 from app.services.list_query_export_service import ListQueryExportService
 from app.services.list_query_metadata_service import ListQueryMetadataService
 from app.services.list_query_search_service import ListQuerySearchService
 from app.services.user_service import UserPermissionService
+from app.services.workflow_submission_dynamic_list_query import (
+    build_dynamic_field_metas_for_definition,
+    get_published_schema_for_definition,
+)
 
 router = APIRouter()
 
@@ -41,11 +46,15 @@ VIEW_SLUG = {
     "orders": "order_management.orders.view",
     "products": "master_data.products.view",
     "suppliers": "procurement.suppliers.view",
+    "workflow_form_definitions": "workflow_forms.definitions.view",
+    "workflow_form_submissions": "workflow_forms.submissions.view",
 }
 EXPORT_SLUG = {
     "orders": "order_management.orders.export",
     "products": "master_data.products.export",
     "suppliers": "procurement.suppliers.export",
+    "workflow_form_definitions": "workflow_forms.definitions.export",
+    "workflow_form_submissions": "workflow_forms.submissions.export",
 }
 
 
@@ -70,6 +79,10 @@ async def list_resources(
 @router.get("/resources/{resource_key}/fields", response_model=List[ListQueryFieldResponse])
 async def list_fields(
     resource_key: str,
+    definition_id: Optional[str] = Query(
+        None,
+        description="For workflow_form_submissions: published schema of this definition adds form-field filters.",
+    ),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -86,6 +99,27 @@ async def list_fields(
         if resource_key == "orders":
             sec, sub = _orders_export_ui_meta(f)
         out.append(base.model_copy(update={"export_section": sec, "export_subgroup": sub}))
+
+    if resource_key == "workflow_form_submissions" and definition_id:
+        schema = get_published_schema_for_definition(db, definition_id.strip())
+        if schema:
+            for m in build_dynamic_field_metas_for_definition(schema):
+                out.append(
+                    ListQueryFieldResponse(
+                        field_key=m.field_key,
+                        label=m.label,
+                        data_type=m.data_type,
+                        compile_key=m.compile_key,
+                        allowed_operators=m.allowed_operators,
+                        filterable=m.filterable,
+                        exportable=m.exportable,
+                        export_column_name=m.export_column_name,
+                        is_line_field=m.is_line_field,
+                        sort_order=m.sort_order,
+                        export_section=None,
+                        export_subgroup=None,
+                    )
+                )
     return out
 
 
@@ -110,6 +144,10 @@ async def advanced_search(
         data = [ProductResponse.model_validate(p) for p in result["data"]]
     elif body.resource == "suppliers":
         data = [SupplierResponse.model_validate(s) for s in result["data"]]
+    elif body.resource == "workflow_form_definitions":
+        data = [WorkflowFormDefinitionOut.model_validate(x) for x in result["data"]]
+    elif body.resource == "workflow_form_submissions":
+        data = [WorkflowSubmissionOut.model_validate(x) for x in result["data"]]
     else:
         data = result["data"]
 

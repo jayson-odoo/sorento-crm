@@ -542,15 +542,6 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
-// Validate ../../app/(protected)/forms-management/kol-video-request/page.tsx
-{
-  type __IsExpected<Specific extends AppPageConfig<"/forms-management/kol-video-request">> = Specific
-  const handler = {} as typeof import("../../app/(protected)/forms-management/kol-video-request/page.js")
-  type __Check = __IsExpected<typeof handler>
-  // @ts-ignore
-  type __Unused = __Check
-}
-
 // Validate ../../app/(protected)/i18n-test/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/i18n-test">> = Specific
@@ -2072,6 +2063,69 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/workflow-forms-management/definitions/[id]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/workflow-forms-management/definitions/[id]">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/workflow-forms-management/definitions/[id]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/workflow-forms-management/definitions/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/workflow-forms-management/definitions">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/workflow-forms-management/definitions/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/workflow-forms-management/forms/[definitionId]/new/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/workflow-forms-management/forms/[definitionId]/new">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/workflow-forms-management/forms/[definitionId]/new/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/workflow-forms-management/forms/[definitionId]/submissions/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/workflow-forms-management/forms/[definitionId]/submissions">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/workflow-forms-management/forms/[definitionId]/submissions/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/workflow-forms-management/submissions/[id]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/workflow-forms-management/submissions/[id]">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/workflow-forms-management/submissions/[id]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/workflow-forms-management/submissions/new/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/workflow-forms-management/submissions/new">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/workflow-forms-management/submissions/new/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/workflow-forms-management/submissions/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/workflow-forms-management/submissions">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/workflow-forms-management/submissions/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/api/auth/[...nextauth]/route.ts
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/auth/[...nextauth]">> = Specific
@@ -3579,6 +3633,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
 {
   type __IsExpected<Specific extends RouteHandlerConfig<"/api/v1/user-management/[...path]">> = Specific
   const handler = {} as typeof import("../../app/api/v1/user-management/[...path]/route.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/api/v1/workflow-forms/[...path]/route.ts
+{
+  type __IsExpected<Specific extends RouteHandlerConfig<"/api/v1/workflow-forms/[...path]">> = Specific
+  const handler = {} as typeof import("../../app/api/v1/workflow-forms/[...path]/route.js")
   type __Check = __IsExpected<typeof handler>
   // @ts-ignore
   type __Unused = __Check

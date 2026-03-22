@@ -1,7 +1,9 @@
 """External API for promotions."""
+from collections import Counter
 from datetime import datetime, date
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -11,6 +13,8 @@ from app.schemas.marketing import PromotionResponse
 from app.models.marketing import Promotion, PromotionProduct, PromotionAttachment
 from app.models.resources import Attachment
 from app.api.v1.external.utils import parse_date_value, get_products_by_code_exact
+from app.services.marketing_service import raise_promotion_product_unique_violation
+from app.services.error_handler import handle_conflict
 
 router = APIRouter()
 
@@ -37,6 +41,14 @@ def create_promotion(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No promotion products provided")
 
     product_codes = [item.product_code for item in payload.promotion_products]
+    stripped_codes = [(item.product_code or "").strip() for item in payload.promotion_products]
+    dup_in_request = sorted({c for c, n in Counter(stripped_codes).items() if n > 1 and c})
+    if dup_in_request:
+        raise handle_conflict(
+            "Duplicate product code(s) in the request (each product can only appear once): "
+            + ", ".join(dup_in_request)
+        )
+
     products_map = get_products_by_code_exact(db, product_codes)
     missing_codes = [c for c in product_codes if (c or "").strip() not in products_map]
     # Missing product codes are a warning only: create the promotion and link only products that exist
@@ -131,7 +143,12 @@ def create_promotion(
                 )
             )
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        raise_promotion_product_unique_violation(db, e)
+
     db.refresh(promotion)
     return PromotionCreateResponse(
         promotion=PromotionResponse.model_validate(promotion),

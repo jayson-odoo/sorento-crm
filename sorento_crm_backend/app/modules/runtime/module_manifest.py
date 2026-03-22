@@ -75,6 +75,11 @@ _RAW: Dict[str, dict] = {
         "description": "Dynamic forms, versions, submissions.",
         "dependencies": ["base", "resources"],
     },
+    "workflow_forms": {
+        "display_name": "Workflow forms",
+        "description": "Build approval-style forms with customizable fields, states, and notifications.",
+        "dependencies": ["base", "notifications"],
+    },
     "notifications": {
         "display_name": "Notifications",
         "description": "In-app notifications and delivery.",

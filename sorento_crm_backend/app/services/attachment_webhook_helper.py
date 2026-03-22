@@ -23,14 +23,18 @@ def _build_signed_attachment_url(file_path: Optional[str]) -> Optional[str]:
         s3 = S3Service()
         if file_path.startswith(("https://", "http://")):
             parsed = urlparse(file_path)
-            if parsed.query and "Policy=" in parsed.query and "Key-Pair-Id=" in parsed.query:
-                return file_path
+            # Always re-sign from the object path so expired Policy/Signature query strings are replaced
             key = unquote((parsed.path or "").lstrip("/"))
             return s3.get_signed_url(key) if key else file_path
         return s3.get_signed_url(unquote(file_path))
     except Exception as e:
         logger.warning("Could not generate signed attachment URL for webhook: %s", e)
         return file_path
+
+
+def build_signed_attachment_url_for_webhook(file_path: Optional[str]) -> Optional[str]:
+    """Public alias: always generate a fresh CloudFront signed URL from stored base URL or S3 key."""
+    return _build_signed_attachment_url(file_path)
 
 
 def create_and_send_webhook(

@@ -135,3 +135,48 @@ export async function resolve(notificationId: string): Promise<NotificationItem>
   }
   return data as NotificationItem;
 }
+
+/** Permanently remove one notification (database delete; cascades deliveries). */
+export async function deleteNotification(notificationId: string): Promise<void> {
+  const res = await apiFetch(`${base}/${encodeURIComponent(notificationId)}`, { method: 'DELETE' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message =
+      (typeof data.detail === 'string' && data.detail) ||
+      data.message ||
+      'Failed to delete notification';
+    throw new Error(message);
+  }
+}
+
+/** Permanently remove multiple notifications owned by the current user. */
+export async function deleteNotificationsBulk(ids: string[]): Promise<{ count: number }> {
+  const res = await apiFetch(`${base}/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message =
+      (typeof data.detail === 'string' && data.detail) ||
+      data.message ||
+      'Failed to delete notifications';
+    throw new Error(message);
+  }
+  return data as { count: number };
+}
+
+/** Permanently remove all notifications for the current user. */
+export async function deleteAllNotifications(): Promise<{ count: number }> {
+  const res = await apiFetch(`${base}/delete-all`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message =
+      (typeof data.detail === 'string' && data.detail) ||
+      data.message ||
+      'Failed to delete all notifications';
+    throw new Error(message);
+  }
+  return data as { count: number };
+}

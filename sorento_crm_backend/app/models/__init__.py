@@ -9,6 +9,13 @@ from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, Stoc
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine
 from app.models.marketing import Promotion, PromotionProduct, CampaignType, MarketingCampaign
 from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
+from app.models.workflow_forms import (
+    WorkflowFormDefinition,
+    WorkflowFormVersion,
+    WorkflowSubmission,
+    WorkflowSubmissionLine,
+    WorkflowSubmissionTransitionLog,
+)
 from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog
@@ -66,6 +73,11 @@ __all__ = [
     "FormField",
     "FormVersion",
     "FormSubmission",
+    "WorkflowFormDefinition",
+    "WorkflowFormVersion",
+    "WorkflowSubmission",
+    "WorkflowSubmissionLine",
+    "WorkflowSubmissionTransitionLog",
     "Complaint",
     "ComplaintAttachment",
     "ComplaintManualAttachment",

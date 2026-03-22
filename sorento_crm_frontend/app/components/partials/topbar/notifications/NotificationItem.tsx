@@ -6,10 +6,21 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
-import { MoreHorizontal, Check, Archive, RotateCcw, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  MoreHorizontal,
+  Check,
+  Archive,
+  RotateCcw,
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
+  Trash2,
+} from 'lucide-react';
 import type { NotificationItem as NotificationItemType } from '@/services/notificationService';
 
 function formatTime(createdAt: string): string {
@@ -34,7 +45,11 @@ interface Props {
   onMarkRead: (id: string) => void;
   onMarkUnread: (id: string) => void;
   onClear: (id: string) => void;
+  /** Permanently delete from database */
+  onDelete?: (id: string) => void;
   onInvalidate: () => void;
+  selected?: boolean;
+  onSelectedChange?: (id: string, checked: boolean) => void;
 }
 
 export default function NotificationItem({
@@ -42,7 +57,10 @@ export default function NotificationItem({
   onMarkRead,
   onMarkUnread,
   onClear,
+  onDelete,
   onInvalidate,
+  selected = false,
+  onSelectedChange,
 }: Props) {
   const isUnread = !item.read_at;
   const jobId = item.data?.job_id as string | undefined;
@@ -86,14 +104,32 @@ export default function NotificationItem({
     onInvalidate();
   };
 
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    void onDelete?.(item.id);
+  };
+
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={handleRowClick}
       onKeyDown={(e) => e.key === 'Enter' && handleRowClick()}
-      className={`flex gap-2.5 px-5 py-3 cursor-pointer transition-colors hover:bg-muted/30 ${isUnread ? 'bg-primary/10' : ''}`}
+      className={`flex gap-2.5 px-5 py-3 cursor-pointer transition-colors hover:bg-muted/30 ${isUnread ? 'bg-primary/10' : ''} ${selected ? 'bg-muted/50' : ''}`}
     >
+      {onSelectedChange ? (
+        <div
+          className="pt-0.5 shrink-0"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <Checkbox
+            checked={selected}
+            onCheckedChange={(c) => onSelectedChange(item.id, c === true)}
+            aria-label="Select notification"
+          />
+        </div>
+      ) : null}
       <div className="flex flex-col gap-1 flex-1 min-w-0">
         <div className="text-sm font-medium break-words">{item.title}</div>
         {item.body && (
@@ -181,6 +217,18 @@ export default function NotificationItem({
               Clear
             </DropdownMenuItem>
           )}
+          {onDelete ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={handleDelete}
+              >
+                <Trash2 className="size-4 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

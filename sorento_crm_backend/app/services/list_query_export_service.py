@@ -11,9 +11,11 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.order import Customer, Order, OrderLine
 from app.models.product import Product
 from app.models.procurement import Supplier
+from app.models.workflow_forms import WorkflowFormDefinition, WorkflowSubmission
 from app.schemas.list_query import ListExportRequest
 from app.services.list_query_metadata_service import ListQueryMetadataService
 from app.services.query.filter_compiler import compile_optional_filter
+from app.services.workflow_submission_dynamic_list_query import merge_submission_field_maps
 
 
 def _json_safe(val: Any) -> Any:
@@ -31,6 +33,33 @@ def _json_safe(val: Any) -> Any:
 def _value_from_obj(obj: Any, compile_key: str) -> Any:
     _, attr = compile_key.split(".", 1)
     return _json_safe(getattr(obj, attr, None))
+
+
+def _value_from_workflow_def(obj: Any, compile_key: str) -> Any:
+    _, attr = compile_key.split(".", 1)
+    return _json_safe(getattr(obj, attr, None))
+
+
+def _value_from_workflow_submission(sub: Any, compile_key: str) -> Any:
+    if compile_key == "rel.definition_name":
+        d = getattr(sub, "definition", None)
+        return _json_safe(d.name if d is not None else None)
+    if compile_key.startswith("wf_hdr:"):
+        fid = compile_key.split(":", 1)[1]
+        data = sub.header_data if isinstance(sub.header_data, dict) else {}
+        return _json_safe(data.get(fid))
+    if compile_key.startswith("wf_ln:"):
+        parts = compile_key.split(":", 2)
+        if len(parts) != 3:
+            return None
+        _, line_group_id, field_id = parts
+        for ln in sub.lines or []:
+            if getattr(ln, "line_group_id", None) == line_group_id:
+                rd = ln.row_data if isinstance(ln.row_data, dict) else {}
+                return _json_safe(rd.get(field_id))
+        return None
+    _, attr = compile_key.split(".", 1)
+    return _json_safe(getattr(sub, attr, None))
 
 
 def _value_from_line_export(line: Any, compile_key: str) -> Any:
@@ -76,6 +105,10 @@ class ListQueryExportService:
             raise ValueError(f"Unknown resource: {req.resource}")
 
         field_by_key = self.meta.fields_by_key(req.resource)
+        if req.resource == "workflow_form_submissions":
+            wid = (req.workflow_form_definition_id or "").strip() or None
+            if wid:
+                field_by_key = merge_submission_field_maps(field_by_key, wid, self.db)
         selected = []
         for sel in req.fields:
             m = field_by_key.get(sel.field_key)
@@ -91,6 +124,10 @@ class ListQueryExportService:
             return self._export_products(selected, clause, req)
         if req.resource == "suppliers":
             return self._export_suppliers(selected, clause, req)
+        if req.resource == "workflow_form_definitions":
+            return self._export_workflow_form_definitions(selected, clause, req)
+        if req.resource == "workflow_form_submissions":
+            return self._export_workflow_form_submissions(selected, clause, req)
         raise ValueError(f"Unsupported resource: {req.resource}")
 
     def _export_orders(
@@ -248,5 +285,91 @@ class ListQueryExportService:
             for m in selected:
                 key = m.export_column_name or m.field_key
                 row[key] = _value_from_obj(s, m.compile_key)
+            out.append(row)
+        return out
+
+    def _export_workflow_form_definitions(
+        self,
+        selected: list,
+        clause: Optional[Any],
+        req: ListExportRequest,
+    ) -> List[Dict[str, Any]]:
+        q = self.db.query(WorkflowFormDefinition)
+        if req.workflow_definition_is_active is not None:
+            q = q.filter(WorkflowFormDefinition.is_active.is_(req.workflow_definition_is_active))
+        if req.quick_search:
+            like = f"%{req.quick_search.strip()}%"
+            q = q.filter(
+                or_(
+                    WorkflowFormDefinition.name.ilike(like),
+                    WorkflowFormDefinition.code.ilike(like),
+                )
+            )
+        if clause is not None:
+            q = q.filter(clause)
+        id_list = _dedupe_record_ids(req.record_ids)
+        if id_list:
+            q = q.filter(WorkflowFormDefinition.id.in_(id_list))
+        rows = q.all()
+        if id_list:
+            by_id = {str(r.id): r for r in rows}
+            rows = [by_id[i] for i in id_list if i in by_id]
+        else:
+            rows = sorted(rows, key=lambda r: r.updated_at or datetime.min, reverse=True)
+        out: List[Dict[str, Any]] = []
+        for d in rows:
+            row = {}
+            for m in selected:
+                key = m.export_column_name or m.field_key
+                row[key] = _value_from_workflow_def(d, m.compile_key)
+            out.append(row)
+        return out
+
+    def _export_workflow_form_submissions(
+        self,
+        selected: list,
+        clause: Optional[Any],
+        req: ListExportRequest,
+    ) -> List[Dict[str, Any]]:
+        q = self.db.query(WorkflowSubmission).options(
+            joinedload(WorkflowSubmission.definition),
+            joinedload(WorkflowSubmission.lines),
+        )
+        wf_def_id = (req.workflow_form_definition_id or "").strip() or None
+        if wf_def_id:
+            q = q.filter(WorkflowSubmission.definition_id == wf_def_id)
+        st = (req.workflow_submission_state_code or "").strip() or None
+        if st:
+            q = q.filter(WorkflowSubmission.current_state_code == st)
+        if req.quick_search:
+            like = f"%{req.quick_search.strip()}%"
+            q = q.outerjoin(
+                WorkflowFormDefinition,
+                WorkflowSubmission.definition_id == WorkflowFormDefinition.id,
+            )
+            q = q.filter(
+                or_(
+                    WorkflowSubmission.current_state_code.ilike(like),
+                    WorkflowFormDefinition.name.ilike(like),
+                    WorkflowFormDefinition.code.ilike(like),
+                )
+            )
+        if clause is not None:
+            q = q.filter(clause)
+        id_list = _dedupe_record_ids(req.record_ids)
+        if id_list:
+            q = q.filter(WorkflowSubmission.id.in_(id_list))
+        rows = q.all()
+        if id_list:
+            by_id = {str(r.id): r for r in rows}
+            rows = [by_id[i] for i in id_list if i in by_id]
+        else:
+            rows = sorted(rows, key=lambda r: r.updated_at or datetime.min, reverse=True)
+        out: List[Dict[str, Any]] = []
+        for s in rows:
+            row = {}
+            for m in selected:
+                key = m.export_column_name or m.field_key
+                row[key] = _value_from_workflow_submission(s, m.compile_key)
             out.append(row)
         return out

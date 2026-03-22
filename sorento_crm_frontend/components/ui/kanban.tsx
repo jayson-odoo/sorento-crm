@@ -31,7 +31,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { Slot } from '@radix-ui/react-slot';
 
-interface KanbanContextProps<T> {
+export interface KanbanContextProps<T> {
   columns: Record<string, T[]>;
   setColumns: (columns: Record<string, T[]>) => void;
   getItemId: (item: T) => string;
@@ -40,6 +40,10 @@ interface KanbanContextProps<T> {
   setActiveId: (id: UniqueIdentifier | null) => void;
   findContainer: (id: UniqueIdentifier) => string | undefined;
   isColumn: (id: UniqueIdentifier) => boolean;
+}
+
+export function useKanbanContext<T>() {
+  return React.useContext(KanbanContext) as KanbanContextProps<T>;
 }
 
 const KanbanContext = React.createContext<KanbanContextProps<any>>({
@@ -270,13 +274,15 @@ function Kanban<T>({ value, onValueChange, getItemValue, children, className, on
 export interface KanbanBoardProps {
   className?: string;
   children: React.ReactNode;
+  /** Default: rect (horizontal kanban). Use verticalListSortingStrategy for stacked columns (e.g. form sections). */
+  strategy?: React.ComponentProps<typeof SortableContext>['strategy'];
 }
 
-function KanbanBoard({ children, className }: KanbanBoardProps) {
+function KanbanBoard({ children, className, strategy = rectSortingStrategy }: KanbanBoardProps) {
   const { columnIds } = React.useContext(KanbanContext);
 
   return (
-    <SortableContext items={columnIds} strategy={rectSortingStrategy}>
+    <SortableContext items={columnIds} strategy={strategy}>
       <div data-slot="kanban-board" className={cn('grid auto-rows-fr sm:grid-cols-3 gap-4', className)}>
         {children}
       </div>

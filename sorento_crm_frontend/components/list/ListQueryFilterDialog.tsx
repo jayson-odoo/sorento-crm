@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -124,6 +123,8 @@ export type ListQueryFilterDialogProps = {
   onOpenChange: (open: boolean) => void;
   initialFilter: ListQueryFilterGroup | null;
   onApply: (filter: ListQueryFilterGroup | null) => void;
+  /** When set, workflow submission list includes form-field filters from the published schema. */
+  workflowDefinitionId?: string | null;
 };
 
 export function ListQueryFilterDialog({
@@ -132,10 +133,15 @@ export function ListQueryFilterDialog({
   onOpenChange,
   initialFilter,
   onApply,
+  workflowDefinitionId,
 }: ListQueryFilterDialogProps) {
   const { data: fields = [], isLoading } = useQuery({
-    queryKey: ['list-query-fields', resourceKey],
-    queryFn: () => fetchListQueryFields(resourceKey),
+    queryKey: ['list-query-fields', resourceKey, workflowDefinitionId ?? ''],
+    queryFn: () =>
+      fetchListQueryFields(resourceKey, {
+        definitionId:
+          resourceKey === 'workflow_form_submissions' ? workflowDefinitionId ?? undefined : undefined,
+      }),
     enabled: open,
     staleTime: 60_000,
   });
@@ -151,7 +157,7 @@ export function ListQueryFilterDialog({
     const { rootOp: ro, rows: r } = rowsFromFilter(initialFilter, defaultField);
     setRootOp(ro);
     setRows(r.length ? r : []);
-  }, [open, initialFilter, defaultField?.field_key]);
+  }, [open, initialFilter, defaultField]);
 
   const addRow = () => {
     if (!defaultField) return;
@@ -214,6 +220,12 @@ export function ListQueryFilterDialog({
           <p className="text-sm text-muted-foreground">No filterable fields for this list.</p>
         ) : (
           <>
+            {resourceKey === 'workflow_form_submissions' && !workflowDefinitionId ? (
+              <p className="text-sm text-muted-foreground rounded-md border border-border bg-muted/40 px-3 py-2">
+                Select one workflow form in the list toolbar to include filters on form field values (header &
+                line items). Submission metadata filters work without a form selection.
+              </p>
+            ) : null}
             <div className="flex items-center gap-2">
               <Label className="shrink-0">Match</Label>
               <Select value={rootOp} onValueChange={(v) => setRootOp(v as 'and' | 'or')}>

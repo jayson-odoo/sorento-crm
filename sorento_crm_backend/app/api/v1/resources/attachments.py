@@ -15,6 +15,7 @@ from app.dependencies import get_current_user, require_permission
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.integration_service import IntegrationLogService
+from app.services.attachment_webhook_helper import build_signed_attachment_url_for_webhook
 from app.schemas.resources import AttachmentCreate, AttachmentUpdate, AttachmentResponse, AttachmentBulkDeleteRequest, AttachmentReorderRequest
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -853,12 +854,12 @@ async def resubmit_attachment_webhook(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Resubmit attachment webhook to n8n without re-uploading the file."""
+    """Resubmit attachment webhook to n8n: refresh CloudFront signed URL (may have expired) then POST payload."""
     try:
-        # Verify attachment exists
+        # Verify attachment exists (ORM row; file_path is stable base URL or S3 key from DB)
         attachment_service = AttachmentService(db)
         attachment = attachment_service.get_attachment(attachment_id)
-        
+
         # Find the integration log for this attachment
         integration_service = IntegrationLogService(db)
         logs_result = integration_service.list_integration_logs(
@@ -868,23 +869,43 @@ async def resubmit_attachment_webhook(
             business_id=attachment_id,
             integration_channel="n8n"
         )
-        
+
         if not logs_result.get("data") or len(logs_result["data"]) == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No integration log found for this attachment. The attachment may not have been processed yet."
             )
-        
-        # Get the most recent log
+
         integration_log = logs_result["data"][0]
-        
-        # Resend the webhook
-        success, error_msg = integration_service.send_webhook_for_log(integration_log.id)
-        
+        log_id = str(integration_log.id)
+        raw_log = integration_service.get_integration_log(log_id)
+
+        signed_url = build_signed_attachment_url_for_webhook(attachment.file_path)
+        try:
+            payload_dict = json.loads(raw_log.request_payload) if raw_log.request_payload else {}
+        except (json.JSONDecodeError, TypeError):
+            payload_dict = {}
+
+        payload_dict["integration_log_id"] = log_id
+        payload_dict["attachment_url"] = signed_url
+        payload_dict["s3_url"] = signed_url
+        payload_dict["file_path"] = attachment.file_path
+        payload_dict["attachment_id"] = str(attachment.id)
+        payload_dict["attachment_filename"] = attachment.original_filename
+        payload_dict["attachment_mime_type"] = attachment.mime_type
+        if getattr(attachment, "attachment_type", None) is not None:
+            payload_dict["attachment_type"] = attachment.attachment_type.type_name
+
+        raw_log.request_payload = json.dumps(payload_dict)
+        db.commit()
+
+        # force_resend: actually POST again (even if status was sent/success) and do not hit max-retry guard
+        success, error_msg = integration_service.send_webhook_for_log(log_id, force_resend=True)
+
         if success:
             return {
-                "message": "Webhook resubmitted successfully",
-                "integration_log_id": integration_log.id
+                "message": "Webhook resent with a fresh signed URL",
+                "integration_log_id": log_id,
             }
         else:
             raise HTTPException(

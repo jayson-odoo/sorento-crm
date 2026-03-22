@@ -1,0 +1,239 @@
+{
+  "description": "Seed for “Sorento Annual Dinner Sponsorship Form” (PDF top half only; lower half is duplicate). Import via Workflow Forms UI: create definition with code below, paste draft_schema, publish, then create submission with sample_header_data.",
+  "definition": {
+    "code": "annual_dinner_sponsorship",
+    "name": "Annual Dinner Sponsorship (Dealer)",
+    "description": "Sponsorship request aligned to CS form — customer detail, criteria/category SKUs, contact, dealer dinner flag."
+  },
+  "sample_header_data": {
+    "f001": "2025-12-18",
+    "f002": "Lee Wei Ming",
+    "f003": "ABC Kitchen & Bath Sdn Bhd",
+    "f004": "No 12, Jalan Industri 1/3, 47100 Puchong, Selangor",
+    "f005": "60_days",
+    "f006": ["SRTMRL801"],
+    "f007": ["SRT79-SS-GM"],
+    "f008": ["SRT79-SS-GM"],
+    "f009": true,
+    "f010": "",
+    "f011": "",
+    "f012": "Ahmad bin Hassan",
+    "f013": "+60123456789",
+    "f014": "2026-01-15",
+    "f015": true
+  },
+  "draft_schema": {
+    "header_sections": [
+      {
+        "id": "sec-customer",
+        "title": "Customer detail",
+        "fields": [
+          {
+            "id": "f001",
+            "type": "date",
+            "label": "Date",
+            "required": true
+          },
+          {
+            "id": "f002",
+            "type": "text",
+            "label": "Salesman name",
+            "required": true
+          },
+          {
+            "id": "f003",
+            "type": "text",
+            "label": "Company name",
+            "required": true
+          },
+          {
+            "id": "f004",
+            "type": "textarea",
+            "label": "Delivery address",
+            "required": true,
+            "placeholder": "Full delivery address"
+          }
+        ]
+      },
+      {
+        "id": "sec-criteria",
+        "title": "Criteria & category (payment terms vs entitlements)",
+        "fields": [
+          {
+            "id": "f005",
+            "type": "select",
+            "label": "Payment terms band",
+            "required": true,
+            "help_text": "Matches PDF rows: 30 / 60 / 90 days or payment up to date.",
+            "options": [
+              { "value": "30_days", "label": "30 days — Cat A/B: 1× mirror cabinet or mirror | Cat C/D: 2× bidet or kitchen faucet" },
+              { "value": "60_days", "label": "60 days — same product rules as 30 days" },
+              { "value": "90_days", "label": "90 days — NOT ELIGIBLE for sponsorship" },
+              { "value": "payment_up_to_date", "label": "Payment up to date — AND 1× bidet or kitchen faucet; annual sales min RM100K may apply" }
+            ]
+          },
+          {
+            "id": "f006",
+            "type": "multi_select",
+            "label": "Category A / B — mirror cabinet or mirror (SKUs)",
+            "help_text": "30/60 days: 1× from this group. Options: SRTMRL801, SRTMRL705, SRTMRL806.",
+            "options": [
+              { "value": "SRTMRL801", "label": "SRTMRL801" },
+              { "value": "SRTMRL705", "label": "SRTMRL705" },
+              { "value": "SRTMRL806", "label": "SRTMRL806" }
+            ]
+          },
+          {
+            "id": "f007",
+            "type": "multi_select",
+            "label": "Category C / D — bidet or kitchen faucet (SKUs)",
+            "help_text": "30 days: 2× from this group. 60 days: same family of SKUs per PDF.",
+            "options": [
+              { "value": "SRT79-SS-GM", "label": "SRT79-SS-GM" },
+              { "value": "SRTKT71SS-GM", "label": "SRTKT71SS-GM" }
+            ]
+          },
+          {
+            "id": "f008",
+            "type": "multi_select",
+            "label": "Additional bidet / kitchen faucet (payment up to date row)",
+            "help_text": "When “Payment up to date” — AND 1× bidet or kitchen faucet from these SKUs.",
+            "options": [
+              { "value": "SRT79-SS-GM", "label": "SRT79-SS-GM" },
+              { "value": "SRTKT71SS-GM", "label": "SRTKT71SS-GM" }
+            ]
+          },
+          {
+            "id": "f009",
+            "type": "checkbox",
+            "label": "Meets annual sales minimum RM100K (where applicable)",
+            "required": false
+          },
+          {
+            "id": "f010",
+            "type": "text",
+            "label": "Approved by (office use)",
+            "required": false
+          },
+          {
+            "id": "f011",
+            "type": "text",
+            "label": "Sales manager",
+            "required": false
+          }
+        ]
+      },
+      {
+        "id": "sec-contact",
+        "title": "Contact & delivery",
+        "fields": [
+          {
+            "id": "f012",
+            "type": "text",
+            "label": "Contact person",
+            "required": true
+          },
+          {
+            "id": "f013",
+            "type": "phone",
+            "label": "Contact no",
+            "required": true
+          },
+          {
+            "id": "f014",
+            "type": "date",
+            "label": "Delivery / pick up date",
+            "required": true
+          }
+        ]
+      },
+      {
+        "id": "sec-dealer",
+        "title": "Dealer annual dinner",
+        "fields": [
+          {
+            "id": "f015",
+            "type": "checkbox",
+            "label": "Dealer's annual dinner sponsorship — Sorento Sdn Bhd",
+            "required": false
+          }
+        ]
+      }
+    ],
+    "header_fields": [],
+    "line_groups": [],
+    "states": [
+      {
+        "id": "s_draft",
+        "name": "Draft",
+        "code": "draft",
+        "is_initial": true,
+        "is_terminal": false,
+        "view_role_ids": [],
+        "edit_role_ids": []
+      },
+      {
+        "id": "s_submitted",
+        "name": "Submitted",
+        "code": "submitted",
+        "is_initial": false,
+        "is_terminal": false,
+        "view_role_ids": [],
+        "edit_role_ids": []
+      },
+      {
+        "id": "s_approved",
+        "name": "Approved",
+        "code": "approved",
+        "is_initial": false,
+        "is_terminal": true,
+        "view_role_ids": [],
+        "edit_role_ids": []
+      },
+      {
+        "id": "s_rejected",
+        "name": "Rejected",
+        "code": "rejected",
+        "is_initial": false,
+        "is_terminal": true,
+        "view_role_ids": [],
+        "edit_role_ids": []
+      }
+    ],
+    "transitions": [
+      {
+        "id": "tr_submit",
+        "from_state_id": "s_draft",
+        "to_state_id": "s_submitted",
+        "label": "Submit",
+        "direction": "forward",
+        "allowed_role_ids": []
+      },
+      {
+        "id": "tr_approve",
+        "from_state_id": "s_submitted",
+        "to_state_id": "s_approved",
+        "label": "Approve",
+        "direction": "forward",
+        "allowed_role_ids": []
+      },
+      {
+        "id": "tr_reject",
+        "from_state_id": "s_submitted",
+        "to_state_id": "s_rejected",
+        "label": "Reject",
+        "direction": "forward",
+        "allowed_role_ids": []
+      },
+      {
+        "id": "tr_send_back",
+        "from_state_id": "s_submitted",
+        "to_state_id": "s_draft",
+        "label": "Send back",
+        "direction": "back",
+        "allowed_role_ids": []
+      }
+    ],
+    "notification_rules": []
+  }
+}

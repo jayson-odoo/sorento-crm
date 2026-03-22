@@ -24,7 +24,7 @@ class Notification(Base):
     # Idempotency: one notification per (user, source, event)
     source_entity_type = Column(String(80), nullable=True, index=True)  # e.g. import_job
     source_entity_id = Column(String(255), nullable=True, index=True)  # e.g. job_id
-    event_type = Column(String(80), nullable=True, index=True)  # e.g. finished, failed
+    event_type = Column(String(255), nullable=True, index=True)  # e.g. finished, failed; workflow ids can be long
 
     __table_args__ = (
         Index("ix_notifications_user_id_created_at", "user_id", "created_at"),

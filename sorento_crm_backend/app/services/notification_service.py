@@ -1,4 +1,4 @@
-"""Notification service: create, list, mark read/archive/resolve."""
+"""Notification service: create, list, mark read/archive/resolve, delete."""
 import logging
 from datetime import datetime
 from typing import Optional, List, Tuple
@@ -230,6 +230,37 @@ class NotificationService:
             self.db.commit()
             self.db.refresh(n)
         return n
+
+    def delete(self, notification_id: str, user_id: str) -> bool:
+        """Permanently remove a notification (cascades to notification_deliveries)."""
+        n = self.get(notification_id, user_id)
+        if not n:
+            return False
+        self.db.delete(n)
+        self.db.commit()
+        return True
+
+    def delete_many(self, notification_ids: List[str], user_id: str) -> int:
+        """Permanently remove notifications that belong to the user. Returns rows deleted."""
+        if not notification_ids:
+            return 0
+        deleted = (
+            self.db.query(Notification)
+            .filter(Notification.user_id == user_id, Notification.id.in_(notification_ids))
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+        return deleted
+
+    def delete_all(self, user_id: str) -> int:
+        """Permanently remove all notifications for the user."""
+        deleted = (
+            self.db.query(Notification)
+            .filter(Notification.user_id == user_id)
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+        return deleted
 
     def record_delivery(
         self,

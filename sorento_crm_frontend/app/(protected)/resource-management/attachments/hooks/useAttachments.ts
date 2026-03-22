@@ -209,7 +209,7 @@ export function useResubmitAttachmentWebhook() {
   return useMutation({
     mutationFn: (id: string) => resubmitAttachmentWebhook(id),
     onSuccess: () => {
-      toast.success('Webhook resubmitted successfully');
+      toast.success('Webhook resent with a fresh signed URL');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to resubmit webhook'),
   });
