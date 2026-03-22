@@ -212,11 +212,11 @@ class PromotionRequest(BaseModel):
 
 
 class PromotionCreateResponse(BaseModel):
-    """Response for external promotion create; includes conflict detail when promo_code already exists, and warnings (e.g. missing product codes)."""
+    """Response for external promotion create; includes conflict detail when promo_code already exists, and warnings (e.g. missing product codes, skipped duplicate rows)."""
     promotion: PromotionResponse
     already_existed: bool = False
     message: Optional[str] = None  # e.g. "Promo code already exists." when already_existed
-    warnings: List[dict] = []  # e.g. [{"message": "Missing product codes (exact match)", "product_codes": ["ABC", "DEF"]}]
+    warnings: List[dict] = []  # e.g. missing codes; skipped_duplicates: [{product_code, selling_price}, ...]
 
 
 class FormRequest(BaseModel):

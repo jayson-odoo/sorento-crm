@@ -1,5 +1,4 @@
 """External API for promotions."""
-from collections import Counter
 from datetime import datetime, date
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -14,7 +13,6 @@ from app.models.marketing import Promotion, PromotionProduct, PromotionAttachmen
 from app.models.resources import Attachment
 from app.api.v1.external.utils import parse_date_value, get_products_by_code_exact
 from app.services.marketing_service import raise_promotion_product_unique_violation
-from app.services.error_handler import handle_conflict
 
 router = APIRouter()
 
@@ -36,19 +34,13 @@ def create_promotion(
     Create a promotion linked to products. Body: { promotions: {...}, promotion_products: [...] }.
     Products are matched by exact product_code (trim only, no case change).
     If promo_code already exists, returns success with already_existed=true and conflict detail in message.
+    Duplicate product codes in promotion_products: the first row per code is applied; later rows are skipped
+    and listed in warnings (product_code and selling_price).
     """
     if not payload.promotion_products:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No promotion products provided")
 
     product_codes = [item.product_code for item in payload.promotion_products]
-    stripped_codes = [(item.product_code or "").strip() for item in payload.promotion_products]
-    dup_in_request = sorted({c for c, n in Counter(stripped_codes).items() if n > 1 and c})
-    if dup_in_request:
-        raise handle_conflict(
-            "Duplicate product code(s) in the request (each product can only appear once): "
-            + ", ".join(dup_in_request)
-        )
-
     products_map = get_products_by_code_exact(db, product_codes)
     missing_codes = [c for c in product_codes if (c or "").strip() not in products_map]
     # Missing product codes are a warning only: create the promotion and link only products that exist
@@ -94,11 +86,23 @@ def create_promotion(
     db.add(promotion)
     db.flush()
 
-    # Only add promotion_products for products that exist; missing codes are already in warnings
+    # Only add promotion_products for products that exist; missing codes are already in warnings.
+    # Duplicate product_code rows: process first occurrence only; skip repeats and report in warnings.
+    seen_product_codes: set[str] = set()
+    skipped_duplicate_rows: list[dict] = []
     for item in payload.promotion_products:
         code = (item.product_code or "").strip()
         if code not in products_map:
             continue
+        if code in seen_product_codes:
+            skipped_duplicate_rows.append(
+                {
+                    "product_code": code,
+                    "selling_price": item.selling_price,
+                }
+            )
+            continue
+        seen_product_codes.add(code)
         product = products_map[code]
         promo_price = item.selling_price
         discount_amount = item.discount_amount
@@ -116,6 +120,16 @@ def create_promotion(
                 discount_amount=discount_amount,
                 discount_percent=discount_percent,
             )
+            )
+
+    if skipped_duplicate_rows:
+        warnings.append(
+            {
+                "message": (
+                    "Skipped duplicate product rows (only the first occurrence per product code was applied)."
+                ),
+                "skipped_duplicates": skipped_duplicate_rows,
+            }
         )
 
     # Link attachments to the promotion if provided (root-level attachment_id or promotions.attachment_id list)
