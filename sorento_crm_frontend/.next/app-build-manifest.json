@@ -70,6 +70,11 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/v1/external/[...path]/route.js"
+    ],
+    "/(protected)/marketing-management/promotions/[id]/edit/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/marketing-management/promotions/[id]/edit/page.js"
     ]
   }
 }

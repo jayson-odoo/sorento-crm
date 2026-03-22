@@ -36,6 +36,11 @@ class Promotion(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
+    promotion_groups = relationship(
+        "PromotionGroup",
+        back_populates="promotion",
+        cascade="all, delete-orphan",
+    )
     promotion_products = relationship(
         "PromotionProduct",
         back_populates="promotion",
@@ -56,25 +61,61 @@ class Promotion(Base):
     )
 
 
+class PromotionGroup(Base):
+    """Bundle / FOC group: products in the same group share the same buy-N-get-M free rule."""
+
+    __tablename__ = "promotion_groups"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    promotion_id = Column(UUID(as_uuid=False), ForeignKey("promotions.id", ondelete="CASCADE"), nullable=False)
+    group_name = Column(String(255), nullable=False)
+    sort_order = Column(Integer, default=0, nullable=False)
+    purchase_quantity_for_foc = Column(Integer, nullable=True)
+    foc_quantity = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    promotion = relationship("Promotion", back_populates="promotion_groups")
+    promotion_products = relationship(
+        "PromotionProduct",
+        back_populates="promotion_group",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_promotion_groups_promotion_id", "promotion_id"),
+    )
+
+
 class PromotionProduct(Base):
     __tablename__ = "promotion_products"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     promotion_id = Column(UUID(as_uuid=False), ForeignKey("promotions.id", ondelete="CASCADE"), nullable=False)
+    promotion_group_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("promotion_groups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     promo_selling_price = Column(Numeric(12, 2), nullable=True)
     discount_amount = Column(Numeric(12, 2), nullable=True)
     discount_percent = Column(Numeric(5, 2), nullable=True)
+    dealer_discount_percent = Column(Numeric(8, 6), nullable=True)
+    dealer_cost = Column(Numeric(12, 2), nullable=True)
+    list_to_dealer_margin_amount = Column(Numeric(12, 2), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     
     promotion = relationship("Promotion", back_populates="promotion_products")
+    promotion_group = relationship("PromotionGroup", back_populates="promotion_products")
     product = relationship("Product", back_populates="promotion_products")
     
     __table_args__ = (
         Index("ix_promotion_products_promotion_id", "promotion_id"),
         Index("ix_promotion_products_product_id", "product_id"),
-        Index("uq_promotion_products_promotion_id_product_id", "promotion_id", "product_id", unique=True),
+        Index("ix_promotion_products_promotion_group_id", "promotion_group_id"),
+        Index("uq_promotion_products_group_product", "promotion_group_id", "product_id", unique=True),
     )
 
 

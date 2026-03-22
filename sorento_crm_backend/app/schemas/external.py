@@ -1,7 +1,7 @@
 """External API request and response schemas."""
 from __future__ import annotations
 
-from pydantic import BaseModel, field_validator, model_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
 from typing import Optional, List, Any, Union
 from datetime import date
 from decimal import Decimal
@@ -206,16 +206,46 @@ class PromotionProductItem(BaseModel):
     selling_price: Optional[float] = None
     discount_amount: Optional[float] = None
     discount_percent: Optional[float] = None
+    dealer_discount: Optional[float] = Field(
+        None,
+        description="Fraction off list for dealer cost, e.g. 0.37 → dealer_cost = list × (1 − 0.37).",
+    )
+
+
+class PromotionGroupProductItem(BaseModel):
+    product_code: str
+    selling_price: Optional[float] = None
+    discount_amount: Optional[float] = None
+    discount_percent: Optional[float] = None
+    dealer_discount: Optional[float] = None
+
+
+class PromotionGroupItem(BaseModel):
+    group_name: str
+    purchase_quantity_for_foc: Optional[int] = None
+    foc_quantity: Optional[int] = None
+    promotion_products: List[PromotionGroupProductItem]
 
 
 class PromotionRequest(BaseModel):
     promotions: PromotionHeader
-    promotion_products: List[PromotionProductItem]
+    promotion_products: Optional[List[PromotionProductItem]] = None
+    promotion_groups: Optional[List[PromotionGroupItem]] = None
     access_levels: Optional[List[str]] = None  # e.g. ["end_user"], ["dealer", "end_user"]; if omitted, DB default applies
     attachment_id: Optional[str] = None  # single attachment UUID to link to the promotion (alternative to promotions.attachment_id list)
     # CRM user UUID to notify when promotion is created. Use when the caller is the system API key (created_by is null).
     # n8n can pass the uploader's user id from a previous step. Omit if attachment-linked uploaders should be notified only.
     notify_user_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def require_products_or_groups(self):
+        has_flat = bool(self.promotion_products and len(self.promotion_products) > 0)
+        has_groups = bool(self.promotion_groups and len(self.promotion_groups) > 0)
+        if not has_flat and not has_groups:
+            raise ValueError("Either promotion_products or promotion_groups must be provided and non-empty")
+        if has_flat and has_groups:
+            raise ValueError("Provide either promotion_products or promotion_groups, not both")
+        return self
 
 
 class PromotionCreateResponse(BaseModel):

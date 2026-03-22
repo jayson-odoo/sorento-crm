@@ -6,7 +6,17 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.marketing_service import PromotionService, PromotionProductService
-from app.schemas.marketing import PromotionCreate, PromotionUpdate, PromotionResponse, PromotionProductCreate, PromotionProductUpdate, PromotionProductResponse
+from app.schemas.marketing import (
+    PromotionCreate,
+    PromotionUpdate,
+    PromotionResponse,
+    PromotionGroupCreate,
+    PromotionGroupUpdate,
+    PromotionGroupResponse,
+    PromotionProductCreate,
+    PromotionProductUpdate,
+    PromotionProductResponse,
+)
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
@@ -68,12 +78,19 @@ async def get_promotion(
             from app.services.error_handler import handle_not_found
             raise handle_not_found("Promotion", promotion_id)
         
-        # Map promo_selling_price to promotion_price for each product
-        if hasattr(promotion, 'products') and promotion.products:
+        # Map promo_selling_price to promotion_price for each line (flat list and nested groups)
+        def _hydrate_promotion_price(pp):
+            if hasattr(pp, "promo_selling_price"):
+                setattr(pp, "promotion_price", pp.promo_selling_price)
+
+        if hasattr(promotion, "products") and promotion.products:
             for product in promotion.products:
-                if hasattr(product, 'promo_selling_price'):
-                    setattr(product, 'promotion_price', product.promo_selling_price)
-        
+                _hydrate_promotion_price(product)
+        if hasattr(promotion, "promotion_groups") and promotion.promotion_groups:
+            for grp in promotion.promotion_groups:
+                for pp in grp.promotion_products or []:
+                    _hydrate_promotion_price(pp)
+
         return promotion
     except HTTPException:
         raise
@@ -165,6 +182,64 @@ async def delete_promotion(
         raise handle_internal_error(str(e))
 
 
+# Nested router: promotion groups (bundle / FOC)
+nested_promotion_groups_router = APIRouter()
+
+
+@nested_promotion_groups_router.post("/", response_model=PromotionGroupResponse, status_code=status.HTTP_201_CREATED)
+async def create_promotion_group_nested(
+    promotion_id: str = Path(..., description="Promotion ID"),
+    body: PromotionGroupCreate = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create a promotion group (e.g. bundle FOC rule)."""
+    try:
+        service = PromotionService(db)
+        g = service.create_promotion_group(promotion_id, body)
+        return PromotionGroupResponse.model_validate(g)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@nested_promotion_groups_router.put("/{group_id}", response_model=PromotionGroupResponse)
+async def update_promotion_group_nested(
+    promotion_id: str = Path(..., description="Promotion ID"),
+    group_id: str = Path(..., description="Promotion group ID"),
+    body: PromotionGroupUpdate = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update a promotion group name, sort order, or FOC fields."""
+    try:
+        service = PromotionService(db)
+        g = service.update_promotion_group(promotion_id, group_id, body)
+        return PromotionGroupResponse.model_validate(g)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@nested_promotion_groups_router.delete("/{group_id}", status_code=status.HTTP_200_OK)
+async def delete_promotion_group_nested(
+    promotion_id: str = Path(..., description="Promotion ID"),
+    group_id: str = Path(..., description="Promotion group ID"),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a promotion group (removes all product lines in that group). Cannot delete the last group."""
+    try:
+        service = PromotionService(db)
+        return service.delete_promotion_group(promotion_id, group_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 # Nested router for promotion products
 nested_promotion_products_router = APIRouter()
 
@@ -213,7 +288,9 @@ async def create_promotion_product_nested(
         create_data = PromotionProductCreate(
             promotion_id=promotion_id,
             product_id=body.get("product_id"),
-            promo_selling_price=body.get("promotion_price")
+            promo_selling_price=body.get("promotion_price"),
+            promotion_group_id=body.get("promotion_group_id"),
+            dealer_discount_percent=body.get("dealer_discount_percent"),
         )
         product = service.create_promotion_product(create_data)
         if hasattr(product, 'promo_selling_price'):
@@ -224,21 +301,22 @@ async def create_promotion_product_nested(
     except Exception as e:
         raise handle_internal_error(str(e))
 
-@nested_promotion_products_router.put("/{product_id}", response_model=PromotionProductResponse)
+@nested_promotion_products_router.put("/{line_id}", response_model=PromotionProductResponse)
 async def update_promotion_product_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
-    product_id: str = Path(..., description="Product ID"),
+    line_id: str = Path(..., description="Promotion product line id (promotion_products.id)"),
     body: dict = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update a promotion product (nested route)."""
+    """Update a promotion product line (nested route). line_id is the junction row id (same SKU may appear in multiple groups)."""
     try:
         service = PromotionProductService(db)
         update_data = PromotionProductUpdate(
-            promo_selling_price=body.get("promotion_price")
+            promo_selling_price=body.get("promotion_price"),
+            dealer_discount_percent=body.get("dealer_discount_percent"),
         )
-        product = service.update_promotion_product(promotion_id, product_id, update_data)
+        product = service.update_promotion_product(promotion_id, line_id, update_data)
         if hasattr(product, 'promo_selling_price'):
             product.promotion_price = product.promo_selling_price
         return product
@@ -247,22 +325,28 @@ async def update_promotion_product_nested(
     except Exception as e:
         raise handle_internal_error(str(e))
 
-@nested_promotion_products_router.delete("/{product_id}", status_code=status.HTTP_200_OK)
+@nested_promotion_products_router.delete("/{line_id}", status_code=status.HTTP_200_OK)
 async def delete_promotion_product_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
-    product_id: str = Path(..., description="Product ID"),
+    line_id: str = Path(..., description="Promotion product line id (promotion_products.id)"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Remove a product from a promotion (nested route)."""
+    """Remove a promotion product line (nested route)."""
     try:
         service = PromotionProductService(db)
-        result = service.delete_promotion_product(promotion_id, product_id)
+        result = service.delete_promotion_product(promotion_id, line_id)
         return result
     except HTTPException:
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+router.include_router(
+    nested_promotion_groups_router,
+    prefix="/{promotion_id}/groups",
+    tags=["promotion-groups"],
+)
 
 # Include nested promotion products router
 router.include_router(

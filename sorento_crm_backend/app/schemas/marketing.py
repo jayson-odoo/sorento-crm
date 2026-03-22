@@ -34,6 +34,65 @@ class PromotionUpdate(BaseModel):
     access_levels: Optional[list[str]] = None
 
 
+class PromotionGroupResponse(BaseModel):
+    """FOC / bundle group within a promotion."""
+
+    id: str
+    promotion_id: str
+    group_name: str
+    sort_order: int = 0
+    purchase_quantity_for_foc: Optional[int] = None
+    foc_quantity: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    promotion_products: Optional[list["PromotionProductResponse"]] = None
+
+    @field_validator("id", "promotion_id", mode="before")
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v)
+
+    class Config:
+        from_attributes = True
+
+
+class PromotionGroupCreate(BaseModel):
+    """Create a bundle / FOC group under a promotion."""
+
+    group_name: str
+    sort_order: Optional[int] = None
+    purchase_quantity_for_foc: Optional[int] = None
+    foc_quantity: Optional[int] = None
+
+    @field_validator("group_name", mode="before")
+    @classmethod
+    def strip_name(cls, v):
+        if v is None:
+            return ""
+        return str(v).strip()
+
+
+class PromotionGroupUpdate(BaseModel):
+    """Update group name, sort order, or FOC rule."""
+
+    group_name: Optional[str] = None
+    sort_order: Optional[int] = None
+    purchase_quantity_for_foc: Optional[int] = None
+    foc_quantity: Optional[int] = None
+
+    @field_validator("group_name", mode="before")
+    @classmethod
+    def strip_name(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s else None
+
+
 class PromotionResponse(PromotionBase):
     id: str
     created_by: Optional[str] = None
@@ -41,6 +100,7 @@ class PromotionResponse(PromotionBase):
     updated_at: datetime
     products_count: Optional[int] = 0
     products: Optional[list["PromotionProductResponse"]] = None
+    promotion_groups: Optional[list["PromotionGroupResponse"]] = None
 
     @field_validator('id', 'created_by', mode='before')
     @classmethod
@@ -65,13 +125,24 @@ class PromotionProductBase(BaseModel):
 
 
 class PromotionProductCreate(PromotionProductBase):
-    pass
+    promotion_group_id: Optional[str] = None
+    dealer_discount_percent: Optional[Decimal] = None
 
 
 class PromotionProductUpdate(BaseModel):
     promo_selling_price: Optional[Decimal] = None
     discount_amount: Optional[Decimal] = None
     discount_percent: Optional[Decimal] = None
+    dealer_discount_percent: Optional[Decimal] = None
+
+
+def _uuid_to_str(v):
+    """ORM often returns uuid.UUID; API fields are str for JSON."""
+    if v is None:
+        return None
+    if isinstance(v, uuid.UUID):
+        return str(v)
+    return str(v)
 
 
 class ProductSimple(BaseModel):
@@ -80,7 +151,12 @@ class ProductSimple(BaseModel):
     product_code: str
     product_name: str
     list_price: Optional[Decimal] = None
-    
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _id_uuid(cls, v):
+        return _uuid_to_str(v)
+
     class Config:
         from_attributes = True
 
@@ -92,7 +168,12 @@ class PromotionSimple(BaseModel):
     name: str
     promo_type: Optional[str] = None
     is_active: Optional[bool] = None
-    
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _id_uuid(cls, v):
+        return _uuid_to_str(v)
+
     class Config:
         from_attributes = True
 
@@ -100,19 +181,29 @@ class PromotionSimple(BaseModel):
 class PromotionProductResponse(BaseModel):
     id: str
     promotion_id: str
+    promotion_group_id: Optional[str] = None
     product_id: str
     promotion_price: Optional[Decimal] = None  # Maps from promo_selling_price
     discount_amount: Optional[Decimal] = None
     discount_percent: Optional[Decimal] = None
+    dealer_discount_percent: Optional[Decimal] = None
+    dealer_cost: Optional[Decimal] = None
+    list_to_dealer_margin_amount: Optional[Decimal] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     product: Optional[ProductSimple] = None
     promotion: Optional[PromotionSimple] = None
     display_order: int = 0  # Default for compatibility
-    
+
+    @field_validator("id", "promotion_id", "promotion_group_id", "product_id", mode="before")
+    @classmethod
+    def _uuid_id_fields(cls, v):
+        """Nested from_attributes (e.g. under promotion_groups) bypasses custom model_validate."""
+        return _uuid_to_str(v)
+
     class Config:
         from_attributes = True
-    
+
     @classmethod
     def model_validate(cls, obj, **kwargs):
         """Custom validation to map promo_selling_price to promotion_price."""
@@ -120,10 +211,17 @@ class PromotionProductResponse(BaseModel):
         if hasattr(obj, 'promo_selling_price'):
             # Create a dict with all attributes
             data = {}
-            for key in ['id', 'promotion_id', 'product_id', 'discount_amount', 'discount_percent', 
-                       'created_at', 'updated_at', 'product', 'promotion']:
+            for key in [
+                'id', 'promotion_id', 'promotion_group_id', 'product_id', 'discount_amount', 'discount_percent',
+                'dealer_discount_percent', 'dealer_cost', 'list_to_dealer_margin_amount',
+                'created_at', 'updated_at', 'product', 'promotion',
+            ]:
                 if hasattr(obj, key):
                     value = getattr(obj, key)
+                    if key in ('id', 'promotion_id', 'promotion_group_id', 'product_id') and isinstance(
+                        value, uuid.UUID
+                    ):
+                        value = str(value)
                     data[key] = value
             # Map promo_selling_price to promotion_price
             data['promotion_price'] = getattr(obj, 'promo_selling_price', None)

@@ -10,11 +10,12 @@ from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.schemas.external import PromotionRequest, PromotionCreateResponse
 from app.schemas.marketing import PromotionResponse
-from app.models.marketing import Promotion, PromotionProduct, PromotionAttachment
+from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, PromotionAttachment
 from app.models.resources import Attachment
 from app.api.v1.external.utils import parse_date_value, get_products_by_code_exact
 from app.services.marketing_service import (
     clamp_discount_percent_for_db,
+    dealer_cost_and_margin_from_list,
     raise_promotion_product_unique_violation,
 )
 from app.services.attachment_notification_helper import notify_after_external_promotion_created
@@ -38,6 +39,29 @@ def _date_to_datetime(value: str | date) -> datetime:
     return datetime.combine(parsed, datetime.min.time())
 
 
+def _promotion_product_values(product, selling_price, discount_amount, discount_percent, dealer_discount):
+    """List vs selling discount + optional dealer_discount (fraction off list for dealer cost)."""
+    lp = float(product.list_price) if product.list_price else None
+    promo_price = selling_price
+    da = discount_amount
+    dp = discount_percent
+    # Same as legacy flat path: derive discount from list vs selling when both exist
+    if promo_price is not None and lp is not None:
+        da = lp - float(promo_price)
+        dp = (da / lp * 100) if lp > 0 else 0
+    dp = clamp_discount_percent_for_db(dp)
+    dd = dealer_discount
+    dc, margin = dealer_cost_and_margin_from_list(lp, float(dd) if dd is not None else None)
+    return {
+        "promo_selling_price": promo_price,
+        "discount_amount": da,
+        "discount_percent": dp,
+        "dealer_discount_percent": dd,
+        "dealer_cost": dc,
+        "list_to_dealer_margin_amount": margin,
+    }
+
+
 @router.post("/", response_model=PromotionCreateResponse)
 def create_promotion(
     payload: PromotionRequest,
@@ -45,21 +69,22 @@ def create_promotion(
     db: Session = Depends(get_db),
 ):
     """
-    Create a promotion linked to products. Body: { promotions: {...}, promotion_products: [...] }.
+    Create a promotion linked to products. Use either:
+    - `promotion_products` (flat list), or
+    - `promotion_groups` (bundle / FOC groups with nested products; same SKU may appear in multiple groups).
+
     Products are matched by exact product_code (trim only, no case change).
-    If promo_code already exists, returns success with already_existed=true and conflict detail in message.
-    Duplicate product codes in promotion_products: the first row per code is applied; later rows are skipped
-    and listed in warnings (product_code and selling_price).
+    Optional `dealer_discount` per line (0.37 = 37% off list) stores dealer_cost and list-to-dealer margin.
 
-    Notifications (in-app + email, logged under Outgoing Mails):
-    - Linked attachments: notifies each attachment uploader (uploaded_by) when attachment_id(s) are provided.
-    - Optional notify_user_id: CRM user UUID to notify when the API key is system (created_by is null). Use n8n
-      to pass the uploader from the attachment step. If omitted and uploaders cannot be resolved, no email is sent.
+    Notifications (in-app + email): same as before for attachments + notify_user_id.
     """
-    if not payload.promotion_products:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No promotion products provided")
-
-    product_codes = [item.product_code for item in payload.promotion_products]
+    if payload.promotion_groups:
+        product_codes = []
+        for g in payload.promotion_groups:
+            for row in g.promotion_products:
+                product_codes.append(row.product_code)
+    else:
+        product_codes = [item.product_code for item in (payload.promotion_products or [])]
     products_map = get_products_by_code_exact(db, product_codes)
     missing_codes = [c for c in product_codes if (c or "").strip() not in products_map]
     # Missing product codes are a warning only: create the promotion and link only products that exist
@@ -120,48 +145,98 @@ def create_promotion(
     db.add(promotion)
     db.flush()
 
-    # Only add promotion_products for products that exist; missing codes are already in warnings.
-    # Duplicate product_code rows: process first occurrence only; skip repeats and report in warnings.
-    seen_product_codes: set[str] = set()
     skipped_duplicate_rows: list[dict] = []
-    for item in payload.promotion_products:
-        code = (item.product_code or "").strip()
-        if code not in products_map:
-            continue
-        if code in seen_product_codes:
-            skipped_duplicate_rows.append(
-                {
-                    "product_code": code,
-                    "selling_price": item.selling_price,
-                }
-            )
-            continue
-        seen_product_codes.add(code)
-        product = products_map[code]
-        promo_price = item.selling_price
-        discount_amount = item.discount_amount
-        discount_percent = item.discount_percent
-        if promo_price is not None and product.list_price:
-            list_price = float(product.list_price)
-            promo_price_float = float(promo_price)
-            discount_amount = list_price - promo_price_float
-            discount_percent = (discount_amount / list_price * 100) if list_price > 0 else 0
-        discount_percent = clamp_discount_percent_for_db(discount_percent)
-        db.add(
-            PromotionProduct(
+
+    if payload.promotion_groups:
+        for gi, grp in enumerate(payload.promotion_groups):
+            pg = PromotionGroup(
                 promotion_id=promotion.id,
-                product_id=product.id,
-                promo_selling_price=promo_price,
-                discount_amount=discount_amount,
-                discount_percent=discount_percent,
+                group_name=(grp.group_name or "").strip() or f"Group {gi + 1}",
+                sort_order=gi,
+                purchase_quantity_for_foc=grp.purchase_quantity_for_foc,
+                foc_quantity=grp.foc_quantity,
             )
+            db.add(pg)
+            db.flush()
+            seen_in_group: set[str] = set()
+            for item in grp.promotion_products:
+                code = (item.product_code or "").strip()
+                if code not in products_map:
+                    continue
+                if code in seen_in_group:
+                    skipped_duplicate_rows.append(
+                        {
+                            "group": pg.group_name,
+                            "product_code": code,
+                            "selling_price": item.selling_price,
+                        }
+                    )
+                    continue
+                seen_in_group.add(code)
+                product = products_map[code]
+                vals = _promotion_product_values(
+                    product,
+                    item.selling_price,
+                    item.discount_amount,
+                    item.discount_percent,
+                    item.dealer_discount,
+                )
+                db.add(
+                    PromotionProduct(
+                        promotion_id=promotion.id,
+                        promotion_group_id=pg.id,
+                        product_id=product.id,
+                        **vals,
+                    )
+                )
+    else:
+        default_group = PromotionGroup(
+            promotion_id=promotion.id,
+            group_name="Default",
+            sort_order=0,
+            purchase_quantity_for_foc=None,
+            foc_quantity=None,
+        )
+        db.add(default_group)
+        db.flush()
+        seen_product_codes: set[str] = set()
+        for item in payload.promotion_products or []:
+            code = (item.product_code or "").strip()
+            if code not in products_map:
+                continue
+            if code in seen_product_codes:
+                skipped_duplicate_rows.append(
+                    {
+                        "product_code": code,
+                        "selling_price": item.selling_price,
+                    }
+                )
+                continue
+            seen_product_codes.add(code)
+            product = products_map[code]
+            vals = _promotion_product_values(
+                product,
+                item.selling_price,
+                item.discount_amount,
+                item.discount_percent,
+                item.dealer_discount,
+            )
+            db.add(
+                PromotionProduct(
+                    promotion_id=promotion.id,
+                    promotion_group_id=default_group.id,
+                    product_id=product.id,
+                    **vals,
+                )
             )
 
     if skipped_duplicate_rows:
         warnings.append(
             {
                 "message": (
-                    "Skipped duplicate product rows (only the first occurrence per product code was applied)."
+                    "Skipped duplicate product rows within the same group (first occurrence kept)."
+                    if payload.promotion_groups
+                    else "Skipped duplicate product rows (only the first occurrence per product code was applied)."
                 ),
                 "skipped_duplicates": skipped_duplicate_rows,
             }

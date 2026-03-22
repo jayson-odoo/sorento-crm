@@ -5,13 +5,24 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, exists, select
 from sqlalchemy.exc import IntegrityError
 from typing import Any, Optional
-from app.models.marketing import Promotion, PromotionProduct, PromotionAttachment, CampaignType, MarketingCampaign
+from decimal import Decimal
+
+from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, PromotionAttachment, CampaignType, MarketingCampaign
 from app.models.product import Product
 from app.models.resources import Attachment, AttachmentType
 from app.schemas.marketing import (
-    PromotionCreate, PromotionUpdate, PromotionProductCreate, PromotionProductUpdate,
-    PromotionAttachmentCreate, PromotionAttachmentUpdate,
-    CampaignTypeCreate, CampaignTypeUpdate, MarketingCampaignCreate, MarketingCampaignUpdate
+    PromotionCreate,
+    PromotionUpdate,
+    PromotionGroupCreate,
+    PromotionGroupUpdate,
+    PromotionProductCreate,
+    PromotionProductUpdate,
+    PromotionAttachmentCreate,
+    PromotionAttachmentUpdate,
+    CampaignTypeCreate,
+    CampaignTypeUpdate,
+    MarketingCampaignCreate,
+    MarketingCampaignUpdate,
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error
 from app.services.contact_access_type_service import ContactAccessTypeService
@@ -37,24 +48,47 @@ def raise_promotion_product_unique_violation(db: Session, exc: Exception) -> Non
     if not isinstance(exc, IntegrityError):
         raise exc
     orig = str(getattr(exc, "orig", exc) or exc)
-    if "uq_promotion" not in orig.lower() and "promotion_products" not in orig.lower():
+    if (
+        "uq_promotion" not in orig.lower()
+        and "promotion_products" not in orig.lower()
+        and "group_product" not in orig.lower()
+    ):
         raise handle_internal_error(
             "Could not save promotion product due to a database constraint."
         )
-    m = re.search(r"Key \(promotion_id, product_id\)=\([^,]+,\s*([^)]+)\)", orig)
+    m = re.search(
+        r"Key \(promotion_group_id, product_id\)=\([^,]+,\s*([^)]+)\)", orig
+    ) or re.search(r"Key \(promotion_id, product_id\)=\([^,]+,\s*([^)]+)\)", orig)
     if not m:
         raise handle_conflict(
-            "This product is already linked to this promotion, or the request contains duplicate products."
+            "This product is already linked to this promotion group, or the request contains duplicate products."
         )
     product_id = m.group(1).strip()
     label = _product_display_label(db, product_id)
     raise handle_conflict(
-        f"Product already on this promotion: {label}. Remove duplicate rows or use one line per product."
+        f"Product already in this promotion group: {label}. Remove duplicate rows or use one line per product per group."
     )
 
 
 # promotion_products.discount_percent is NUMERIC(5,2) → |value| must be < 10**3 (max ±999.99).
 _MAX_DISCOUNT_PERCENT = 999.99
+
+
+def dealer_cost_and_margin_from_list(
+    list_price: Optional[float],
+    dealer_discount_percent: Optional[float],
+) -> tuple[Optional[float], Optional[float]]:
+    """
+    dealer_discount_percent e.g. 0.37 => dealer pays (1-0.37) of list (dealer cost).
+    Returns (dealer_cost, list_to_dealer_margin_amount).
+    """
+    if list_price is None or dealer_discount_percent is None:
+        return None, None
+    lp = float(list_price)
+    dd = float(dealer_discount_percent)
+    dealer_cost = lp * (1.0 - dd)
+    margin = lp - dealer_cost
+    return round(dealer_cost, 2), round(margin, 2)
 
 
 def clamp_discount_percent_for_db(value: Optional[float]) -> Optional[float]:
@@ -205,30 +239,33 @@ class PromotionService:
         }
     
     def get_promotion(self, promotion_id: str):
-        """Get a promotion by ID."""
+        """Get a promotion by ID (includes promotion_groups with nested products, and flat products list)."""
         from sqlalchemy.orm import joinedload
-        
-        promotion = self.db.query(Promotion).filter(Promotion.id == promotion_id).first()
+
+        promotion = (
+            self.db.query(Promotion)
+            .options(
+                joinedload(Promotion.promotion_groups).joinedload(PromotionGroup.promotion_products).joinedload(
+                    PromotionProduct.product
+                ),
+            )
+            .filter(Promotion.id == promotion_id)
+            .first()
+        )
         if not promotion:
             raise handle_not_found("Promotion", promotion_id)
-        
-        # Add product count
-        products_count = self.db.query(func.count(PromotionProduct.id)).filter(
-            PromotionProduct.promotion_id == promotion.id
-        ).scalar() or 0
-        promotion.products_count = products_count
-        
-        # Load products with relationships
-        products = self.db.query(PromotionProduct).options(
-            joinedload(PromotionProduct.product),
-            joinedload(PromotionProduct.promotion)
-        ).filter(
-            PromotionProduct.promotion_id == promotion_id
-        ).order_by(PromotionProduct.created_at.asc()).all()
-        
-        # Set products on promotion object
-        promotion.products = products
-        
+
+        groups = sorted(promotion.promotion_groups or [], key=lambda g: (g.sort_order, g.created_at))
+        flat: list = []
+        for g in groups:
+            for pp in sorted(g.promotion_products or [], key=lambda x: x.created_at):
+                flat.append(pp)
+
+        promotion.products_count = len(flat)
+        promotion.products = flat
+        # Expose sorted groups for API (nested products on each group)
+        promotion.promotion_groups = groups
+
         return promotion
     
     def create_promotion(self, promotion_data: PromotionCreate, created_by: str):
@@ -339,12 +376,115 @@ class PromotionService:
         self.db.commit()
         return {"message": f"Access levels set for {updated} promotion(s).", "updated_count": updated}
 
+    def create_promotion_group(self, promotion_id: str, data: PromotionGroupCreate) -> PromotionGroup:
+        """Add a bundle / FOC group to a promotion."""
+        if not self.db.query(Promotion.id).filter(Promotion.id == promotion_id).first():
+            raise handle_not_found("Promotion", promotion_id)
+        name = (data.group_name or "").strip()
+        if not name:
+            raise handle_conflict("Group name cannot be empty.")
+        max_so = (
+            self.db.query(func.coalesce(func.max(PromotionGroup.sort_order), -1))
+            .filter(PromotionGroup.promotion_id == promotion_id)
+            .scalar()
+        )
+        sort_order = data.sort_order if data.sort_order is not None else (int(max_so) + 1)
+        g = PromotionGroup(
+            promotion_id=promotion_id,
+            group_name=name,
+            sort_order=sort_order,
+            purchase_quantity_for_foc=data.purchase_quantity_for_foc,
+            foc_quantity=data.foc_quantity,
+        )
+        self.db.add(g)
+        self.db.commit()
+        self.db.refresh(g)
+        return g
+
+    def update_promotion_group(self, promotion_id: str, group_id: str, data: PromotionGroupUpdate) -> PromotionGroup:
+        """Update group name, sort order, or FOC fields."""
+        g = (
+            self.db.query(PromotionGroup)
+            .filter(PromotionGroup.id == group_id, PromotionGroup.promotion_id == promotion_id)
+            .first()
+        )
+        if not g:
+            raise handle_not_found("Promotion group", group_id)
+        update_data = data.model_dump(exclude_unset=True)
+        if "group_name" in update_data and update_data["group_name"] is not None:
+            nm = str(update_data["group_name"]).strip()
+            if not nm:
+                raise handle_conflict("Group name cannot be empty.")
+            update_data["group_name"] = nm
+        for key, value in update_data.items():
+            setattr(g, key, value)
+        self.db.commit()
+        self.db.refresh(g)
+        return g
+
+    def delete_promotion_group(self, promotion_id: str, group_id: str) -> dict:
+        """
+        Delete a promotion group (cascade deletes promotion product lines in that group).
+        Cannot remove the last remaining group.
+        """
+        g = (
+            self.db.query(PromotionGroup)
+            .filter(PromotionGroup.id == group_id, PromotionGroup.promotion_id == promotion_id)
+            .first()
+        )
+        if not g:
+            raise handle_not_found("Promotion group", group_id)
+        total = (
+            self.db.query(func.count(PromotionGroup.id))
+            .filter(PromotionGroup.promotion_id == promotion_id)
+            .scalar()
+        )
+        if (total or 0) <= 1:
+            raise handle_conflict(
+                "Cannot delete the only promotion group. Create another group first, or delete the promotion."
+            )
+        line_count = (
+            self.db.query(func.count(PromotionProduct.id))
+            .filter(PromotionProduct.promotion_group_id == group_id)
+            .scalar()
+            or 0
+        )
+        self.db.delete(g)
+        self.db.commit()
+        return {
+            "message": "Promotion group deleted",
+            "deleted_product_lines": int(line_count),
+        }
+
 
 class PromotionProductService:
     """Service for promotion product operations."""
     
     def __init__(self, db: Session):
         self.db = db
+
+    def get_or_create_default_promotion_group(self, promotion_id: str) -> PromotionGroup:
+        """Legacy / simple promotions: one unnamed default group for flat product lists."""
+        g = (
+            self.db.query(PromotionGroup)
+            .filter(
+                PromotionGroup.promotion_id == promotion_id,
+                PromotionGroup.group_name == "Default",
+            )
+            .first()
+        )
+        if g:
+            return g
+        g = PromotionGroup(
+            promotion_id=promotion_id,
+            group_name="Default",
+            sort_order=0,
+            purchase_quantity_for_foc=None,
+            foc_quantity=None,
+        )
+        self.db.add(g)
+        self.db.flush()
+        return g
 
     def _compute_discount_values(self, list_price: float, promo_price: float) -> tuple[float, float]:
         """Compute discount amount/percent; clamp percent to NUMERIC(5,2) range."""
@@ -408,39 +548,79 @@ class PromotionProductService:
             "empty": total == 0
         }
     
-    def get_promotion_product(self, promotion_id: str, product_id: str):
-        """Get a promotion product."""
+    def get_promotion_line(self, promotion_id: str, line_id: str):
+        """Get a promotion product row by junction id (supports same SKU in multiple groups)."""
         from sqlalchemy.orm import joinedload
-        product = self.db.query(PromotionProduct).options(
-            joinedload(PromotionProduct.product),
-            joinedload(PromotionProduct.promotion)
-        ).filter(
-            PromotionProduct.promotion_id == promotion_id,
-            PromotionProduct.product_id == product_id
-        ).first()
-        if not product:
+
+        row = (
+            self.db.query(PromotionProduct)
+            .options(
+                joinedload(PromotionProduct.product),
+                joinedload(PromotionProduct.promotion),
+                joinedload(PromotionProduct.promotion_group),
+            )
+            .filter(
+                PromotionProduct.id == line_id,
+                PromotionProduct.promotion_id == promotion_id,
+            )
+            .first()
+        )
+        if not row:
+            raise handle_not_found("Promotion product line", f"{promotion_id}/{line_id}")
+        return row
+
+    def get_promotion_product(self, promotion_id: str, product_id: str):
+        """Deprecated: use get_promotion_line. Returns first matching row if duplicates exist."""
+        from sqlalchemy.orm import joinedload
+
+        row = (
+            self.db.query(PromotionProduct)
+            .options(joinedload(PromotionProduct.product), joinedload(PromotionProduct.promotion))
+            .filter(
+                PromotionProduct.promotion_id == promotion_id,
+                PromotionProduct.product_id == product_id,
+            )
+            .first()
+        )
+        if not row:
             raise handle_not_found("Promotion Product", f"{promotion_id}/{product_id}")
-        return product
+        return row
     
     def create_promotion_product(self, product_data: PromotionProductCreate):
-        """Add a product to a promotion."""
+        """Add a product to a promotion (within a group; default group if omitted)."""
         from sqlalchemy.orm import joinedload
         from app.models.product import Product
+
+        pdata = product_data.model_dump()
+        group_id = pdata.get("promotion_group_id")
+        if not group_id:
+            g = self.get_or_create_default_promotion_group(product_data.promotion_id)
+            group_id = g.id
+        else:
+            g = (
+                self.db.query(PromotionGroup)
+                .filter(
+                    PromotionGroup.id == group_id,
+                    PromotionGroup.promotion_id == product_data.promotion_id,
+                )
+                .first()
+            )
+            if not g:
+                raise handle_not_found("Promotion group", str(group_id))
         
         existing = self.db.query(PromotionProduct).filter(
-            PromotionProduct.promotion_id == product_data.promotion_id,
+            PromotionProduct.promotion_group_id == group_id,
             PromotionProduct.product_id == product_data.product_id
         ).first()
         if existing:
             label = _product_display_label(self.db, product_data.product_id)
-            raise handle_conflict(f"Product already on this promotion: {label}.")
+            raise handle_conflict(f"Product already in this promotion group: {label}.")
         
         # Get the product to calculate discount
         product = self.db.query(Product).filter(Product.id == product_data.product_id).first()
         if not product:
             raise handle_not_found("Product", product_data.product_id)
         
-        # Calculate discount if promotion_price is provided
         promo_selling_price = product_data.promo_selling_price
         discount_amount = None
         discount_percent = None
@@ -449,13 +629,24 @@ class PromotionProductService:
             list_price = float(product.list_price)
             promo_price = float(promo_selling_price)
             discount_amount, discount_percent = self._compute_discount_values(list_price, promo_price)
+
+        dd = product_data.dealer_discount_percent
+        dd_f = float(dd) if dd is not None else None
+        dealer_cost, list_to_dealer_margin = dealer_cost_and_margin_from_list(
+            float(product.list_price) if product.list_price is not None else None,
+            dd_f,
+        )
         
         promotion_product = PromotionProduct(
             promotion_id=product_data.promotion_id,
+            promotion_group_id=group_id,
             product_id=product_data.product_id,
             promo_selling_price=promo_selling_price,
             discount_amount=discount_amount,
-            discount_percent=discount_percent
+            discount_percent=discount_percent,
+            dealer_discount_percent=dd,
+            dealer_cost=dealer_cost,
+            list_to_dealer_margin_amount=list_to_dealer_margin,
         )
         self.db.add(promotion_product)
         try:
@@ -471,15 +662,13 @@ class PromotionProductService:
             joinedload(PromotionProduct.promotion)
         ).filter(PromotionProduct.id == promotion_product.id).first()
     
-    def update_promotion_product(self, promotion_id: str, product_id: str, product_data: PromotionProductUpdate):
-        """Update a promotion product."""
+    def update_promotion_product(self, promotion_id: str, line_id: str, product_data: PromotionProductUpdate):
+        """Update a promotion product line (by promotion_products.id)."""
         from sqlalchemy.orm import joinedload
         from app.models.product import Product
         
-        promotion_product = self.get_promotion_product(promotion_id, product_id)
-        
-        # Get the product to recalculate discount if price changed
-        product = self.db.query(Product).filter(Product.id == product_id).first()
+        promotion_product = self.get_promotion_line(promotion_id, line_id)
+        product = self.db.query(Product).filter(Product.id == promotion_product.product_id).first()
         
         update_data = product_data.model_dump(exclude_unset=True)
         
@@ -490,6 +679,16 @@ class PromotionProductService:
             discount_amount, discount_percent = self._compute_discount_values(list_price, promo_price)
             update_data['discount_amount'] = discount_amount
             update_data['discount_percent'] = discount_percent
+
+        if 'dealer_discount_percent' in update_data and product:
+            dd = update_data.get('dealer_discount_percent')
+            dd_f = float(dd) if dd is not None else None
+            dc, margin = dealer_cost_and_margin_from_list(
+                float(product.list_price) if product.list_price is not None else None,
+                dd_f,
+            )
+            update_data['dealer_cost'] = dc
+            update_data['list_to_dealer_margin_amount'] = margin
         
         for key, value in update_data.items():
             setattr(promotion_product, key, value)
@@ -497,16 +696,15 @@ class PromotionProductService:
         self.db.commit()
         self.db.refresh(promotion_product)
         
-        # Reload with product and promotion relationships
         return self.db.query(PromotionProduct).options(
             joinedload(PromotionProduct.product),
             joinedload(PromotionProduct.promotion)
         ).filter(PromotionProduct.id == promotion_product.id).first()
     
-    def delete_promotion_product(self, promotion_id: str, product_id: str):
-        """Remove a product from a promotion."""
-        product = self.get_promotion_product(promotion_id, product_id)
-        self.db.delete(product)
+    def delete_promotion_product(self, promotion_id: str, line_id: str):
+        """Remove a promotion product line from a promotion."""
+        row = self.get_promotion_line(promotion_id, line_id)
+        self.db.delete(row)
         self.db.commit()
         return {"message": "Product removed from promotion"}
 

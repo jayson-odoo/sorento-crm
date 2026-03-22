@@ -7,7 +7,7 @@ from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
 from app.models.order import Order, OrderStatus, Customer, OrderLine
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine
-from app.models.marketing import Promotion, PromotionProduct, CampaignType, MarketingCampaign
+from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, CampaignType, MarketingCampaign
 from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
 from app.models.workflow_forms import (
     WorkflowFormDefinition,
@@ -65,6 +65,7 @@ __all__ = [
     "PurchaseRequestHeader",
     "PurchaseRequestLine",
     "Promotion",
+    "PromotionGroup",
     "PromotionProduct",
     "CampaignType",
     "MarketingCampaign",

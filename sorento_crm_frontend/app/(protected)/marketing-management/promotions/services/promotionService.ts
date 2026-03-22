@@ -1,5 +1,11 @@
 import { apiFetch } from '@/lib/api';
-import type { Promotion, PromotionFormData, PromotionDetail, PromotionProduct } from '../types/promotion.types';
+import type {
+  Promotion,
+  PromotionFormData,
+  PromotionDetail,
+  PromotionProduct,
+  PromotionGroup,
+} from '../types/promotion.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
 export async function getPromotions(
@@ -99,11 +105,79 @@ export async function getPromotionProducts(promotionId: string): Promise<Promoti
   return response.json();
 }
 
-export async function addPromotionProduct(promotionId: string, productId: string, promotionPrice?: number): Promise<PromotionProduct> {
+export async function createPromotionGroup(
+  promotionId: string,
+  data: {
+    group_name: string;
+    sort_order?: number | null;
+    purchase_quantity_for_foc?: number | null;
+    foc_quantity?: number | null;
+  },
+): Promise<PromotionGroup> {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/groups`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail ?? err.message ?? 'Failed to create promotion group');
+  }
+  return response.json();
+}
+
+export async function updatePromotionGroup(
+  promotionId: string,
+  groupId: string,
+  data: {
+    group_name?: string;
+    sort_order?: number | null;
+    purchase_quantity_for_foc?: number | null;
+    foc_quantity?: number | null;
+  },
+): Promise<PromotionGroup> {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/groups/${groupId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail ?? err.message ?? 'Failed to update promotion group');
+  }
+  return response.json();
+}
+
+export async function deletePromotionGroup(
+  promotionId: string,
+  groupId: string,
+): Promise<{ message: string; deleted_product_lines?: number }> {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/groups/${groupId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail ?? err.message ?? 'Failed to delete promotion group');
+  }
+  return response.json();
+}
+
+export async function addPromotionProduct(
+  promotionId: string,
+  productId: string,
+  promotionPrice?: number,
+  promotionGroupId?: string,
+  dealerDiscountPercent?: number | null,
+): Promise<PromotionProduct> {
   const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ product_id: productId, promotion_price: promotionPrice }),
+    body: JSON.stringify({
+      product_id: productId,
+      promotion_price: promotionPrice,
+      ...(promotionGroupId ? { promotion_group_id: promotionGroupId } : {}),
+      ...(dealerDiscountPercent !== undefined ? { dealer_discount_percent: dealerDiscountPercent } : {}),
+    }),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to add product to promotion' }));
@@ -112,19 +186,28 @@ export async function addPromotionProduct(promotionId: string, productId: string
   return response.json();
 }
 
-export async function removePromotionProduct(promotionId: string, productId: string): Promise<void> {
-  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/${productId}`, { method: 'DELETE' });
+/** `lineId` is promotion_products.id (junction row); required when the same SKU appears in multiple groups. */
+export async function removePromotionProduct(promotionId: string, lineId: string): Promise<void> {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/${lineId}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to remove product from promotion' }));
     throw new Error(error.message);
   }
 }
 
-export async function updatePromotionProductPrice(promotionId: string, productId: string, promotionPrice: number): Promise<PromotionProduct> {
-  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/${productId}`, {
+export async function updatePromotionProductPrice(
+  promotionId: string,
+  lineId: string,
+  promotionPrice: number,
+  dealerDiscountPercent?: number | null,
+): Promise<PromotionProduct> {
+  const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/${lineId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ promotion_price: promotionPrice }),
+    body: JSON.stringify({
+      promotion_price: promotionPrice,
+      ...(dealerDiscountPercent !== undefined ? { dealer_discount_percent: dealerDiscountPercent } : {}),
+    }),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to update promotion product price' }));

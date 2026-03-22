@@ -1,11 +1,8 @@
 {
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/api/v1/external/[...path]/route": "app/api/v1/external/[...path]/route.js",
-  "/api/user-management/account/route": "app/api/user-management/account/route.js",
-  "/(protected)/marketing-management/promotions/page": "app/(protected)/marketing-management/promotions/page.js",
-  "/(protected)/marketing-management/promotions/[id]/page": "app/(protected)/marketing-management/promotions/[id]/page.js",
-  "/(protected)/page": "app/(protected)/page.js",
   "/(auth)/signin/page": "app/(auth)/signin/page.js",
-  "/(protected)/system-management/outgoing-mails/page": "app/(protected)/system-management/outgoing-mails/page.js"
+  "/(protected)/marketing-management/promotions/page": "app/(protected)/marketing-management/promotions/page.js",
+  "/(protected)/marketing-management/promotions/[id]/edit/page": "app/(protected)/marketing-management/promotions/[id]/edit/page.js",
+  "/(protected)/page": "app/(protected)/page.js",
+  "/(protected)/marketing-management/promotions/[id]/page": "app/(protected)/marketing-management/promotions/[id]/page.js"
 }

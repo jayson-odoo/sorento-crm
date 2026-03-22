@@ -36,16 +36,33 @@ export interface PromotionFormData {
 export interface PromotionProduct {
   id: string;
   promotion_id: string;
+  promotion_group_id?: string | null;
   product_id: string;
   promotion_price?: number | null;
   display_order: number;
   product?: Product;
   discount_amount?: number;
   discount_percent?: number;
+  /** Fraction off list for dealer cost (e.g. 0.37) */
+  dealer_discount_percent?: number | null;
+  dealer_cost?: number | null;
+  /** list_price − dealer_cost */
+  list_to_dealer_margin_amount?: number | null;
+}
+
+export interface PromotionGroup {
+  id: string;
+  promotion_id: string;
+  group_name: string;
+  sort_order: number;
+  purchase_quantity_for_foc?: number | null;
+  foc_quantity?: number | null;
+  promotion_products?: PromotionProduct[];
 }
 
 export interface PromotionDetail extends Promotion {
   products?: PromotionProduct[];
+  promotion_groups?: PromotionGroup[];
   metrics?: {
     units_sold: number;
     revenue: number;
