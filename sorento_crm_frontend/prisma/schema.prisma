@@ -982,7 +982,7 @@ model InboundShipment {
   shipmentNumber          String    @unique @map("shipment_number") @db.VarChar(50)
   supplierId               String    @map("supplier_id")
   shipmentDate            DateTime  @map("shipment_date") @db.Date
-  expectedArrivalDate     DateTime? @map("expected_arrival_date") @db.Date
+  estimatedArrivalDate    DateTime? @map("estimated_arrival_date") @db.Date
   actualArrivalDate       DateTime? @map("actual_arrival_date") @db.Date
   billOfLadingNumber      String?   @map("bill_of_lading_number") @db.VarChar(100)
   shippingContainerNumber String?   @map("shipping_container_number") @db.VarChar(100)

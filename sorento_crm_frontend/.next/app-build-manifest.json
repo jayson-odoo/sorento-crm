@@ -75,6 +75,16 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/marketing-management/promotions/[id]/edit/page.js"
+    ],
+    "/(protected)/procurement-management/packing-lists/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/packing-lists/page.js"
+    ],
+    "/(protected)/procurement-management/packing-lists/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/packing-lists/[id]/page.js"
     ]
   }
 }

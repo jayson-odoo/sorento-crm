@@ -47,7 +47,7 @@ export default function PackingListForm({
       shipment_number: '',
       supplier_id: '',
       shipment_date: '',
-      expected_arrival_date: '',
+      estimated_arrival_date: '',
       bill_of_lading_number: '',
       shipping_container_number: '',
       invoice_number: '',
@@ -86,8 +86,8 @@ export default function PackingListForm({
       shipment_number: packingList.shipment_number,
       supplier_id: packingList.supplier_id ?? '',
       shipment_date: packingList.shipment_date ? new Date(packingList.shipment_date).toISOString().slice(0, 10) : '',
-      expected_arrival_date: packingList.expected_arrival_date
-        ? new Date(packingList.expected_arrival_date).toISOString().slice(0, 10)
+      estimated_arrival_date: packingList.estimated_arrival_date
+        ? new Date(packingList.estimated_arrival_date).toISOString().slice(0, 10)
         : '',
       bill_of_lading_number: packingList.bill_of_lading_number ?? '',
       shipping_container_number: packingList.shipping_container_number ?? '',
@@ -110,7 +110,7 @@ export default function PackingListForm({
         shipment_number: data.shipment_number,
         supplier_id: data.supplier_id || undefined,
         shipment_date: data.shipment_date,
-        expected_arrival_date: data.expected_arrival_date || undefined,
+        estimated_arrival_date: data.estimated_arrival_date || undefined,
         bill_of_lading_number: data.bill_of_lading_number || undefined,
         shipping_container_number: data.shipping_container_number || undefined,
         invoice_number: data.invoice_number || undefined,
@@ -217,10 +217,10 @@ export default function PackingListForm({
               />
               <FormField
                 control={form.control}
-                name="expected_arrival_date"
+                name="estimated_arrival_date"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Expected Arrival Date</FormLabel>
+                    <FormLabel>Estimated Arrival Date</FormLabel>
                     <FormControl>
                       <Input type="date" {...field} value={field.value || ''} />
                     </FormControl>

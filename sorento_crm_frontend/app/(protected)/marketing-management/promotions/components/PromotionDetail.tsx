@@ -579,9 +579,6 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
         <CardHeader className="flex-row items-center justify-between gap-4">
           <div className="space-y-1 min-w-0">
             <CardTitle>Products in Promotion</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Organise lines into bundle / FOC groups. Each group can have its own buy-N-get-M rule.
-            </p>
           </div>
           <div className="flex flex-wrap gap-2 shrink-0">
             <Button variant="outline" onClick={openCreateGroupDialog} className="shrink-0">

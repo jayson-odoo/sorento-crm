@@ -316,11 +316,11 @@ export default function PackingListDetail({
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">
-                  Expected Arrival Date
+                  Estimated Arrival Date
                 </p>
                 <p className="font-medium">
-                  {packingList.expected_arrival_date
-                    ? formatDate(new Date(packingList.expected_arrival_date))
+                  {packingList.estimated_arrival_date
+                    ? formatDate(new Date(packingList.estimated_arrival_date))
                     : '-'}
                 </p>
               </div>

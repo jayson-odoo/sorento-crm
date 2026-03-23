@@ -29,7 +29,7 @@ export interface PackingList {
   shipment_number: string;
   supplier_id: string;
   shipment_date: Date;
-  expected_arrival_date?: Date | null;
+  estimated_arrival_date?: Date | null;
   actual_arrival_date?: Date | null;
   bill_of_lading_number?: string | null;
   shipping_container_number?: string | null;
@@ -75,7 +75,7 @@ export interface PackingListFormData {
   shipment_number: string;
   supplier_id?: string;
   shipment_date: string;
-  expected_arrival_date?: string;
+  estimated_arrival_date?: string;
   actual_arrival_date?: string;
   bill_of_lading_number?: string;
   shipping_container_number?: string;

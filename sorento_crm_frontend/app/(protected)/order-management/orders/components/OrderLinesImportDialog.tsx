@@ -146,9 +146,6 @@ export function OrderLinesImportDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Import delivery order detail (order lines)</DialogTitle>
-          <DialogDescription>
-            Upload an Excel file with delivery order lines. Columns: <strong>Doc No</strong> (or Order Number), <strong>Item Code</strong> (or Product Code), <strong>Location</strong> (or Warehouse). Optional: Qty, Unit Price, Discount, Total, Tax, Total Excluding Tax, Total Including Tax. Rows are matched to orders by Doc No and upserted as order lines.
-          </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           {!file ? (

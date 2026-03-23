@@ -1,7 +1,7 @@
 """External API request and response schemas."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator, model_validator, ConfigDict
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator, ConfigDict
 from typing import Optional, List, Any, Union
 from datetime import date
 from decimal import Decimal
@@ -15,14 +15,18 @@ from app.schemas.forms import FormResponse
 
 
 class PackingListHeader(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     shipment_number: str
     supplier_id: Optional[str] = None
     shipment_date: str | date
     shipping_container_number: Optional[str] = None
     attachment_id: str
-    # Estimated time of arrival → inbound_shipments.eta (parsed like other date fields)
-    eta: Optional[str | date] = None
-    expected_arrival_date: Optional[str | date] = None
+    # Stored as inbound_shipments.estimated_arrival_date. Accepts legacy keys "eta" or "expected_arrival_date".
+    estimated_arrival_date: Optional[str | date] = Field(
+        default=None,
+        validation_alias=AliasChoices("estimated_arrival_date", "eta", "expected_arrival_date"),
+    )
     actual_arrival_date: Optional[str | date] = None
     bill_of_lading_number: Optional[str] = None
     invoice_number: Optional[str] = None

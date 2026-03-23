@@ -137,13 +137,13 @@ export default function PackingListsList() {
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
-        accessorKey: 'expected_arrival_date',
+        accessorKey: 'estimated_arrival_date',
         header: ({ column }) => (
           <DataGridColumnHeader title="Expected Arrival" column={column} />
         ),
         cell: ({ row }) =>
-          row.original.expected_arrival_date
-            ? formatDate(new Date(row.original.expected_arrival_date))
+          row.original.estimated_arrival_date
+            ? formatDate(new Date(row.original.estimated_arrival_date))
             : '-',
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },

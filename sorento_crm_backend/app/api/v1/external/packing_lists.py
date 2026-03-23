@@ -1,6 +1,7 @@
 """External API for packing lists (inbound shipments)."""
 import html
 import logging
+from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -64,7 +65,8 @@ def create_packing_list(
     # Group by product_id and sum quantity (one row per product per shipment)
     by_product: dict[str, int] = {}
     for item in valid_items:
-        product_id = products_map[normalize_code(item.product_code)].id
+        product = products_map[normalize_code(item.product_code)]
+        product_id = cast(str, product.id)
         by_product[product_id] = by_product.get(product_id, 0) + item.quantity
 
     try:
@@ -75,8 +77,7 @@ def create_packing_list(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid shipment_date")
 
     try:
-        eta = parse_date_value(payload.packing_list.eta)
-        expected_arrival_date = parse_date_value(payload.packing_list.expected_arrival_date)
+        estimated_arrival_date = parse_date_value(payload.packing_list.estimated_arrival_date)
         actual_arrival_date = parse_date_value(payload.packing_list.actual_arrival_date)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -85,8 +86,7 @@ def create_packing_list(
         shipment_number=payload.packing_list.shipment_number,
         supplier_id=payload.packing_list.supplier_id or None,
         shipment_date=shipment_date,
-        eta=eta,
-        expected_arrival_date=expected_arrival_date,
+        estimated_arrival_date=estimated_arrival_date,
         actual_arrival_date=actual_arrival_date,
         bill_of_lading_number=payload.packing_list.bill_of_lading_number,
         shipping_container_number=payload.packing_list.shipping_container_number,
