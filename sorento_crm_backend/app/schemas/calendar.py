@@ -1,7 +1,7 @@
 """Calendar and working days schemas."""
 from datetime import date, datetime, time
-from typing import Optional
-from pydantic import BaseModel
+from typing import List, Optional
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PublicHolidayBase(BaseModel):
@@ -61,3 +61,41 @@ class WorkCalendarConfigResponse(WorkCalendarConfigBase):
 
     class Config:
         from_attributes = True
+
+
+class ExternalWorkingDayRange(BaseModel):
+    """One contiguous run of working days (Monday–Sunday order)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    start_weekday: str = Field(
+        ...,
+        description="First calendar day in this range (e.g. Monday).",
+    )
+    end_weekday: str = Field(
+        ...,
+        description="Last calendar day in this range (e.g. Friday).",
+    )
+
+
+class ExternalWorkCalendarSummary(BaseModel):
+    """External API: working days as ranges plus shared daily working hours."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    timezone: str = Field(
+        ...,
+        description="IANA timezone used for working-hours interpretation (e.g. Asia/Kuala_Lumpur).",
+    )
+    working_hours_start: str = Field(
+        ...,
+        description="Local start of working hours (HH:MM:SS).",
+    )
+    working_hours_end: str = Field(
+        ...,
+        description="Local end of working hours (HH:MM:SS).",
+    )
+    working_day_ranges: List[ExternalWorkingDayRange] = Field(
+        default_factory=list,
+        description="Contiguous working weekday ranges; gaps create separate entries.",
+    )

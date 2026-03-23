@@ -1,6 +1,6 @@
 """Calendar service for business-day calculations."""
 from datetime import date, datetime, time, timedelta
-from typing import Optional, Set
+from typing import List, Optional, Set, Tuple
 from zoneinfo import ZoneInfo
 import logging
 from sqlalchemy.orm import Session
@@ -11,6 +11,39 @@ logger = logging.getLogger(__name__)
 
 # Default timezone for working-hours checks (tenant wall clock; align with Work Calendar UI).
 DEFAULT_WORKING_TZ = ZoneInfo("Asia/Kuala_Lumpur")
+
+# Monday=index 0 … Sunday=6 (matches datetime.weekday()).
+WEEKDAY_LABELS: Tuple[str, ...] = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
+
+
+def weekday_ranges_from_flags(flags: List[bool]) -> List[Tuple[str, str]]:
+    """
+    Split Mon–Sun booleans into contiguous ranges.
+    Example: Mon–Tue and Thu–Fri if Wednesday is off →
+    [("Monday", "Tuesday"), ("Thursday", "Friday")].
+    """
+    if len(flags) != 7:
+        raise ValueError("flags must have 7 entries (Monday through Sunday)")
+    ranges: List[Tuple[str, str]] = []
+    i = 0
+    while i < 7:
+        if not flags[i]:
+            i += 1
+            continue
+        start = i
+        while i < 7 and flags[i]:
+            i += 1
+        end = i - 1
+        ranges.append((WEEKDAY_LABELS[start], WEEKDAY_LABELS[end]))
+    return ranges
 
 
 class CalendarService:
@@ -66,6 +99,32 @@ class CalendarService:
         except SQLAlchemyError:
             logger.warning("Work calendar config unavailable; defaulting working hours 09:00–17:00.")
         return (time(9, 0, 0), time(17, 0, 0))
+
+    def get_working_day_ranges(self) -> list[dict[str, str]]:
+        """
+        Contiguous working weekday ranges for the default work calendar.
+        Each item has start_weekday and end_weekday (English names, e.g. Monday–Friday).
+        """
+        try:
+            config = self.get_or_create_work_calendar()
+            flags = [
+                bool(config.monday),
+                bool(config.tuesday),
+                bool(config.wednesday),
+                bool(config.thursday),
+                bool(config.friday),
+                bool(config.saturday),
+                bool(config.sunday),
+            ]
+            return [
+                {"start_weekday": a, "end_weekday": b}
+                for a, b in weekday_ranges_from_flags(flags)
+            ]
+        except SQLAlchemyError:
+            logger.warning("Work calendar config unavailable; defaulting Mon–Fri.")
+            return [
+                {"start_weekday": "Monday", "end_weekday": "Friday"},
+            ]
 
     def is_within_working_time(
         self,
