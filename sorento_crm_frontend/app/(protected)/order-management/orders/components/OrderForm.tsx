@@ -89,7 +89,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
     defaultValues: {
       order_number: '',
       order_date: defaultOrderDate,
-      promised_delivery_date: defaultEstimatedDeliveryDate,
+      estimated_delivery_date: defaultEstimatedDeliveryDate,
       actual_delivery_date: undefined,
       customer_id: '',
       order_status_id: '',
@@ -167,7 +167,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
         form.reset({
           order_number: order.order_number ?? '',
           order_date: order.order_date ? dateOnlyUTC(order.order_date) ?? new Date() : new Date(),
-          promised_delivery_date: dateOnlyUTC(order.promised_delivery_date),
+          estimated_delivery_date: dateOnlyUTC(order.estimated_delivery_date),
           actual_delivery_date: dateOnlyUTC(order.actual_delivery_date),
           customer_id: order.customer_id ? String(order.customer_id) : '',
           order_status_id: orderStatusId,
@@ -219,7 +219,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
       const formData: OrderFormData = {
         order_number: data.order_number,
         order_date: data.order_date,
-        promised_delivery_date: data.promised_delivery_date || undefined,
+        estimated_delivery_date: data.estimated_delivery_date || undefined,
         actual_delivery_date: data.actual_delivery_date || undefined,
         customer_id: data.customer_id ?? undefined,
         order_status_id: data.order_status_id,
@@ -376,7 +376,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
 
                   <FormField
                     control={form.control}
-                    name="promised_delivery_date"
+                    name="estimated_delivery_date"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Estimated Delivery Date</FormLabel>

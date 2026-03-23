@@ -57,7 +57,7 @@ class Order(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     order_number = Column(String(100), unique=True, nullable=False)
     order_date = Column(DateTime(timezone=False), nullable=True)
-    promised_delivery_date = Column(DateTime(timezone=False), nullable=True)
+    estimated_delivery_date = Column(DateTime(timezone=False), nullable=True)
     actual_delivery_date = Column(DateTime(timezone=False), nullable=True)
     customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
     order_status_id = Column(UUID(as_uuid=False), ForeignKey("order_statuses.id", ondelete="SET NULL"), nullable=True)

@@ -212,9 +212,9 @@ export default function OrdersList() {
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
-        accessorKey: 'promised_delivery_date',
+        accessorKey: 'estimated_delivery_date',
         header: ({ column }) => <DataGridColumnHeader title="Estimated Delivery" column={column} />,
-        cell: ({ row }) => row.original.promised_delivery_date ? formatDate(new Date(row.original.promised_delivery_date)) : '-',
+        cell: ({ row }) => row.original.estimated_delivery_date ? formatDate(new Date(row.original.estimated_delivery_date)) : '-',
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },

@@ -78,7 +78,7 @@ class OrderService:
         # Nullable columns: use nulls_last so NULLs don't break sort order
         nullable_sort_fields = {
             "order_date",
-            "promised_delivery_date",
+            "estimated_delivery_date",
             "actual_delivery_date",
             "delivery_days",
             "debtor_name",
@@ -90,7 +90,7 @@ class OrderService:
         sort_map = {
             "order_number": Order.order_number,
             "order_date": Order.order_date,
-            "promised_delivery_date": Order.promised_delivery_date,
+            "estimated_delivery_date": Order.estimated_delivery_date,
             "actual_delivery_date": Order.actual_delivery_date,
             "delivery_days": Order.delivery_days,
             "debtor_name": Order.debtor_name,
@@ -332,9 +332,10 @@ class OrderService:
             'Order Number': 'order_number',
             'order_date': 'order_date',
             'Order Date': 'order_date',
-            'promised_delivery_date': 'promised_delivery_date',
-            'Estimated Delivery Date': 'promised_delivery_date',
-            'Promised Delivery Date': 'promised_delivery_date',  # legacy Excel headers
+            'estimated_delivery_date': 'estimated_delivery_date',
+            'Estimated Delivery Date': 'estimated_delivery_date',
+            'Promised Delivery Date': 'estimated_delivery_date',  # legacy Excel headers
+            'promised_delivery_date': 'estimated_delivery_date',  # legacy column / export key
             'actual_delivery_date': 'actual_delivery_date',
             'Actual Delivery Date': 'actual_delivery_date',
             'customer_id': 'customer_id',
@@ -392,7 +393,7 @@ class OrderService:
                 mapped_data = {}
                 for excel_key, value in row_data.items():
                     db_key = column_mapping.get(excel_key, excel_key.lower())
-                    if db_key in ['order_date', 'promised_delivery_date', 'actual_delivery_date']:
+                    if db_key in ['order_date', 'estimated_delivery_date', 'actual_delivery_date']:
                         mapped_data[db_key] = parse_date(value)
                     elif db_key in ['subtotal_amount', 'discount_amount', 'tax_amount', 'total_amount']:
                         mapped_data[db_key] = parse_decimal(value)
@@ -706,7 +707,7 @@ class OrderService:
         for row_idx, row_data, mapped in mapped_master_rows:
             try:
                 if mapped.get("order_date"):
-                    mapped["promised_delivery_date"] = calendar_service.add_business_days(
+                    mapped["estimated_delivery_date"] = calendar_service.add_business_days(
                         mapped["order_date"],
                         2,
                         working_weekdays=working_weekdays,

@@ -6,7 +6,7 @@ export const OrderSchema = z.object({
     .min(1, { message: 'Order number is required.' })
     .max(100, { message: 'Order number must not exceed 100 characters.' }),
   order_date: z.date({ required_error: 'Order date is required.' }),
-  promised_delivery_date: z.date().optional().nullable(),
+  estimated_delivery_date: z.date().optional().nullable(),
   actual_delivery_date: z.date().optional().nullable(),
   customer_id: z.string().optional().nullable(),
   order_status_id: z.string().min(1, { message: 'Order status is required.' }),

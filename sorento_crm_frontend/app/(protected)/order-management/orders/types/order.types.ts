@@ -2,7 +2,7 @@ export interface Order {
   id: string;
   order_number: string;
   order_date?: Date | null;
-  promised_delivery_date?: Date | null;
+  estimated_delivery_date?: Date | null;
   actual_delivery_date?: Date | null;
   customer_id?: string | null;
   order_status_id?: string | null;
@@ -74,7 +74,7 @@ export interface OrderLine {
 export interface OrderFormData {
   order_number: string;
   order_date: Date;
-  promised_delivery_date?: Date;
+  estimated_delivery_date?: Date;
   actual_delivery_date?: Date;
   customer_id?: string | null;
   order_status_id: string;

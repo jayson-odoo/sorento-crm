@@ -73,7 +73,7 @@ class CustomerResponse(CustomerBase):
 class OrderBase(BaseModel):
     order_number: str
     order_date: Optional[datetime] = None
-    promised_delivery_date: Optional[datetime] = None
+    estimated_delivery_date: Optional[datetime] = None
     actual_delivery_date: Optional[datetime] = None
     customer_id: Optional[str] = None
     order_status_id: Optional[str] = None
@@ -112,7 +112,7 @@ class OrderCreate(OrderBase):
 
 class OrderUpdate(BaseModel):
     order_date: Optional[datetime] = None
-    promised_delivery_date: Optional[datetime] = None
+    estimated_delivery_date: Optional[datetime] = None
     actual_delivery_date: Optional[datetime] = None
     customer_id: Optional[str] = None
     order_status_id: Optional[str] = None

@@ -124,7 +124,7 @@ def upgrade() -> None:
     ins_field(ro, "customer_id", "Customer", "uuid", "order.customer_id", uuid_ops, 70)
     ins_field(ro, "is_cancelled", "Cancelled", "boolean", "order.is_cancelled", bool_ops, 80)
     ins_field(ro, "total_amount", "Total amount", "number", "order.total_amount", num_ops, 90)
-    ins_field(ro, "promised_delivery_date", "Estimated delivery", "date", "order.promised_delivery_date", date_ops, 100)
+    ins_field(ro, "estimated_delivery_date", "Estimated delivery", "date", "order.estimated_delivery_date", date_ops, 100)
     ins_field(ro, "actual_delivery_date", "Actual delivery", "date", "order.actual_delivery_date", date_ops, 110)
     ins_field(ro, "order_type", "Order type", "string", "order.order_type", str_ops, 120)
     ins_field(ro, "remarks_cs", "Remarks CS", "string", "order.remarks_cs", str_ops, 130)

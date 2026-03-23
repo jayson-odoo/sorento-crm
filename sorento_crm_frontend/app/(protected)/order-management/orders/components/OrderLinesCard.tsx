@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -111,6 +112,16 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
   const formatNum = (v: number | string | null | undefined) =>
     v != null && v !== '' ? new Intl.NumberFormat('en-MY', { minimumFractionDigits: 2 }).format(Number(v)) : '-';
 
+  const productLineLabel = (line: OrderLine) => {
+    if (line.product) {
+      const code = line.product.product_code ?? '';
+      const name = line.product.product_name ?? '';
+      if (code && name) return `${code} - ${name}`;
+      return (code || name || line.product_id).trim();
+    }
+    return line.product_id;
+  };
+
   return (
     <>
       <Card>
@@ -148,10 +159,21 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {lines.map((line) => (
+                  {lines.map((line) => {
+                    const productId = line.product?.id ?? line.product_id;
+                    return (
                     <TableRow key={line.id}>
                       <TableCell>
-                        {line.product ? `${line.product.product_code ?? ''} - ${line.product.product_name ?? ''}` : line.product_id}
+                        {productId ? (
+                          <Link
+                            href={`/master-data-management/products/${productId}`}
+                            className="text-primary font-medium hover:underline underline-offset-2"
+                          >
+                            {productLineLabel(line)}
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         {line.warehouse ? `${line.warehouse.warehouse_code ?? ''} - ${line.warehouse.warehouse_name ?? ''}` : line.warehouse_id}
@@ -175,7 +197,8 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
                         </Button>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>

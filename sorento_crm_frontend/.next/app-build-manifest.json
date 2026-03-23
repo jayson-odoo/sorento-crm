@@ -85,6 +85,11 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/procurement-management/packing-lists/[id]/page.js"
+    ],
+    "/(protected)/order-management/orders/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/order-management/orders/page.js"
     ]
   }
 }

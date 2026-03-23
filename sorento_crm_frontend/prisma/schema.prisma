@@ -716,7 +716,7 @@ model Order {
   id                    String    @id @default(uuid())
   orderNumber           String    @unique @map("order_number") @db.VarChar(100)
   orderDate             DateTime? @map("order_date")
-  promisedDeliveryDate  DateTime? @map("promised_delivery_date")
+  estimatedDeliveryDate DateTime? @map("estimated_delivery_date")
   actualDeliveryDate    DateTime? @map("actual_delivery_date")
   customerId            String?   @map("customer_id")
   orderStatusId         String?   @map("order_status_id")

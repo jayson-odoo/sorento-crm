@@ -224,7 +224,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Estimated Delivery Date</p>
-                  <p className="font-medium">{order.promised_delivery_date ? formatDate(new Date(order.promised_delivery_date)) : '-'}</p>
+                  <p className="font-medium">{order.estimated_delivery_date ? formatDate(new Date(order.estimated_delivery_date)) : '-'}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Actual Delivery Date</p>
