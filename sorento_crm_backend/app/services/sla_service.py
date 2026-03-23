@@ -575,6 +575,7 @@ class ConversationSLATrackingService:
             .options(
                 joinedload(ConversationSLATracking.policy),
                 joinedload(ConversationSLATracking.contact),
+                joinedload(ConversationSLATracking.assigned_user),
                 joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user),
             )
             .filter(ConversationSLATracking.respond_contact_id == contact.id)

@@ -2,6 +2,7 @@
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
@@ -19,6 +20,73 @@ def _format_assignee_response(result: dict) -> dict:
         "assignee_name": result.get("name"),
         "assignee_respond_user_id": result.get("respond_user_id"),
     }
+
+
+def _user_field(user: Any, name: str) -> Any:
+    """Read attribute; prefer instance __dict__ so detached / test User instances work."""
+    d = getattr(user, "__dict__", None)
+    if isinstance(d, dict) and name in d:
+        return d.get(name)
+    return getattr(user, name, None)
+
+
+def _user_to_conversation_assignee_payload(user: Any) -> dict:
+    return {
+        "conversation_assignee_id": _user_field(user, "id"),
+        "conversation_assignee_email": _user_field(user, "email"),
+        "conversation_assignee_name": _user_field(user, "name"),
+        "conversation_assignee_respond_user_id": _user_field(user, "respond_user_id"),
+    }
+
+
+def _conversation_assignee_from_tracking(tracking: Optional[Any], db: Session) -> dict:
+    """
+    CRM conversation assignee (SLA tracking), distinct from round-robin assignee_* fields.
+    When tracking has no assignee, all fields are None.
+    """
+    empty = {
+        "conversation_assignee_id": None,
+        "conversation_assignee_email": None,
+        "conversation_assignee_name": None,
+        "conversation_assignee_respond_user_id": None,
+    }
+    if tracking is None:
+        return empty
+
+    from app.models.user import User
+
+    au = getattr(tracking, "assigned_user", None)
+    if au is not None and isinstance(au, User):
+        return _user_to_conversation_assignee_payload(au)
+
+    aid = getattr(tracking, "assigned_to_id", None)
+    if aid:
+        user = db.query(User).filter(User.id == aid).first()
+        if user is not None and isinstance(user, User):
+            return _user_to_conversation_assignee_payload(user)
+
+    at = getattr(tracking, "assigned_to", None)
+    if not isinstance(at, str) or not str(at).strip():
+        return empty
+    s = str(at).strip()
+
+    user = db.query(User).filter(User.id == s).first()
+    if user is not None and isinstance(user, User):
+        return _user_to_conversation_assignee_payload(user)
+    user = db.query(User).filter(User.respond_user_id == s).first()
+    if user is not None and isinstance(user, User):
+        return _user_to_conversation_assignee_payload(user)
+    user = db.query(User).filter(User.email == s).first()
+    if user is not None and isinstance(user, User):
+        return _user_to_conversation_assignee_payload(user)
+
+    # Legacy text only: often respond.io user id; may be email or display string
+    out = {**empty}
+    if "@" in s:
+        out["conversation_assignee_email"] = s
+    else:
+        out["conversation_assignee_respond_user_id"] = s
+    return out
 
 
 def _tracking_is_assigned(tracking: Any) -> bool:
@@ -40,6 +108,7 @@ def _enrich_n8n_response(
     *,
     is_working_hours: bool,
     is_already_assigned: bool,
+    conversation_assignee: Optional[dict] = None,
 ) -> dict:
     status_flags: list[str] = []
     if not is_working_hours:
@@ -64,6 +133,8 @@ def _enrich_n8n_response(
     out["is_already_assigned"] = is_already_assigned
     out["status_flags"] = status_flags
     out["message"] = message
+    if conversation_assignee is not None:
+        out.update(conversation_assignee)
     return out
 
 
@@ -83,6 +154,8 @@ async def post_next_assignee(
     - is_already_assigned: True if latest SLA tracking for this phone has an assignee in CRM
     - status_flags: e.g. ["non_working_hours"], ["already_assigned"], or both
     - message: human-readable hint for n8n (queue vs assign vs comment)
+    - conversation_assignee_*: CRM assignee on the SLA tracking row (when already assigned);
+      distinct from assignee_* (round-robin). All null when not assigned.
 
     Body (required): contact_phone_number or contact_phone.
     Body (agent/team): agent_id/agent_code/agent and team_id/team_code/team or code.
@@ -104,6 +177,16 @@ async def post_next_assignee(
     sla_service = ConversationSLATrackingService(db)
     tracking: Optional[Any] = sla_service.get_tracking_by_contact_phone(contact_phone)
     is_already_assigned = _tracking_is_assigned(tracking)
+    conversation_assignee = (
+        _conversation_assignee_from_tracking(tracking, db)
+        if is_already_assigned
+        else {
+            "conversation_assignee_id": None,
+            "conversation_assignee_email": None,
+            "conversation_assignee_name": None,
+            "conversation_assignee_respond_user_id": None,
+        }
+    )
 
     # Accept client-friendly names: agent -> agent_code, team -> team_code
     agent_id = body.get("agent_id")
@@ -146,6 +229,7 @@ async def post_next_assignee(
                 _format_assignee_response(result),
                 is_working_hours=is_working_hours,
                 is_already_assigned=is_already_assigned,
+                conversation_assignee=conversation_assignee,
             )
         # current_assignee not in team or other failure: fall through to normal round-robin
 
@@ -159,4 +243,5 @@ async def post_next_assignee(
         _format_assignee_response(result),
         is_working_hours=is_working_hours,
         is_already_assigned=is_already_assigned,
+        conversation_assignee=conversation_assignee,
     )

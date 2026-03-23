@@ -110,6 +110,11 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/order-management/orders/[id]/edit/page.js"
+    ],
+    "/(protected)/system-management/work-calendar/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/system-management/work-calendar/page.js"
     ]
   }
 }
