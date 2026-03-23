@@ -1,12 +1,16 @@
 """Calendar service for business-day calculations."""
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Optional, Set
+from zoneinfo import ZoneInfo
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
 
 logger = logging.getLogger(__name__)
+
+# Default timezone for working-hours checks (tenant wall clock; align with Work Calendar UI).
+DEFAULT_WORKING_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 
 class CalendarService:
@@ -27,6 +31,8 @@ class CalendarService:
                 friday=True,
                 saturday=False,
                 sunday=False,
+                work_day_start_time=time(9, 0, 0),
+                work_day_end_time=time(17, 0, 0),
             )
             self.db.add(config)
             self.db.flush()
@@ -48,6 +54,53 @@ class CalendarService:
         except SQLAlchemyError:
             logger.warning("Work calendar config unavailable; defaulting to Mon-Fri.")
             return {0, 1, 2, 3, 4}
+
+    def get_working_hours(self) -> tuple[time, time]:
+        """Start and end clock times for a standard working day (same every working weekday)."""
+        try:
+            config = self.get_or_create_work_calendar()
+            start = config.work_day_start_time
+            end = config.work_day_end_time
+            if start is not None and end is not None:
+                return (start, end)
+        except SQLAlchemyError:
+            logger.warning("Work calendar config unavailable; defaulting working hours 09:00–17:00.")
+        return (time(9, 0, 0), time(17, 0, 0))
+
+    def is_within_working_time(
+        self,
+        when: Optional[datetime] = None,
+        *,
+        tz: ZoneInfo = DEFAULT_WORKING_TZ,
+    ) -> bool:
+        """
+        True if `when` falls on a configured business day (weekday + not a public holiday)
+        and the local time-of-day is within work_day_start_time..work_day_end_time (inclusive).
+
+        If `when` is None, uses current time in `tz`.
+        If `when` is naive, it is interpreted as local wall time in `tz` (not UTC).
+        """
+        try:
+            if when is None:
+                dt_local = datetime.now(tz)
+            elif when.tzinfo is None:
+                dt_local = when.replace(tzinfo=tz)
+            else:
+                dt_local = when.astimezone(tz)
+
+            d = dt_local.date()
+            weekday = d.weekday()
+            working_weekdays = self.get_working_weekdays()
+            holidays = self.get_public_holidays_between(d, d)
+            if not self._is_business_day(d, working_weekdays, holidays):
+                return False
+
+            start_t, end_t = self.get_working_hours()
+            t = dt_local.time()
+            return start_t <= t <= end_t
+        except SQLAlchemyError:
+            logger.warning("Work calendar unavailable for working-time check; treating as non-working.")
+            return False
 
     def get_public_holidays_between(self, start_date: date, end_date: date) -> Set[date]:
         try:

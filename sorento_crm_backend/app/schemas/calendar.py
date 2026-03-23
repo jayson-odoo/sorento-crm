@@ -1,5 +1,5 @@
 """Calendar and working days schemas."""
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Optional
 from pydantic import BaseModel
 
@@ -37,6 +37,8 @@ class WorkCalendarConfigBase(BaseModel):
     friday: bool
     saturday: bool
     sunday: bool
+    work_day_start_time: time
+    work_day_end_time: time
 
 
 class WorkCalendarConfigUpdate(BaseModel):
@@ -47,6 +49,8 @@ class WorkCalendarConfigUpdate(BaseModel):
     friday: Optional[bool] = None
     saturday: Optional[bool] = None
     sunday: Optional[bool] = None
+    work_day_start_time: Optional[time] = None
+    work_day_end_time: Optional[time] = None
 
 
 class WorkCalendarConfigResponse(WorkCalendarConfigBase):

@@ -1,7 +1,8 @@
 import type { MenuConfig, MenuItem } from './types';
 
 /**
- * Append one submenu per published workflow form (name = form title).
+ * Append one link per published workflow form (name = form title).
+ * Each link goes to the submissions list for that form (with New submission on that page).
  * Must run before permission filtering so submitters without definitions.view still see their forms.
  */
 export function injectPublishedWorkflowForms(
@@ -12,18 +13,9 @@ export function injectPublishedWorkflowForms(
     if (item.title === 'Workflow Forms' && item.moduleKey === 'workflow_forms') {
       const extra: MenuItem[] = forms.map((f) => ({
         title: f.name,
-        children: [
-          {
-            title: 'New submission',
-            path: `/workflow-forms-management/forms/${f.id}/new`,
-            permission: 'workflow_forms.submissions.add',
-          },
-          {
-            title: 'Submissions',
-            path: `/workflow-forms-management/forms/${f.id}/submissions`,
-            permission: 'workflow_forms.submissions.view',
-          },
-        ],
+        path: `/workflow-forms-management/forms/${f.id}/submissions`,
+        // List page requires view to load submissions; New submission is shown when user also has add.
+        permission: 'workflow_forms.submissions.view',
       }));
       return {
         ...item,

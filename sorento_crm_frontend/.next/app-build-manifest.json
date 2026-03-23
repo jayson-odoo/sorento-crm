@@ -90,6 +90,26 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/order-management/orders/page.js"
+    ],
+    "/(protected)/order-management/orders/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/order-management/orders/[id]/page.js"
+    ],
+    "/(protected)/master-data-management/products/layout": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/master-data-management/products/layout.js"
+    ],
+    "/(protected)/master-data-management/products/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/master-data-management/products/[id]/page.js"
+    ],
+    "/(protected)/order-management/orders/[id]/edit/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/order-management/orders/[id]/edit/page.js"
     ]
   }
 }

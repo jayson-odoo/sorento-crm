@@ -1,5 +1,5 @@
 """Work calendar and public holidays API routes."""
-from datetime import date
+from datetime import date, time
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
@@ -18,6 +18,14 @@ from app.services.calendar_service import CalendarService
 from app.services.error_handler import handle_internal_error, handle_not_found, handle_conflict
 
 router = APIRouter()
+
+
+def _validate_working_hours(start: time, end: time) -> None:
+    if end <= start:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Working day end time must be after start time.",
+        )
 
 
 @router.get("/work-calendar-config", response_model=WorkCalendarConfigResponse)
@@ -47,6 +55,7 @@ async def update_work_calendar_config(
         config = service.get_or_create_work_calendar()
         for field, value in payload.model_dump(exclude_unset=True).items():
             setattr(config, field, value)
+        _validate_working_hours(config.work_day_start_time, config.work_day_end_time)
         db.commit()
         db.refresh(config)
         return config

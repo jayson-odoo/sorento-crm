@@ -28,7 +28,11 @@ import { MenuItemPinButton } from './menu-item-pin-button';
 function filterMenuByPermission(items: MenuConfig, permissionSet: Set<string>): MenuConfig {
   return items.filter((item: MenuItem) => {
     if (item.heading) return true;
-    if (item.permission && !permissionSet.has(item.permission)) return false;
+    if (item.permissionsAny?.length) {
+      if (!item.permissionsAny.some((p) => permissionSet.has(p))) return false;
+    } else if (item.permission && !permissionSet.has(item.permission)) {
+      return false;
+    }
     if (item.children?.length) {
       const filtered = filterMenuByPermission(item.children, permissionSet);
       return filtered.length > 0;

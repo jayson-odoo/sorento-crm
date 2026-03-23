@@ -40,6 +40,9 @@ function isAllowed(
   if (enabledModuleKeys && item.moduleKey && !enabledModuleKeys.has(item.moduleKey)) {
     return false;
   }
+  if (item.permissionsAny?.length) {
+    return item.permissionsAny.some((p) => permissionSet.has(p));
+  }
   if (!item.permission) return true;
   return permissionSet.has(item.permission);
 }

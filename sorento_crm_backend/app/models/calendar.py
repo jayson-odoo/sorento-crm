@@ -1,5 +1,5 @@
 """Calendar and working days models."""
-from sqlalchemy import Column, String, Boolean, Date, DateTime, Text, Index
+from sqlalchemy import Column, String, Boolean, Date, DateTime, Time, Text, Index
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
@@ -33,5 +33,8 @@ class WorkCalendarConfig(Base):
     friday = Column(Boolean, default=True, nullable=False)
     saturday = Column(Boolean, default=False, nullable=False)
     sunday = Column(Boolean, default=False, nullable=False)
+    # Default working hours on each working day (local / tenant time; used for display and future hour-based logic).
+    work_day_start_time = Column(Time, nullable=False)
+    work_day_end_time = Column(Time, nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)

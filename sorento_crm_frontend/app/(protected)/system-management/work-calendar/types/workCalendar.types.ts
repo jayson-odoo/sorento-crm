@@ -8,6 +8,9 @@ export interface WorkCalendarConfig {
   friday: boolean;
   saturday: boolean;
   sunday: boolean;
+  /** ISO-like time from API, e.g. "09:00:00" */
+  work_day_start_time: string;
+  work_day_end_time: string;
   created_at: string;
   updated_at: string;
 }

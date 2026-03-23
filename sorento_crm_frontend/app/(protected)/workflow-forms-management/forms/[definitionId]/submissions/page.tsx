@@ -42,7 +42,7 @@ export default async function WorkflowSubmissionsForFormPage({
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>List</BreadcrumbPage>
+                  <BreadcrumbPage>Submissions</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>

@@ -16,6 +16,8 @@ export interface MenuItem {
   separator?: boolean;
   /** RBAC: permission slug required to view this item (e.g. "order_management.orders.view"). If set, item is hidden when user lacks this permission. */
   permission?: string;
+  /** If set, user must have at least one of these permissions (use instead of `permission` for OR logic). */
+  permissionsAny?: string[];
   /**
    * Installable module key from backend App Store (e.g. "inventory").
    * When tenant modules are loaded, this branch is hidden if the module is disabled.

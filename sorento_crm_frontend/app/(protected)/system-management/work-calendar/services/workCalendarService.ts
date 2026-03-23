@@ -16,7 +16,13 @@ export async function updateWorkCalendarConfig(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!response.ok) throw new Error('Failed to update work calendar config');
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    const detail = err?.detail;
+    throw new Error(
+      typeof detail === 'string' ? detail : detail?.message ?? 'Failed to update work calendar config',
+    );
+  }
   return response.json();
 }
 
