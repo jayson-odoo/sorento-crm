@@ -7,9 +7,12 @@ import {
   getCoreRowModel,
 } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Columns3 } from 'lucide-react';
 import { usePromotionProducts } from '../../promotions/hooks/usePromotions';
 import type { PromotionProduct } from '../../promotions/types/promotion.types';
 
@@ -80,11 +83,25 @@ export default function PromotionProductsGrid({ promotionId }: PromotionProducts
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex-row items-center justify-between">
         <CardTitle>Products in Promotion</CardTitle>
+        <DataGridColumnVisibility
+          table={table}
+          trigger={
+            <Button variant="outline" size="sm" className="gap-1">
+              <Columns3 className="size-4" />
+              Columns
+            </Button>
+          }
+        />
       </CardHeader>
       <CardContent>
-        <DataGrid table={table} recordCount={products?.length || 0} isLoading={isLoading}>
+        <DataGrid
+          table={table}
+          recordCount={products?.length || 0}
+          isLoading={isLoading}
+          tableLayout={{ columnsVisibility: true }}
+        >
           <DataGridTable />
         </DataGrid>
       </CardContent>

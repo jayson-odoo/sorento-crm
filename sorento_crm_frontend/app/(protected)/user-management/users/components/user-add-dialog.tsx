@@ -7,7 +7,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
-import { formatDate } from '@/lib/helpers';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import {
   Dialog,
@@ -49,7 +48,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { Button, ButtonArrow } from '@/components/ui/button';
-import { LoaderCircleIcon, Plus, X } from 'lucide-react';
+import { LoaderCircleIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { UserRole } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
@@ -74,6 +73,7 @@ const UserAddDialog = ({
     defaultValues: {
       name: '',
       email: '',
+      contact_number: '',
       roleId: '',
       superior_id: null,
     },
@@ -102,9 +102,11 @@ const UserAddDialog = ({
 
   const mutation = useMutation({
     mutationFn: async (values: UserAddSchemaType) => {
-      const { agent_ids, roleId, superior_id, ...rest } = values;
+      const { roleId, superior_id, ...rest } = values;
+      const contactNumber = typeof rest.contact_number === 'string' ? rest.contact_number.trim() : null;
       const payload = {
         ...rest,
+        contact_number: contactNumber || null,
         role_ids: roleId ? [roleId] : undefined,
         superior_id: superior_id === '__none__' || superior_id === '' ? null : superior_id,
       };
@@ -124,8 +126,6 @@ const UserAddDialog = ({
       }
 
       const userData = await response.json();
-      const userId = userData.id;
-
       return { ...userData, _invited: sendInvitationEmail };
     },
     onSuccess: (data) => {
@@ -202,6 +202,23 @@ const UserAddDialog = ({
                     <FormLabel>Email</FormLabel>
                     <FormControl>
                       <Input placeholder="Enter user email" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="contact_number"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Contact Number</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="Enter contact number"
+                        {...field}
+                        value={field.value ?? ''}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

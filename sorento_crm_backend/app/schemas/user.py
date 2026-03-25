@@ -133,6 +133,7 @@ class UserPermissionResponse(UserPermissionBase):
 class UserBase(BaseModel):
     email: str
     name: Optional[str] = None
+    contact_number: Optional[str] = None
     status: str = "INACTIVE"
     country: Optional[str] = None
     timezone: Optional[str] = None
@@ -149,6 +150,7 @@ class UserCreate(UserBase):
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     status: Optional[str] = None
+    contact_number: Optional[str] = None
     country: Optional[str] = None
     timezone: Optional[str] = None
     avatar: Optional[str] = None

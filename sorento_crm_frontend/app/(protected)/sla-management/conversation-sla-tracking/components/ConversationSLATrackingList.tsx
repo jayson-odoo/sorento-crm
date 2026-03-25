@@ -12,12 +12,13 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, Clock, AlertCircle, CheckCircle, RefreshCw, UserRound, Filter } from 'lucide-react';
+import { AlertCircle, CheckCircle, ChevronRight, Clock, Columns3, Filter, RefreshCw, Search, UserRound, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -35,7 +36,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { useConversationSLATracking, useSyncAssigneeFromRespond } from '../hooks/useConversationSLATracking';
 import type { ConversationSLATracking } from '../types/conversationSLATracking.types';
-import { formatDate, formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
+import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import { apiFetch } from '@/lib/api';
 
 export default function ConversationSLATrackingList() {
@@ -430,7 +431,7 @@ export default function ConversationSLATrackingList() {
   };
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
+    <DataGrid table={table} tableLayout={{ columnsVisibility: true }} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center gap-2 py-5">
           <div className="flex items-center gap-2">
@@ -498,15 +499,25 @@ export default function ConversationSLATrackingList() {
             </PopoverContent>
           </Popover>
           </div>
-          <Button
-            variant="outline"
-            onClick={handleRefresh}
-            disabled={isRefreshing || isLoading}
-            className="ml-auto"
-          >
-            <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={handleRefresh}
+              disabled={isRefreshing || isLoading}
+            >
+              <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
+          </div>
         </CardHeader>
         <CardTable>
           <ScrollArea>

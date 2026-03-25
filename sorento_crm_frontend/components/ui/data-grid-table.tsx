@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { CSSProperties, Fragment, ReactNode } from 'react';
+import type { DragEndEvent } from '@dnd-kit/core';
+import { arrayMove } from '@dnd-kit/sortable';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useDataGrid } from '@/components/ui/data-grid';
+import { DataGridTableDnd } from '@/components/ui/data-grid-table-dnd';
 import { Cell, Column, flexRender, Header, HeaderGroup, Row } from '@tanstack/react-table';
 import { cva } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
@@ -156,13 +159,24 @@ function DataGridTableHeadRowCell<TData>({
 
 function DataGridTableHeadRowCellResize<TData>({ header }: { header: Header<TData, unknown> }) {
   const { column } = header;
+  const resizeHandler = header.getResizeHandler();
 
   return (
     <div
       {...{
         onDoubleClick: () => column.resetSize(),
-        onMouseDown: header.getResizeHandler(),
-        onTouchStart: header.getResizeHandler(),
+        onPointerDown: (e: React.PointerEvent) => {
+          // Prevent dnd-kit from starting a column drag while the user is resizing.
+          e.stopPropagation();
+        },
+        onMouseDown: (e: React.MouseEvent) => {
+          e.stopPropagation();
+          resizeHandler(e);
+        },
+        onTouchStart: (e: React.TouchEvent) => {
+          e.stopPropagation();
+          resizeHandler(e);
+        },
         className:
           'absolute top-0 h-full w-4 cursor-col-resize user-select-none touch-none -end-2 z-10 flex justify-center before:absolute before:w-px before:inset-y-0 before:bg-border before:-translate-x-px',
       }}
@@ -419,66 +433,98 @@ function DataGridTable<TData>() {
   const { table, isLoading, props } = useDataGrid();
   const pagination = table.getState().pagination;
 
+  if (props.tableLayout?.columnsDraggable) {
+    const handleDragEnd = (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over) return;
+
+      const columnOrderState = table.getState().columnOrder as string[] | undefined;
+      const effectiveOrder =
+        Array.isArray(columnOrderState) && columnOrderState.length > 0
+          ? columnOrderState
+          : table.getAllLeafColumns().map((c) => c.id);
+      if (!Array.isArray(effectiveOrder) || effectiveOrder.length === 0) return;
+
+      const activeId = String(active.id);
+      const overId = String(over.id);
+      if (activeId === overId) return;
+
+      const oldIndex = effectiveOrder.indexOf(activeId);
+      const newIndex = effectiveOrder.indexOf(overId);
+      if (oldIndex === -1 || newIndex === -1) return;
+
+      table.setColumnOrder(arrayMove(effectiveOrder, oldIndex, newIndex));
+    };
+
+    return (
+      <div className="relative">
+        <DataGridTableDnd<TData> handleDragEnd={handleDragEnd} />
+      </div>
+    );
+  }
+
   return (
-    <DataGridTableBase>
-      <DataGridTableHead>
-        {table.getHeaderGroups().map((headerGroup: HeaderGroup<TData>, index) => {
-          return (
-            <DataGridTableHeadRow headerGroup={headerGroup} key={index}>
-              {headerGroup.headers.map((header, index) => {
-                const { column } = header;
-
-                return (
-                  <DataGridTableHeadRowCell header={header} key={index}>
-                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                    {props.tableLayout?.columnsResizable && column.getCanResize() && (
-                      <DataGridTableHeadRowCellResize header={header} />
-                    )}
-                  </DataGridTableHeadRowCell>
-                );
-              })}
-            </DataGridTableHeadRow>
-          );
-        })}
-      </DataGridTableHead>
-
-      {(props.tableLayout?.stripped || !props.tableLayout?.rowBorder) && <DataGridTableRowSpacer />}
-
-      <DataGridTableBody>
-        {props.loadingMode === 'skeleton' && isLoading && pagination?.pageSize ? (
-          Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
-            <DataGridTableBodyRowSkeleton key={rowIndex}>
-              {table.getVisibleFlatColumns().map((column, colIndex) => {
-                return (
-                  <DataGridTableBodyRowSkeletonCell column={column} key={colIndex}>
-                    {column.columnDef.meta?.skeleton}
-                  </DataGridTableBodyRowSkeletonCell>
-                );
-              })}
-            </DataGridTableBodyRowSkeleton>
-          ))
-        ) : table.getRowModel().rows.length ? (
-          table.getRowModel().rows.map((row: Row<TData>, index) => {
+    <div className="relative">
+      <DataGridTableBase>
+        <DataGridTableHead>
+          {table.getHeaderGroups().map((headerGroup: HeaderGroup<TData>, index) => {
             return (
-              <Fragment key={row.id}>
-                <DataGridTableBodyRow row={row} key={index}>
-                  {row.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => {
-                    return (
-                      <DataGridTableBodyRowCell cell={cell} key={colIndex}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </DataGridTableBodyRowCell>
-                    );
-                  })}
-                </DataGridTableBodyRow>
-                {row.getIsExpanded() && <DataGridTableBodyRowExpandded row={row} />}
-              </Fragment>
+              <DataGridTableHeadRow headerGroup={headerGroup} key={index}>
+                {headerGroup.headers.map((header, index) => {
+                  const { column } = header;
+
+                  return (
+                    <DataGridTableHeadRowCell header={header} key={index}>
+                      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                      {props.tableLayout?.columnsResizable && column.getCanResize() && (
+                        <DataGridTableHeadRowCellResize header={header} />
+                      )}
+                    </DataGridTableHeadRowCell>
+                  );
+                })}
+              </DataGridTableHeadRow>
             );
-          })
-        ) : (
-          <DataGridTableEmpty />
-        )}
-      </DataGridTableBody>
-    </DataGridTableBase>
+          })}
+        </DataGridTableHead>
+
+        {(props.tableLayout?.stripped || !props.tableLayout?.rowBorder) && <DataGridTableRowSpacer />}
+
+        <DataGridTableBody>
+          {props.loadingMode === 'skeleton' && isLoading && pagination?.pageSize ? (
+            Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
+              <DataGridTableBodyRowSkeleton key={rowIndex}>
+                {table.getVisibleFlatColumns().map((column, colIndex) => {
+                  return (
+                    <DataGridTableBodyRowSkeletonCell column={column} key={colIndex}>
+                      {column.columnDef.meta?.skeleton}
+                    </DataGridTableBodyRowSkeletonCell>
+                  );
+                })}
+              </DataGridTableBodyRowSkeleton>
+            ))
+          ) : table.getRowModel().rows.length ? (
+            table.getRowModel().rows.map((row: Row<TData>, index) => {
+              return (
+                <Fragment key={row.id}>
+                  <DataGridTableBodyRow row={row} key={index}>
+                    {row.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => {
+                      return (
+                        <DataGridTableBodyRowCell cell={cell} key={colIndex}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </DataGridTableBodyRowCell>
+                      );
+                    })}
+                  </DataGridTableBodyRow>
+                  {row.getIsExpanded() && <DataGridTableBodyRowExpandded row={row} />}
+                </Fragment>
+              );
+            })
+          ) : (
+            <DataGridTableEmpty />
+          )}
+        </DataGridTableBody>
+      </DataGridTableBase>
+    </div>
   );
 }
 

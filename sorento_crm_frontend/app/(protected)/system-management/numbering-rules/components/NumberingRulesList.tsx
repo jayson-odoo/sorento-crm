@@ -6,9 +6,10 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { Card, CardTable } from '@/components/ui/card';
+import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -18,7 +19,7 @@ import { useNumberingRules } from '../hooks/useNumberingRules';
 import type { DocumentNumberingRule } from '../types/numberingRule.types';
 import { DOC_TYPE_LABELS, RESET_POLICY_OPTIONS } from '../types/numberingRule.types';
 import NumberingRuleEditDialog from './NumberingRuleEditDialog';
-import { Pencil } from 'lucide-react';
+import { Pencil, Columns3 } from 'lucide-react';
 
 const RESET_LABELS: Record<string, string> = Object.fromEntries(
   RESET_POLICY_OPTIONS.map((o) => [o.value, o.label]),
@@ -123,7 +124,23 @@ export default function NumberingRulesList() {
   return (
     <>
       <Card>
-        <DataGrid table={table} recordCount={rules?.length ?? 0} isLoading={isLoading}>
+        <DataGrid
+          table={table}
+          recordCount={rules?.length ?? 0}
+          isLoading={isLoading}
+          tableLayout={{ columnsVisibility: true }}
+        >
+          <CardHeader className="flex items-center justify-end">
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
+          </CardHeader>
           <ScrollArea>
             <CardTable>
               <DataGridTable />

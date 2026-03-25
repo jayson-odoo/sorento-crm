@@ -10,13 +10,14 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { Search, X, RefreshCw, ChevronRight, Plus, Trash2, Copy } from 'lucide-react';
+import { ChevronRight, Columns3, Copy, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -240,7 +241,7 @@ export default function ContactsList() {
   const clearSelection = () => setRowSelection({});
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid table={table} tableLayout={{ columnsVisibility: true }} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">
@@ -263,6 +264,15 @@ export default function ContactsList() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
             {selectedContactIds.length > 0 && (
               <>
                 <Button

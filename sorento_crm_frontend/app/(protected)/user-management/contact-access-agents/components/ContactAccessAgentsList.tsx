@@ -10,12 +10,13 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X } from 'lucide-react';
+import { Search, X, Columns3 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -112,7 +113,9 @@ export default function ContactAccessAgentsList() {
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      tableLayout={{ columnsVisibility: true }}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">
@@ -134,6 +137,15 @@ export default function ContactAccessAgentsList() {
               </Button>
             )}
           </div>
+                    <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
         </CardHeader>
         <CardTable>
           <ScrollArea>

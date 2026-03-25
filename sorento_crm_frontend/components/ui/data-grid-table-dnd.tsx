@@ -1,5 +1,4 @@
 import { CSSProperties, Fragment, useId } from 'react';
-import { Button } from '@/components/ui/button';
 import { useDataGrid } from '@/components/ui/data-grid';
 import {
   DataGridTableBase,
@@ -52,18 +51,14 @@ function DataGridTableDndHeader<TData>({ header }: { header: Header<TData, unkno
 
   return (
     <DataGridTableHeadRowCell header={header} dndStyle={style} dndRef={setNodeRef}>
-      <div className="flex items-center justify-start gap-0.5">
-        <Button
-          mode="icon"
-          size="sm"
-          variant="dim"
-          className="-ms-2 size-6"
-          {...attributes}
-          {...listeners}
-          aria-label="Drag to reorder"
-        >
-          <GripVertical className="opacity-50" aria-hidden="true" />
-        </Button>
+      <div
+        className="flex items-center justify-start gap-0.5 w-full cursor-grab select-none"
+        {...attributes}
+        {...listeners}
+        aria-label="Drag column to reorder"
+      >
+        {/* Keeping the grip icon purely visual (drag is on the entire header area). */}
+        {!header.isPlaceholder && <GripVertical className="size-4 opacity-35 ms-1" aria-hidden="true" />}
         {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
         {props.tableLayout?.columnsResizable && column.getCanResize() && (
           <DataGridTableHeadRowCellResize header={header} />
@@ -98,7 +93,16 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
   const { table, isLoading, props } = useDataGrid();
   const pagination = table.getState().pagination;
 
-  const sensors = useSensors(useSensor(MouseSensor, {}), useSensor(TouchSensor, {}), useSensor(KeyboardSensor, {}));
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
+    useSensor(KeyboardSensor, {}),
+  );
+
+  const orderedIds =
+    Array.isArray(table.getState().columnOrder) && table.getState().columnOrder?.length > 0
+      ? (table.getState().columnOrder as string[])
+      : table.getAllLeafColumns().map((c) => c.id);
 
   return (
     <DndContext
@@ -112,11 +116,9 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
         <DataGridTableBase>
           <DataGridTableHead>
             {table.getHeaderGroups().map((headerGroup: HeaderGroup<TData>, index) => {
-              console.log('table.getState().columnOrder:', table.getState().columnOrder);
-
               return (
                 <DataGridTableHeadRow headerGroup={headerGroup} key={index}>
-                  <SortableContext items={table.getState().columnOrder} strategy={horizontalListSortingStrategy}>
+                  <SortableContext items={orderedIds} strategy={horizontalListSortingStrategy}>
                     {headerGroup.headers.map((header, index) => (
                       <DataGridTableDndHeader header={header} key={index} />
                     ))}
@@ -150,7 +152,7 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
                         return (
                           <SortableContext
                             key={cell.id}
-                            items={table.getState().columnOrder}
+                            items={orderedIds}
                             strategy={horizontalListSortingStrategy}
                           >
                             <DataGridTableDndCell cell={cell} />

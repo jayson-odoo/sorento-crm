@@ -11,6 +11,7 @@ import {
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -21,7 +22,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useScheduledTasks } from '../hooks/useScheduledTasks';
 import type { ScheduledTask } from '../types/scheduledTask.types';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Columns3 } from 'lucide-react';
 
 const INTERVAL_LABELS: Record<string, string> = {
   seconds: 'sec',
@@ -159,10 +160,19 @@ export default function ScheduledTasksList() {
       recordCount={total}
       isLoading={isLoading}
       onRowClick={(task) => task?.id && router.push(`/system-management/scheduled-tasks/${task.id}`)}
-      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
     >
       <Card>
-        <CardHeader>
+        <CardHeader className="flex items-center justify-end">
+          <DataGridColumnVisibility
+            table={table}
+            trigger={
+              <Button variant="outline" size="sm" className="gap-1">
+                <Columns3 className="size-4" />
+                Columns
+              </Button>
+            }
+          />
           <CardTable>
             <ScrollArea className="w-full">
               <DataGridTable />

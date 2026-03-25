@@ -11,19 +11,14 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, FileDown, Cog, Trash2 } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, FileDown, Trash2, Columns3 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -261,6 +256,8 @@ export default function StockInquiriesList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
+    
+      tableLayout={{ columnsVisibility: true }}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
@@ -283,7 +280,7 @@ export default function StockInquiriesList() {
               </Button>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             {selectedInquiryIds.size > 0 && (
               <Button
                 variant="outline"
@@ -295,22 +292,25 @@ export default function StockInquiriesList() {
                 Bulk Delete ({selectedInquiryIds.size})
               </Button>
             )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon" aria-label="Options">
-                  <Cog className="size-4" />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportExcel}
+              disabled={exporting || !data?.data?.length}
+              className="gap-1"
+            >
+              <FileDown className="size-4" />
+              {exporting ? 'Exporting…' : 'Export'}
+            </Button>
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={handleExportExcel}
-                  disabled={exporting || !data?.data?.length}
-                >
-                  <FileDown className="size-4" />
-                  {exporting ? 'Exporting…' : 'Export to Excel'}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+              }
+            />
             <Button
               onClick={() =>
                 router.push('/procurement-management/stock-inquiries/new')

@@ -11,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Settings, Upload, Trash2 } from 'lucide-react';
+import { ChevronRight, Columns3, Plus, Search, Settings, Trash2, Upload, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -203,6 +204,7 @@ export default function GRNList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
+      tableLayout={{ columnsVisibility: true }}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
@@ -226,6 +228,15 @@ export default function GRNList() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
             {selectedGrnIds.size > 0 && (
               <Button
                 variant="outline"

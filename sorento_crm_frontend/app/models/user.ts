@@ -20,6 +20,8 @@ export interface User {
   country?: string | null;
   timezone?: string | null;
   name?: string | null;
+  /** Optional contact phone number for the user. */
+  contactNumber?: string | null;
   roleId?: string | null;
   status: UserStatus;
   createdAt: Date;

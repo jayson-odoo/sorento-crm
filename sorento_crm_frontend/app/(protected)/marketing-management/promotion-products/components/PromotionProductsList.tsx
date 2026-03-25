@@ -11,12 +11,13 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight } from 'lucide-react';
+import { Search, X, ChevronRight, Columns3 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -24,7 +25,6 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { usePromotionProductsList } from '../hooks/usePromotionProducts';
 import type { PromotionProductListItem } from '../types/promotionProduct.types';
-import { formatDate } from '@/lib/helpers';
 
 export default function PromotionProductsList() {
   const router = useRouter();
@@ -165,7 +165,7 @@ export default function PromotionProductsList() {
       table={table} 
       recordCount={data?.pagination.total || 0} 
       isLoading={isLoading}
-      tableLayout={{
+      tableLayout={{ columnsVisibility: true, 
         columnsResizable: true,
       }}
     >
@@ -190,6 +190,15 @@ export default function PromotionProductsList() {
               </Button>
             )}
           </div>
+                    <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
         </CardHeader>
         <CardTable>
           <ScrollArea>

@@ -12,12 +12,13 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Trash2, Users, Filter, SlidersHorizontal, Download } from 'lucide-react';
+import { ChevronRight, Columns3, Download, Filter, Plus, Search, SlidersHorizontal, Trash2, Users, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -286,7 +287,7 @@ export default function PromotionsList() {
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
+    <DataGrid table={table} tableLayout={{ columnsVisibility: true }} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="flex items-center gap-2">
@@ -385,6 +386,29 @@ export default function PromotionsList() {
                 </div>
               </PopoverContent>
             </Popover>
+          </div>
+          <div className="flex items-center gap-2">
+            {selectedPromotionIds.size > 0 && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setBulkAccessLevelsDialogOpen(true)}
+                >
+                  <Users className="size-4" />
+                  Set Access Levels ({selectedPromotionIds.size})
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setBulkDeleteDialogOpen(true)}
+                  className="text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                  Bulk Delete ({selectedPromotionIds.size})
+                </Button>
+              </>
+            )}
             {listQueryToolsEnabled ? (
               <>
                 <Button
@@ -409,29 +433,15 @@ export default function PromotionsList() {
                 </Button>
               </>
             ) : null}
-          </div>
-          <div className="flex items-center gap-2">
-            {selectedPromotionIds.size > 0 && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setBulkAccessLevelsDialogOpen(true)}
-                >
-                  <Users className="size-4" />
-                  Set Access Levels ({selectedPromotionIds.size})
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setBulkDeleteDialogOpen(true)}
-                  className="text-destructive hover:text-destructive"
-                >
-                  <Trash2 className="size-4" />
-                  Bulk Delete ({selectedPromotionIds.size})
-                </Button>
-              </>
-            )}
+              }
+            />
             <Button onClick={() => router.push('/marketing-management/promotions/new')}>
               <Plus />
               Create Promotion

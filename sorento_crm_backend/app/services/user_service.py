@@ -325,7 +325,7 @@ class UserService:
                 self._check_respond_user_id_unique(rid, exclude_user_id=user_id)
         
         # Convert empty strings to None for optional fields to avoid foreign key violations
-        optional_fields = ['superior_id', 'respond_user_id', 'country', 'timezone', 'avatar', 'tier']
+        optional_fields = ['superior_id', 'respond_user_id', 'country', 'timezone', 'avatar', 'tier', 'contact_number']
         
         # Log what we received
         logger.info(f"Received update_data keys: {list(update_data.keys())}")

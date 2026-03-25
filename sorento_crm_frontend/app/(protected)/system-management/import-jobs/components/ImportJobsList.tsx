@@ -12,6 +12,7 @@ import {
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -19,7 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { RefreshCw } from 'lucide-react';
+import { Columns3, RefreshCw } from 'lucide-react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useQueryClient } from '@tanstack/react-query';
 import { getImportJob } from '../services/importJobService';
@@ -284,11 +285,11 @@ export default function ImportJobsList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={(row) => handleRowClick(row.job_id)}
-      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      tableLayout={{ columnsVisibility: true,  width: 'fixed', columnsResizable: true }}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-3">
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             <Input
               placeholder="Filter by type..."
               value={jobType}
@@ -300,6 +301,15 @@ export default function ImportJobsList() {
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className="w-48"
+            />
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
             />
           </div>
         </CardHeader>

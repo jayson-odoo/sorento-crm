@@ -1,19 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Columns3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import {
   Dialog,
   DialogContent,
@@ -26,6 +18,11 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
 import { toast } from 'sonner';
 import {
   getAllContactAccessTypes,
@@ -257,6 +254,171 @@ export default function ContactAccessTypesAdmin() {
     }
   }
 
+  const typeColumns = useMemo<ColumnDef<ContactAccessTypeAdmin>[]>(
+    () => [
+      {
+        id: 'code',
+        accessorFn: (row) => row.code,
+        header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
+        size: 140,
+        enableSorting: false,
+        meta: { headerTitle: 'Code', skeleton: <Skeleton className="h-4 w-20 font-mono" /> },
+        cell: ({ row }) => <span className="font-mono">{row.original.code}</span>,
+      },
+      {
+        id: 'name',
+        accessorFn: (row) => row.name,
+        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
+        size: 200,
+        enableSorting: false,
+        meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-28" /> },
+        cell: ({ row }) => <span>{row.original.name}</span>,
+      },
+      {
+        id: 'description',
+        accessorFn: (row) => row.description,
+        header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+        size: 260,
+        enableSorting: false,
+        meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-44" /> },
+        cell: ({ row }) => (
+          <span className="max-w-[200px] truncate">{row.original.description ?? '—'}</span>
+        ),
+      },
+      {
+        id: 'sort_order',
+        accessorFn: (row) => row.sort_order ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="Sort order" column={column} />,
+        size: 140,
+        enableSorting: false,
+        meta: { headerTitle: 'Sort order', skeleton: <Skeleton className="h-4 w-20" /> },
+        cell: ({ row }) => <span>{row.original.sort_order ?? '—'}</span>,
+      },
+      {
+        id: 'is_active',
+        accessorFn: (row) => row.is_active,
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        size: 140,
+        enableSorting: false,
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-6 w-20" /> },
+        cell: ({ row }) =>
+          row.original.is_active ? (
+            <Badge variant="primary">Active</Badge>
+          ) : (
+            <Badge variant="secondary">Inactive</Badge>
+          ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        size: 140,
+        enableSorting: false,
+        enableHiding: false,
+        enableResizing: false,
+        cell: ({ row }) => (
+          <div className="flex gap-2">
+            <Button variant="ghost" size="icon" onClick={() => openEditType(row.original)} aria-label="Edit">
+              <Pencil className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setDeleteTypeCode(row.original.code)}
+              aria-label="Delete"
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const typeTable = useReactTable({
+    columns: typeColumns,
+    data: types,
+    getRowId: (row) => row.code,
+    state: {
+      pagination: { pageIndex: 0, pageSize: 10 },
+    },
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  const mappingColumns = useMemo<ColumnDef<RespondAccessTypeMappingAdmin>[]>(
+    () => [
+      {
+        id: 'source_key',
+        accessorFn: (row) => row.source_key,
+        header: ({ column }) => <DataGridColumnHeader title="Respond value (source_key)" column={column} />,
+        size: 260,
+        enableSorting: false,
+        meta: {
+          headerTitle: 'Respond value (source_key)',
+          skeleton: <Skeleton className="h-4 w-44 font-mono" />,
+        },
+        cell: ({ row }) => <span className="font-mono">{row.original.source_key}</span>,
+      },
+      {
+        id: 'access_type_code',
+        accessorFn: (row) => row.access_type_code,
+        header: ({ column }) => <DataGridColumnHeader title="Access type" column={column} />,
+        size: 200,
+        enableSorting: false,
+        meta: { headerTitle: 'Access type', skeleton: <Skeleton className="h-4 w-28" /> },
+        cell: ({ row }) => <span>{row.original.access_type_code}</span>,
+      },
+      {
+        id: 'is_active',
+        accessorFn: (row) => row.is_active,
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        size: 140,
+        enableSorting: false,
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-6 w-20" /> },
+        cell: ({ row }) =>
+          row.original.is_active ? (
+            <Badge variant="primary">Active</Badge>
+          ) : (
+            <Badge variant="secondary">Inactive</Badge>
+          ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        size: 140,
+        enableSorting: false,
+        enableHiding: false,
+        enableResizing: false,
+        cell: ({ row }) => (
+          <div className="flex gap-2">
+            <Button variant="ghost" size="icon" onClick={() => openEditMapping(row.original)} aria-label="Edit">
+              <Pencil className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setDeleteMappingId(row.original.id)}
+              aria-label="Delete"
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const mappingTable = useReactTable({
+    columns: mappingColumns,
+    data: mappings,
+    getRowId: (row) => row.id,
+    state: {
+      pagination: { pageIndex: 0, pageSize: 10 },
+    },
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   return (
     <div className="space-y-6">
       <Tabs value={catalogTab} onValueChange={(v) => setCatalogTab(v as 'catalog' | 'mappings')}>
@@ -269,75 +431,32 @@ export default function ContactAccessTypesAdmin() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
               <CardTitle>Contact access types</CardTitle>
-              <Button onClick={openCreateType}>
-                <Plus className="size-4 mr-2" />
-                Add type
-              </Button>
+              <div className="flex items-center gap-2">
+                <DataGridColumnVisibility
+                  table={typeTable}
+                  trigger={
+                    <Button variant="outline" size="sm" className="gap-1">
+                      <Columns3 className="size-4" />
+                      Columns
+                    </Button>
+                  }
+                />
+                <Button onClick={openCreateType}>
+                  <Plus className="size-4 mr-2" />
+                  Add type
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
-              {typesLoading ? (
-                <Skeleton className="h-48 w-full" />
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Code</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Description</TableHead>
-                      <TableHead>Sort order</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-[100px]">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {types.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={6} className="text-muted-foreground text-center">
-                          No access types. Add one to get started.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      types.map((row) => (
-                        <TableRow key={row.code}>
-                          <TableCell className="font-mono">{row.code}</TableCell>
-                          <TableCell>{row.name}</TableCell>
-                          <TableCell className="max-w-[200px] truncate">
-                            {row.description ?? '—'}
-                          </TableCell>
-                          <TableCell>{row.sort_order ?? '—'}</TableCell>
-                          <TableCell>
-                            {row.is_active ? (
-                              <Badge variant="primary">Active</Badge>
-                            ) : (
-                              <Badge variant="secondary">Inactive</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex gap-2">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => openEditType(row)}
-                                aria-label="Edit"
-                              >
-                                <Pencil className="size-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setDeleteTypeCode(row.code)}
-                                aria-label="Delete"
-                              >
-                                <Trash2 className="size-4 text-destructive" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              )}
+              <DataGrid
+                table={typeTable}
+                recordCount={types.length}
+                isLoading={typesLoading}
+                emptyMessage="No access types. Add one to get started."
+                tableLayout={{ width: 'fixed' }}
+              >
+                <DataGridTable />
+              </DataGrid>
             </CardContent>
           </Card>
         </TabsContent>
@@ -346,10 +465,21 @@ export default function ContactAccessTypesAdmin() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0">
               <CardTitle>Respond value → Access type</CardTitle>
-              <Button onClick={openCreateMapping} disabled={types.length === 0}>
-                <Plus className="size-4 mr-2" />
-                Add mapping
-              </Button>
+              <div className="flex items-center gap-2">
+                <DataGridColumnVisibility
+                  table={mappingTable}
+                  trigger={
+                    <Button variant="outline" size="sm" className="gap-1">
+                      <Columns3 className="size-4" />
+                      Columns
+                    </Button>
+                  }
+                />
+                <Button onClick={openCreateMapping} disabled={types.length === 0}>
+                  <Plus className="size-4 mr-2" />
+                  Add mapping
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {types.length === 0 && (
@@ -357,63 +487,15 @@ export default function ContactAccessTypesAdmin() {
                   Add at least one access type in the catalog before creating mappings.
                 </p>
               )}
-              {mappingsLoading ? (
-                <Skeleton className="h-48 w-full" />
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Respond value (source_key)</TableHead>
-                      <TableHead>Access type</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-[100px]">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {mappings.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-muted-foreground text-center">
-                          No mappings. Add one to map Respond.io values to access types.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      mappings.map((row) => (
-                        <TableRow key={row.id}>
-                          <TableCell className="font-mono">{row.source_key}</TableCell>
-                          <TableCell>{row.access_type_code}</TableCell>
-                          <TableCell>
-                            {row.is_active ? (
-                              <Badge variant="primary">Active</Badge>
-                            ) : (
-                              <Badge variant="secondary">Inactive</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex gap-2">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => openEditMapping(row)}
-                                aria-label="Edit"
-                              >
-                                <Pencil className="size-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => setDeleteMappingId(row.id)}
-                                aria-label="Delete"
-                              >
-                                <Trash2 className="size-4 text-destructive" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              )}
+              <DataGrid
+                table={mappingTable}
+                recordCount={mappings.length}
+                isLoading={mappingsLoading}
+                emptyMessage="No mappings. Add one to map Respond.io values to access types."
+                tableLayout={{ width: 'fixed' }}
+              >
+                <DataGridTable />
+              </DataGrid>
             </CardContent>
           </Card>
         </TabsContent>

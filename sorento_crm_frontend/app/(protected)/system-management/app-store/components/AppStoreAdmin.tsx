@@ -32,14 +32,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { TENANT_MODULES_QUERY_KEY, useTenantModules } from '@/hooks/useTenantModules';
 import {
@@ -52,11 +44,19 @@ import {
   MODULE_PURGE_TABLES,
   type TenantModuleState,
 } from '../services/appModulesService';
+import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Skeleton } from '@/components/ui/skeleton';
+import type { ModuleInstallEvent } from '../services/appModulesService';
+import { Columns3 } from 'lucide-react';
 
 export default function AppStoreAdmin() {
   const queryClient = useQueryClient();
   const canManage = useHasPermission('system.modules.manage');
-  const { raw, refetch, moduleGuardStrict } = useTenantModules();
+  const { raw, refetch } = useTenantModules();
   const [bundleKey, setBundleKey] = useState<string>('');
 
   const eventsQuery = useQuery({
@@ -130,11 +130,10 @@ export default function AppStoreAdmin() {
   });
 
   const bundles = raw?.bundles ?? [];
-  const modules = raw?.modules ?? [];
-
   const sortedModules = useMemo(() => {
+    const modules = raw?.modules ?? [];
     return [...modules].sort((a, b) => a.display_name.localeCompare(b.display_name));
-  }, [modules]);
+  }, [raw?.modules]);
 
   const busy =
     installModuleMut.isPending ||
@@ -142,6 +141,62 @@ export default function AppStoreAdmin() {
     disableMut.isPending ||
     uninstallMut.isPending ||
     installBundleMut.isPending;
+
+  const eventColumns = useMemo<ColumnDef<ModuleInstallEvent>[]>(
+    () => [
+      {
+        id: 'created_at',
+        accessorFn: (row) => row.created_at ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="When" column={column} />,
+        size: 180,
+        enableSorting: false,
+        meta: { headerTitle: 'When', skeleton: <Skeleton className="h-4 w-32" /> },
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap text-xs">{row.original.created_at ?? '—'}</span>
+        ),
+      },
+      {
+        id: 'module_key',
+        accessorFn: (row) => row.module_key,
+        header: ({ column }) => <DataGridColumnHeader title="Module" column={column} />,
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Module', skeleton: <Skeleton className="h-4 w-28" /> },
+        cell: ({ row }) => <span>{row.original.module_key}</span>,
+      },
+      {
+        id: 'action',
+        accessorFn: (row) => row.action,
+        header: ({ column }) => <DataGridColumnHeader title="Action" column={column} />,
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Action', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => <span>{row.original.action}</span>,
+      },
+      {
+        id: 'actor_user_id',
+        accessorFn: (row) => row.actor_user_id ?? null,
+        header: ({ column }) => <DataGridColumnHeader title="Actor" column={column} />,
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Actor', skeleton: <Skeleton className="h-4 w-28" /> },
+        cell: ({ row }) => (
+          <span className="text-xs text-muted-foreground">{row.original.actor_user_id ?? '—'}</span>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const eventsTable = useReactTable({
+    columns: eventColumns,
+    data: eventsQuery.data?.items ?? [],
+    getRowId: (row) => row.id,
+    state: {
+      pagination: { pageIndex: 0, pageSize: 10 },
+    },
+    getCoreRowModel: getCoreRowModel(),
+  });
 
   return (
     <div className="space-y-8">
@@ -235,40 +290,33 @@ export default function AppStoreAdmin() {
 
       {canManage && (
         <Card>
-          <CardHeader>
-            <CardTitle>Recent install events</CardTitle>
-            <CardDescription>Audit trail for this tenant.</CardDescription>
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
+            <div>
+              <CardTitle>Recent install events</CardTitle>
+              <CardDescription>Audit trail for this tenant.</CardDescription>
+            </div>
+            <DataGridColumnVisibility
+              table={eventsTable}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1" disabled={eventsQuery.isLoading}>
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
           </CardHeader>
           <CardContent>
-            {eventsQuery.isLoading ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : eventsQuery.error ? (
+            {eventsQuery.error ? (
               <p className="text-sm text-destructive">Failed to load events.</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>When</TableHead>
-                    <TableHead>Module</TableHead>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Actor</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {(eventsQuery.data?.items ?? []).map((ev) => (
-                    <TableRow key={ev.id}>
-                      <TableCell className="whitespace-nowrap text-xs">
-                        {ev.created_at ?? '—'}
-                      </TableCell>
-                      <TableCell>{ev.module_key}</TableCell>
-                      <TableCell>{ev.action}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {ev.actor_user_id ?? '—'}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <DataGrid
+                table={eventsTable}
+                recordCount={eventsQuery.data?.items?.length ?? 0}
+                isLoading={eventsQuery.isLoading}
+                emptyMessage="No install events"
+              >
+                <DataGridTable />
+              </DataGrid>
             )}
           </CardContent>
         </Card>

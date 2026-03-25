@@ -11,12 +11,13 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Columns3 } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -72,7 +73,7 @@ export default function SLAPoliciesList() {
         accessorKey: 'tiers_count',
         header: ({ column }) => <DataGridColumnHeader title="Tiers" column={column} />,
         cell: ({ row }) => {
-          const tiersCount = (row.original as any).tiers_count || 0;
+          const tiersCount = row.original.tiers_count || 0;
           return <Badge variant="secondary">{tiersCount}</Badge>;
         },
         size: 100,
@@ -115,7 +116,9 @@ export default function SLAPoliciesList() {
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
+    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}
+      tableLayout={{ columnsVisibility: true }}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">
@@ -137,10 +140,21 @@ export default function SLAPoliciesList() {
               </Button>
             )}
           </div>
-          <Button onClick={() => router.push('/sla-management/sla-policies/new')}>
-            <Plus />
-            Create SLA Policy
-          </Button>
+          <div className="flex items-center gap-2">
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
+            <Button onClick={() => router.push('/sla-management/sla-policies/new')}>
+              <Plus />
+              Create SLA Policy
+            </Button>
+          </div>
         </CardHeader>
         <CardTable>
           <ScrollArea>

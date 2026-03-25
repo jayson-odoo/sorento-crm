@@ -11,12 +11,13 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, RefreshCw } from 'lucide-react';
+import { ChevronRight, Columns3, RefreshCw, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -183,6 +184,7 @@ export default function IntegrationLogsList() {
       table={table} 
       recordCount={data?.pagination.total || 0} 
       isLoading={isLoading}
+      tableLayout={{ columnsVisibility: true }}
       onRowClick={(row) => {
         router.push(`/integration-management/integration-logs/${row.id}`);
       }}
@@ -246,6 +248,15 @@ export default function IntegrationLogsList() {
               </SelectContent>
             </Select>
           </div>
+          <DataGridColumnVisibility
+            table={table}
+            trigger={
+              <Button variant="outline" size="sm" className="gap-1">
+                <Columns3 className="size-4" />
+                Columns
+              </Button>
+            }
+          />
           <Button
             variant="outline"
             size="sm"

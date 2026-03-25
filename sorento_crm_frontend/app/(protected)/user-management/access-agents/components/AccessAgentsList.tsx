@@ -12,13 +12,14 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, ChevronRight } from 'lucide-react';
+import { Plus, ChevronRight, Columns3 } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ListPageToolbar } from '@/components/common/ListPageToolbar';
 import { Card, CardFooter, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -108,7 +109,13 @@ export default function AccessAgentsList() {
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
+    <DataGrid
+      table={table}
+      recordCount={data?.pagination.total || 0}
+      isLoading={isLoading}
+      onRowClick={handleRowClick}
+      tableLayout={{ columnsVisibility: true }}
+    >
       <Card>
         <ListPageToolbar
           searchPlaceholder="Search access agents..."
@@ -118,10 +125,21 @@ export default function AccessAgentsList() {
             setPagination((p) => ({ ...p, pageIndex: 0 }));
           }}
           createButton={
-            <Button onClick={() => setFormModalOpen(true)}>
-              <Plus />
-              Create Access Agent
-            </Button>
+            <>
+              <DataGridColumnVisibility
+                table={table}
+                trigger={
+                  <Button variant="outline" size="sm" className="gap-1">
+                    <Columns3 className="size-4" />
+                    Columns
+                  </Button>
+                }
+              />
+              <Button onClick={() => setFormModalOpen(true)}>
+                <Plus />
+                Create Access Agent
+              </Button>
+            </>
           }
           isLoading={isLoading}
         />

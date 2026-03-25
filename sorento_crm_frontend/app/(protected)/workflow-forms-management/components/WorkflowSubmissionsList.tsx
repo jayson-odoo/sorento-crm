@@ -12,12 +12,13 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Download, Filter, Plus, Search, SlidersHorizontal, X } from 'lucide-react';
+import { Download, Filter, Plus, Search, SlidersHorizontal, X, Columns3 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -183,6 +184,7 @@ export default function WorkflowSubmissionsList({
         recordCount={data?.pagination.total ?? 0}
         isLoading={isLoading}
         onRowClick={(row) => router.push(`/workflow-forms-management/submissions/${row.id}`)}
+        tableLayout={{ columnsVisibility: true }}
       >
         <Card>
           <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -259,6 +261,12 @@ export default function WorkflowSubmissionsList({
                       </div>
                     </PopoverContent>
                   </Popover>
+                </>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2">
+              {listQueryToolsEnabled ? (
+                <>
                   <Button variant="outline" size="sm" className="gap-1" onClick={() => setFilterDialogOpen(true)}>
                     <Filter className="size-4" />
                     Filters
@@ -276,22 +284,31 @@ export default function WorkflowSubmissionsList({
                   ) : null}
                 </>
               ) : null}
+              <DataGridColumnVisibility
+                table={table}
+                trigger={
+                  <Button variant="outline" size="sm" className="gap-1">
+                    <Columns3 className="size-4" />
+                    Columns
+                  </Button>
+                }
+              />
+              {canAdd ? (
+                <Button size="sm" asChild>
+                  <Link
+                    href={
+                      fixedDefinitionId
+                        ? `/workflow-forms-management/forms/${fixedDefinitionId}/new`
+                        : '/workflow-forms-management/submissions/new'
+                    }
+                  >
+                    <Plus className="size-4 mr-1" />
+                    New submission
+                  </Link>
+                </Button>
+              ) : null}
             </div>
-            {canAdd ? (
-              <Button size="sm" asChild>
-                <Link
-                  href={
-                    fixedDefinitionId
-                      ? `/workflow-forms-management/forms/${fixedDefinitionId}/new`
-                      : '/workflow-forms-management/submissions/new'
-                  }
-                >
-                  <Plus className="size-4 mr-1" />
-                  New submission
-                </Link>
-              </Button>
-            ) : null}
-          </CardHeader>
+        </CardHeader>
           {!listQueryToolsEnabled ? (
             <div className="px-5 pb-2 text-sm text-muted-foreground">
               Install the Workflow Forms module to enable advanced filters and export.

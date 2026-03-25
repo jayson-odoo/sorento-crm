@@ -11,6 +11,7 @@ import {
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -32,7 +33,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { formatDateTime } from '@/lib/helpers';
-import { Eye } from 'lucide-react';
+import { Eye, Columns3 } from 'lucide-react';
 import { useOutgoingMails } from '../hooks/useOutgoingMails';
 import type { OutgoingMail } from '../types/outgoingMail.types';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
@@ -159,7 +160,9 @@ export default function OutgoingMailsList() {
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      tableLayout={{ columnsVisibility: true }}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
@@ -183,6 +186,15 @@ export default function OutgoingMailsList() {
               className="w-72"
             />
           </div>
+                    <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
         </CardHeader>
         <CardTable>
           <ScrollArea>

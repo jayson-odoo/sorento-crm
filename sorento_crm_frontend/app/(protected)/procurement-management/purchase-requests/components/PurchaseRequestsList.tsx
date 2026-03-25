@@ -13,13 +13,14 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Filter, Trash2 } from 'lucide-react';
+import { ChevronRight, Columns3, Filter, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -315,6 +316,7 @@ export default function PurchaseRequestsList({
       recordCount={data?.pagination?.total ?? 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
+      tableLayout={{ columnsVisibility: true }}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">
@@ -373,6 +375,15 @@ export default function PurchaseRequestsList({
             </DropdownMenu>
           </div>
           <div className="flex items-center gap-2">
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
             {selectedIds.size > 0 && (
               <Button
                 variant="outline"

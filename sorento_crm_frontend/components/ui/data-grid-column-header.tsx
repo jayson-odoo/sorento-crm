@@ -44,9 +44,9 @@ function DataGridColumnHeader<TData, TValue>({
   icon,
   className,
   filter,
-  visibility = false,
+  visibility = true,
 }: DataGridColumnHeaderProps<TData, TValue>) {
-  const { isLoading, table, props, recordCount } = useDataGrid();
+  const { isLoading, table, props, recordCount, columnPreferences } = useDataGrid();
 
   const moveColumn = (direction: 'left' | 'right') => {
     const currentOrder = [...table.getState().columnOrder]; // Get current column order
@@ -103,6 +103,7 @@ function DataGridColumnHeader<TData, TValue>({
         )}
         disabled={isLoading || recordCount === 0}
         onClick={() => {
+          if (!column.getCanSort()) return;
           const isSorted = column.getIsSorted();
           if (isSorted === 'asc') {
             column.toggleSorting(true);
@@ -111,6 +112,10 @@ function DataGridColumnHeader<TData, TValue>({
           } else {
             column.toggleSorting(false);
           }
+        }}
+        onPointerDown={(e) => {
+          // Prevent dnd-kit column drag listeners from interfering with sorting clicks.
+          e.stopPropagation();
         }}
       >
         {icon && icon}
@@ -147,8 +152,20 @@ function DataGridColumnHeader<TData, TValue>({
   const headerControls = () => {
     return (
       <div className="flex items-center h-full gap-1.5 justify-between">
+        {column.getCanSort() ? headerButton() : headerLabel()}
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>{headerButton()}</DropdownMenuTrigger>
+          <DropdownMenuTrigger asChild>
+            <Button
+              mode="icon"
+              size="sm"
+              variant="ghost"
+              className="rounded-md h-7 w-7"
+              aria-label={`Column options for ${title || column.id}`}
+              title={`Column options for ${title || column.id}`}
+            >
+              <Settings2 className="size-4 opacity-70" />
+            </Button>
+          </DropdownMenuTrigger>
           <DropdownMenuContent className="w-40" align="start">
             {filter && <DropdownMenuLabel>{filter}</DropdownMenuLabel>}
 
@@ -254,6 +271,17 @@ function DataGridColumnHeader<TData, TValue>({
                           </DropdownMenuCheckboxItem>
                         );
                       })}
+                    {columnPreferences?.resetToDefaults && <DropdownMenuSeparator />}
+                    {columnPreferences?.resetToDefaults && (
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.preventDefault();
+                          void columnPreferences.resetToDefaults?.();
+                        }}
+                      >
+                        Reset columns
+                      </DropdownMenuItem>
+                    )}
                   </DropdownMenuSubContent>
                 </DropdownMenuPortal>
               </DropdownMenuSub>
@@ -265,14 +293,9 @@ function DataGridColumnHeader<TData, TValue>({
     );
   };
 
-  if (
-    props.tableLayout?.columnsMovable ||
-    (props.tableLayout?.columnsVisibility && visibility) ||
-    (props.tableLayout?.columnsPinnable && column.getCanPin()) ||
-    filter
-  ) {
-    return headerControls();
-  }
+  // Used only by legacy dropdown mode (we currently render only sorting).
+  // Keeps eslint from flagging the function as unused.
+  void headerControls;
 
   if (column.getCanSort() || (props.tableLayout?.columnsResizable && column.getCanResize())) {
     return <div className="flex items-center h-full">{headerButton()}</div>;

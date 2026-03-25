@@ -7,11 +7,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.list_query_metadata import ListQueryField
+from app.models.user import UserListColumnConfig, UserPermission
 from app.schemas.list_query import (
     ListExportRequest,
     ListQueryFieldResponse,
     ListQueryResourceResponse,
     ListSearchRequest,
+    UserListColumnConfigPayload,
+    UserListColumnConfigResponse,
 )
 from app.schemas.marketing import PromotionResponse
 from app.schemas.order import OrderResponse
@@ -67,6 +70,30 @@ def _can_view(db: Session, user_id: str, resource_key: str) -> bool:
     if not slug:
         return False
     return UserPermissionService(db).check_user_has_permission(user_id, slug)
+
+
+def _can_view_listing_key(db: Session, user_id: str, listing_key: str) -> bool:
+    """
+    Personalization configs are authorized by the listing key itself.
+
+    This repo expects `listing_key` to be either:
+    - the RBAC view permission slug (e.g. `order_management.orders.view`), or
+    - a composite key prefixed with the RBAC permission slug, using `::`:
+      `order_management.orders.view::orders-list`.
+    """
+    listing_key = (listing_key or "").strip()
+    if not listing_key:
+        return False
+    perm_slug = listing_key.split("::", 1)[0].strip() or listing_key
+
+    # If the permission slug does not exist in the RBAC catalog, treat the listing
+    # as "module-auth only" (many routes in this repo use module guards instead
+    # of fine-grained `require_permission`).
+    perm_exists = db.query(UserPermission).filter(UserPermission.slug == perm_slug).first()
+    if not perm_exists:
+        return True
+
+    return UserPermissionService(db).check_user_has_permission(user_id, perm_slug)
 
 
 @router.get("/resources", response_model=List[ListQueryResourceResponse])
@@ -180,3 +207,86 @@ async def export_rows(
     except Exception as e:
         raise handle_internal_error(str(e))
     return {"data": rows, "total": len(rows)}
+
+
+@router.get("/column-config/{listing_key:path}", response_model=UserListColumnConfigResponse)
+async def get_list_column_config(
+    listing_key: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    listing_key = (listing_key or "").strip()
+    if not _can_view_listing_key(db, current_user["id"], listing_key):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+    row = (
+        db.query(UserListColumnConfig)
+        .filter(
+            UserListColumnConfig.user_id == current_user["id"],
+            UserListColumnConfig.listing_key == listing_key,
+        )
+        .first()
+    )
+    return UserListColumnConfigResponse(listing_key=listing_key, config=row.config if row else None)
+
+
+@router.put("/column-config/{listing_key:path}", response_model=UserListColumnConfigResponse)
+async def upsert_list_column_config(
+    listing_key: str,
+    body: UserListColumnConfigPayload,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    listing_key = (listing_key or "").strip()
+    if not _can_view_listing_key(db, current_user["id"], listing_key):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+    try:
+        data = body.model_dump(exclude_none=True)
+        row = (
+            db.query(UserListColumnConfig)
+            .filter(
+                UserListColumnConfig.user_id == current_user["id"],
+                UserListColumnConfig.listing_key == listing_key,
+            )
+            .first()
+        )
+        if row:
+            row.config = data
+        else:
+            row = UserListColumnConfig(user_id=current_user["id"], listing_key=listing_key, config=data)
+            db.add(row)
+        db.commit()
+        db.refresh(row)
+        return UserListColumnConfigResponse(listing_key=listing_key, config=row.config)
+    except Exception as e:
+        db.rollback()
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/column-config/{listing_key:path}", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_list_column_config(
+    listing_key: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    listing_key = (listing_key or "").strip()
+    if not _can_view_listing_key(db, current_user["id"], listing_key):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+    try:
+        row = (
+            db.query(UserListColumnConfig)
+            .filter(
+                UserListColumnConfig.user_id == current_user["id"],
+                UserListColumnConfig.listing_key == listing_key,
+            )
+            .first()
+        )
+        if row:
+            db.delete(row)
+            db.commit()
+        return None
+    except Exception as e:
+        db.rollback()
+        raise handle_internal_error(str(e))

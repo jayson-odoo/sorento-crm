@@ -1,7 +1,7 @@
 """SQLAlchemy models."""
 # Import all models here so Alembic can discover them
 # Import order matters for relationships - import base models first
-from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission, SystemLog, SystemSetting, UserQuickAccess
+from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission, SystemLog, SystemSetting, UserQuickAccess, UserListColumnConfig
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
 from app.models.order import Order, OrderStatus, Customer, OrderLine
@@ -41,6 +41,7 @@ __all__ = [
     "SystemLog",
     "SystemSetting",
     "UserQuickAccess",
+    "UserListColumnConfig",
     "Product",
     "ProductCategory",
     "Brand",

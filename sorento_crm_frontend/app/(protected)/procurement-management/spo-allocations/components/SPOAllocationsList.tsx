@@ -9,12 +9,13 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronDown, ChevronRight, Link as LinkIcon, Trash2, ChevronsDownUp, ChevronsUpDown, Settings, Upload } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Columns3, Link as LinkIcon, Plus, Search, Settings, Trash2, Upload, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -356,6 +357,7 @@ export default function SPOAllocationsList() {
       table={table}
       recordCount={totalSPOs}
       isLoading={isLoading}
+      tableLayout={{ columnsVisibility: true }}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-2 flex-nowrap">
@@ -413,6 +415,15 @@ export default function SPOAllocationsList() {
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1 h-8">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
             {selectedAllocationIds.size > 0 && (
               <Button
                 variant="destructive"

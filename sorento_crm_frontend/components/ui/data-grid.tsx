@@ -3,6 +3,8 @@
 import { createContext, ReactNode, useContext } from 'react';
 import { cn } from '@/lib/utils';
 import { ColumnFiltersState, RowData, SortingState, Table } from '@tanstack/react-table';
+import { useListingColumnPreferences } from '@/lib/listing-column-preferences/useListingColumnPreferences';
+import { usePathname } from 'next/navigation';
 
 declare module '@tanstack/react-table' {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -37,6 +39,10 @@ export interface DataGridContextProps<TData extends object> {
   table: Table<TData>;
   recordCount: number;
   isLoading: boolean;
+  columnPreferences?: {
+    resetToDefaults?: () => Promise<void>;
+  };
+  isColumnPreferencesLoading?: boolean;
 }
 
 export type DataGridRequestParams = {
@@ -56,6 +62,11 @@ export interface DataGridProps<TData extends object> {
   loadingMode?: 'skeleton' | 'spinner';
   loadingMessage?: ReactNode | string;
   emptyMessage?: ReactNode | string;
+  /**
+   * Optional per-user per-listing key for persisting column visibility/order.
+   * Expected to be the RBAC view permission slug (e.g. `order_management.orders.view`).
+   */
+  listingKey?: string | null;
   tableLayout?: {
     dense?: boolean;
     cellBorder?: boolean;
@@ -101,15 +112,26 @@ function useDataGrid() {
 function DataGridProvider<TData extends object>({
   children,
   table,
+  columnPreferences,
+  isColumnPreferencesLoading,
   ...props
-}: DataGridProps<TData> & { table: Table<TData> }) {
+}: (DataGridProps<TData> & { table: Table<TData> }) & {
+  columnPreferences?: {
+    resetToDefaults?: () => Promise<void>;
+  };
+  isColumnPreferencesLoading?: boolean;
+}) {
   return (
     <DataGridContext.Provider
       value={{
         props,
         table,
         recordCount: props.recordCount,
-        isLoading: props.isLoading || false,
+        // Keep skeleton/loading visible until user column preferences are applied
+        // to avoid a default-layout flash before personalized settings load.
+        isLoading: Boolean(props.isLoading || isColumnPreferencesLoading),
+        columnPreferences,
+        isColumnPreferencesLoading,
       }}
     >
       {children}
@@ -117,7 +139,8 @@ function DataGridProvider<TData extends object>({
   );
 }
 
-function DataGrid<TData extends object>({ children, table, ...props }: DataGridProps<TData>) {
+function DataGrid<TData extends object>({ children, table, listingKey, ...props }: DataGridProps<TData>) {
+  const pathname = usePathname();
   const defaultProps: Partial<DataGridProps<TData>> = {
     loadingMode: 'skeleton',
     tableLayout: {
@@ -130,11 +153,13 @@ function DataGrid<TData extends object>({ children, table, ...props }: DataGridP
       headerBackground: true,
       headerBorder: true,
       width: 'fixed',
-      columnsVisibility: false,
+      // Hide/show will no longer render a dedicated panel; keep the grid header focused on sorting.
+      columnsVisibility: true,
       columnsResizable: true,
       columnsPinnable: false,
       columnsMovable: false,
-      columnsDraggable: false,
+      // Enable column drag + drop reordering directly in the table header.
+      columnsDraggable: true,
       rowsDraggable: false,
     },
     tableClassNames: {
@@ -167,8 +192,20 @@ function DataGrid<TData extends object>({ children, table, ...props }: DataGridP
     throw new Error('DataGrid requires a "table" prop');
   }
 
+  const effectiveListingKey = listingKey ?? pathname;
+
+  const { resetToDefaults, isLoading: isPrefsLoading } = useListingColumnPreferences({
+    table,
+    listingKey: effectiveListingKey,
+  });
+
   return (
-    <DataGridProvider table={table} {...mergedProps}>
+    <DataGridProvider
+      table={table}
+      columnPreferences={{ resetToDefaults }}
+      isColumnPreferencesLoading={isPrefsLoading}
+      {...mergedProps}
+    >
       {children}
     </DataGridProvider>
   );
@@ -190,4 +227,4 @@ function DataGridContainer({
   );
 }
 
-export { useDataGrid, DataGridProvider, DataGrid, DataGridContainer };
+export { useDataGrid, DataGridProvider, DataGrid, DataGridContainer, DataGridContext };

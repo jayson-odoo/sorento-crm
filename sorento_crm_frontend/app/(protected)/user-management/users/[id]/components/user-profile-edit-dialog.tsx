@@ -97,6 +97,7 @@ const UserProfileEditDialog = ({
       roleIds: user?.roles?.length ? user.roles.map((r) => r.id) : (user?.roleId ? [user.roleId] : []),
       status: user?.status || '',
       respond_user_id: user?.respondUserId || '',
+      contact_number: user?.contactNumber || '',
       tier: user?.tier ?? undefined,
       superior_id: user?.superiorId || '',
     },
@@ -118,6 +119,7 @@ const UserProfileEditDialog = ({
       roleIds,
       status: user.status || '',
       respond_user_id: user.respondUserId || '',
+      contact_number: user.contactNumber || '',
       tier: user.tier ?? undefined,
       superior_id: user.superiorId || '',
     });
@@ -166,6 +168,7 @@ const UserProfileEditDialog = ({
         name: values.name,
         status: values.status,
       };
+      profileData.contact_number = values.contact_number?.trim() || null;
       profileData.respond_user_id = values.respond_user_id?.trim() || null;
       profileData.tier = values.tier != null ? (typeof values.tier === 'number' ? values.tier : Number(values.tier)) : null;
       profileData.superior_id = (values.superior_id && values.superior_id !== '__none__' && values.superior_id.trim() !== '')
@@ -186,7 +189,7 @@ const UserProfileEditDialog = ({
       const updatedUser = await response.json();
       return { success: true, user: updatedUser };
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       const message = 'User updated successfully';
 
       toast.custom(
@@ -326,6 +329,23 @@ const UserProfileEditDialog = ({
                   <FormLabel>Name</FormLabel>
                   <FormControl>
                     <Input placeholder="Enter user name" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="contact_number"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Contact Number</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Enter contact number"
+                      {...field}
+                      value={field.value || ''}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

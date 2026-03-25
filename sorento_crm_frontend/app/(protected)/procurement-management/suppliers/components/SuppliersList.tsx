@@ -11,12 +11,13 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, SlidersHorizontal, Download } from 'lucide-react';
+import { ChevronRight, Columns3, Download, Plus, Search, SlidersHorizontal, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -135,6 +136,7 @@ export default function SuppliersList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
+      tableLayout={{ columnsVisibility: true }}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between flex-wrap gap-2">
@@ -158,6 +160,8 @@ export default function SuppliersList() {
                 </Button>
               )}
             </div>
+          </div>
+          <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" className="gap-1" onClick={() => setFilterDialogOpen(true)}>
               <SlidersHorizontal className="size-4" />
               Filters
@@ -171,11 +175,20 @@ export default function SuppliersList() {
               <Download className="size-4" />
               Export
             </Button>
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
+            <Button onClick={() => router.push('/procurement-management/suppliers/new')}>
+              <Plus />
+              Create Supplier
+            </Button>
           </div>
-          <Button onClick={() => router.push('/procurement-management/suppliers/new')}>
-            <Plus />
-            Create Supplier
-          </Button>
         </CardHeader>
         {isError ? (
           <div className="px-5 pb-2 text-sm text-destructive">

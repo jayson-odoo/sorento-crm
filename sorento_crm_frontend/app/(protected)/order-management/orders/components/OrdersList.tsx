@@ -22,6 +22,7 @@ import {
   Trash2,
   Filter,
   SlidersHorizontal,
+  Columns3,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,8 +37,9 @@ import {
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -114,7 +116,7 @@ export default function OrdersList() {
     advancedFilter: advancedFilter ?? undefined,
   });
 
-  const handleUploadTemplate = async (data: any[]) => {
+  const handleUploadTemplate = async (data: unknown[]) => {
     try {
       const result = await bulkImportOrders(data);
       toast.success(`Successfully imported: ${result.created} created, ${result.updated} updated`);
@@ -330,7 +332,7 @@ export default function OrdersList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
-      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
     >
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -426,19 +428,6 @@ export default function OrdersList() {
                 </div>
               </PopoverContent>
             </Popover>
-            <Button variant="outline" size="sm" onClick={() => setFilterDialogOpen(true)} className="gap-1">
-              <Filter className="size-4" />
-              Filters
-              {advancedFilter ? (
-                <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
-                  On
-                </Badge>
-              ) : null}
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setExportDialogOpen(true)} className="gap-1">
-              <Download className="size-4" />
-              Export
-            </Button>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {selectedOrderIds.size > 0 && (
@@ -475,6 +464,28 @@ export default function OrdersList() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <Button variant="outline" size="sm" onClick={() => setFilterDialogOpen(true)} className="gap-1">
+              <Filter className="size-4" />
+              Filters
+              {advancedFilter ? (
+                <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
+                  On
+                </Badge>
+              ) : null}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setExportDialogOpen(true)} className="gap-1">
+              <Download className="size-4" />
+              Export
+            </Button>
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
             <Button onClick={() => router.push('/order-management/orders/new')}>
               <Plus />
               Create Order

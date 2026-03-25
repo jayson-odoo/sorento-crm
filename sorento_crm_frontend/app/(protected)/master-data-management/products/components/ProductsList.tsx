@@ -26,6 +26,7 @@ import {
   Filter,
   Settings,
   SlidersHorizontal,
+  Columns3,
 } from 'lucide-react';
 import { formatDate, formatDateTime } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -37,6 +38,7 @@ import {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import {
   DataGridTable,
@@ -717,28 +719,6 @@ const ProductsList = () => {
             </div>
           </PopoverContent>
         </Popover>
-        <Button
-          variant="outline"
-          size="icon"
-          disabled={isLoading}
-          title="Advanced filters"
-          className="relative"
-          onClick={() => setAdvancedFilterDialogOpen(true)}
-        >
-          <SlidersHorizontal className="size-4" />
-          {advancedFilter ? (
-            <span className="absolute -top-1 -end-1 size-2.5 rounded-full bg-primary" />
-          ) : null}
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          disabled={isLoading}
-          title="Export"
-          onClick={() => setExportDialogOpen(true)}
-        >
-          <Download className="size-4" />
-        </Button>
         <div className="flex items-center gap-2 ml-auto">
           {selectedRowIds.length > 0 && (
             <Button
@@ -781,6 +761,37 @@ const ProductsList = () => {
             </DropdownMenuContent>
           </DropdownMenu>
           <Button
+            variant="outline"
+            size="icon"
+            disabled={isLoading}
+            title="Advanced filters"
+            className="relative"
+            onClick={() => setAdvancedFilterDialogOpen(true)}
+          >
+            <SlidersHorizontal className="size-4" />
+            {advancedFilter ? (
+              <span className="absolute -top-1 -end-1 size-2.5 rounded-full bg-primary" />
+            ) : null}
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            disabled={isLoading}
+            title="Export"
+            onClick={() => setExportDialogOpen(true)}
+          >
+            <Download className="size-4" />
+          </Button>
+          <DataGridColumnVisibility
+            table={table}
+            trigger={
+              <Button variant="outline" size="sm" className="gap-1">
+                <Columns3 className="size-4" />
+                Columns
+              </Button>
+            }
+          />
+          <Button
             disabled={isLoading}
             onClick={() => router.push('/master-data-management/products/new')}
           >
@@ -788,7 +799,7 @@ const ProductsList = () => {
             Create Product
           </Button>
         </div>
-      </CardHeader>
+        </CardHeader>
     );
   };
 

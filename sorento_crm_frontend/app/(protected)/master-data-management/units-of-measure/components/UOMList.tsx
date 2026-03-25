@@ -11,12 +11,13 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Trash2 } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Trash2, Columns3 } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, type DataGridApiFetchParams } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -131,7 +132,9 @@ export default function UOMList() {
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      tableLayout={{ columnsVisibility: true }}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">
@@ -153,10 +156,21 @@ export default function UOMList() {
               </Button>
             )}
           </div>
-          <Button onClick={() => router.push('/master-data-management/units-of-measure/new')}>
-            <Plus />
-            Create UOM
-          </Button>
+          <div className="flex items-center gap-2">
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
+            <Button onClick={() => router.push('/master-data-management/units-of-measure/new')}>
+              <Plus />
+              Create UOM
+            </Button>
+          </div>
         </CardHeader>
         <CardTable>
           <ScrollArea>

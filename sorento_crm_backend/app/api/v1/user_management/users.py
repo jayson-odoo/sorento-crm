@@ -80,6 +80,7 @@ async def get_users(
                 "status": user.status,
                 "country": user.country,
                 "timezone": user.timezone,
+                "contact_number": getattr(user, "contact_number", None),
                 "respond_user_id": user.respond_user_id,
                 "respond_synced": user.respond_synced,
                 "superior_id": user.superior_id,
@@ -138,7 +139,64 @@ async def get_users_select(
 
 class BulkUsersRequest(BaseModel):
     user_ids: list[str]
-    action: str  # "delete" | "activate" | "deactivate"
+    action: str  # "delete" | "activate" | "deactivate" | "permanent_delete" | "resend_invite"
+
+
+def _send_invitation_link_for_user(db: Session, user) -> str:
+    """
+    Create a verification token and send an invitation email for the given user.
+    Used by both single-user resend and bulk resend flows.
+    """
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(days=7)
+    verification_token = VerificationToken(
+        identifier=user.id,
+        token=token,
+        expires=expires,
+    )
+    db.add(verification_token)
+    db.commit()
+
+    base_url = (app_settings.frontend_base_url or "").strip().rstrip("/")
+    set_password_path = "/change-password"
+    invite_link = (
+        f"{base_url}{set_password_path}?token={token}"
+        if base_url
+        else f"{set_password_path}?token={token}"
+    )
+    subject = "You're invited to join the platform"
+    body_text = (
+        f"Hello{f', {user.name}' if user.name else ''},\n\n"
+        "You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.\n\n"
+        f"{invite_link}\n\n"
+        "After setting your password, you can sign in with your email and the new password.\n\n"
+        "This is a system-generated email. Please do not reply."
+    )
+    body_html = (
+        f"<p>Hello{f', {user.name}' if user.name else ''},</p>\n"
+        "<p>You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.</p>\n"
+        f'<p><a href="{invite_link}">{invite_link}</a></p>\n'
+        "<p>After setting your password, you can sign in with your email and the new password.</p>\n"
+        "<p><em>This is a system-generated email. Please do not reply.</em></p>"
+    )
+
+    try:
+        sys_settings = db.query(SystemSetting).first()
+        smtp_config = _smtp_config_from_settings(sys_settings) if sys_settings else None
+        err = send_notification_email(
+            to=user.email,
+            subject=subject,
+            body_text=body_text,
+            body_html=body_html,
+            smtp_config=smtp_config,
+            from_name="Sorento AI System",
+        )
+        if err:
+            logger.warning("Resend invitation email failed for %s: %s", user.email, err)
+    except Exception as e:
+        logger.warning("Resend invitation email error: %s", e)
+
+    return f"Invitation link sent to {user.email}."
 
 
 @router.post("/bulk", status_code=status.HTTP_200_OK)
@@ -167,6 +225,25 @@ async def bulk_users_action(
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied for permanent delete")
             count = service.bulk_permanent_delete_users(body.user_ids)
             return {"message": f"{count} trashed user(s) permanently deleted", "count": count}
+        if body.action == "resend_invite":
+            success = 0
+            failed = 0
+            for user_id in body.user_ids:
+                try:
+                    user = service.get_user(user_id)
+                    _send_invitation_link_for_user(db, user)
+                    success += 1
+                except HTTPException:
+                    failed += 1
+                except Exception:
+                    failed += 1
+            if failed:
+                return {
+                    "message": f"Invitation links sent to {success} user(s). {failed} failed.",
+                    "success": success,
+                    "failed": failed,
+                }
+            return {"message": f"Invitation links sent to {success} user(s).", "success": success, "failed": 0}
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid action")
     except HTTPException:
         raise
@@ -230,6 +307,7 @@ async def get_current_user_profile(
             "status": user.status,
             "country": user.country,
             "timezone": user.timezone,
+            "contact_number": getattr(user, "contact_number", None),
             "respond_user_id": user.respond_user_id,
             "respond_synced": user.respond_synced,
             "superior_id": user.superior_id,
@@ -317,6 +395,7 @@ async def get_user(
             "status": user.status,
             "country": user.country,
             "timezone": user.timezone,
+            "contact_number": getattr(user, "contact_number", None),
             "respond_user_id": user.respond_user_id,
             "respond_synced": user.respond_synced,
             "superior_id": user.superior_id,
@@ -483,52 +562,8 @@ async def resend_invite(
     try:
         service = UserService(db)
         user = service.get_user(user_id)
-
-        token = secrets.token_urlsafe(32)
-        expires = datetime.now(timezone.utc) + timedelta(days=7)
-        verification_token = VerificationToken(
-            identifier=user.id,
-            token=token,
-            expires=expires,
-        )
-        db.add(verification_token)
-        db.commit()
-
-        base_url = (app_settings.frontend_base_url or "").strip().rstrip("/")
-        set_password_path = "/change-password"
-        invite_link = f"{base_url}{set_password_path}?token={token}" if base_url else f"{set_password_path}?token={token}"
-        subject = "You're invited to join the platform"
-        body_text = (
-            f"Hello{f', {user.name}' if user.name else ''},\n\n"
-            "You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.\n\n"
-            f"{invite_link}\n\n"
-            "After setting your password, you can sign in with your email and the new password.\n\n"
-            "This is a system-generated email. Please do not reply."
-        )
-        body_html = (
-            f"<p>Hello{f', {user.name}' if user.name else ''},</p>\n"
-            "<p>You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.</p>\n"
-            f'<p><a href="{invite_link}">{invite_link}</a></p>\n'
-            "<p>After setting your password, you can sign in with your email and the new password.</p>\n"
-            "<p><em>This is a system-generated email. Please do not reply.</em></p>"
-        )
-        try:
-            sys_settings = db.query(SystemSetting).first()
-            smtp_config = _smtp_config_from_settings(sys_settings) if sys_settings else None
-            err = send_notification_email(
-                to=user.email,
-                subject=subject,
-                body_text=body_text,
-                body_html=body_html,
-                smtp_config=smtp_config,
-                from_name="Sorento AI System",
-            )
-            if err:
-                logger.warning("Resend invitation email failed for %s: %s", user.email, err)
-        except Exception as e:
-            logger.warning("Resend invitation email error: %s", e)
-
-        return {"message": f"Invitation link sent to {user.email}."}
+        message = _send_invitation_link_for_user(db, user)
+        return {"message": message}
     except HTTPException:
         raise
     except Exception as e:
@@ -679,6 +714,7 @@ async def update_current_user_profile(
             "status": user.status,
             "country": user.country,
             "timezone": user.timezone,
+            "contact_number": getattr(user, "contact_number", None),
             "respond_user_id": user.respond_user_id,
             "respond_synced": user.respond_synced,
             "superior_id": user.superior_id,

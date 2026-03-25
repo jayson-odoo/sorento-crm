@@ -1,7 +1,7 @@
 """User management models."""
 import enum
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index, Integer
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index, Integer, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -23,6 +23,8 @@ class User(Base):
     country = Column(String, nullable=True)
     timezone = Column(String, nullable=True)
     name = Column(String, nullable=True)
+    # Optional phone number used for user contact.
+    contact_number = Column(String, nullable=True)
     status = Column(String, default=UserStatus.INACTIVE.value, nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -41,6 +43,11 @@ class User(Base):
     system_logs = relationship("SystemLog", back_populates="user")
     superior = relationship("User", remote_side=[id], backref="subordinates")
     quick_access = relationship("UserQuickAccess", back_populates="user", order_by="UserQuickAccess.sort_order")
+    list_column_configs = relationship(
+        "UserListColumnConfig",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index("users_invited_by_user_id_idx", "invited_by_user_id"),
@@ -198,4 +205,32 @@ class UserQuickAccess(Base):
     __table_args__ = (
         Index("ix_user_quick_access_user_id", "user_id"),
         Index("ix_user_quick_access_user_id_path", "user_id", "path", unique=True),
+    )
+
+
+class UserListColumnConfig(Base):
+    """Per-user per-listing column preferences (visibility + ordering)."""
+
+    __tablename__ = "user_list_column_configs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Stable key identifying the listing.
+    # In this implementation it is expected to be the RBAC view permission slug.
+    listing_key = Column(String(255), nullable=False)
+
+    # JSON payload:
+    # - version: int
+    # - columnOrder: string[]
+    # - columnVisibility: Record<string, boolean>
+    config = Column(JSONB, nullable=False)
+
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    user = relationship("User", back_populates="list_column_configs")
+
+    __table_args__ = (
+        Index("ix_user_list_column_configs_user_id", "user_id"),
+        UniqueConstraint("user_id", "listing_key", name="uq_user_list_column_configs_user_id_listing_key"),
     )

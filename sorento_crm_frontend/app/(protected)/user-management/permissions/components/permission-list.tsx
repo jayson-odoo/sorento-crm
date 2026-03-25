@@ -12,7 +12,7 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { Ellipsis, Plus, Search, X } from 'lucide-react';
+import { Columns3, Ellipsis, Plus, Search, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { formatDateTimeSafe } from '@/lib/helpers';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +30,7 @@ import {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import {
   DataGridTable,
@@ -369,6 +370,15 @@ const PermissionList = () => {
           </Select>
         </div>
         <CardToolbar>
+          <DataGridColumnVisibility
+            table={table}
+            trigger={
+              <Button variant="outline" size="sm" className="gap-1" disabled={isLoading}>
+                <Columns3 className="size-4" />
+                Columns
+              </Button>
+            }
+          />
           {deletePermissionIds.length > 0 && (
             <Button
               variant="destructive"

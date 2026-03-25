@@ -9,12 +9,13 @@ import {
   getCoreRowModel,
   getExpandedRowModel,
 } from '@tanstack/react-table';
-import { ChevronDown, ChevronRight, Plus, Search, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Columns3, Plus, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -233,7 +234,7 @@ export default function ContactAccessAgentsGroupedList() {
 
   return (
     <>
-      <DataGrid table={table} recordCount={groupedData.length} isLoading={isLoading}>
+      <DataGrid table={table} tableLayout={{ columnsVisibility: true }} recordCount={groupedData.length} isLoading={isLoading}>
         <Card>
           <CardHeader className="flex-row items-center justify-between">
             <div className="relative">
@@ -255,6 +256,15 @@ export default function ContactAccessAgentsGroupedList() {
                 </Button>
               )}
             </div>
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
           </CardHeader>
           <CardTable>
             <ScrollArea>

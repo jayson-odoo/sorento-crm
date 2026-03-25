@@ -13,7 +13,7 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronRight, LoaderCircleIcon, Plus, Search, Settings, Trash2, UserCheck, UserX, X } from 'lucide-react';
+import { ChevronRight, Columns3, LoaderCircleIcon, Mail, Plus, Search, Settings, Trash2, UserCheck, UserX, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import {
   AlertDialog,
@@ -27,7 +27,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { formatDateSafe, formatDateTimeInMalaysia, getInitials } from '@/lib/helpers';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge, BadgeDot, BadgeProps } from '@/components/ui/badge';
+import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable, CardToolbar } from '@/components/ui/card';
 import {
@@ -42,6 +42,7 @@ import {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import {
   DataGridTable,
@@ -82,7 +83,7 @@ const UserList = () => {
   const [selectedTrashed, setSelectedTrashed] = useState<string>('exclude');
   const [bulkActionPending, setBulkActionPending] = useState(false);
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
-  const [bulkConfirmAction, setBulkConfirmAction] = useState<'delete' | 'activate' | 'deactivate' | 'permanent_delete' | null>(null);
+  const [bulkConfirmAction, setBulkConfirmAction] = useState<'delete' | 'activate' | 'deactivate' | 'permanent_delete' | 'resend_invite' | null>(null);
 
   // Role select query
   const { data: roleList } = useRoleSelectQuery();
@@ -190,7 +191,7 @@ const UserList = () => {
 
   const selectedRowIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
 
-  const runBulkAction = (action: 'delete' | 'activate' | 'deactivate' | 'permanent_delete') => {
+  const runBulkAction = (action: 'delete' | 'activate' | 'deactivate' | 'permanent_delete' | 'resend_invite') => {
     if (selectedRowIds.length === 0) return;
     setBulkConfirmAction(action);
     setBulkConfirmOpen(true);
@@ -230,6 +231,12 @@ const UserList = () => {
           description: `Are you sure you want to trash ${selectedRowIds.length} user(s)? They can be restored from the Trashed filter.`,
           actionLabel: 'Trash',
         }
+      : bulkConfirmAction === 'resend_invite'
+        ? {
+            title: 'Confirm resend invitation',
+            description: `Are you sure you want to send invitation links to ${selectedRowIds.length} user(s)?`,
+            actionLabel: 'Send invitations',
+          }
       : bulkConfirmAction === 'permanent_delete'
         ? {
             title: 'Permanently delete users',
@@ -551,6 +558,15 @@ const UserList = () => {
           </Select>
         </div>
         <CardToolbar className="flex items-center gap-2">
+          <DataGridColumnVisibility
+            table={table}
+            trigger={
+              <Button variant="outline" size="sm" className="gap-1" disabled={isLoading}>
+                <Columns3 className="size-4" />
+                Columns
+              </Button>
+            }
+          />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -579,6 +595,13 @@ const UserList = () => {
               >
                 <UserX className="size-4" />
                 Bulk deactivate
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => runBulkAction('resend_invite')}
+                disabled={bulkActionPending || selectedTrashed === 'only'}
+              >
+                <Mail className="size-4" />
+                Bulk send invitation
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={() => runBulkAction('delete')}

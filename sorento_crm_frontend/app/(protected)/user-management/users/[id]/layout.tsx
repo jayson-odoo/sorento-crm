@@ -112,6 +112,7 @@ export default function UserLayout({
         roleId: roles[0]?.id ?? data.role_id ?? data.roleId,
         respondUserId: data.respond_user_id || data.respondUserId,
         respondSynced: data.respond_synced || data.respondSynced,
+        contactNumber: data.contact_number || data.contactNumber,
         superiorId: data.superior_id || data.superiorId,
         superiorName: data.superior_name || data.superiorName,
         tier: data.tier != null ? data.tier : undefined,

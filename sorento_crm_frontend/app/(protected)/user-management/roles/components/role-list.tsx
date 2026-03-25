@@ -13,6 +13,7 @@ import {
 } from '@tanstack/react-table';
 import {
   Ellipsis,
+  Columns3,
   Plus,
   ShieldAlert,
   UserRound,
@@ -20,13 +21,14 @@ import {
 import { apiFetch } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { Card, CardFooter, CardTable } from '@/components/ui/card';
 import {
   DataGrid,
   DataGridApiFetchParams,
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
@@ -299,6 +301,7 @@ const RoleList = () => {
           columnsResizable: true,
           columnsPinnable: true,
           columnsMovable: true,
+          columnsVisibility: true,
         }}
         tableClassNames={{
           edgeCell: 'px-5',
@@ -310,16 +313,27 @@ const RoleList = () => {
             searchValue={searchQuery}
             onSearchChange={handleSearchChange}
             createButton={
-              <Button
-                disabled={isLoading}
-                onClick={() => {
-                  setEditRole(null);
-                  setEditDialogOpen(true);
-                }}
-              >
-                <Plus />
-                Add Role
-              </Button>
+              <>
+                <DataGridColumnVisibility
+                  table={table}
+                  trigger={
+                    <Button variant="outline" size="sm" className="gap-1" disabled={isLoading}>
+                      <Columns3 className="size-4" />
+                      Columns
+                    </Button>
+                  }
+                />
+                <Button
+                  disabled={isLoading}
+                  onClick={() => {
+                    setEditRole(null);
+                    setEditDialogOpen(true);
+                  }}
+                >
+                  <Plus />
+                  Add Role
+                </Button>
+              </>
             }
             isLoading={isLoading}
           />

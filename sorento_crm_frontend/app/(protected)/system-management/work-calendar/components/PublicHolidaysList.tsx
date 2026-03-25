@@ -10,11 +10,12 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Edit2, Trash2 } from 'lucide-react';
+import { Columns3, Edit2, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -115,6 +116,7 @@ export default function PublicHolidaysList() {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+      tableLayout={{ columnsVisibility: true }}
       >
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
@@ -122,15 +124,26 @@ export default function PublicHolidaysList() {
               <h3 className="text-base font-semibold">Public Holidays</h3>
               <p className="text-sm text-muted-foreground">Dates excluded from delivery calculations.</p>
             </div>
-            <Button
-              onClick={() => {
+            <div className="flex items-center gap-2">
+              <DataGridColumnVisibility
+                table={table}
+                trigger={
+                  <Button variant="outline" size="sm" className="gap-1">
+                    <Columns3 className="size-4" />
+                    Columns
+                  </Button>
+                }
+              />
+              <Button
+                onClick={() => {
                 setSelectedHoliday(null);
                 setIsFormOpen(true);
               }}
             >
               <Plus className="size-4 mr-2" />
               Add Holiday
-            </Button>
+              </Button>
+            </div>
           </CardHeader>
           <CardTable>
             <ScrollArea className="w-full">

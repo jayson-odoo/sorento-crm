@@ -11,10 +11,12 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search } from 'lucide-react';
+import { Search, Columns3 } from 'lucide-react';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -131,7 +133,9 @@ export default function EventLogList() {
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      tableLayout={{ columnsVisibility: true }}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between flex-wrap gap-3">
           <div className="relative">
@@ -167,6 +171,15 @@ export default function EventLogList() {
               ))}
             </SelectContent>
           </Select>
+                    <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
+                </Button>
+              }
+            />
         </CardHeader>
         <CardTable>
           <ScrollArea>

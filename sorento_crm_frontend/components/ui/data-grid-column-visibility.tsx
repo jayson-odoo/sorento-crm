@@ -1,14 +1,19 @@
-import { ReactNode } from 'react';
+import { ReactNode, useContext } from 'react';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuLabel,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Table } from '@tanstack/react-table';
+import { DataGridContext } from '@/components/ui/data-grid';
 
 function DataGridColumnVisibility<TData>({ table, trigger }: { table: Table<TData>; trigger: ReactNode }) {
+  const grid = useContext(DataGridContext);
+  const columnPreferences = grid?.columnPreferences;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
@@ -30,6 +35,17 @@ function DataGridColumnVisibility<TData>({ table, trigger }: { table: Table<TDat
               </DropdownMenuCheckboxItem>
             );
           })}
+        {columnPreferences?.resetToDefaults && <DropdownMenuSeparator />}
+        {columnPreferences?.resetToDefaults && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.preventDefault();
+              void columnPreferences.resetToDefaults?.();
+            }}
+          >
+            Reset columns
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

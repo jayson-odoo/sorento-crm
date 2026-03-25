@@ -1,7 +1,7 @@
 """Pydantic schemas for dynamic list query (filter DSL) and export."""
 from __future__ import annotations
 
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -134,3 +134,24 @@ class ListQueryResourceResponse(BaseModel):
     resource_key: str
     display_name: str
     description: Optional[str] = None
+
+
+class UserListColumnConfigPayload(BaseModel):
+    """
+    Per-user per-listing column preferences.
+
+    Stored as JSONB and merged with each listing's default column definitions on the frontend.
+    """
+
+    version: int = 1
+    columnOrder: Optional[List[str]] = None
+    columnVisibility: Optional[Dict[str, bool]] = None
+    # TanStack stores per-column widths in its columnSizing state.
+    # Persisted as { [columnId]: width } in JSONB.
+    columnSizing: Optional[Dict[str, float]] = None
+
+
+class UserListColumnConfigResponse(BaseModel):
+    listing_key: str
+    config: Optional[Dict[str, Any]] = None
+
