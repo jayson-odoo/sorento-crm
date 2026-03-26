@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
@@ -37,6 +38,7 @@ import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
 import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useTenantModules } from '@/hooks/useTenantModules';
+import { fetchListQueryFields } from '@/lib/list-query/listQueryService';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import {
   usePublishedWorkflowDefinitionsForSubmissionQuery,
@@ -51,6 +53,7 @@ export default function WorkflowSubmissionsList({
   fixedDefinitionId?: string;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
   const listQueryToolsEnabled =
     modulesLoading || enabledModuleKeys == null || enabledModuleKeys.has('workflow_forms');
@@ -94,6 +97,38 @@ export default function WorkflowSubmissionsList({
 
   const quickFilterActive = Boolean(quickStateCode.trim());
 
+  const wfDefForPayload =
+    fixedDefinitionId ||
+    (scopeDefinitionId && scopeDefinitionId !== '__all' ? scopeDefinitionId : undefined);
+
+  /** Required for list-query form-field metadata (published schema). */
+  const definitionIdForFilters = wfDefForPayload;
+
+  const { data: submissionFieldMetas } = useQuery({
+    queryKey: ['workflow-submissions-list-fields', definitionIdForFilters],
+    queryFn: () =>
+      fetchListQueryFields('workflow_form_submissions', {
+        definitionId: definitionIdForFilters,
+      }),
+    enabled: Boolean(definitionIdForFilters),
+    staleTime: 60_000,
+  });
+
+  const dynamicHeaderFields = useMemo(
+    () =>
+      (submissionFieldMetas ?? []).filter(
+        (f) => f.field_key.startsWith('hdr:') && f.filterable,
+      ),
+    [submissionFieldMetas],
+  );
+
+  const formatHeaderValue = (value: unknown): string => {
+    if (value === null || value === undefined || value === '') return '-';
+    if (Array.isArray(value)) return value.map((v) => String(v)).join(', ');
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  };
+
   const columns = useMemo<ColumnDef<WorkflowSubmission>[]>(
     () => [
       {
@@ -116,7 +151,7 @@ export default function WorkflowSubmissionsList({
         header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
         cell: ({ row }) => <Badge variant="secondary">{row.original.current_state_code}</Badge>,
         size: 130,
-        meta: { skeleton: <Skeleton className="h-5 w-16" /> },
+        meta: { headerTitle: 'State', skeleton: <Skeleton className="h-5 w-16" /> },
       },
       {
         accessorKey: 'updated_at',
@@ -124,8 +159,28 @@ export default function WorkflowSubmissionsList({
         cell: ({ row }) =>
           row.original.updated_at ? new Date(row.original.updated_at).toLocaleString() : '—',
         size: 180,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Updated', skeleton: <Skeleton className="h-4 w-28" /> },
       },
+      ...dynamicHeaderFields.map<ColumnDef<WorkflowSubmission>>((fieldMeta) => {
+        const fieldId = fieldMeta.field_key.slice(4);
+        const friendlyHeader = fieldMeta.label.replace(/^Header:\s*/i, '');
+        return {
+          id: fieldMeta.field_key,
+          header: friendlyHeader,
+          accessorFn: (row) => row.header_data?.[fieldId],
+          cell: ({ getValue }) => (
+            <span className="truncate block max-w-[24rem]">
+              {formatHeaderValue(getValue())}
+            </span>
+          ),
+          size: 220,
+          enableSorting: false,
+          meta: {
+            headerTitle: friendlyHeader,
+            skeleton: <Skeleton className="h-4 w-24" />,
+          },
+        };
+      }),
       {
         id: 'actions',
         header: '',
@@ -140,7 +195,7 @@ export default function WorkflowSubmissionsList({
         enableSorting: false,
       },
     ],
-    [defOptions],
+    [defOptions, dynamicHeaderFields],
   );
 
   const table = useReactTable({
@@ -159,13 +214,6 @@ export default function WorkflowSubmissionsList({
     manualFiltering: true,
   });
 
-  const wfDefForPayload =
-    fixedDefinitionId ||
-    (scopeDefinitionId && scopeDefinitionId !== '__all' ? scopeDefinitionId : undefined);
-
-  /** Required for list-query form-field metadata (published schema). */
-  const definitionIdForFilters = wfDefForPayload;
-
   useEffect(() => {
     if (!fixedDefinitionId && scopeDefinitionId === '__all') {
       setAdvancedFilter(null);
@@ -183,6 +231,7 @@ export default function WorkflowSubmissionsList({
         table={table}
         recordCount={data?.pagination.total ?? 0}
         isLoading={isLoading}
+        listingKey={wfDefForPayload ? `${pathname}::${wfDefForPayload}` : pathname}
         onRowClick={(row) => router.push(`/workflow-forms-management/submissions/${row.id}`)}
         tableLayout={{ columnsVisibility: true }}
       >

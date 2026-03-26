@@ -17,7 +17,7 @@ function DataGridColumnVisibility<TData>({ table, trigger }: { table: Table<TDat
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[150px]">
+      <DropdownMenuContent align="end" className="min-w-[150px] max-h-[60vh] overflow-y-auto">
         <DropdownMenuLabel className="font-medium">Toggle Columns</DropdownMenuLabel>
         {table
           .getAllColumns()
