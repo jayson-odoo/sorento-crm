@@ -10,8 +10,8 @@ export const UserAddSchema = z.object({
     message: 'Please enter a valid email address.',
   }),
   contact_number: z.string().optional().nullable(),
-  roleId: z.string().nonempty({
-    message: 'Role ID is required.',
+  roleIds: z.array(z.string()).min(1, {
+    message: 'At least one role is required.',
   }),
   agent_ids: z.array(z.string()).optional(),
   superior_id: z.string().optional().nullable(),

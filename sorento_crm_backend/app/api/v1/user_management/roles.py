@@ -104,8 +104,7 @@ async def delete_role(
     """Delete a role."""
     try:
         service = UserRoleService(db)
-        # Implement delete logic
-        return {"message": "Role deleted successfully"}
+        return service.delete_role(role_id)
     except HTTPException:
         raise
     except Exception as e:

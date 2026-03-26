@@ -27,14 +27,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Command,
   CommandEmpty,
   CommandGroup,
@@ -74,7 +66,7 @@ const UserAddDialog = ({
       name: '',
       email: '',
       contact_number: '',
-      roleId: '',
+      roleIds: [],
       superior_id: null,
     },
     mode: 'onSubmit',
@@ -102,12 +94,12 @@ const UserAddDialog = ({
 
   const mutation = useMutation({
     mutationFn: async (values: UserAddSchemaType) => {
-      const { roleId, superior_id, ...rest } = values;
+      const { roleIds, superior_id, ...rest } = values;
       const contactNumber = typeof rest.contact_number === 'string' ? rest.contact_number.trim() : null;
       const payload = {
         ...rest,
         contact_number: contactNumber || null,
-        role_ids: roleId ? [roleId] : undefined,
+        role_ids: roleIds,
         superior_id: superior_id === '__none__' || superior_id === '' ? null : superior_id,
       };
       const inviteUrl = '/api/user-management/users/invite';
@@ -226,28 +218,36 @@ const UserAddDialog = ({
               />
               <FormField
                 control={form.control}
-                name="roleId"
+                name="roleIds"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Role</FormLabel>
+                    <FormLabel>Roles</FormLabel>
                     <FormControl>
-                      <Select
-                        onValueChange={(value) => field.onChange(value)}
-                        defaultValue={field.value}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a role" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectGroup>
-                            {roleList?.map((role: UserRole) => (
-                              <SelectItem key={role.id} value={role.id}>
-                                {role.name}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
+                      <div className="flex flex-col gap-2 rounded-md border p-3">
+                        {(roleList ?? []).map((role: UserRole) => (
+                          <div
+                            key={role.id}
+                            className="flex flex-row items-center space-x-2"
+                          >
+                            <Checkbox
+                              id={`role-${role.id}`}
+                              checked={field.value?.includes(role.id)}
+                              onCheckedChange={(checked) => {
+                                const next = checked
+                                  ? [...(field.value ?? []), role.id]
+                                  : (field.value ?? []).filter((id) => id !== role.id);
+                                field.onChange(next);
+                              }}
+                            />
+                            <label
+                              htmlFor={`role-${role.id}`}
+                              className="font-normal cursor-pointer text-sm"
+                            >
+                              {role.name}
+                            </label>
+                          </div>
+                        ))}
+                      </div>
                     </FormControl>
                     <FormMessage />
                   </FormItem>

@@ -70,7 +70,11 @@ class UserRole(Base):
     is_default = Column(Boolean, default=False, nullable=False)
     
     user_assignments = relationship("UserRoleAssignment", back_populates="role", cascade="all, delete-orphan")
-    permissions = relationship("UserRolePermission", back_populates="role")
+    permissions = relationship(
+        "UserRolePermission",
+        back_populates="role",
+        passive_deletes=True,
+    )
 
 
 class UserRoleAssignment(Base):

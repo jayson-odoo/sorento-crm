@@ -547,14 +547,14 @@ class UserRoleService:
             "empty": total == 0
         }
 
-    def get_role(self, role_id: str):
-        """Get a role by ID with permissions loaded."""
-        role = (
-            self.db.query(UserRole)
-            .options(joinedload(UserRole.permissions).joinedload(UserRolePermission.permission))
-            .filter(UserRole.id == role_id)
-            .first()
-        )
+    def get_role(self, role_id: str, with_permissions: bool = True):
+        """Get a role by ID, optionally loading permissions."""
+        query = self.db.query(UserRole)
+        if with_permissions:
+            query = query.options(
+                joinedload(UserRole.permissions).joinedload(UserRolePermission.permission)
+            )
+        role = query.filter(UserRole.id == role_id).first()
         if not role:
             raise handle_not_found("User Role", role_id)
         return role
@@ -588,7 +588,9 @@ class UserRoleService:
     
     def update_role(self, role_id: str, role_data: UserRoleUpdate):
         """Update a role and optionally replace its permission assignments."""
-        role = self.get_role(role_id)
+        # Avoid loading permission relationship into session before bulk replace,
+        # which can trigger stale row-count errors on flush.
+        role = self.get_role(role_id, with_permissions=False)
         update_data = role_data.model_dump(exclude_unset=True)
         permission_ids = update_data.pop("permissions", None)
 
@@ -596,9 +598,13 @@ class UserRoleService:
             setattr(role, key, value)
 
         if permission_ids is not None:
-            self.db.query(UserRolePermission).filter(UserRolePermission.role_id == role_id).delete(
-                synchronize_session=False
+            existing_role_permissions = (
+                self.db.query(UserRolePermission)
+                .filter(UserRolePermission.role_id == role_id)
+                .all()
             )
+            for role_permission in existing_role_permissions:
+                self.db.delete(role_permission)
             self.db.flush()
             for perm_id in permission_ids:
                 self.db.add(UserRolePermission(role_id=role_id, permission_id=perm_id))
@@ -606,6 +612,29 @@ class UserRoleService:
         self.db.commit()
         self.db.refresh(role)
         return role
+
+    def delete_role(self, role_id: str):
+        """Delete a role when it is allowed by business rules."""
+        # Do not eager-load permissions here; it can leave stale child rows in session
+        # when deleting and trigger SQLAlchemy rowcount mismatch errors.
+        role = self.get_role(role_id, with_permissions=False)
+
+        if role.is_default:
+            raise handle_conflict("Default role cannot be deleted. Set another role as default first.")
+
+        assigned_users = (
+            self.db.query(UserRoleAssignment)
+            .filter(UserRoleAssignment.role_id == role_id)
+            .count()
+        )
+        if assigned_users > 0:
+            raise handle_conflict(
+                f"Cannot delete role: {assigned_users} user(s) are still assigned to this role."
+            )
+
+        self.db.delete(role)
+        self.db.commit()
+        return {"message": "Role deleted successfully", "deleted": True, "deleted_count": 1}
     
     def set_default_role(self, role_id: str):
         """Set a role as the default role."""

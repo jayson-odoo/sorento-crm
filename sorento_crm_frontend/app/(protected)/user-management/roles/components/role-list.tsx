@@ -15,7 +15,6 @@ import {
   Ellipsis,
   Columns3,
   Plus,
-  ShieldAlert,
   UserRound,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
@@ -130,18 +129,11 @@ const RoleList = () => {
         ),
         cell: ({ row, getValue }) => {
           const value = getValue() as string;
-          const isProtected = row.original.isProtected;
           const isDefault = row.original.isDefault;
 
           return (
             <div className="flex items-center flex-wrap gap-2">
               {value}
-              {isProtected && (
-                <Badge variant="outline">
-                  <ShieldAlert className="text-destructive" />
-                  system
-                </Badge>
-              )}
               {isDefault && (
                 <Badge variant="outline">
                   <UserRound className="text-success" />
@@ -234,7 +226,7 @@ const RoleList = () => {
                 Edit role
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={row.original.isProtected || row.original.isDefault}
+                disabled={row.original.isDefault}
                 onClick={() => {
                   setDefaultRole(row.original);
                   setDefaultDialogOpen(true);
@@ -245,7 +237,6 @@ const RoleList = () => {
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 variant="destructive"
-                disabled={row.original.isProtected}
                 onClick={() => {
                   setDeleteRole(row.original);
                   setDeleteDialogOpen(true);

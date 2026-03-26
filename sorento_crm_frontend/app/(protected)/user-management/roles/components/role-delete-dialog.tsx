@@ -27,9 +27,44 @@ const RoleDeleteDialog = ({
       const response = await apiFetch(`/api/user-management/roles/${role.id}`, {
         method: 'DELETE',
       });
-      if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete role'));
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          data?.message ??
+            data?.detail ??
+            (await extractApiError(response, 'Failed to delete role')),
+        );
+      }
+
+      const failedByContract =
+        data?.success === false ||
+        data?.deleted === false ||
+        (typeof data?.deleted_count === 'number' && data.deleted_count < 1);
+
+      if (failedByContract) {
+        throw new Error(
+          data?.message ?? data?.detail ?? 'Role could not be deleted.',
+        );
+      }
+
+      // Verify backend actually deleted/trashed the role before claiming success.
+      const verifyResponse = await apiFetch(
+        `/api/user-management/roles/${role.id}?_t=${Date.now()}`,
+      );
+
+      if (verifyResponse.ok) {
+        const verifyPayload = await verifyResponse.json().catch(() => null);
+        const roleAfterDelete = verifyPayload?.data ?? verifyPayload ?? null;
+        const isTrashed = Boolean(roleAfterDelete?.isTrashed ?? roleAfterDelete?.is_trashed);
+        if (roleAfterDelete?.id && !isTrashed) {
+          throw new Error(
+            'Role is still active after delete request. It may be protected or currently in use by users.',
+          );
+        }
+      }
     }}
-    queryKeysToInvalidate={[['user-roles']]}
+    queryKeysToInvalidate={[['user-roles'], ['user-role-select']]}
     successMessage="Role deleted successfully"
   />
 );
