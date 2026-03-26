@@ -169,6 +169,7 @@ async def escalate_sla_tracking_integration(
         assignee = service.get_escalation_assignee_for_tier(
             getattr(tracking, "source_entity_type", None),
             body.current_tier,
+            body.team_set_code,
         )
 
         tracking = service.escalate_tracking(

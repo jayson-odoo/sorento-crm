@@ -93,7 +93,7 @@ export interface AgentTeamMemberInfo {
 export interface AgentTeamAssignment {
   code: string;
   team_id: string;
-  /** Explicit tier: 1 = initial notifications, 2/3 = escalation (one team per tier per agent). */
+  /** Explicit tier: 1 = initial notifications, 2/3 = escalation (within the same code/team set). */
   tier?: number | null;
   team_name?: string;
   members?: AgentTeamMemberInfo[];

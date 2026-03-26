@@ -166,14 +166,14 @@ class TeamMember(Base):
 
 
 class AgentTeam(Base):
-    """Link access agent to a team with a context code and optional tier (1=initial, 2/3=escalation)."""
+    """Link access agent to a team set code and optional tier (1=initial, 2/3=escalation)."""
     __tablename__ = "agent_teams"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="CASCADE"), nullable=False)
-    code = Column(Text, nullable=False)  # Context code (e.g. marketing, tier_1, project_sales)
+    code = Column(Text, nullable=False)  # Team set code (e.g. marketing_product, retail_director)
     team_id = Column(UUID(as_uuid=False), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
-    tier = Column(Integer, nullable=True)  # Explicit tier: 1=initial notifications, 2/3=escalation (one per agent)
+    tier = Column(Integer, nullable=True)  # Explicit tier: 1/2/3 within a team set
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     agent = relationship("AccessAgent", back_populates="agent_teams")
@@ -184,7 +184,23 @@ class AgentTeam(Base):
         Index("ix_agent_teams_team_id", "team_id"),
         Index("ix_agent_teams_code", "code"),
         Index("ix_agent_teams_tier", "tier"),
-        Index("uq_agent_teams_agent_code", "agent_id", "code", unique=True),
+        # For non-tier assignments (legacy), keep one row per (agent, code).
+        Index(
+            "uq_agent_teams_agent_code_tier_null",
+            "agent_id",
+            "code",
+            unique=True,
+            postgresql_where=(tier.is_(None)),
+        ),
+        # For tiered assignments, allow one row per (agent, code, tier).
+        Index(
+            "uq_agent_teams_agent_code_tier_not_null",
+            "agent_id",
+            "code",
+            "tier",
+            unique=True,
+            postgresql_where=(tier.is_not(None)),
+        ),
     )
 
 

@@ -166,6 +166,7 @@ class ConversationSLAEscalateRequest(BaseModel):
     policy_id: str
     current_tier: int  # Escalated tier level
     escalation_reason: str
+    team_set_code: Optional[str] = None  # Optional team set key to resolve tier within a set
 
     @field_validator("respond_contact_id")
     @classmethod

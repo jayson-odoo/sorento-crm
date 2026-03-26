@@ -626,7 +626,10 @@ class ConversationSLATrackingService:
     }
 
     def get_escalation_assignee_for_tier(
-        self, source_entity_type: Optional[str], target_tier: int
+        self,
+        source_entity_type: Optional[str],
+        target_tier: int,
+        team_set_code: Optional[str] = None,
     ) -> dict:
         """
         Resolve the next assignee for escalation to the given tier using agent tier-team and round-robin.
@@ -645,10 +648,19 @@ class ConversationSLATrackingService:
                 f"No access agent found with code '{agent_code}'. Cannot resolve escalation assignee. "
                 "Create the Access Agent and assign tier teams (tier 1, 2, 3)."
             )
-        team_id = agent_svc.get_team_id_by_tier(agent_id, target_tier)
+        team_id = agent_svc.get_team_id_by_tier(
+            agent_id,
+            target_tier,
+            team_set_code=team_set_code,
+        )
         if not team_id:
+            suffix = (
+                f" in team set '{team_set_code}'"
+                if team_set_code
+                else ""
+            )
             raise handle_validation_error(
-                f"No team assigned for agent '{agent_code}' with tier {target_tier}. "
+                f"No team assigned for agent '{agent_code}' with tier {target_tier}{suffix}. "
                 f"Add a Team Assignment with Tier = {target_tier} for this agent."
             )
         assignee = agent_svc.get_next_assignee(agent_id, team_id)

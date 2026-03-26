@@ -56,13 +56,13 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
     return m;
   }, [teamsList]);
 
-  const toggleTeam = (code: string) => {
+  const toggleTeam = (assignmentKey: string) => {
     setExpandedTeams((prev) => {
       const next = new Set(prev);
-      if (next.has(code)) {
-        next.delete(code);
+      if (next.has(assignmentKey)) {
+        next.delete(assignmentKey);
       } else {
-        next.add(code);
+        next.add(assignmentKey);
       }
       return next;
     });
@@ -184,16 +184,17 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
           ) : (
             <div className="space-y-2">
               {assignments.map((a) => {
-                const isExpanded = expandedTeams.has(a.code);
+                const assignmentKey = `${a.code}::${a.tier ?? 'none'}::${a.team_id}`;
+                const isExpanded = expandedTeams.has(assignmentKey);
                 const members = a.members ?? [];
                 const lastAssignedId = a.last_assigned?.id;
                 const nextInLineId = a.next_in_line?.id;
 
                 return (
                   <Collapsible
-                    key={a.code}
+                    key={assignmentKey}
                     open={isExpanded}
-                    onOpenChange={() => toggleTeam(a.code)}
+                    onOpenChange={() => toggleTeam(assignmentKey)}
                   >
                     <div className="border rounded-lg">
                       <CollapsibleTrigger className="w-full">

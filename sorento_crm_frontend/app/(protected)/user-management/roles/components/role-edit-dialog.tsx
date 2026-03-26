@@ -16,7 +16,7 @@ import {
   AlertTitle,
 } from '@/components/ui/alert';
 import { Badge, BadgeButton } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, ButtonArrow } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Command,
@@ -76,7 +76,9 @@ const RoleEditDialog = ({
   const [sourceRoleId, setSourceRoleId] = useState<string>('');
   const [isCopyingPermissions, setIsCopyingPermissions] = useState(false);
   const [selectedUserToAssign, setSelectedUserToAssign] = useState<string>('');
+  const [assignUserOpen, setAssignUserOpen] = useState(false);
   const [isAssigningUser, setIsAssigningUser] = useState(false);
+  const [unassigningUserId, setUnassigningUserId] = useState<string | null>(null);
   const { data: permissionList } = usePermissionSelectQuery();
   const { data: roleList } = useRoleSelectQuery();
   const { data: usersSelect } = useQuery({
@@ -350,6 +352,61 @@ const RoleEditDialog = ({
     }
   };
 
+  const unassignUserFromRole = async (userId: string, userLabel: string) => {
+    if (!role?.id || !userId) {
+      return;
+    }
+
+    setUnassigningUserId(userId);
+    try {
+      const userResponse = await apiFetch(`/api/user-management/users/${userId}`);
+      if (!userResponse.ok) {
+        const err = await userResponse.json().catch(() => ({}));
+        throw new Error(err?.message ?? err?.detail ?? 'Failed to load user.');
+      }
+
+      const userPayload = await userResponse.json();
+      const selectedUser = userPayload?.data ?? userPayload ?? {};
+      const existingRoleIds = Array.from(
+        new Set([
+          ...((selectedUser?.roles ?? []).map((r: { id: string }) => r.id) ?? []),
+          ...(selectedUser?.roleId ? [selectedUser.roleId] : []),
+        ]),
+      ) as string[];
+
+      const nextRoleIds = existingRoleIds.filter((id) => id !== role.id);
+      if (nextRoleIds.length === existingRoleIds.length) {
+        toast.info(`${userLabel} is not assigned to this role.`, {
+          position: 'top-center',
+        });
+        return;
+      }
+
+      const response = await apiFetch(`/api/user-management/users/${userId}/roles`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role_ids: nextRoleIds }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err?.message ?? err?.detail ?? 'Failed to unassign user from role.');
+      }
+
+      toast.success(`${userLabel} removed from ${role.name}.`, {
+        position: 'top-center',
+      });
+      queryClient.invalidateQueries({ queryKey: ['role-assigned-users', role.id] });
+      queryClient.invalidateQueries({ queryKey: ['user-users'] });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to unassign user.';
+      toast.error(message, { position: 'top-center' });
+    } finally {
+      setUnassigningUserId(null);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent className="max-h-[90vh] overflow-hidden flex flex-col">
@@ -419,6 +476,17 @@ const RoleEditDialog = ({
                         assignedUsers.map((user) => (
                           <Badge key={user.id} variant="secondary">
                             {user.name || user.email || user.id}
+                            <BadgeButton
+                              disabled={unassigningUserId === user.id}
+                              onClick={() =>
+                                unassignUserFromRole(
+                                  user.id,
+                                  user.name || user.email || user.id,
+                                )
+                              }
+                            >
+                              <X />
+                            </BadgeButton>
                           </Badge>
                         ))
                       ) : (
@@ -429,24 +497,68 @@ const RoleEditDialog = ({
                     </div>
                   </ScrollArea>
                   <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <Select
-                      value={selectedUserToAssign}
-                      onValueChange={setSelectedUserToAssign}
-                      disabled={isAssigningUser}
-                    >
-                      <SelectTrigger className="w-full sm:w-[22rem]">
-                        <SelectValue placeholder="Select user to assign" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(usersSelect ?? []).map(
-                          (user: { id: string; name?: string | null; email?: string | null }) => (
-                            <SelectItem key={user.id} value={user.id}>
-                              {user.name || user.email || user.id}
-                            </SelectItem>
-                          ),
-                        )}
-                      </SelectContent>
-                    </Select>
+                    <Popover open={assignUserOpen} onOpenChange={setAssignUserOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          role="combobox"
+                          mode="input"
+                          aria-expanded={assignUserOpen}
+                          className="w-full sm:w-[22rem] justify-between"
+                          disabled={isAssigningUser}
+                        >
+                          <span
+                            className={cn(
+                              'truncate',
+                              !selectedUserToAssign && 'text-muted-foreground',
+                            )}
+                          >
+                            {selectedUserToAssign
+                              ? ((usersSelect ?? []).find(
+                                  (u: { id: string }) => u.id === selectedUserToAssign,
+                                ) as { name?: string | null; email?: string | null } | undefined)?.name ||
+                                ((usersSelect ?? []).find(
+                                  (u: { id: string }) => u.id === selectedUserToAssign,
+                                ) as { name?: string | null; email?: string | null } | undefined)?.email ||
+                                selectedUserToAssign
+                              : 'Select user to assign'}
+                          </span>
+                          <ButtonArrow />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        className="w-(--radix-popper-anchor-width) p-0"
+                        align="start"
+                      >
+                        <Command>
+                          <CommandInput placeholder="Search user by name or email..." />
+                          <CommandList>
+                            <CommandEmpty>No user found.</CommandEmpty>
+                            <CommandGroup>
+                              {(usersSelect ?? []).map(
+                                (user: {
+                                  id: string;
+                                  name?: string | null;
+                                  email?: string | null;
+                                }) => (
+                                  <CommandItem
+                                    key={user.id}
+                                    value={`${user.name ?? ''} ${user.email ?? ''}`.trim() || user.id}
+                                    onSelect={() => {
+                                      setSelectedUserToAssign(user.id);
+                                      setAssignUserOpen(false);
+                                    }}
+                                  >
+                                    {user.name || user.email || user.id}
+                                  </CommandItem>
+                                ),
+                              )}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                     <Button
                       type="button"
                       variant="outline"

@@ -1326,16 +1326,28 @@ class AccessAgentService:
         )
         return str(row[0]) if row else None
 
-    def get_team_id_by_tier(self, agent_id: str, tier: int) -> str | None:
-        """Resolve team_id for agent+tier (1=initial, 2/3=escalation). Returns None if not found."""
+    def get_team_id_by_tier(
+        self, agent_id: str, tier: int, team_set_code: Optional[str] = None
+    ) -> str | None:
+        """Resolve team_id for agent+tier, optionally constrained to one team set code."""
         if tier is None or tier < 1 or tier > 3:
             return None
-        row = (
-            self.db.query(AgentTeam.team_id)
-            .filter(AgentTeam.agent_id == agent_id, AgentTeam.tier == tier)
-            .first()
+
+        query = self.db.query(AgentTeam.team_id).filter(
+            AgentTeam.agent_id == agent_id,
+            AgentTeam.tier == tier,
         )
-        return str(row[0]) if row else None
+        if team_set_code:
+            query = query.filter(AgentTeam.code == team_set_code)
+
+        rows = query.all()
+        if not rows:
+            return None
+        if len(rows) > 1 and not team_set_code:
+            raise handle_conflict(
+                f"Multiple team sets found for tier {tier}. Provide team_set_code to resolve escalation target."
+            )
+        return str(rows[0][0])
 
     def get_agent_id_by_code(self, code: str) -> str | None:
         """Resolve agent_id from access agent code. Returns None if not found."""
