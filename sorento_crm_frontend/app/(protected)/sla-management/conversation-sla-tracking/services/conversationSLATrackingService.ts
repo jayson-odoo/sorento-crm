@@ -98,3 +98,34 @@ export async function syncAssigneeFromRespond(trackingId: string): Promise<SyncA
   }
   return response.json();
 }
+
+export interface ConversationSLATestOverridesBody {
+  assigned_to_id?: string | null;
+  current_tier_started_at?: string;
+  initiated_at?: string;
+}
+
+export async function postConversationSLATestOverrides(
+  trackingId: string,
+  body: ConversationSLATestOverridesBody,
+): Promise<{ message: string }> {
+  const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking/${trackingId}/test-overrides`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: 'Update failed' }));
+    const detail = err.detail;
+    const msg =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: { msg?: string }) => d.msg).filter(Boolean).join(' ')
+          : typeof detail === 'object' && detail !== null && 'message' in detail
+            ? String((detail as { message?: string }).message)
+            : 'Update failed';
+    throw new Error(msg);
+  }
+  return response.json();
+}

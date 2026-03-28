@@ -274,43 +274,86 @@ export function formatDateTime(input: Date | string | number): string {
   return `${day}/${month}/${year}, ${time}`;
 }
 
+/** Display approximations (not calendar months). */
+const SEC_PER_DAY = 86400;
+const SEC_PER_MONTH = 30 * SEC_PER_DAY;
+const SEC_PER_YEAR = 365 * SEC_PER_DAY;
+
+function pluralUnit(n: number, singular: string, plural: string): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
+
+/**
+ * Under 24h: hours / minutes / seconds only (e.g. 23h stays 23h).
+ * 24h+: years (365d), months (30d), days, then h / m / s.
+ */
+function formatDurationFromTotalSeconds(
+  totalSeconds: number,
+  mode: 'compact' | 'withSeconds',
+): string {
+  if (totalSeconds < SEC_PER_DAY) {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    const parts: string[] = [];
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+    if (mode === 'withSeconds') {
+      parts.push(`${seconds}s`);
+    } else if (seconds > 0 || parts.length === 0) {
+      parts.push(`${seconds}s`);
+    }
+    return parts.join(' ');
+  }
+
+  let r = totalSeconds;
+  const years = Math.floor(r / SEC_PER_YEAR);
+  r %= SEC_PER_YEAR;
+  const months = Math.floor(r / SEC_PER_MONTH);
+  r %= SEC_PER_MONTH;
+  const days = Math.floor(r / SEC_PER_DAY);
+  r %= SEC_PER_DAY;
+  const h = Math.floor(r / 3600);
+  r %= 3600;
+  const m = Math.floor(r / 60);
+  const s = r % 60;
+
+  const parts: string[] = [];
+  if (years > 0) parts.push(pluralUnit(years, 'year', 'years'));
+  if (months > 0) parts.push(pluralUnit(months, 'month', 'months'));
+  if (days > 0) parts.push(pluralUnit(days, 'day', 'days'));
+
+  if (mode === 'withSeconds') {
+    parts.push(`${h}h`, `${m}m`, `${s}s`);
+    return parts.join(' ');
+  }
+
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0) parts.push(`${m}m`);
+  if (s > 0 || parts.length === 0) parts.push(`${s}s`);
+
+  return parts.join(' ');
+}
+
 /**
  * Format a duration in milliseconds to a human-readable string with hours, minutes, and seconds
  * @param milliseconds - Duration in milliseconds (can be negative for overdue times)
- * @returns Formatted string like "2h 30m 15s" or "-1h 5m 20s" for overdue
+ * @returns Under 24h: "2h 30m 15s". 24h+: "14 days 22h 47m 21s". Overdue: leading "-".
  */
 export function formatDuration(milliseconds: number): string {
   const isNegative = milliseconds < 0;
-  const absMs = Math.abs(milliseconds);
-  
-  const totalSeconds = Math.floor(absMs / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  
-  const parts: string[] = [];
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
-  if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
-  
-  const formatted = parts.join(' ');
+  const totalSeconds = Math.floor(Math.abs(milliseconds) / 1000);
+  const formatted = formatDurationFromTotalSeconds(totalSeconds, 'compact');
   return isNegative ? `-${formatted}` : formatted;
 }
 
 /**
- * Format a duration in milliseconds to a string that always includes seconds (e.g. "1h 2m 0s", "2m 35s")
+ * Format a duration in milliseconds; always includes seconds under 24h ("1h 2m 0s").
+ * For 24h+, includes h/m/s after days (e.g. "1 day 1h 0m 0s").
  */
 export function formatDurationWithSeconds(milliseconds: number): string {
   const isNegative = milliseconds < 0;
-  const absMs = Math.abs(milliseconds);
-  const totalSeconds = Math.floor(absMs / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const parts: string[] = [];
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
-  parts.push(`${seconds}s`);
-  const formatted = parts.join(' ');
+  const totalSeconds = Math.floor(Math.abs(milliseconds) / 1000);
+  const formatted = formatDurationFromTotalSeconds(totalSeconds, 'withSeconds');
   return isNegative ? `-${formatted}` : formatted;
 }

@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ConversationSLATrackingDetail } from '../types/conversationSLATracking.types';
-import { getConversationSLATracking, getConversationSLATrackingDetail, getSLATrackingDashboardMetrics, deleteConversationSLATracking, deleteConversationSLAEventLog, getConversationSLAEventLogs, syncAssigneeFromRespond } from '../services/conversationSLATrackingService';
+import { getConversationSLATracking, getConversationSLATrackingDetail, getSLATrackingDashboardMetrics, deleteConversationSLATracking, deleteConversationSLAEventLog, getConversationSLAEventLogs, syncAssigneeFromRespond, postConversationSLATestOverrides, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
 import type { ConversationSLAEventLogsParams } from '../services/conversationSLATrackingService';
 
 export function useConversationSLATracking(params: DataGridApiFetchParams & { policy_id?: string; status?: string; assigned_to?: string }) {
@@ -82,6 +82,22 @@ export function useSyncAssigneeFromRespond() {
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Failed to sync assignee from Respond.io.');
+    },
+  });
+}
+
+export function useConversationSLATestOverrides(trackingId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ConversationSLATestOverridesBody) =>
+      postConversationSLATestOverrides(trackingId, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking'] });
+      queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking-detail', trackingId] });
+      toast.success('Tracking updated.');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Update failed.');
     },
   });
 }

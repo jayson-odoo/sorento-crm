@@ -90,7 +90,8 @@ api_router.include_router(
     sla.router,
     prefix="/sla-management",
     tags=["sla"],
-    dependencies=[Depends(require_module_enabled("sla"))],
+    # JWT or X-API-Key (same EXTERNAL_API_KEY as /external/*) for n8n / automation
+    dependencies=[Depends(require_module_enabled_with_api_key("sla"))],
 )
 api_router.include_router(
     resources.router,

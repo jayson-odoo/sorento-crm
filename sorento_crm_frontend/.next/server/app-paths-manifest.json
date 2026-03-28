@@ -1,3 +1,7 @@
 {
-  "/api/v1/external/[...path]/route": "app/api/v1/external/[...path]/route.js"
+  "/api/auth/token/route": "app/api/auth/token/route.js",
+  "/(protected)/system-management/work-calendar/page": "app/(protected)/system-management/work-calendar/page.js",
+  "/(auth)/signin/page": "app/(auth)/signin/page.js",
+  "/(protected)/sla-management/conversation-sla-tracking/[id]/page": "app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js",
+  "/(protected)/user-management/roles/page": "app/(protected)/user-management/roles/page.js"
 }

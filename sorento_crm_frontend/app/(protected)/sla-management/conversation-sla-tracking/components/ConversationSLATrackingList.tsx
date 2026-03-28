@@ -284,7 +284,11 @@ export default function ConversationSLATrackingList() {
           const o = row.original;
           if (o.is_responded) {
             const overdue = isResponseOverdue(o);
-            const str = getResponseDuration(o) ?? (o.response_time != null ? formatDurationWithSeconds(o.response_time * 3600) : '—');
+            const str =
+              getResponseDuration(o) ??
+              (o.response_time != null
+                ? formatDurationWithSeconds(Number(o.response_time) * 3600 * 1000)
+                : '—');
             return (
               <div className="space-y-0.5">
                 <div className="text-xs text-muted-foreground">Response time</div>

@@ -141,6 +141,23 @@ class ConversationSLATrackingUpdate(BaseModel):
         return self
 
 
+class ConversationSLATestOverrideRequest(BaseModel):
+    """Gated by sla_management.conversation_sla_tracking.test_override. At least one field required in the request body."""
+    assigned_to_id: Optional[str] = None
+    current_tier_started_at: Optional[datetime] = None
+    initiated_at: Optional[datetime] = None
+
+    @model_validator(mode='after')
+    def at_least_one_field(self):
+        updatable = {"assigned_to_id", "current_tier_started_at", "initiated_at"}
+        if not (self.model_fields_set & updatable):
+            raise ValueError(
+                "Provide at least one of assigned_to_id (including null to unassign), "
+                "current_tier_started_at, or initiated_at."
+            )
+        return self
+
+
 class ConversationSLATrackingStatusUpdate(BaseModel):
     is_responded: Optional[bool] = None
     responded_at: Optional[datetime] = None

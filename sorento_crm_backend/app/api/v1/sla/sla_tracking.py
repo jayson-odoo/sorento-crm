@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import httpx
 from app.database import get_db
-from app.dependencies import get_current_user_or_api_key
+from app.dependencies import get_current_user_or_api_key, require_permission
 from app.services.sla_service import ConversationSLATrackingService, to_naive_datetime, compute_tracking_timings
 from app.services.integration_service import IntegrationLogService
 from app.schemas.sla import (
@@ -18,6 +18,7 @@ from app.schemas.sla import (
     ConversationSLAEventLogResponse,
     ConversationSLATrackingStatusUpdate,
     ConversationSLAEscalateRequest,
+    ConversationSLATestOverrideRequest,
 )
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
@@ -387,6 +388,28 @@ async def sync_assignee_from_respond(
         raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail={"message": "Respond.io API timed out", "code": "TIMEOUT"})
     except httpx.ConnectError:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"message": "Failed to connect to Respond.io", "code": "CONNECTION_ERROR"})
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{tracking_id}/test-overrides", status_code=status.HTTP_200_OK)
+async def post_sla_tracking_test_overrides(
+    tracking_id: UUID,
+    body: ConversationSLATestOverrideRequest,
+    _current_user: dict = Depends(
+        require_permission("sla_management.conversation_sla_tracking.test_override")
+    ),
+    db: Session = Depends(get_db),
+):
+    """Override assignee or SLA timestamps (permission-gated; for testing workflows)."""
+    try:
+        service = ConversationSLATrackingService(db)
+        service.admin_test_override_tracking(
+            str(tracking_id), body.model_dump(exclude_unset=True)
+        )
+        return {"message": "Updated"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 

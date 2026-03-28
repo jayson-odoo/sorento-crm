@@ -1190,7 +1190,67 @@ class ConversationSLATrackingService:
         self.db.commit()
         self.db.refresh(tracking)
         return tracking
-    
+
+    def admin_test_override_tracking(self, tracking_id: str, updates: dict):
+        """
+        Apply assignee / timestamp overrides for testing. Recalculates due_at when tier start changes.
+        `updates` should be model_dump(exclude_unset=True) from ConversationSLATestOverrideRequest.
+        """
+        from app.models.user import User
+
+        if not updates:
+            raise handle_validation_error("No fields to update.")
+
+        tracking = self.get_tracking(tracking_id)
+
+        if "assigned_to_id" in updates:
+            aid = updates["assigned_to_id"]
+            if aid is None or (isinstance(aid, str) and not str(aid).strip()):
+                tracking.assigned_to_id = None
+                tracking.assigned_to = None
+            else:
+                user = self.db.query(User).filter(User.id == str(aid).strip()).first()
+                if not user:
+                    raise handle_validation_error("User not found for assigned_to_id.")
+                tracking.assigned_to_id = user.id
+                tracking.assigned_to = (
+                    str(user.respond_user_id) if user.respond_user_id is not None else None
+                )
+
+        if "current_tier_started_at" in updates:
+            raw = updates["current_tier_started_at"]
+            if isinstance(raw, str):
+                raw = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if not isinstance(raw, datetime):
+                raise handle_validation_error("current_tier_started_at must be a datetime.")
+            started = _to_aware_utc(raw)
+            tracking.current_tier_started_at = started
+
+            tier = self.db.query(SLAPolicyTier).filter(
+                SLAPolicyTier.policy_id == tracking.policy_id,
+                SLAPolicyTier.tier_level == tracking.current_tier,
+            ).first()
+            if not tier:
+                raise handle_validation_error(
+                    f"No tier {tracking.current_tier} for this policy."
+                )
+            response_hours = tier.response_hours if tier.response_hours is not None else 24
+            resolution_hours = getattr(tier, "resolution_hours", None) or 24
+            tracking.due_at = started + timedelta(hours=response_hours)
+            tracking.due_at_resolution = started + timedelta(hours=resolution_hours)
+
+        if "initiated_at" in updates:
+            raw = updates["initiated_at"]
+            if isinstance(raw, str):
+                raw = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if not isinstance(raw, datetime):
+                raise handle_validation_error("initiated_at must be a datetime.")
+            tracking.initiated_at = _to_aware_utc(raw)
+
+        self.db.commit()
+        self.db.refresh(tracking)
+        return tracking
+
     def delete_tracking(self, tracking_id: str):
         """Delete a tracking record."""
         tracking = self.get_tracking(tracking_id)

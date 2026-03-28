@@ -56,6 +56,13 @@ PERMISSION_REGISTRY.extend(_crud("complaint_management", "complaints", "Complain
 # SLA Management
 PERMISSION_REGISTRY.extend(_crud("sla_management", "sla_policies", "SLA Policies"))
 PERMISSION_REGISTRY.extend(_crud("sla_management", "conversation_sla_tracking", "Conversation SLA Tracking"))
+PERMISSION_REGISTRY.append(
+    {
+        "slug": "sla_management.conversation_sla_tracking.test_override",
+        "name": "Conversation SLA test overrides",
+        "description": "Override assignee and SLA timestamps on a tracking record for testing (non-production use).",
+    }
+)
 PERMISSION_REGISTRY.extend(_crud("sla_management", "escalation_logs", "SLA Event Logs"))
 
 # Master Data (Products)

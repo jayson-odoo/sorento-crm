@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,10 +18,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useConversationSLATrackingDetail, useConversationSLATracking, useDeleteConversationSLATracking, useSyncAssigneeFromRespond } from '../hooks/useConversationSLATracking';
+import { useConversationSLATrackingDetail, useConversationSLATracking, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
 import { formatDate, formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info, Settings, ExternalLink } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info, Settings, ExternalLink, CalendarClock, UserCog } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Popover,
@@ -32,11 +32,50 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { cn } from '@/lib/utils';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { getUsersSelect } from '@/services/userSelectService';
+import { toast } from 'sonner';
 import RecordNavigation from '@/components/common/RecordNavigation';
 
 const RESPOND_IO_INBOX_BASE_URL = 'https://app.respond.io/space/364817/inbox';
+
+const SLA_TEST_OVERRIDE_PERMISSION = 'sla_management.conversation_sla_tracking.test_override';
+
+function toDatetimeLocalInputValue(isoLike: string | Date | undefined | null): string {
+  if (!isoLike) return '';
+  const d = isoLike instanceof Date ? isoLike : parseDateTimeAsUTC(isoLike);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function datetimeLocalToISO(local: string): string {
+  const d = new Date(local);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error('Invalid date');
+  }
+  return d.toISOString();
+}
 
 interface ConversationSLATrackingDetailProps {
   trackingId: string;
@@ -45,6 +84,7 @@ interface ConversationSLATrackingDetailProps {
 export default function ConversationSLATrackingDetail({ trackingId }: ConversationSLATrackingDetailProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const canSlaTestOverride = useHasPermission(SLA_TEST_OVERRIDE_PERMISSION);
   const { data: tracking, isLoading } = useConversationSLATrackingDetail(trackingId);
   const navigationParams = useMemo(
     () => ({
@@ -67,6 +107,41 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
   const [resolutionOpen, setResolutionOpen] = useState(false);
   const deleteMutation = useDeleteConversationSLATracking();
   const syncAssigneeMutation = useSyncAssigneeFromRespond();
+  const testOverrideMutation = useConversationSLATestOverrides(trackingId);
+
+  const [assigneeDialogOpen, setAssigneeDialogOpen] = useState(false);
+  const [tierStartedDialogOpen, setTierStartedDialogOpen] = useState(false);
+  const [initiatedDialogOpen, setInitiatedDialogOpen] = useState(false);
+  const [assigneeComboOpen, setAssigneeComboOpen] = useState(false);
+  const [selectedAssigneeId, setSelectedAssigneeId] = useState('');
+  const [tierStartedLocal, setTierStartedLocal] = useState('');
+  const [initiatedLocal, setInitiatedLocal] = useState('');
+
+  const { data: usersSelect = [] } = useQuery({
+    queryKey: ['users-select', 'sla-test-override'],
+    queryFn: () => getUsersSelect(),
+    enabled: assigneeDialogOpen && canSlaTestOverride,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  useEffect(() => {
+    if (assigneeDialogOpen && tracking) {
+      setSelectedAssigneeId(tracking.assigned_to_id ?? '');
+      setAssigneeComboOpen(false);
+    }
+  }, [assigneeDialogOpen, tracking]);
+
+  useEffect(() => {
+    if (tierStartedDialogOpen && tracking) {
+      setTierStartedLocal(toDatetimeLocalInputValue(tracking.current_tier_started_at));
+    }
+  }, [tierStartedDialogOpen, tracking]);
+
+  useEffect(() => {
+    if (initiatedDialogOpen && tracking) {
+      setInitiatedLocal(toDatetimeLocalInputValue(tracking.initiated_at));
+    }
+  }, [initiatedDialogOpen, tracking]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -246,6 +321,23 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                   Open conversation
                 </DropdownMenuItem>
               )}
+              {canSlaTestOverride && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setAssigneeDialogOpen(true)}>
+                    <UserCog className="size-4 mr-2" />
+                    Overwrite assignee
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setTierStartedDialogOpen(true)}>
+                    <CalendarClock className="size-4 mr-2" />
+                    Set current tier started at
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setInitiatedDialogOpen(true)}>
+                    <CalendarClock className="size-4 mr-2" />
+                    Set initiated at
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
           <Button
@@ -258,6 +350,163 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
           </Button>
         </div>
       </div>
+
+      <Dialog open={assigneeDialogOpen} onOpenChange={setAssigneeDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Overwrite assignee</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <Label>User</Label>
+            <Popover open={assigneeComboOpen} onOpenChange={setAssigneeComboOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={assigneeComboOpen}
+                  className="w-full justify-between font-normal"
+                >
+                  <span className={cn('truncate', !selectedAssigneeId && 'text-muted-foreground')}>
+                    {selectedAssigneeId
+                      ? usersSelect.find((u) => u.id === selectedAssigneeId)?.name ||
+                        usersSelect.find((u) => u.id === selectedAssigneeId)?.email ||
+                        selectedAssigneeId
+                      : 'No assignee'}
+                  </span>
+                  <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
+                <Command>
+                  <CommandInput placeholder="Search by name or email…" />
+                  <CommandList>
+                    <CommandEmpty>No user found.</CommandEmpty>
+                    <CommandGroup>
+                      <CommandItem
+                        value="__no_assignee unassign"
+                        onSelect={() => {
+                          setSelectedAssigneeId('');
+                          setAssigneeComboOpen(false);
+                        }}
+                      >
+                        No assignee
+                      </CommandItem>
+                      {usersSelect.map((user) => (
+                        <CommandItem
+                          key={user.id}
+                          value={`${user.name ?? ''} ${user.email}`.trim()}
+                          onSelect={() => {
+                            setSelectedAssigneeId(user.id);
+                            setAssigneeComboOpen(false);
+                          }}
+                        >
+                          {user.name || user.email}
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setAssigneeDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={testOverrideMutation.isPending}
+              onClick={() => {
+                testOverrideMutation.mutate(
+                  { assigned_to_id: selectedAssigneeId === '' ? null : selectedAssigneeId },
+                  { onSuccess: () => setAssigneeDialogOpen(false) },
+                );
+              }}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tierStartedDialogOpen} onOpenChange={setTierStartedDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Set current tier started at</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-1">
+            <Label htmlFor="tier-started-local">Date and time</Label>
+            <Input
+              id="tier-started-local"
+              type="datetime-local"
+              value={tierStartedLocal}
+              onChange={(e) => setTierStartedLocal(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setTierStartedDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={!tierStartedLocal || testOverrideMutation.isPending}
+              onClick={() => {
+                try {
+                  const iso = datetimeLocalToISO(tierStartedLocal);
+                  testOverrideMutation.mutate(
+                    { current_tier_started_at: iso },
+                    { onSuccess: () => setTierStartedDialogOpen(false) },
+                  );
+                } catch {
+                  toast.error('Invalid date and time.');
+                }
+              }}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={initiatedDialogOpen} onOpenChange={setInitiatedDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Set initiated at</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-1">
+            <Label htmlFor="initiated-local">Date and time</Label>
+            <Input
+              id="initiated-local"
+              type="datetime-local"
+              value={initiatedLocal}
+              onChange={(e) => setInitiatedLocal(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setInitiatedDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={!initiatedLocal || testOverrideMutation.isPending}
+              onClick={() => {
+                try {
+                  const iso = datetimeLocalToISO(initiatedLocal);
+                  testOverrideMutation.mutate(
+                    { initiated_at: iso },
+                    { onSuccess: () => setInitiatedDialogOpen(false) },
+                  );
+                } catch {
+                  toast.error('Invalid date and time.');
+                }
+              }}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
