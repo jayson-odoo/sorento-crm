@@ -6,11 +6,63 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
+from app.models.sla import SLAPolicy, SLAPolicyTier
 from app.services.calendar_service import CalendarService
 from app.services.sla_service import ConversationSLATrackingService
 from app.services.user_service import AccessAgentService
 
 router = APIRouter()
+
+_SLA_FIELDS_EMPTY = {
+    "policy_id": None,
+    "tier_response_hours": None,
+    "tier_resolution_hours": None,
+}
+
+
+def _resolve_sla_policy_tier_for_next_assignee(db: Session, body: dict) -> dict:
+    """
+    When policy_code and tier are both sent, load SLA policy id and tier hour targets.
+    When neither is sent, return nulls for those fields. If only one is sent, 400.
+    """
+    policy_code = (body.get("policy_code") or body.get("sla_policy_code") or "").strip()
+    tier_raw = body.get("tier") if "tier" in body else body.get("tier_level")
+
+    if not policy_code and tier_raw is None:
+        return dict(_SLA_FIELDS_EMPTY)
+    if not policy_code or tier_raw is None:
+        raise HTTPException(
+            status_code=400,
+            detail="policy_code and tier must both be provided together.",
+        )
+    try:
+        tier_level = int(tier_raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="tier must be an integer.")
+
+    policy = db.query(SLAPolicy).filter(SLAPolicy.code == policy_code).first()
+    if not policy:
+        raise HTTPException(status_code=404, detail=f"No SLA policy found with code={policy_code!r}")
+
+    tier_row = (
+        db.query(SLAPolicyTier)
+        .filter(
+            SLAPolicyTier.policy_id == policy.id,
+            SLAPolicyTier.tier_level == tier_level,
+        )
+        .first()
+    )
+    if not tier_row:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No tier {tier_level} for SLA policy code={policy_code!r}",
+        )
+
+    return {
+        "policy_id": policy.id,
+        "tier_response_hours": tier_row.response_hours,
+        "tier_resolution_hours": tier_row.resolution_hours,
+    }
 
 
 def _format_assignee_response(result: dict) -> dict:
@@ -109,6 +161,7 @@ def _enrich_n8n_response(
     is_working_hours: bool,
     is_already_assigned: bool,
     conversation_assignee: Optional[dict] = None,
+    sla_policy_tier: Optional[dict] = None,
 ) -> dict:
     status_flags: list[str] = []
     if not is_working_hours:
@@ -129,6 +182,8 @@ def _enrich_n8n_response(
         )
 
     out = {**base}
+    if sla_policy_tier is not None:
+        out.update(sla_policy_tier)
     out["is_working_hours"] = is_working_hours
     out["is_already_assigned"] = is_already_assigned
     out["status_flags"] = status_flags
@@ -156,10 +211,14 @@ async def post_next_assignee(
     - message: human-readable hint for n8n (queue vs assign vs comment)
     - conversation_assignee_*: CRM assignee on the SLA tracking row (when already assigned);
       distinct from assignee_* (round-robin). All null when not assigned.
+    - policy_id, tier_response_hours, tier_resolution_hours: set when policy_code and tier are sent;
+      otherwise null.
 
     Body (required): contact_phone_number or contact_phone.
     Body (agent/team): agent_id/agent_code/agent and team_id/team_code/team or code.
     Body (optional): current_assignee (respond_user_id) to get the next in line after that user.
+    Body (optional): policy_code (or sla_policy_code) and tier (or tier_level) together —
+      response includes policy_id, tier_response_hours, tier_resolution_hours from that SLA tier.
 
     Example:
       { "contact_phone_number": "+60123456789", "agent_code": "general_enquiries", "team_code": "marketing" }
@@ -170,6 +229,8 @@ async def post_next_assignee(
             status_code=400,
             detail="contact_phone_number (or contact_phone) is required.",
         )
+
+    sla_policy_tier = _resolve_sla_policy_tier_for_next_assignee(db, body)
 
     calendar = CalendarService(db)
     is_working_hours = calendar.is_within_working_time()
@@ -230,6 +291,7 @@ async def post_next_assignee(
                 is_working_hours=is_working_hours,
                 is_already_assigned=is_already_assigned,
                 conversation_assignee=conversation_assignee,
+                sla_policy_tier=sla_policy_tier,
             )
         # current_assignee not in team or other failure: fall through to normal round-robin
 
@@ -244,4 +306,5 @@ async def post_next_assignee(
         is_working_hours=is_working_hours,
         is_already_assigned=is_already_assigned,
         conversation_assignee=conversation_assignee,
+        sla_policy_tier=sla_policy_tier,
     )

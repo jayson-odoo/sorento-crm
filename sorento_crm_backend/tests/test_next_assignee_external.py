@@ -62,6 +62,9 @@ def test_working_hours_not_assigned(
     assert "Within working hours" in data["message"]
     assert data["conversation_assignee_id"] is None
     assert data["conversation_assignee_email"] is None
+    assert data["policy_id"] is None
+    assert data["tier_response_hours"] is None
+    assert data["tier_resolution_hours"] is None
 
 
 @patch("app.api.v1.external.next_assignee.AccessAgentService")
@@ -263,3 +266,61 @@ def test_current_assignee_branch_includes_flags(
     assert data["is_working_hours"] is False
     assert data["status_flags"] == ["non_working_hours"]
     mock_access.return_value.get_next_assignee_after.assert_called_once()
+
+
+@patch("app.api.v1.external.next_assignee.AccessAgentService")
+@patch("app.api.v1.external.next_assignee.ConversationSLATrackingService")
+@patch("app.api.v1.external.next_assignee.CalendarService")
+@patch("app.api.v1.external.next_assignee._resolve_sla_policy_tier_for_next_assignee")
+def test_sla_policy_tier_fields_when_requested(
+    mock_sla_resolve, mock_cal, mock_sla, mock_access, client: TestClient
+):
+    mock_cal.return_value.is_within_working_time.return_value = True
+    mock_sla.return_value.get_tracking_by_contact_phone.return_value = None
+    mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
+    mock_access.return_value.get_team_id_by_code.return_value = "team-1"
+    mock_access.return_value.get_next_assignee.return_value = ASSIGNEE
+    mock_sla_resolve.return_value = {
+        "policy_id": "policy-uuid-1",
+        "tier_response_hours": 2,
+        "tier_resolution_hours": 48,
+    }
+
+    r = client.post(
+        "/api/v1/external/next-assignee",
+        json={
+            "contact_phone": "+60120000008",
+            "agent_code": "general_enquiries",
+            "team_code": "marketing",
+            "policy_code": "stock_inquiry",
+            "tier": 1,
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["policy_id"] == "policy-uuid-1"
+    assert data["tier_response_hours"] == 2
+    assert data["tier_resolution_hours"] == 48
+    mock_sla_resolve.assert_called_once()
+
+
+@patch("app.api.v1.external.next_assignee.AccessAgentService")
+@patch("app.api.v1.external.next_assignee.ConversationSLATrackingService")
+@patch("app.api.v1.external.next_assignee.CalendarService")
+def test_policy_code_without_tier_returns_400(mock_cal, mock_sla, mock_access, client: TestClient):
+    mock_cal.return_value.is_within_working_time.return_value = True
+    mock_sla.return_value.get_tracking_by_contact_phone.return_value = None
+    mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
+    mock_access.return_value.get_team_id_by_code.return_value = "team-1"
+
+    r = client.post(
+        "/api/v1/external/next-assignee",
+        json={
+            "contact_phone": "+60120000009",
+            "agent_code": "general_enquiries",
+            "team_code": "marketing",
+            "policy_code": "stock_inquiry",
+        },
+    )
+    assert r.status_code == 400
+    assert "both" in r.json()["detail"].lower()
