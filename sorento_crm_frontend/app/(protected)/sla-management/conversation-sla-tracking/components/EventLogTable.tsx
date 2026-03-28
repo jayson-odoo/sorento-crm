@@ -62,9 +62,11 @@ const EVENT_TYPE_OPTIONS = [
 
 interface EventLogTableProps {
   trackingId: string;
+  agentCode?: string | null;
+  teamSetCode?: string | null;
 }
 
-export default function EventLogTable({ trackingId }: EventLogTableProps) {
+export default function EventLogTable({ trackingId, agentCode, teamSetCode }: EventLogTableProps) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [eventTypeFilter, setEventTypeFilter] = useState('__all__');
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
@@ -214,6 +216,20 @@ export default function EventLogTable({ trackingId }: EventLogTableProps) {
         meta: { skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
+        id: 'agent_code',
+        header: ({ column }) => <DataGridColumnHeader title="Agent Code" column={column} />,
+        cell: () => agentCode || '-',
+        size: 150,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        id: 'team_set_code',
+        header: ({ column }) => <DataGridColumnHeader title="Team Set Code" column={column} />,
+        cell: () => teamSetCode || '-',
+        size: 160,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         accessorKey: 'assigned_user_name',
         header: ({ column }) => <DataGridColumnHeader title="Assigned To" column={column} />,
         cell: ({ row }) => {
@@ -244,7 +260,7 @@ export default function EventLogTable({ trackingId }: EventLogTableProps) {
         size: 80,
       }] : []),
     ],
-    [isAdmin],
+    [isAdmin, agentCode, teamSetCode],
   );
 
   const table = useReactTable({

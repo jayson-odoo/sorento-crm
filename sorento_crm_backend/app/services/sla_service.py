@@ -630,17 +630,21 @@ class ConversationSLATrackingService:
         source_entity_type: Optional[str],
         target_tier: int,
         team_set_code: Optional[str] = None,
+        agent_code_override: Optional[str] = None,
     ) -> dict:
         """
         Resolve the next assignee for escalation to the given tier using agent tier-team and round-robin.
-        source_entity_type comes from tracking (e.g. complaint, stock_inquiry, purchase_request).
+        agent_code_override (from tracking.agent_code) takes priority over the source_entity_type mapping.
         Returns dict with id, email, name, respond_user_id. Raises if agent or tier team not configured.
         """
         from app.services.user_service import AccessAgentService
 
-        agent_code = self.ENTITY_TYPE_TO_AGENT_CODE.get(
-            (source_entity_type or "").strip().lower()
-        ) or "complaint"
+        if agent_code_override and agent_code_override.strip():
+            agent_code = agent_code_override.strip()
+        else:
+            agent_code = self.ENTITY_TYPE_TO_AGENT_CODE.get(
+                (source_entity_type or "").strip().lower()
+            ) or "complaint"
         agent_svc = AccessAgentService(self.db)
         agent_id = agent_svc.get_agent_id_by_code(agent_code)
         if not agent_id:
@@ -1136,6 +1140,9 @@ class ConversationSLATrackingService:
             # Unset assignee when resolving (same as n8n / external API behaviour)
             update_data["assigned_to"] = None
             update_data["assigned_to_id"] = None
+            # Clear escalation routing codes — no longer needed once resolved
+            update_data["agent_code"] = None
+            update_data["team_set_code"] = None
             # Always set resolved_at when marking resolved (UTC)
             if "resolved_at" not in update_data or update_data.get("resolved_at") is None:
                 update_data["resolved_at"] = _now_utc()
@@ -1296,7 +1303,11 @@ class ConversationSLATrackingService:
         else:
             dt = log_dict.get("event_at")
             if isinstance(dt, datetime):
-                log_dict["event_at"] = _to_aware_utc(dt)
+                if dt.tzinfo is None:
+                    # Naive datetime from callers (n8n, API) is Malaysia time (UTC+8); convert to UTC.
+                    # Timezone-aware datetimes (e.g. from internal code using _now_utc()) are kept as-is.
+                    dt = dt.replace(tzinfo=MALAYSIA_TZ).astimezone(timezone.utc)
+                log_dict["event_at"] = dt.astimezone(timezone.utc)
         
         # For response or resolution events, auto-populate from_time and duration
         event_type = log_dict.get("event_type", "").lower()

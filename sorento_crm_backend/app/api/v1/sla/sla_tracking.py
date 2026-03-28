@@ -167,10 +167,19 @@ async def escalate_sla_tracking_integration(
                 "Cannot escalate a resolved conversation SLA tracking."
             )
 
+        # Prefer agent_code / team_set_code stored on the tracking record.
+        # Fall back to body.team_set_code if not yet persisted, and to source_entity_type→agent mapping.
+        resolved_team_set_code = (
+            getattr(tracking, "team_set_code", None)
+            or body.team_set_code
+            or None
+        )
+        resolved_agent_code = getattr(tracking, "agent_code", None) or None
         assignee = service.get_escalation_assignee_for_tier(
             getattr(tracking, "source_entity_type", None),
             body.current_tier,
-            body.team_set_code,
+            resolved_team_set_code,
+            agent_code_override=resolved_agent_code,
         )
 
         tracking = service.escalate_tracking(

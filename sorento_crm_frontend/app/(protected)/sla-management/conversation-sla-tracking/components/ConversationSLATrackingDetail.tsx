@@ -662,6 +662,14 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                         <p className="font-medium">{tracking.escalation_reason}</p>
                       </div>
                     )}
+                    <div>
+                      <p className="text-sm text-muted-foreground">Agent Code</p>
+                      <p className="font-medium">{tracking.agent_code || '-'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Team Set Code</p>
+                      <p className="font-medium">{tracking.team_set_code || '-'}</p>
+                    </div>
                   </div>
                 </CardContent>
               </CollapsibleContent>
@@ -798,7 +806,11 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
 
         {/* Tab 2: Event Log */}
         <TabsContent value="event-log">
-          <EventLogTable trackingId={trackingId} />
+          <EventLogTable
+            trackingId={trackingId}
+            agentCode={tracking.agent_code}
+            teamSetCode={tracking.team_set_code}
+          />
         </TabsContent>
       </Tabs>
     </div>

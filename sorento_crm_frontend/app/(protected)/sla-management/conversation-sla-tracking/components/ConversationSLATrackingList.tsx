@@ -7,6 +7,7 @@ import {
   ColumnDef,
   PaginationState,
   SortingState,
+  VisibilityState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
@@ -44,6 +45,10 @@ export default function ConversationSLATrackingList() {
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
+    agent_code: false,
+    team_set_code: false,
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [assignedToFilter, setAssignedToFilter] = useState('__all__');
@@ -350,6 +355,20 @@ export default function ConversationSLATrackingList() {
         size: 200,
       },
       {
+        accessorKey: 'agent_code',
+        header: ({ column }) => <DataGridColumnHeader title="Agent Code" column={column} />,
+        cell: ({ row }) => row.original.agent_code || '-',
+        size: 150,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        accessorKey: 'team_set_code',
+        header: ({ column }) => <DataGridColumnHeader title="Team Set Code" column={column} />,
+        cell: ({ row }) => row.original.team_set_code || '-',
+        size: 160,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         accessorKey: 'is_resolved',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => {
@@ -416,9 +435,10 @@ export default function ConversationSLATrackingList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, columnVisibility },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
+    onColumnVisibilityChange: setColumnVisibility,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),

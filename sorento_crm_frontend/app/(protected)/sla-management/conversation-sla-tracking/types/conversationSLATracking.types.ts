@@ -71,6 +71,8 @@ export interface ConversationSLATracking {
   resolution_due_at?: Date | string | null; // Alias / computed resolution deadline
   tier_response_hours?: number | null;
   tier_resolution_hours?: number | null;
+  agent_code?: string | null;
+  team_set_code?: string | null;
 }
 
 export interface ConversationSLATrackingDetail extends ConversationSLATracking {

@@ -73,6 +73,8 @@ class ConversationSLATracking(Base):
     respond_contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)  # FK to respond_contacts
     source_entity_type = Column(String(50), nullable=True)  # stock_inquiry | complaint
     source_entity_id = Column(String(100), nullable=True)
+    agent_code = Column(String(100), nullable=True)  # Access agent code for escalation round-robin
+    team_set_code = Column(String(100), nullable=True)  # Team assignment set code for escalation; cleared on resolve
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     resolution_duration = Column(Numeric(10, 2), nullable=True)

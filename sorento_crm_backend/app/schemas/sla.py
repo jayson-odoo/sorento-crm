@@ -80,6 +80,8 @@ class ConversationSLATrackingBase(BaseModel):
     resolved_by: Optional[str] = None
     respond_contact_id: Optional[str] = None  # FK to respond_contacts
     resolution_duration: Optional[Decimal] = None
+    agent_code: Optional[str] = None
+    team_set_code: Optional[str] = None
 
 
 class ConversationSLATrackingCreate(BaseModel):
@@ -101,6 +103,8 @@ class ConversationSLATrackingCreate(BaseModel):
     resolved_by: Optional[str] = None  # Will be reset to None
     respond_contact_id: Optional[str] = None  # FK to respond_contacts
     resolution_duration: Optional[Decimal] = None  # Will be reset to None
+    agent_code: Optional[str] = None  # Access agent code for escalation round-robin
+    team_set_code: Optional[str] = None  # Team assignment set code for escalation
     contact_phone_number: str  # Required field
 
     @field_validator('contact_phone_number')
@@ -132,6 +136,8 @@ class ConversationSLATrackingUpdate(BaseModel):
     resolved_by: Optional[str] = None
     resolution_duration: Optional[Decimal] = None
     resolution_time: Optional[Decimal] = None
+    agent_code: Optional[str] = None
+    team_set_code: Optional[str] = None
 
     @model_validator(mode='after')
     def map_resolution_time(self):

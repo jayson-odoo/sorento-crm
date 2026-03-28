@@ -65,6 +65,21 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/user-management/roles/page.js"
+    ],
+    "/(protected)/sla-management/sla-policies/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/sla-management/sla-policies/page.js"
+    ],
+    "/(protected)/system-management/scheduled-tasks/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/system-management/scheduled-tasks/page.js"
+    ],
+    "/(protected)/system-management/scheduled-tasks/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/system-management/scheduled-tasks/[id]/page.js"
     ]
   }
 }
