@@ -6,6 +6,8 @@ from sqlalchemy.sql import func
 from app.database import Base
 import uuid
 
+# Forward reference: AccessAgent is defined in app.models.access
+
 
 class SLAPolicy(Base):
     __tablename__ = "sla_policies"
@@ -73,7 +75,7 @@ class ConversationSLATracking(Base):
     respond_contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)  # FK to respond_contacts
     source_entity_type = Column(String(50), nullable=True)  # stock_inquiry | complaint
     source_entity_id = Column(String(100), nullable=True)
-    agent_code = Column(String(100), nullable=True)  # Access agent code for escalation round-robin
+    agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="SET NULL"), nullable=True)  # FK to access_agents
     team_set_code = Column(String(100), nullable=True)  # Team assignment set code for escalation; cleared on resolve
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
@@ -87,6 +89,7 @@ class ConversationSLATracking(Base):
     )
     contact = relationship("RespondContact", foreign_keys=[respond_contact_id])
     assigned_user = relationship("User", foreign_keys=[assigned_to_id])
+    agent = relationship("AccessAgent", foreign_keys=[agent_id])
     
     __table_args__ = (
         Index("ix_conversation_sla_tracking_policy_id", "policy_id"),
@@ -94,6 +97,7 @@ class ConversationSLATracking(Base):
         Index("ix_conversation_sla_tracking_assigned_to", "assigned_to"),
         Index("ix_conversation_sla_tracking_assigned_to_id", "assigned_to_id"),
         Index("ix_conversation_sla_tracking_respond_contact_id", "respond_contact_id"),
+        Index("ix_conversation_sla_tracking_agent_id", "agent_id"),
     )
 
 

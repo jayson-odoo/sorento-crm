@@ -345,10 +345,12 @@ class ConversationSLATrackingService:
         from app.models.sla import ConversationSLAEventLog
         from app.models.user import User
 
+        from app.models.access import AccessAgent
         q = self.db.query(ConversationSLATracking).options(
             joinedload(ConversationSLATracking.policy),
             joinedload(ConversationSLATracking.contact),
             joinedload(ConversationSLATracking.assigned_user),
+            joinedload(ConversationSLATracking.agent),
             joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user)
         )
 
@@ -443,6 +445,14 @@ class ConversationSLATrackingService:
                 "synced_to_excel": track.synced_to_excel,
                 "last_synced_to_excel": track.last_synced_to_excel,
                 "resolution_duration": track.resolution_duration,
+                "agent_id": getattr(track, "agent_id", None),
+                "agent_code": track.agent.code if getattr(track, "agent", None) else None,
+                "agent": {
+                    "id": str(track.agent.id),
+                    "code": track.agent.code,
+                    "name": track.agent.name,
+                } if getattr(track, "agent", None) else None,
+                "team_set_code": getattr(track, "team_set_code", None),
                 "policy": {
                     "id": str(track.policy.id),
                     "code": track.policy.code,
@@ -529,6 +539,7 @@ class ConversationSLATrackingService:
             joinedload(ConversationSLATracking.policy),
             joinedload(ConversationSLATracking.contact),
             joinedload(ConversationSLATracking.assigned_user).joinedload(User.superior),
+            joinedload(ConversationSLATracking.agent),
             joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user)
         ).filter(
             ConversationSLATracking.id == tracking_id
@@ -631,22 +642,32 @@ class ConversationSLATrackingService:
         target_tier: int,
         team_set_code: Optional[str] = None,
         agent_code_override: Optional[str] = None,
+        agent_id_override: Optional[str] = None,
     ) -> dict:
         """
         Resolve the next assignee for escalation to the given tier using agent tier-team and round-robin.
-        agent_code_override (from tracking.agent_code) takes priority over the source_entity_type mapping.
+        Priority: agent_id_override (UUID FK) > agent_code_override > source_entity_type mapping.
         Returns dict with id, email, name, respond_user_id. Raises if agent or tier team not configured.
         """
         from app.services.user_service import AccessAgentService
+        from app.models.access import AccessAgent
 
-        if agent_code_override and agent_code_override.strip():
+        agent_svc = AccessAgentService(self.db)
+
+        if agent_id_override:
+            agent_id = str(agent_id_override)
+            # Resolve display code for error messages
+            _agent = self.db.query(AccessAgent).filter(AccessAgent.id == agent_id).first()
+            agent_code = _agent.code if _agent else agent_id
+        elif agent_code_override and agent_code_override.strip():
             agent_code = agent_code_override.strip()
+            agent_id = agent_svc.get_agent_id_by_code(agent_code)
         else:
             agent_code = self.ENTITY_TYPE_TO_AGENT_CODE.get(
                 (source_entity_type or "").strip().lower()
             ) or "complaint"
-        agent_svc = AccessAgentService(self.db)
-        agent_id = agent_svc.get_agent_id_by_code(agent_code)
+            agent_id = agent_svc.get_agent_id_by_code(agent_code)
+
         if not agent_id:
             raise handle_validation_error(
                 f"No access agent found with code '{agent_code}'. Cannot resolve escalation assignee. "
@@ -960,8 +981,36 @@ class ConversationSLATrackingService:
             )
         tracking_dict["respond_contact_id"] = contact.id
 
-        # Resolve assigned_to to assigned_to_id
-        if not tracking_dict.get("assigned_to_id") and tracking_dict.get("assigned_to"):
+        # Resolve agent_code → agent_id (FK) and auto-assign via round-robin when agent_code is provided.
+        # Looks up the next-in-line user from the agent's tier team (honoring team_set_code).
+        # This mirrors the escalation API behaviour and takes priority over any explicitly
+        # passed assigned_to / assigned_to_id so the round-robin pointer is always advanced.
+        raw_agent_code = tracking_dict.pop("agent_code", None)
+        if raw_agent_code:
+            from app.models.access import AccessAgent as _AccessAgent
+            _agent = self.db.query(_AccessAgent).filter(
+                _AccessAgent.code == raw_agent_code.strip()
+            ).first()
+            if not _agent:
+                raise handle_validation_error(
+                    f"No access agent found with code '{raw_agent_code}'. "
+                    "Create the Access Agent first."
+                )
+            tracking_dict["agent_id"] = str(_agent.id)
+            assignee = self.get_escalation_assignee_for_tier(
+                source_entity_type=None,
+                target_tier=tracking_dict["current_tier"],
+                team_set_code=tracking_dict.get("team_set_code") or None,
+                agent_id_override=str(_agent.id),
+            )
+            tracking_dict["assigned_to_id"] = assignee["id"]
+            tracking_dict["assigned_to"] = (
+                str(assignee["respond_user_id"])
+                if assignee.get("respond_user_id") is not None
+                else None
+            )
+        elif not tracking_dict.get("assigned_to_id") and tracking_dict.get("assigned_to"):
+            # Fallback: resolve explicit assigned_to (respond_user_id / user id / email) to assigned_to_id
             from app.models.user import User
 
             assigned_to_value = str(tracking_dict["assigned_to"]).strip()
@@ -1031,11 +1080,16 @@ class ConversationSLATrackingService:
         ).first()
         
         if existing:
-            # Update existing tracking record. Apply recalculated due_at and due_at_resolution
-            # so they stay in sync with current_tier_started_at (fixes due dates
-            # appearing in the past when current_tier_started_at is updated to now).
-            preserve_fields = {"id", "created_at", "respond_contact_id"}
+            # Block if the existing tracking is still active — caller must resolve it first.
+            if not existing.is_resolved:
+                from app.services.error_handler import handle_conflict
+                raise handle_conflict(
+                    f"An active (unresolved) SLA tracking already exists for this contact "
+                    f"(tracking id: {existing.id}). Resolve it before creating a new one."
+                )
 
+            # Existing tracking is resolved — overwrite it for the new conversation.
+            preserve_fields = {"id", "created_at", "respond_contact_id"}
             for key, value in tracking_dict.items():
                 if key not in preserve_fields:
                     setattr(existing, key, value)
@@ -1063,7 +1117,24 @@ class ConversationSLATrackingService:
         tracking = self.get_tracking(tracking_id)
         
         update_data = tracking_data.model_dump(exclude_unset=True)
-        
+
+        # Resolve agent_code → agent_id FK if caller passed a code string
+        raw_agent_code = update_data.pop("agent_code", None)
+        if raw_agent_code:
+            from app.models.access import AccessAgent as _AccessAgent
+            _agent = self.db.query(_AccessAgent).filter(
+                _AccessAgent.code == raw_agent_code.strip()
+            ).first()
+            if not _agent:
+                raise handle_validation_error(
+                    f"No access agent found with code '{raw_agent_code}'. "
+                    "Create the Access Agent first."
+                )
+            update_data["agent_id"] = str(_agent.id)
+        elif "agent_code" in tracking_data.model_fields_set and raw_agent_code is None:
+            # Explicitly set to null — clear the FK
+            update_data["agent_id"] = None
+
         # Explicitly clear assignee when assigned_to is None (keep in sync with Respond.io)
         if "assigned_to" in update_data and update_data["assigned_to"] is None:
             update_data["assigned_to_id"] = None
@@ -1140,8 +1211,8 @@ class ConversationSLATrackingService:
             # Unset assignee when resolving (same as n8n / external API behaviour)
             update_data["assigned_to"] = None
             update_data["assigned_to_id"] = None
-            # Clear escalation routing codes — no longer needed once resolved
-            update_data["agent_code"] = None
+            # Clear escalation routing FK and team code — no longer needed once resolved
+            update_data["agent_id"] = None
             update_data["team_set_code"] = None
             # Always set resolved_at when marking resolved (UTC)
             if "resolved_at" not in update_data or update_data.get("resolved_at") is None:
@@ -1204,17 +1275,29 @@ class ConversationSLATrackingService:
         `updates` should be model_dump(exclude_unset=True) from ConversationSLATestOverrideRequest.
         """
         from app.models.user import User
+        from app.schemas.sla import ConversationSLATrackingUpdate
 
         if not updates:
             raise handle_validation_error("No fields to update.")
 
         tracking = self.get_tracking(tracking_id)
+        now_utc = _now_utc()
+        old_assigned_to_id = tracking.assigned_to_id
+        old_assigned_to = tracking.assigned_to
+        old_current_tier_started_at = tracking.current_tier_started_at
+        old_initiated_at = tracking.initiated_at
+        assign_changed = False
+        current_tier_started_changed = False
+        initiated_at_changed = False
 
         if "assigned_to_id" in updates:
             aid = updates["assigned_to_id"]
             if aid is None or (isinstance(aid, str) and not str(aid).strip()):
                 tracking.assigned_to_id = None
                 tracking.assigned_to = None
+                assign_changed = (
+                    old_assigned_to_id is not None or old_assigned_to is not None
+                )
             else:
                 user = self.db.query(User).filter(User.id == str(aid).strip()).first()
                 if not user:
@@ -1223,6 +1306,7 @@ class ConversationSLATrackingService:
                 tracking.assigned_to = (
                     str(user.respond_user_id) if user.respond_user_id is not None else None
                 )
+                assign_changed = str(old_assigned_to_id or "") != str(user.id)
 
         if "current_tier_started_at" in updates:
             raw = updates["current_tier_started_at"]
@@ -1245,6 +1329,9 @@ class ConversationSLATrackingService:
             resolution_hours = getattr(tier, "resolution_hours", None) or 24
             tracking.due_at = started + timedelta(hours=response_hours)
             tracking.due_at_resolution = started + timedelta(hours=resolution_hours)
+            current_tier_started_changed = (
+                _to_aware_utc(old_current_tier_started_at) != started
+            )
 
         if "initiated_at" in updates:
             raw = updates["initiated_at"]
@@ -1252,11 +1339,109 @@ class ConversationSLATrackingService:
                 raw = datetime.fromisoformat(raw.replace("Z", "+00:00"))
             if not isinstance(raw, datetime):
                 raise handle_validation_error("initiated_at must be a datetime.")
-            tracking.initiated_at = _to_aware_utc(raw)
+            initiated = _to_aware_utc(raw)
+            tracking.initiated_at = initiated
+            initiated_at_changed = _to_aware_utc(old_initiated_at) != initiated
+
+        # Delegate is_responded / is_resolved to the smart update logic (handles auto-calc, validation).
+        status_updates = {}
+        if "is_responded" in updates and updates["is_responded"] is True:
+            status_updates["is_responded"] = True
+        if "is_resolved" in updates and updates["is_resolved"] is True:
+            status_updates["is_resolved"] = True
 
         self.db.commit()
         self.db.refresh(tracking)
-        return tracking
+
+        if assign_changed:
+            assignee_name = (
+                tracking.assigned_user.name
+                if getattr(tracking, "assigned_user", None)
+                else None
+            )
+            reason = (
+                f"New Assignee {assignee_name}"
+                if assignee_name
+                else "Assignee cleared"
+            )
+            self.create_event_log(
+                ConversationSLAEventLogCreate(
+                    sla_tracking_id=tracking.id,
+                    event_type="assign",
+                    from_tier=tracking.current_tier,
+                    to_tier=tracking.current_tier,
+                    event_at=now_utc,
+                    reason=reason,
+                    assigned_to=tracking.assigned_to,
+                    assigned_to_id=tracking.assigned_to_id,
+                    due_at=tracking.due_at,
+                )
+            )
+
+        if current_tier_started_changed:
+            self.create_event_log(
+                ConversationSLAEventLogCreate(
+                    sla_tracking_id=tracking.id,
+                    event_type="adjust",
+                    from_tier=tracking.current_tier,
+                    to_tier=tracking.current_tier,
+                    event_at=now_utc,
+                    reason="Adjusted current tier started at for testing.",
+                    assigned_to=tracking.assigned_to,
+                    assigned_to_id=tracking.assigned_to_id,
+                    due_at=tracking.due_at,
+                )
+            )
+
+        if initiated_at_changed:
+            self.create_event_log(
+                ConversationSLAEventLogCreate(
+                    sla_tracking_id=tracking.id,
+                    event_type="adjust",
+                    from_tier=tracking.current_tier,
+                    to_tier=tracking.current_tier,
+                    event_at=now_utc,
+                    reason="Adjusted initiated at for testing.",
+                    assigned_to=tracking.assigned_to,
+                    assigned_to_id=tracking.assigned_to_id,
+                    due_at=tracking.due_at,
+                )
+            )
+
+        if status_updates:
+            updated_tracking = self.update_tracking(
+                tracking_id, ConversationSLATrackingUpdate(**status_updates)
+            )
+
+            if status_updates.get("is_responded") is True:
+                self.create_event_log(
+                    ConversationSLAEventLogCreate(
+                        sla_tracking_id=tracking_id,
+                        event_type="response",
+                        from_tier=updated_tracking.current_tier,
+                        to_tier=updated_tracking.current_tier,
+                        assigned_to=updated_tracking.assigned_to,
+                        assigned_to_id=updated_tracking.assigned_to_id,
+                        reason="Responded",
+                    )
+                )
+
+            if status_updates.get("is_resolved") is True:
+                self.create_event_log(
+                    ConversationSLAEventLogCreate(
+                        sla_tracking_id=tracking_id,
+                        event_type="resolution",
+                        from_tier=updated_tracking.current_tier,
+                        to_tier=updated_tracking.current_tier,
+                        assigned_to=updated_tracking.assigned_to,
+                        assigned_to_id=updated_tracking.assigned_to_id,
+                        reason="Resolved",
+                    )
+                )
+
+            return updated_tracking
+
+        return self.get_tracking(tracking_id)
 
     def delete_tracking(self, tracking_id: str):
         """Delete a tracking record."""

@@ -103,6 +103,8 @@ export interface ConversationSLATestOverridesBody {
   assigned_to_id?: string | null;
   current_tier_started_at?: string;
   initiated_at?: string;
+  is_responded?: boolean;
+  is_resolved?: boolean;
 }
 
 export async function postConversationSLATestOverrides(

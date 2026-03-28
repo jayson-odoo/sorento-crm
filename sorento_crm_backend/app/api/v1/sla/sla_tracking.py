@@ -112,7 +112,7 @@ async def create_sla_tracking(
             ),
             request_payload_dict=tracking_data.model_dump(),
         )
-        return tracking
+        return service.get_tracking(str(tracking.id))
     except HTTPException:
         raise
     except Exception as e:
@@ -167,25 +167,37 @@ async def escalate_sla_tracking_integration(
                 "Cannot escalate a resolved conversation SLA tracking."
             )
 
-        # Prefer agent_code / team_set_code stored on the tracking record.
+        from_tier = int(getattr(tracking, "current_tier", 0) or 0)
+        target_tier = from_tier + 1
+        if from_tier < 1:
+            raise handle_validation_error("Current SLA tier is invalid for escalation.")
+        if target_tier > 3:
+            raise handle_validation_error("Conversation is already at the highest SLA tier.")
+        if body.current_tier != target_tier:
+            raise handle_validation_error(
+                f"Escalation must move from tier {from_tier} to tier {target_tier}. "
+                f"Received current_tier={body.current_tier}."
+            )
+
+        # Prefer agent_id FK / team_set_code stored on the tracking record.
         # Fall back to body.team_set_code if not yet persisted, and to source_entity_type→agent mapping.
         resolved_team_set_code = (
             getattr(tracking, "team_set_code", None)
             or body.team_set_code
             or None
         )
-        resolved_agent_code = getattr(tracking, "agent_code", None) or None
+        resolved_agent_id = getattr(tracking, "agent_id", None) or None
         assignee = service.get_escalation_assignee_for_tier(
             getattr(tracking, "source_entity_type", None),
-            body.current_tier,
+            target_tier,
             resolved_team_set_code,
-            agent_code_override=resolved_agent_code,
+            agent_id_override=resolved_agent_id,
         )
 
         tracking = service.escalate_tracking(
             respond_contact_id=body.respond_contact_id,
             policy_id=body.policy_id,
-            current_tier=body.current_tier,
+            current_tier=target_tier,
             escalation_reason=body.escalation_reason,
         )
         tracking.assigned_to_id = assignee["id"]
@@ -207,6 +219,8 @@ async def escalate_sla_tracking_integration(
             request_payload_dict=body.model_dump(),
         )
         assigned_to_respond_user_id = str(assignee.get("respond_user_id") or "")
+        assigned_to_id = str(assignee.get("id") or "")
+        assigned_to_name = assignee.get("name")
 
         # Return new due dates and remaining hours (based on SLA policy)
         now_utc = datetime.now(timezone.utc)
@@ -241,6 +255,8 @@ async def escalate_sla_tracking_integration(
             "status": "success",
             "message": "SLA tracking escalated successfully.",
             "tracking_id": tracking.id,
+            "assigned_to_id": assigned_to_id,
+            "assigned_to_name": assigned_to_name,
             "assigned_to_respond_user_id": assigned_to_respond_user_id,
             "due_at": _iso(tracking.due_at),
             "due_at_resolution": _iso(tracking.due_at_resolution),
@@ -349,7 +365,7 @@ async def update_sla_tracking(
             ),
             request_payload_dict=tracking_data.model_dump(exclude_unset=True),
         )
-        return tracking
+        return service.get_tracking(str(tracking.id))
     except HTTPException:
         raise
     except Exception as e:
@@ -909,6 +925,14 @@ async def get_sla_tracking_record(
             "event_logs": event_logs_data,
             "tier_response_hours": tier_response_hours,
             "tier_resolution_hours": tier_resolution_hours,
+            "agent_id": getattr(tracking, "agent_id", None),
+            "agent_code": tracking.agent.code if getattr(tracking, "agent", None) else None,
+            "agent": {
+                "id": str(tracking.agent.id),
+                "code": tracking.agent.code,
+                "name": tracking.agent.name,
+            } if getattr(tracking, "agent", None) else None,
+            "team_set_code": getattr(tracking, "team_set_code", None),
             **timings,
         }
         

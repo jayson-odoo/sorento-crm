@@ -112,6 +112,8 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
   const [assigneeDialogOpen, setAssigneeDialogOpen] = useState(false);
   const [tierStartedDialogOpen, setTierStartedDialogOpen] = useState(false);
   const [initiatedDialogOpen, setInitiatedDialogOpen] = useState(false);
+  const [markRespondedDialogOpen, setMarkRespondedDialogOpen] = useState(false);
+  const [markResolvedDialogOpen, setMarkResolvedDialogOpen] = useState(false);
   const [assigneeComboOpen, setAssigneeComboOpen] = useState(false);
   const [selectedAssigneeId, setSelectedAssigneeId] = useState('');
   const [tierStartedLocal, setTierStartedLocal] = useState('');
@@ -336,6 +338,18 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                     <CalendarClock className="size-4 mr-2" />
                     Set initiated at
                   </DropdownMenuItem>
+                  {!tracking.is_responded && (
+                    <DropdownMenuItem onSelect={() => setMarkRespondedDialogOpen(true)}>
+                      <CheckCircle className="size-4 mr-2" />
+                      Mark as responded
+                    </DropdownMenuItem>
+                  )}
+                  {!tracking.is_resolved && (
+                    <DropdownMenuItem onSelect={() => setMarkResolvedDialogOpen(true)}>
+                      <CheckCircle className="size-4 mr-2" />
+                      Mark as resolved
+                    </DropdownMenuItem>
+                  )}
                 </>
               )}
             </DropdownMenuContent>
@@ -507,6 +521,54 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={markRespondedDialogOpen} onOpenChange={setMarkRespondedDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mark as responded</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will mark the conversation as responded and record the current time as the response time. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                testOverrideMutation.mutate(
+                  { is_responded: true },
+                  { onSuccess: () => setMarkRespondedDialogOpen(false) },
+                );
+              }}
+            >
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={markResolvedDialogOpen} onOpenChange={setMarkResolvedDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mark as resolved</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will mark the conversation as resolved and record the current time as the resolution time. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                testOverrideMutation.mutate(
+                  { is_resolved: true },
+                  { onSuccess: () => setMarkResolvedDialogOpen(false) },
+                );
+              }}
+            >
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>

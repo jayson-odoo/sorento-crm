@@ -61,6 +61,8 @@ class SLAPolicyResponse(SLAPolicyBase):
 
 
 class ConversationSLATrackingBase(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     policy_id: str
     current_tier: int
     assigned_to: Optional[str] = None  # Keep for backward compatibility
@@ -80,7 +82,7 @@ class ConversationSLATrackingBase(BaseModel):
     resolved_by: Optional[str] = None
     respond_contact_id: Optional[str] = None  # FK to respond_contacts
     resolution_duration: Optional[Decimal] = None
-    agent_code: Optional[str] = None
+    agent_id: Optional[str] = None  # FK to access_agents.id
     team_set_code: Optional[str] = None
 
 
@@ -103,7 +105,7 @@ class ConversationSLATrackingCreate(BaseModel):
     resolved_by: Optional[str] = None  # Will be reset to None
     respond_contact_id: Optional[str] = None  # FK to respond_contacts
     resolution_duration: Optional[Decimal] = None  # Will be reset to None
-    agent_code: Optional[str] = None  # Access agent code for escalation round-robin
+    agent_code: Optional[str] = None  # resolved → agent_id FK in service
     team_set_code: Optional[str] = None  # Team assignment set code for escalation
     contact_phone_number: str  # Required field
 
@@ -136,7 +138,7 @@ class ConversationSLATrackingUpdate(BaseModel):
     resolved_by: Optional[str] = None
     resolution_duration: Optional[Decimal] = None
     resolution_time: Optional[Decimal] = None
-    agent_code: Optional[str] = None
+    agent_code: Optional[str] = None  # resolved → agent_id FK in service
     team_set_code: Optional[str] = None
 
     @model_validator(mode='after')
@@ -152,14 +154,16 @@ class ConversationSLATestOverrideRequest(BaseModel):
     assigned_to_id: Optional[str] = None
     current_tier_started_at: Optional[datetime] = None
     initiated_at: Optional[datetime] = None
+    is_responded: Optional[bool] = None
+    is_resolved: Optional[bool] = None
 
     @model_validator(mode='after')
     def at_least_one_field(self):
-        updatable = {"assigned_to_id", "current_tier_started_at", "initiated_at"}
+        updatable = {"assigned_to_id", "current_tier_started_at", "initiated_at", "is_responded", "is_resolved"}
         if not (self.model_fields_set & updatable):
             raise ValueError(
-                "Provide at least one of assigned_to_id (including null to unassign), "
-                "current_tier_started_at, or initiated_at."
+                "Provide at least one of: assigned_to_id (including null to unassign), "
+                "current_tier_started_at, initiated_at, is_responded, or is_resolved."
             )
         return self
 
@@ -219,6 +223,15 @@ class SLAPolicySimple(BaseModel):
     code: str
     name: str
     
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AgentSimple(BaseModel):
+    """Simple access agent reference for tracking responses."""
+    id: str
+    code: str
+    name: str
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -354,9 +367,11 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     # Related objects
     contact: Optional[ContactSimple] = None
     assigned_user: Optional[UserSimple] = None
+    agent: Optional[AgentSimple] = None  # FK to access_agents
     # Renamed field for API consumers
     response_duration: Optional[Decimal] = None
     # Computed fields for backward compatibility
+    agent_code: Optional[str] = None  # Resolved from agent.code FK
     contact_phone: Optional[str] = None  # From contact.phone_number or respond_contact_phone
     contact_name: Optional[str] = None  # From contact.name or respond_contact_name
     assigned_user_name: Optional[str] = None  # From assigned_user.name
@@ -427,17 +442,19 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
             self.contact_phone = self.contact.phone_number
             self.contact_name = self.contact.name
         else:
-            # If no contact relationship, set to None/empty
             self.contact_phone = None
             self.contact_name = None
-        
+
         # Populate assigned_user_name and assigned_user_email from assigned_user relationship
         if self.assigned_user:
             self.assigned_user_name = self.assigned_user.name
             self.assigned_user_email = self.assigned_user.email
         else:
-            # If no assigned_user relationship, set to None
             self.assigned_user_name = None
             self.assigned_user_email = None
-        
+
+        # Populate agent_code from agent FK relationship
+        if self.agent and self.agent_code is None:
+            self.agent_code = self.agent.code
+
         return self

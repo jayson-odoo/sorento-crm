@@ -20,6 +20,12 @@ export interface SLAPolicySimple {
   name: string;
 }
 
+export interface AgentSimple {
+  id: string;
+  code: string;
+  name: string;
+}
+
 export interface ConversationSLATracking {
   id: string;
   policy_id: string;
@@ -52,6 +58,7 @@ export interface ConversationSLATracking {
   // Relationship objects
   contact?: ContactSimple | null;
   assigned_user?: UserSimple | null;
+  agent?: AgentSimple | null;  // FK to access_agents
   // Computed fields for easy access
   contact_phone?: string | null;
   contact_name?: string | null;
@@ -71,7 +78,8 @@ export interface ConversationSLATracking {
   resolution_due_at?: Date | string | null; // Alias / computed resolution deadline
   tier_response_hours?: number | null;
   tier_resolution_hours?: number | null;
-  agent_code?: string | null;
+  agent_id?: string | null;   // FK UUID (internal)
+  agent_code?: string | null; // Resolved from agent FK
   team_set_code?: string | null;
 }
 
