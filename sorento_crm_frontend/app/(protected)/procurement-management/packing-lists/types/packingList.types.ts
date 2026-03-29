@@ -22,6 +22,19 @@ export interface InboundShipmentLine {
     product_code: string;
     product_name: string;
   };
+  related_spo_allocations?: Array<{
+    id: string;
+    spo_number?: string | null;
+    allocated_quantity?: number | null;
+    receipt_status?: string | null;
+  }>;
+  related_grns?: Array<{
+    id: string;
+    picking_number?: string | null;
+    spo_number?: string | null;
+    picking_status?: string | null;
+    picking_date?: string | Date | null;
+  }>;
 }
 
 export interface PackingList {

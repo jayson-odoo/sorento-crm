@@ -1482,17 +1482,32 @@ class ConversationSLATrackingService:
             if user:
                 log_dict["assigned_to_id"] = user.id
         
+        def _normalize_api_datetime_to_utc(value):
+            """
+            Normalize API datetime input to timezone-aware UTC.
+            Naive values are interpreted as Malaysia local time (UTC+8).
+            """
+            if value is None:
+                return None
+            dt = value
+            if isinstance(dt, str):
+                dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
+            if not isinstance(dt, datetime):
+                raise handle_validation_error("Invalid datetime payload in event log.")
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=MALAYSIA_TZ)
+            return dt.astimezone(timezone.utc)
+
         # Auto-populate event_at to now (UTC)
         if not log_dict.get("event_at"):
             log_dict["event_at"] = _now_utc()
         else:
-            dt = log_dict.get("event_at")
-            if isinstance(dt, datetime):
-                if dt.tzinfo is None:
-                    # Naive datetime from callers (n8n, API) is Malaysia time (UTC+8); convert to UTC.
-                    # Timezone-aware datetimes (e.g. from internal code using _now_utc()) are kept as-is.
-                    dt = dt.replace(tzinfo=MALAYSIA_TZ).astimezone(timezone.utc)
-                log_dict["event_at"] = dt.astimezone(timezone.utc)
+            log_dict["event_at"] = _normalize_api_datetime_to_utc(log_dict.get("event_at"))
+
+        # Normalize optional datetime fields if supplied.
+        for field in ("from_time", "due_at", "last_reminder_at"):
+            if field in log_dict and log_dict.get(field) is not None:
+                log_dict[field] = _normalize_api_datetime_to_utc(log_dict.get(field))
         
         # For response or resolution events, auto-populate from_time and duration
         event_type = log_dict.get("event_type", "").lower()

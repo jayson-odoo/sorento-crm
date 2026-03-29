@@ -8,6 +8,7 @@ from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.schemas.external import SPOAllocationRequest
 from app.models.procurement import SPOAllocation, InboundShipment, InboundShipmentLine
+from app.services.procurement_service import InboundShipmentService
 from app.models.inventory import Warehouse
 from app.api.v1.external.utils import (
     get_products_by_code,
@@ -259,6 +260,13 @@ def create_spo_allocations(
         db.commit()
         for allocation in allocations:
             db.refresh(allocation)
+        inbound_svc = InboundShipmentService(db)
+        for shipment_id in {
+            allocation.inbound_shipment_id
+            for allocation in allocations
+            if allocation.inbound_shipment_id
+        }:
+            inbound_svc.refresh_shipment_line_statuses(shipment_id)
 
     return {
         "data": [

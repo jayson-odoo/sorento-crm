@@ -72,6 +72,27 @@ class ProductSimple(BaseModel):
         from_attributes = True
 
 
+class PackingListLineSPOSimple(BaseModel):
+    id: str
+    spo_number: Optional[str] = None
+    allocated_quantity: Optional[int] = None
+    receipt_status: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PackingListLineGRNSimple(BaseModel):
+    id: str
+    picking_number: Optional[str] = None
+    spo_number: Optional[str] = None
+    picking_status: Optional[str] = None
+    picking_date: Optional[date] = None
+
+    class Config:
+        from_attributes = True
+
+
 class ProductSupplierBase(BaseModel):
     product_id: str
     supplier_id: str
@@ -122,6 +143,8 @@ class InboundShipmentLineResponse(InboundShipmentLineBase):
     spo_allocated_quantity: Optional[int] = None  # Total SPO allocated qty for this product on this shipment (all warehouses)
     quantity_received: Optional[int] = None  # Sum of quantity_received from SPO allocations for this line
     line_status: Optional[str] = None  # Stored in DB: in_transit, allocated, partially_allocated, received, partially_received (for n8n/API)
+    related_spo_allocations: Optional[List[PackingListLineSPOSimple]] = None
+    related_grns: Optional[List[PackingListLineGRNSimple]] = None
 
     class Config:
         from_attributes = True

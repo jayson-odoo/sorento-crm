@@ -2,10 +2,11 @@
 
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Link as LinkIcon, Search, X, ArrowUpDown, ArrowUp, ArrowDown, Link2, Unlink } from 'lucide-react';
+import { Edit, Trash2, Link as LinkIcon, Search, X, ArrowUpDown, ArrowUp, ArrowDown, Link2, Unlink, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -558,14 +559,148 @@ export default function PackingListDetail({
                       return (
                         <TableRow key={line.id}>
                           <TableCell>
-                            {line.product?.product_code || '-'}
+                            {line.product?.id ? (
+                              <Link
+                                href={`/master-data-management/products/${line.product.id}`}
+                                className="font-medium text-primary hover:underline"
+                              >
+                                {line.product.product_code}
+                              </Link>
+                            ) : (
+                              line.product?.product_code || '-'
+                            )}
                           </TableCell>
                           <TableCell>{line.quantity_shipped}</TableCell>
                           <TableCell>
-                            {line.spo_allocated_quantity != null ? line.spo_allocated_quantity : '-'}
+                            <div className="flex items-center gap-2">
+                              <span>
+                                {line.spo_allocated_quantity != null ? line.spo_allocated_quantity : '-'}
+                              </span>
+                              {line.related_spo_allocations?.length ? (
+                                <Popover>
+                                  <PopoverTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-6 text-muted-foreground hover:text-foreground"
+                                      aria-label={`View related SPO for ${line.product?.product_code || 'this line'}`}
+                                    >
+                                      <Info className="size-4" />
+                                    </Button>
+                                  </PopoverTrigger>
+                                  <PopoverContent align="start" className="w-80 space-y-4 p-4">
+                                    <div className="space-y-1">
+                                      <p className="text-sm font-medium">
+                                        {line.product?.product_code || 'Related SPO'}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        Navigate to related SPO allocations for this line.
+                                      </p>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                        Related SPO
+                                      </p>
+                                      <div className="space-y-2">
+                                        {line.related_spo_allocations.map((spo) => (
+                                          <Link
+                                            key={spo.id}
+                                            href={`/procurement-management/spo-allocations/${spo.id}`}
+                                            className="block rounded-md border px-3 py-2 hover:bg-muted/50"
+                                          >
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span className="text-sm font-medium text-primary">
+                                                {spo.spo_number || 'SPO Allocation'}
+                                              </span>
+                                              {spo.receipt_status ? (
+                                                <Badge
+                                                  variant={getStatusBadgeVariant(spo.receipt_status)}
+                                                  className="shrink-0"
+                                                >
+                                                  {formatStatusLabel(spo.receipt_status)}
+                                                </Badge>
+                                              ) : null}
+                                            </div>
+                                            {spo.allocated_quantity != null ? (
+                                              <p className="mt-1 text-xs text-muted-foreground">
+                                                Allocated: {spo.allocated_quantity}
+                                              </p>
+                                            ) : null}
+                                          </Link>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </PopoverContent>
+                                </Popover>
+                              ) : null}
+                            </div>
                           </TableCell>
                           <TableCell>
-                            {line.quantity_received != null ? line.quantity_received : '-'}
+                            <div className="flex items-center gap-2">
+                              <span>
+                                {line.quantity_received != null ? line.quantity_received : '-'}
+                              </span>
+                              {line.related_grns?.length ? (
+                                <Popover>
+                                  <PopoverTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-6 text-muted-foreground hover:text-foreground"
+                                      aria-label={`View related GRN for ${line.product?.product_code || 'this line'}`}
+                                    >
+                                      <Info className="size-4" />
+                                    </Button>
+                                  </PopoverTrigger>
+                                  <PopoverContent align="start" className="w-80 space-y-4 p-4">
+                                    <div className="space-y-1">
+                                      <p className="text-sm font-medium">
+                                        {line.product?.product_code || 'Related GRN'}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        Navigate to related GRNs for this line.
+                                      </p>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                        Related GRN
+                                      </p>
+                                      <div className="space-y-2">
+                                        {line.related_grns.map((grn) => (
+                                          <Link
+                                            key={grn.id}
+                                            href={`/procurement-management/grn/${grn.id}`}
+                                            className="block rounded-md border px-3 py-2 hover:bg-muted/50"
+                                          >
+                                            <div className="flex items-center justify-between gap-2">
+                                              <span className="text-sm font-medium text-primary">
+                                                {grn.picking_number || 'GRN'}
+                                              </span>
+                                              {grn.picking_status ? (
+                                                <Badge
+                                                  variant={getStatusBadgeVariant(grn.picking_status)}
+                                                  className="shrink-0"
+                                                >
+                                                  {formatStatusLabel(grn.picking_status)}
+                                                </Badge>
+                                              ) : null}
+                                            </div>
+                                            <p className="mt-1 text-xs text-muted-foreground">
+                                              {grn.spo_number || 'No SPO'}
+                                              {grn.picking_date
+                                                ? ` • ${formatDate(new Date(grn.picking_date))}`
+                                                : ''}
+                                            </p>
+                                          </Link>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </PopoverContent>
+                                </Popover>
+                              ) : null}
+                            </div>
                           </TableCell>
                           <TableCell>
                             <Badge variant={getStatusBadgeVariant(lineStatus)}>

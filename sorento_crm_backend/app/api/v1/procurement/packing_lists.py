@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models.procurement import SPOAllocation
+from app.models.procurement import SPOAllocation, PickingHeader, PickingLine
 from app.services.procurement_service import InboundShipmentService
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentUpdate, InboundShipmentResponse
 from app.schemas.common import ListResponse
@@ -71,18 +71,93 @@ async def get_packing_list(
             .all()
         )
         spo_by_product = {str(p): int(t) for p, t in totals}
-        # Quantity received per inbound_shipment_line (SPO allocations are keyed by inbound_shipment_lines_id)
-        received_by_line = (
-            db.query(SPOAllocation.inbound_shipment_lines_id, func.sum(SPOAllocation.quantity_received).label("total"))
+        received_by_product = service.get_received_quantities_by_product(shipment_id)
+        allocations = (
+            db.query(SPOAllocation)
             .filter(SPOAllocation.inbound_shipment_id == shipment_id)
-            .filter(SPOAllocation.inbound_shipment_lines_id.isnot(None))
-            .group_by(SPOAllocation.inbound_shipment_lines_id)
+            .order_by(SPOAllocation.created_at.asc())
             .all()
         )
-        received_by_line_id = {str(line_id): int(t) for line_id, t in received_by_line}
+        related_spo_by_product: dict[str, list[dict]] = {}
+        spo_numbers_by_product: dict[str, set[str]] = {}
+        all_spo_numbers: set[str] = set()
+        for allocation in allocations:
+            product_key = str(allocation.product_id)
+            normalized_spo = (
+                str(allocation.spo_number).strip().replace("/", ".").replace("\\", ".")
+                if allocation.spo_number
+                else None
+            )
+            related_spo_by_product.setdefault(product_key, []).append(
+                {
+                    "id": str(allocation.id),
+                    "spo_number": allocation.spo_number,
+                    "allocated_quantity": allocation.allocated_quantity,
+                    "receipt_status": allocation.receipt_status,
+                }
+            )
+            if normalized_spo:
+                spo_numbers_by_product.setdefault(product_key, set()).add(normalized_spo)
+                all_spo_numbers.add(normalized_spo)
+
+        related_grns_by_product: dict[str, list[dict]] = {}
+        if all_spo_numbers:
+            norm_expr = func.replace(
+                func.replace(func.trim(PickingHeader.spo_number), "/", "."),
+                "\\",
+                ".",
+            )
+            grn_rows = (
+                db.query(
+                    PickingLine.product_id,
+                    PickingHeader.id,
+                    PickingHeader.picking_number,
+                    PickingHeader.spo_number,
+                    PickingHeader.picking_status,
+                    PickingHeader.picking_date,
+                )
+                .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+                .filter(
+                    PickingHeader.picking_type == "goods_received",
+                    PickingHeader.spo_number.isnot(None),
+                    norm_expr.in_(all_spo_numbers),
+                )
+                .group_by(
+                    PickingLine.product_id,
+                    PickingHeader.id,
+                    PickingHeader.picking_number,
+                    PickingHeader.spo_number,
+                    PickingHeader.picking_status,
+                    PickingHeader.picking_date,
+                )
+                .order_by(PickingHeader.picking_date.desc().nulls_last(), PickingHeader.picking_number)
+                .all()
+            )
+            for product_id, grn_id, picking_number, spo_number, picking_status, picking_date in grn_rows:
+                product_key = str(product_id)
+                normalized_spo = (
+                    str(spo_number).strip().replace("/", ".").replace("\\", ".")
+                    if spo_number
+                    else None
+                )
+                if normalized_spo not in spo_numbers_by_product.get(product_key, set()):
+                    continue
+                related_grns_by_product.setdefault(product_key, []).append(
+                    {
+                        "id": str(grn_id),
+                        "picking_number": picking_number,
+                        "spo_number": spo_number,
+                        "picking_status": picking_status,
+                        "picking_date": picking_date,
+                    }
+                )
+
         for line in shipment.shipment_lines:
-            setattr(line, "spo_allocated_quantity", spo_by_product.get(str(line.product_id), 0))
-            setattr(line, "quantity_received", received_by_line_id.get(str(line.id), 0))
+            product_key = str(line.product_id)
+            setattr(line, "spo_allocated_quantity", spo_by_product.get(product_key, 0))
+            setattr(line, "quantity_received", received_by_product.get(product_key, 0))
+            setattr(line, "related_spo_allocations", related_spo_by_product.get(product_key, []))
+            setattr(line, "related_grns", related_grns_by_product.get(product_key, []))
         return shipment
     except HTTPException:
         raise

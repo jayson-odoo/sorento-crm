@@ -225,6 +225,83 @@ class InboundShipmentService:
             raise handle_not_found("Inbound Shipment", shipment_id)
         return shipment
 
+    def get_received_quantities_by_product(self, shipment_id: str) -> dict[str, int]:
+        """Return received qty per product for a shipment, ignoring warehouse boundaries."""
+        received_totals: dict[str, int] = {}
+
+        linked_rows = (
+            self.db.query(
+                SPOAllocation.product_id,
+                func.coalesce(func.sum(PickingLine.quantity_expected), 0).label("total"),
+            )
+            .join(PickingLine, PickingLine.spo_allocation_id == SPOAllocation.id)
+            .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+            .filter(
+                SPOAllocation.inbound_shipment_id == shipment_id,
+                PickingHeader.picking_type == "goods_received",
+                PickingHeader.picking_status == "approved",
+            )
+            .group_by(SPOAllocation.product_id)
+            .all()
+        )
+        for product_id, total in linked_rows:
+            received_totals[str(product_id)] = int(total or 0)
+
+        allocation_rows = (
+            self.db.query(SPOAllocation.product_id, SPOAllocation.spo_number)
+            .filter(
+                SPOAllocation.inbound_shipment_id == shipment_id,
+                SPOAllocation.spo_number.isnot(None),
+            )
+            .all()
+        )
+        spo_numbers_by_product: dict[str, set[str]] = {}
+        for product_id, spo_number in allocation_rows:
+            normalized = _normalize_spo_number(spo_number)
+            if not normalized:
+                continue
+            spo_numbers_by_product.setdefault(str(product_id), set()).add(normalized)
+
+        if not spo_numbers_by_product:
+            return received_totals
+
+        product_ids = list(spo_numbers_by_product.keys())
+        all_spo_numbers = {
+            spo_number
+            for spo_numbers in spo_numbers_by_product.values()
+            for spo_number in spo_numbers
+        }
+        norm_expr = func.replace(
+            func.replace(func.trim(PickingHeader.spo_number), "/", "."),
+            "\\",
+            ".",
+        )
+        orphan_rows = (
+            self.db.query(
+                PickingLine.product_id,
+                norm_expr.label("normalized_spo_number"),
+                func.coalesce(func.sum(PickingLine.quantity_expected), 0).label("total"),
+            )
+            .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+            .filter(
+                PickingLine.spo_allocation_id.is_(None),
+                PickingLine.product_id.in_(product_ids),
+                PickingHeader.picking_type == "goods_received",
+                PickingHeader.picking_status == "approved",
+                PickingHeader.spo_number.isnot(None),
+                norm_expr.in_(all_spo_numbers),
+            )
+            .group_by(PickingLine.product_id, norm_expr)
+            .all()
+        )
+        for product_id, normalized_spo_number, total in orphan_rows:
+            product_key = str(product_id)
+            if normalized_spo_number not in spo_numbers_by_product.get(product_key, set()):
+                continue
+            received_totals[product_key] = received_totals.get(product_key, 0) + int(total or 0)
+
+        return received_totals
+
     def refresh_shipment_line_statuses(self, shipment_id: str) -> None:
         """Recompute and persist line_status for all lines of this shipment (for n8n/API)."""
         lines = (
@@ -241,17 +318,12 @@ class InboundShipmentService:
             .all()
         )
         spo_by_product = {str(p): int(t) for p, t in totals_alloc}
-        received_by_line = (
-            self.db.query(SPOAllocation.inbound_shipment_lines_id, func.sum(SPOAllocation.quantity_received).label("total"))
-            .filter(SPOAllocation.inbound_shipment_id == shipment_id)
-            .filter(SPOAllocation.inbound_shipment_lines_id.isnot(None))
-            .group_by(SPOAllocation.inbound_shipment_lines_id)
-            .all()
-        )
-        received_by_line_id = {str(lid): int(t) for lid, t in received_by_line}
+        received_by_product = self.get_received_quantities_by_product(shipment_id)
         for line in lines:
             alloc = spo_by_product.get(str(line.product_id), 0)
-            recv = received_by_line_id.get(str(line.id), 0)
+            recv = received_by_product.get(str(line.product_id), 0)
+            line.spo_allocated_quantity = alloc
+            line.quantity_received = recv
             line.line_status = compute_inbound_shipment_line_status(
                 line.quantity_shipped or 0, alloc, recv
             )
@@ -755,32 +827,50 @@ class SPOAllocationService:
         self.db.add(allocation)
         self.db.commit()
         self.db.refresh(allocation)
+        InboundShipmentService(self.db).refresh_shipment_line_statuses(allocation.inbound_shipment_id)
         return allocation
     
     def update_allocation(self, allocation_id: str, allocation_data: SPOAllocationUpdate):
         """Update an SPO allocation."""
         allocation = self.get_allocation(allocation_id)
-        
+        previous_shipment_id = allocation.inbound_shipment_id
         update_data = allocation_data.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(allocation, key, value)
         
         self.db.commit()
         self.db.refresh(allocation)
+        inbound_svc = InboundShipmentService(self.db)
+        inbound_svc.refresh_shipment_line_statuses(allocation.inbound_shipment_id)
+        if previous_shipment_id and allocation.inbound_shipment_id != previous_shipment_id:
+            inbound_svc.refresh_shipment_line_statuses(previous_shipment_id)
         return allocation
 
     def delete_allocation(self, allocation_id: str):
         """Delete an SPO allocation by ID."""
         allocation = self.get_allocation(allocation_id)
+        shipment_id = allocation.inbound_shipment_id
         self.db.delete(allocation)
         self.db.commit()
+        InboundShipmentService(self.db).refresh_shipment_line_statuses(shipment_id)
 
     def bulk_delete_allocations(self, allocation_ids: list[str]):
         """Delete multiple SPO allocations by ID. Returns count of deleted."""
         if not allocation_ids:
             return {"message": "No allocations to delete", "deleted_count": 0}
+        shipment_ids = {
+            shipment_id
+            for (shipment_id,) in self.db.query(SPOAllocation.inbound_shipment_id)
+            .filter(SPOAllocation.id.in_(allocation_ids))
+            .distinct()
+            .all()
+            if shipment_id is not None
+        }
         deleted = self.db.query(SPOAllocation).filter(SPOAllocation.id.in_(allocation_ids)).delete(synchronize_session=False)
         self.db.commit()
+        inbound_svc = InboundShipmentService(self.db)
+        for shipment_id in shipment_ids:
+            inbound_svc.refresh_shipment_line_statuses(shipment_id)
         return {"message": f"Deleted {deleted} SPO allocation(s)", "deleted_count": deleted}
 
     def compute_received_for_allocation(self, allocation_id: str) -> int:
@@ -1118,6 +1208,8 @@ class PickingHeaderService:
     def delete_grn(self, grn_id: str):
         """Delete a GRN and its lines."""
         grn = self.get_grn(grn_id)
+        spo_number = grn.spo_number
+        was_approved = grn.picking_status == "approved"
         
         # Explicitly delete picking lines first to avoid foreign key constraint issues
         self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).delete()
@@ -1125,6 +1217,8 @@ class PickingHeaderService:
         # Then delete the header
         self.db.delete(grn)
         self.db.commit()
+        if was_approved and spo_number and str(spo_number).strip():
+            self.sync_received_for_spo_number(spo_number)
         return {"message": "GRN deleted successfully"}
 
     def bulk_delete_grns(self, grn_ids: list[str]) -> dict:
@@ -1132,6 +1226,7 @@ class PickingHeaderService:
         if not grn_ids:
             return {"message": "No GRNs to delete", "deleted_count": 0}
         deleted = 0
+        spo_numbers_to_sync = set()
         for gid in grn_ids:
             grn = (
                 self.db.query(PickingHeader)
@@ -1142,10 +1237,14 @@ class PickingHeaderService:
                 .first()
             )
             if grn:
+                if grn.picking_status == "approved" and grn.spo_number and str(grn.spo_number).strip():
+                    spo_numbers_to_sync.add(str(grn.spo_number))
                 self.db.query(PickingLine).filter(PickingLine.picking_header_id == gid).delete()
                 self.db.delete(grn)
                 deleted += 1
         self.db.commit()
+        for spo_number in spo_numbers_to_sync:
+            self.sync_received_for_spo_number(spo_number)
         return {"message": f"{deleted} GRN(s) deleted", "deleted_count": deleted}
 
     def get_grn_by_picking_number(self, picking_number: str):
@@ -1401,6 +1500,7 @@ class PickingHeaderService:
         if not target_norm:
             return
         allocations = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None)).all()
+        shipment_ids = set()
         for alloc in allocations:
             if _normalize_spo_number(alloc.spo_number) != target_norm:
                 continue
@@ -1408,7 +1508,12 @@ class PickingHeaderService:
             total = self.compute_received_for_allocation(alloc_id)
             alloc.quantity_received = total
             alloc.receipt_status = "received" if total >= alloc.allocated_quantity else "pending"
+            if alloc.inbound_shipment_id:
+                shipment_ids.add(alloc.inbound_shipment_id)
         self.db.commit()
+        inbound_svc = InboundShipmentService(self.db)
+        for sid in shipment_ids:
+            inbound_svc.refresh_shipment_line_statuses(sid)
 
     def get_linked_grns_for_spo(self, spo_number: Optional[str]):
         """Return list of GRN headers (id, picking_number, picking_status, picking_date) for this SPO number.
