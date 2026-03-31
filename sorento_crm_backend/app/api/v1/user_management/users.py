@@ -34,6 +34,10 @@ class ProfileUpdateRequest(BaseModel):
 class UserRolesUpdateRequest(BaseModel):
     role_ids: list[str]
 
+
+class DailySummarySubscriptionUpdateRequest(BaseModel):
+    subscribed: bool
+
 router = APIRouter()
 
 
@@ -85,6 +89,7 @@ async def get_users(
                 "respond_synced": user.respond_synced,
                 "superior_id": user.superior_id,
                 "tier": getattr(user, "tier", None),
+                "daily_sla_summary_subscribed": getattr(user, "daily_sla_summary_subscribed", True),
                 "avatar": resolve_avatar_url_for_client(user.avatar),
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
@@ -245,6 +250,26 @@ async def bulk_users_action(
                 }
             return {"message": f"Invitation links sent to {success} user(s).", "success": success, "failed": 0}
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid action")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.patch("/{user_id}/daily-sla-summary-subscription", status_code=status.HTTP_200_OK)
+async def update_user_daily_sla_summary_subscription(
+    user_id: str,
+    body: DailySummarySubscriptionUpdateRequest,
+    current_user: dict = Depends(require_permission("user_management.users.edit")),
+    db: Session = Depends(get_db),
+):
+    """Admin update for a user's daily SLA summary subscription."""
+    try:
+        service = UserService(db)
+        user = service.get_user(user_id)
+        user.daily_sla_summary_subscribed = bool(body.subscribed)
+        db.commit()
+        return {"user_id": user.id, "subscribed": bool(user.daily_sla_summary_subscribed)}
     except HTTPException:
         raise
     except Exception as e:

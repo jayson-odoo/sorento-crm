@@ -27,6 +27,8 @@ const schema = z.object({
   interval_unit: z.enum(['seconds', 'minutes', 'hours', 'days']),
   timezone: z.string().optional(),
   start_at: z.date().nullable().optional(),
+  send_in_app: z.boolean().optional(),
+  send_email: z.boolean().optional(),
 });
 
 export type FormValues = z.infer<typeof schema>;
@@ -54,6 +56,14 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
       interval_unit: task.interval_unit as 'seconds' | 'minutes' | 'hours' | 'days',
       timezone: task.timezone || 'UTC',
       start_at: task.start_at ? parseDateSafe(task.start_at) ?? undefined : undefined,
+      send_in_app:
+        task.key === 'user_sla_daily_summary'
+          ? (task.metadata?.send_in_app as boolean | undefined) !== false
+          : true,
+      send_email:
+        task.key === 'user_sla_daily_summary'
+          ? (task.metadata?.send_email as boolean | undefined) !== false
+          : true,
     },
   });
 
@@ -72,6 +82,16 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
       'start_at',
       task.start_at ? parseDateSafe(task.start_at) ?? undefined : undefined,
     );
+    if (task.key === 'user_sla_daily_summary') {
+      setValue(
+        'send_in_app',
+        (task.metadata?.send_in_app as boolean | undefined) !== false,
+      );
+      setValue(
+        'send_email',
+        (task.metadata?.send_email as boolean | undefined) !== false,
+      );
+    }
   }, [task, setValue]);
 
   return (
@@ -98,6 +118,30 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
         />
         <Label htmlFor="enabled">Enabled</Label>
       </div>
+
+      {task.key === 'user_sla_daily_summary' && (
+        <div className="space-y-3 rounded-md border p-4">
+          <p className="text-sm font-medium">Notification channels</p>
+          <div className="flex items-center space-x-2">
+            <Switch
+              id="send_in_app"
+              checked={watch('send_in_app') !== false}
+              onCheckedChange={(v) =>
+                setValue('send_in_app', v, { shouldDirty: true })}
+            />
+            <Label htmlFor="send_in_app">In-app</Label>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Switch
+              id="send_email"
+              checked={watch('send_email') !== false}
+              onCheckedChange={(v) =>
+                setValue('send_email', v, { shouldDirty: true })}
+            />
+            <Label htmlFor="send_email">Email</Label>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <div className="space-y-2">

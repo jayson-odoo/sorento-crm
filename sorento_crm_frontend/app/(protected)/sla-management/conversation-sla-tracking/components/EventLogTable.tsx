@@ -5,6 +5,7 @@ import {
   ColumnDef,
   PaginationState,
   Row,
+  SortingState,
   useReactTable,
   getCoreRowModel,
   getPaginationRowModel,
@@ -13,11 +14,12 @@ import { Card, CardContent, CardFooter, CardHeader, CardTable, CardTitle } from 
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridStandardToolbar } from '@/components/ui/data-grid-standard-toolbar';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { Trash2, Filter } from 'lucide-react';
+import { Trash2 } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,7 +37,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
@@ -69,6 +70,7 @@ interface EventLogTableProps {
 
 export default function EventLogTable({ trackingId, agentCode, teamSetCode }: EventLogTableProps) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'event_at', desc: true }]);
   const [eventTypeFilter, setEventTypeFilter] = useState('__all__');
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
   const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
@@ -80,6 +82,8 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
   const { data: eventLogsResponse, isLoading } = useConversationSLAEventLogs(trackingId, {
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
+    sort: sorting?.[0]?.id || 'event_at',
+    dir: sorting?.[0]?.desc ? 'desc' : 'asc',
     event_type: eventTypeFilter && eventTypeFilter !== '__all__' ? eventTypeFilter : undefined,
     date_from: dateFrom ? toYYYYMMDD(dateFrom) : undefined,
     date_to: dateTo ? toYYYYMMDD(dateTo) : undefined,
@@ -119,11 +123,12 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
 
   const isAdmin = currentUser?.role === 'admin';
 
-  const hasActiveFilters =
+  const hasActiveFilters = Boolean(
     (eventTypeFilter && eventTypeFilter !== '__all__') ||
     dateFrom != null ||
     dateTo != null ||
-    (assignedToFilter && assignedToFilter !== '__all__');
+    (assignedToFilter && assignedToFilter !== '__all__'),
+  );
 
   const handleClearFilters = () => {
     setEventTypeFilter('__all__');
@@ -271,8 +276,10 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
     getPaginationRowModel: getPaginationRowModel(),
     manualPagination: true,
     pageCount: Math.ceil(totalCount / pagination.pageSize) || 0,
-    state: { pagination },
+    state: { pagination, sorting },
     onPaginationChange: setPagination,
+    onSortingChange: setSorting,
+    manualSorting: true,
   });
 
   if (isLoading && eventLogs.length === 0) {
@@ -290,24 +297,18 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
 
   return (
     <>
-      <DataGrid table={table} recordCount={totalCount} isLoading={isLoading}>
+      <DataGrid table={table} recordCount={totalCount} isLoading={isLoading} tableLayout={{ columnsVisibility: true }}
+      standardToolbar={false}>
         <Card>
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 py-5">
-            <CardTitle>Event Log</CardTitle>
-            <div className="flex items-center gap-2 shrink-0">
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" disabled={isLoading} title="Filter by event type, date range, assigned to" className="relative">
-                    <Filter className="size-4 mr-1.5" />
-                    Filter
-                    {hasActiveFilters && (
-                      <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-primary" />
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-80" align="end">
+          <CardHeader className="py-5">
+            <DataGridStandardToolbar
+              table={table}
+              quickFiltersSlot={<CardTitle>Event Log</CardTitle>}
+              advancedFilters={{
+                active: hasActiveFilters,
+                content: (
                   <div className="space-y-4">
-                    <h4 className="font-medium text-sm">Filters</h4>
+                    <h4 className="text-sm font-medium">Advanced filters</h4>
                     <div className="space-y-2">
                       <Label className="text-xs">Event Type</Label>
                       <Select
@@ -333,7 +334,7 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
                       <Label className="text-xs">Date range (Event At)</Label>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <Label className="text-muted-foreground text-xs">From</Label>
+                          <Label className="text-xs text-muted-foreground">From</Label>
                           <DatePicker
                             value={dateFrom}
                             onChange={(d) => {
@@ -344,7 +345,7 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
                           />
                         </div>
                         <div>
-                          <Label className="text-muted-foreground text-xs">To</Label>
+                          <Label className="text-xs text-muted-foreground">To</Label>
                           <DatePicker
                             value={dateTo}
                             onChange={(d) => {
@@ -384,9 +385,10 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
                       </Button>
                     )}
                   </div>
-                </PopoverContent>
-              </Popover>
-            </div>
+                ),
+              }}
+              exportConfig={{ filename: `conversation_sla_event_log_${trackingId}.xlsx` }}
+            />
           </CardHeader>
           {eventLogs.length > 0 ? (
             <>

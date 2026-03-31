@@ -75,6 +75,7 @@ async def update_scheduled_task(
         interval_value=body.interval_value,
         timezone=body.timezone,
         start_at=body.start_at,
+        metadata=body.metadata,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Scheduled task not found")
@@ -112,7 +113,7 @@ async def trigger_run_now(
     task = get_task(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Scheduled task not found")
-    result = run_task_now(db, task_id)
+    result = run_task_now(db, task_id, requested_by_user_id=current_user.get("id"))
     if result is None:
         raise HTTPException(status_code=404, detail="Scheduled task not found")
     return result

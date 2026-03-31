@@ -38,6 +38,8 @@ export interface User {
   superiorName?: string | null;
   /** Conversation SLA policy tier (1, 2, ...) */
   tier?: number | null;
+  dailySlaSummarySubscribed?: boolean | null;
+  daily_sla_summary_subscribed?: boolean | null;
   roles?: UserRoleSimple[];
   role?: UserRole;
   sessions?: Session[];

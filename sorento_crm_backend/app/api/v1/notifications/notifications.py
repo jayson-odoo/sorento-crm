@@ -9,6 +9,11 @@ from app.dependencies import get_current_user
 from app.services.notification_service import NotificationService
 from app.services.audit_service import log_audit
 from app.models.notification import PushSubscription
+from app.models.user import User
+from app.services.user_sla_daily_summary_service import (
+    verify_unsubscribe_token,
+    set_user_daily_summary_subscription,
+)
 from app.schemas.notification import (
     NotificationResponse,
     UnreadCountResponse,
@@ -42,6 +47,47 @@ def _to_response(n):
         source_entity_id=n.source_entity_id,
         event_type=n.event_type,
     )
+
+
+@router.get("/preferences/daily-sla-summary")
+async def get_daily_sla_summary_preference(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get current user's subscription setting for daily SLA summary newsletter."""
+    user = db.query(User).filter(User.id == current_user["id"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"subscribed": bool(getattr(user, "daily_sla_summary_subscribed", True))}
+
+
+@router.patch("/preferences/daily-sla-summary")
+async def set_daily_sla_summary_preference(
+    subscribed: bool = Query(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update current user's subscription setting for daily SLA summary newsletter."""
+    ok = set_user_daily_summary_subscription(db, current_user["id"], subscribed)
+    if not ok:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"subscribed": bool(subscribed)}
+
+
+@router.get("/preferences/daily-sla-summary/unsubscribe")
+async def unsubscribe_daily_sla_summary_via_token(
+    token: str = Query(..., min_length=10),
+    db: Session = Depends(get_db),
+):
+    """Public endpoint for one-click unsubscribe from email link."""
+    try:
+        user_id = verify_unsubscribe_token(token)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    ok = set_user_daily_summary_subscription(db, user_id, False)
+    if not ok:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"message": "Unsubscribed from daily SLA summary emails.", "subscribed": False}
 
 
 @router.get("/", response_model=ListResponse[NotificationResponse])

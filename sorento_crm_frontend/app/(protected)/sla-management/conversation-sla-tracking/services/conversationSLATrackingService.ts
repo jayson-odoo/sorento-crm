@@ -6,6 +6,8 @@ export interface ConversationSLAEventLogsParams {
   tracking_id: string;
   page?: number;
   limit?: number;
+  sort?: string;
+  dir?: 'asc' | 'desc';
   event_type?: string;
   date_from?: string; // YYYY-MM-DD
   date_to?: string;   // YYYY-MM-DD
@@ -18,11 +20,13 @@ export interface ConversationSLAEventLogsResponse {
 }
 
 export async function getConversationSLAEventLogs(params: ConversationSLAEventLogsParams): Promise<ConversationSLAEventLogsResponse> {
-  const { tracking_id, page = 1, limit = 50, event_type, date_from, date_to, assigned_to_id } = params;
+  const { tracking_id, page = 1, limit = 50, sort = 'event_at', dir = 'desc', event_type, date_from, date_to, assigned_to_id } = params;
   const queryParams = new URLSearchParams({
     tracking_id,
     page: String(page),
     limit: String(limit),
+    sort,
+    dir,
     ...(event_type ? { event_type } : {}),
     ...(date_from ? { date_from: date_from } : {}),
     ...(date_to ? { date_to: date_to } : {}),

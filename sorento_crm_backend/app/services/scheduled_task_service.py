@@ -1,7 +1,7 @@
 """Service for scheduled task execution and run logging."""
 import logging
 from datetime import datetime, timedelta
-from typing import Callable, Optional, Any
+from typing import Callable, Optional, Any, Dict
 
 from sqlalchemy.orm import Session
 
@@ -96,6 +96,7 @@ def update_task(
     interval_value: Optional[int] = None,
     timezone: Optional[str] = None,
     start_at: Optional[datetime] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional[ScheduledTask]:
     """Update task config. Recomputes next_run_at if interval/start_at changed."""
     task = get_task(db, task_id)
@@ -115,6 +116,14 @@ def update_task(
         task.timezone = timezone
     if start_at is not None:
         task.start_at = start_at
+    if metadata is not None:
+        base = dict(task.metadata_ or {})
+        for k, v in metadata.items():
+            if v is None:
+                base.pop(k, None)
+            else:
+                base[k] = v
+        task.metadata_ = base or None
     # Recompute next_run_at from current schedule
     now = datetime.utcnow()
     base = task.last_run_at or task.start_at or now
@@ -131,7 +140,7 @@ def update_task(
     return task
 
 
-def run_task_now(db: Session, task_id: str) -> Optional[dict]:
+def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] = None) -> Optional[dict]:
     """
     Run a task once immediately (manual trigger). Returns run summary or None if task not found.
     """
@@ -162,6 +171,9 @@ def run_task_now(db: Session, task_id: str) -> Optional[dict]:
                 db, task.id, "skipped", None, {"reason": "no handler registered"}, next_run
             )
             return {"run_id": run.id, "status": "skipped", "summary": {"reason": "no handler registered"}}
+        # For manual ad-hoc runs, handlers may use this context to run in safe test mode.
+        if requested_by_user_id:
+            setattr(task, "_manual_run_requested_by_user_id", str(requested_by_user_id))
         summary = handler(db, task)
         duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
         finish_run(db, run.id, status="success", duration_ms=duration_ms, summary=summary or {})

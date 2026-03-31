@@ -323,11 +323,54 @@ def compute_tracking_timings(tracking, tier) -> dict:
     }
 
 
+def event_log_assignee_fields(db: Session, user_ref: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Resolve (display label, user id) for SLA event log assigned_to / assigned_to_id."""
+    if user_ref is None or (isinstance(user_ref, str) and not str(user_ref).strip()):
+        return None, None
+    v = str(user_ref).strip()
+    from app.models.user import User
+
+    user = (
+        db.query(User)
+        .filter(
+            (User.id == v) | (User.respond_user_id == v) | (User.email == v),
+        )
+        .first()
+    )
+    if not user:
+        return v, None
+    label = (
+        user.name
+        or user.email
+        or (str(user.respond_user_id) if user.respond_user_id else "")
+        or ""
+    ).strip() or None
+    return label, user.id
+
+
 class ConversationSLATrackingService:
     """Service for conversation SLA tracking operations."""
     
     def __init__(self, db: Session):
         self.db = db
+
+    def _resolve_tracking_assignee_user_id(self, tracking: ConversationSLATracking) -> Optional[str]:
+        """Current assignee as users.id before clearing assignment (FK first, then legacy assigned_to text)."""
+        if tracking.assigned_to_id:
+            return str(tracking.assigned_to_id)
+        if not tracking.assigned_to:
+            return None
+        from app.models.user import User
+
+        raw = str(tracking.assigned_to).strip()
+        user = (
+            self.db.query(User)
+            .filter(
+                (User.respond_user_id == raw) | (User.id == raw) | (User.email == raw),
+            )
+            .first()
+        )
+        return user.id if user else None
     
     def list_tracking(
         self,
@@ -1166,6 +1209,11 @@ class ConversationSLATrackingService:
         if is_responded:
             if tracking.is_responded:
                 raise handle_validation_error("Conversation is already responded.")
+            _resp_by = update_data.get("responded_by")
+            if _resp_by is None or (isinstance(_resp_by, str) and not str(_resp_by).strip()):
+                _aid = self._resolve_tracking_assignee_user_id(tracking)
+                if _aid:
+                    update_data["responded_by"] = _aid
             update_data["is_responded"] = True
             # Auto-set responded_at to now (UTC)
             if "responded_at" not in update_data or update_data.get("responded_at") is None:
@@ -1207,6 +1255,11 @@ class ConversationSLATrackingService:
         if is_resolved:
             if tracking.is_resolved:
                 raise handle_validation_error("Conversation is already resolved.")
+            _res_by = update_data.get("resolved_by")
+            if _res_by is None or (isinstance(_res_by, str) and not str(_res_by).strip()):
+                _rid = self._resolve_tracking_assignee_user_id(tracking)
+                if _rid:
+                    update_data["resolved_by"] = _rid
             update_data["is_resolved"] = True
             # Unset assignee when resolving (same as n8n / external API behaviour)
             update_data["assigned_to"] = None
@@ -1414,27 +1467,33 @@ class ConversationSLATrackingService:
             )
 
             if status_updates.get("is_responded") is True:
+                alabel, aid = event_log_assignee_fields(
+                    self.db, updated_tracking.responded_by
+                )
                 self.create_event_log(
                     ConversationSLAEventLogCreate(
                         sla_tracking_id=tracking_id,
                         event_type="response",
                         from_tier=updated_tracking.current_tier,
                         to_tier=updated_tracking.current_tier,
-                        assigned_to=updated_tracking.assigned_to,
-                        assigned_to_id=updated_tracking.assigned_to_id,
+                        assigned_to=alabel,
+                        assigned_to_id=aid,
                         reason="Responded",
                     )
                 )
 
             if status_updates.get("is_resolved") is True:
+                alabel, aid = event_log_assignee_fields(
+                    self.db, updated_tracking.resolved_by
+                )
                 self.create_event_log(
                     ConversationSLAEventLogCreate(
                         sla_tracking_id=tracking_id,
                         event_type="resolution",
                         from_tier=updated_tracking.current_tier,
                         to_tier=updated_tracking.current_tier,
-                        assigned_to=updated_tracking.assigned_to,
-                        assigned_to_id=updated_tracking.assigned_to_id,
+                        assigned_to=alabel,
+                        assigned_to_id=aid,
                         reason="Resolved",
                     )
                 )
@@ -1535,6 +1594,19 @@ class ConversationSLATrackingService:
                     duration_seconds = max(0.0, duration_seconds)  # clamp for bad legacy data
                     duration_hours = Decimal(str(duration_seconds / 3600)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
                     log_dict["duration"] = duration_hours
+
+            if not log_dict.get("assigned_to_id") and tracking:
+                uid_ref = (
+                    tracking.responded_by
+                    if event_type == "response"
+                    else tracking.resolved_by
+                )
+                if uid_ref:
+                    label, uid = event_log_assignee_fields(self.db, str(uid_ref))
+                    if uid:
+                        log_dict["assigned_to_id"] = uid
+                    if label:
+                        log_dict["assigned_to"] = label
         
         log = ConversationSLAEventLog(**log_dict)
         self.db.add(log)
@@ -1546,6 +1618,8 @@ class ConversationSLATrackingService:
         self,
         page: int = 1,
         limit: int = 50,
+        sort_field: Optional[str] = "event_at",
+        sort_dir: Optional[str] = "desc",
         tracking_id: Optional[str] = None,
         event_type: Optional[str] = None,
         assigned_to: Optional[str] = None,
@@ -1591,7 +1665,21 @@ class ConversationSLATrackingService:
 
         total = q.count()
 
-        logs = q.order_by(ConversationSLAEventLog.event_at.desc()).offset((page - 1) * limit).limit(limit).all()
+        sort_map = {
+            "event_type": ConversationSLAEventLog.event_type,
+            "from_tier": ConversationSLAEventLog.from_tier,
+            "to_tier": ConversationSLAEventLog.to_tier,
+            "event_at": ConversationSLAEventLog.event_at,
+            "from_time": ConversationSLAEventLog.from_time,
+            "duration": ConversationSLAEventLog.duration,
+            "reason": ConversationSLAEventLog.reason,
+            "assigned_user_name": ConversationSLAEventLog.assigned_to,
+            "assigned_to": ConversationSLAEventLog.assigned_to,
+            "created_at": ConversationSLAEventLog.created_at,
+        }
+        order_col = sort_map.get((sort_field or "").strip(), ConversationSLAEventLog.event_at)
+        order_expr = order_col.desc() if str(sort_dir or "desc").lower() == "desc" else order_col.asc()
+        logs = q.order_by(order_expr).offset((page - 1) * limit).limit(limit).all()
 
         # Build response items as dicts (same shape as get_tracking) to avoid ORM->schema validation edge cases
         data = []

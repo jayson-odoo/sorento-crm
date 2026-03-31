@@ -23,6 +23,7 @@ class ScheduledTaskUpdate(BaseModel):
     interval_value: Optional[int] = Field(None, ge=1)
     timezone: Optional[str] = None
     start_at: Optional[datetime] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class ScheduledTaskResponse(BaseModel):

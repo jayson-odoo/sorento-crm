@@ -8,7 +8,12 @@ from typing import Optional
 import httpx
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key, require_permission
-from app.services.sla_service import ConversationSLATrackingService, to_naive_datetime, compute_tracking_timings
+from app.services.sla_service import (
+    ConversationSLATrackingService,
+    to_naive_datetime,
+    compute_tracking_timings,
+    event_log_assignee_fields,
+)
 from app.services.integration_service import IntegrationLogService
 from app.schemas.sla import (
     ConversationSLATrackingCreate,
@@ -602,30 +607,19 @@ async def update_sla_tracking_status_integration(
             responded_at_utc = update_data.responded_at
             if isinstance(responded_at_utc, datetime) and responded_at_utc.tzinfo:
                 responded_at_utc = responded_at_utc.astimezone(timezone.utc)
-            
+
+            alabel, aid = event_log_assignee_fields(db, tracking.responded_by)
+
             service.create_event_log(ConversationSLAEventLogCreate(
                 sla_tracking_id=tracking_id,
                 event_type="response",
                 event_at=responded_at_utc,
                 response_time=update_dict.get("response_time"),
-                assigned_to=tracking.assigned_to,  # Keep for backward compatibility
-                assigned_to_id=tracking.assigned_to_id,
+                assigned_to=alabel,
+                assigned_to_id=aid,
             ))
 
         if update_data.is_resolved:
-            # Resolved_by is stored as user UUID by the service; look up for event log
-            resolved_by_user_id = None
-            if tracking.resolved_by:
-                from app.models.user import User
-                resolved_user = db.query(User).filter(
-                    (User.id == tracking.resolved_by) |
-                    (User.respond_user_id == tracking.resolved_by) |
-                    (User.email == tracking.resolved_by) |
-                    (User.name == tracking.resolved_by)
-                ).first()
-                if resolved_user:
-                    resolved_by_user_id = resolved_user.id
-
             # Use tracking.resolved_at (set by service if not sent) for event log
             resolved_at_utc = update_data.resolved_at or getattr(tracking, "resolved_at", None)
             if isinstance(resolved_at_utc, datetime) and resolved_at_utc.tzinfo:
@@ -633,13 +627,15 @@ async def update_sla_tracking_status_integration(
             elif isinstance(resolved_at_utc, datetime) and not resolved_at_utc.tzinfo:
                 resolved_at_utc = resolved_at_utc.replace(tzinfo=timezone.utc)
 
+            rlabel, rid = event_log_assignee_fields(db, tracking.resolved_by)
+
             service.create_event_log(ConversationSLAEventLogCreate(
                 sla_tracking_id=tracking_id,
                 event_type="resolution",
                 event_at=resolved_at_utc,
                 resolution_time=update_dict.get("resolution_duration"),
-                assigned_to=tracking.resolved_by,  # Keep for backward compatibility
-                assigned_to_id=resolved_by_user_id,
+                assigned_to=rlabel,
+                assigned_to_id=rid,
             ))
 
         log_service = IntegrationLogService(db)
@@ -729,6 +725,8 @@ async def delete_event_log(
 async def get_event_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
+    sort: Optional[str] = Query("event_at"),
+    dir: Optional[str] = Query("desc"),
     tracking_id: Optional[str] = Query(None),
     event_type: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
@@ -744,6 +742,8 @@ async def get_event_logs(
         result = service.list_event_logs(
             page=page,
             limit=limit,
+            sort_field=sort,
+            sort_dir=dir,
             tracking_id=tracking_id,
             event_type=event_type,
             assigned_to=assigned_to,
