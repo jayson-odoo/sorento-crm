@@ -1,5 +1,6 @@
 """Procurement service for business logic."""
 import logging
+import re
 import secrets
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
@@ -34,6 +35,13 @@ def _normalize_spo_number(spo_number: Optional[str]) -> str:
     if not spo_number or not str(spo_number).strip():
         return ""
     return str(spo_number).strip().replace("/", ".").replace("\\", ".")
+
+
+def _spo_match_key(spo_number: Optional[str]) -> str:
+    """Alphanumeric-only key so SPO-202602-0102 matches SPO-2026/02-0102 and SPO-2026.02-0102."""
+    if not spo_number or not str(spo_number).strip():
+        return ""
+    return re.sub(r"[^A-Za-z0-9]", "", str(spo_number).strip()).upper()
 
 
 def compute_inbound_shipment_line_status(
@@ -910,28 +918,23 @@ class SPOAllocationService:
 
     def get_linked_grns_for_spo(self, spo_number: Optional[str]):
         """Return list of GRN headers (id, picking_number, picking_status, picking_date) for this SPO number.
-        Matches by normalized SPO number. Filter at DB level to avoid loading all GRNs."""
+        Matches by alphanumeric SPO key so variant formats (e.g. SPO-202602-0102 vs SPO-2026/02-0102) align."""
         if not spo_number or not spo_number.strip():
             return []
-        target_norm = _normalize_spo_number(spo_number)
-        if not target_norm:
+        target_key = _spo_match_key(spo_number)
+        if not target_key:
             return []
-        # Normalize in DB: trim and replace / and \ with . (PostgreSQL)
-        norm_expr = func.replace(
-            func.replace(func.trim(PickingHeader.spo_number), "/", "."),
-            "\\", ".",
-        )
         rows = (
             self.db.query(
                 PickingHeader.id,
                 PickingHeader.picking_number,
                 PickingHeader.picking_status,
                 PickingHeader.picking_date,
+                PickingHeader.spo_number,
             )
             .filter(
                 PickingHeader.picking_type == "goods_received",
                 PickingHeader.spo_number.isnot(None),
-                norm_expr == target_norm,
             )
             .order_by(PickingHeader.picking_date.desc().nulls_last(), PickingHeader.picking_number)
             .all()
@@ -939,6 +942,7 @@ class SPOAllocationService:
         return [
             {"id": str(r[0]), "picking_number": r[1], "picking_status": r[2], "picking_date": r[3]}
             for r in rows
+            if _spo_match_key(r[4]) == target_key
         ]
 
 
@@ -1139,6 +1143,7 @@ class PickingHeaderService:
         """Update a GRN. Link to SPO only when status changes to approved; unlink and release quantity when status changes to draft or rejected."""
         grn = self.get_grn(grn_id)
         prev_status = grn.picking_status
+        prev_spo_number = grn.spo_number
 
         update_data = grn_data.model_dump(exclude_unset=True)
         picking_lines_payload = update_data.pop("picking_lines", None)
@@ -1163,31 +1168,51 @@ class PickingHeaderService:
                     line_dict.pop("spo_allocation_id", None)  # Do not link when not approved
                     line = PickingLine(**line_dict, picking_header_id=grn_id)
                     self.db.add(line)
-        elif grn.picking_status == "approved" and prev_status != "approved" and grn.spo_number and str(grn.spo_number).strip():
-            # Status just changed to approved without sending lines: link existing lines to SPO via FIFO
-            existing_lines = (
-                self.db.query(PickingLine)
-                .filter(PickingLine.picking_header_id == grn_id)
-                .all()
+        elif grn.picking_status == "approved" and grn.spo_number and str(grn.spo_number).strip():
+            status_became_approved = prev_status != "approved"
+            spo_changed_while_approved = (
+                prev_status == "approved"
+                and _spo_match_key(prev_spo_number) != _spo_match_key(grn.spo_number)
             )
-            if existing_lines:
-                lines_payload = [
-                    {
-                        "product_id": str(line.product_id),
-                        "source_warehouse_id": str(line.source_warehouse_id) if line.source_warehouse_id else None,
-                        "quantity_expected": line.quantity_expected or 0,
-                        "quantity_picked": line.quantity_picked or 0,
-                    }
-                    for line in existing_lines
-                ]
-                self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).delete()
-                self._create_grn_lines_with_spo_fifo(grn_id, grn.spo_number, lines_payload)
+            if status_became_approved or spo_changed_while_approved:
+                # No line payload: rebuild from existing DB rows and FIFO-link to current SPO
+                existing_lines = (
+                    self.db.query(PickingLine)
+                    .filter(PickingLine.picking_header_id == grn_id)
+                    .all()
+                )
+                if existing_lines:
+                    lines_payload = [
+                        {
+                            "product_id": str(line.product_id),
+                            "source_warehouse_id": str(line.source_warehouse_id) if line.source_warehouse_id else None,
+                            "quantity_expected": line.quantity_expected or 0,
+                            "quantity_picked": line.quantity_picked or 0,
+                        }
+                        for line in existing_lines
+                    ]
+                    self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).delete()
+                    self._create_grn_lines_with_spo_fifo(grn_id, grn.spo_number, lines_payload)
 
         self.db.commit()
         self.db.refresh(grn)
 
-        if grn.picking_status == "approved" and prev_status != "approved":
+        spo_key_changed = _spo_match_key(prev_spo_number) != _spo_match_key(grn.spo_number)
+        if grn.picking_status == "approved" and (
+            prev_status != "approved"
+            or picking_lines_payload is not None
+            or spo_key_changed
+        ):
             self.sync_grn_received_to_spo(grn_id)
+        if (
+            grn.picking_status == "approved"
+            and prev_status == "approved"
+            and spo_key_changed
+        ):
+            if prev_spo_number and str(prev_spo_number).strip():
+                self.sync_received_for_spo_number(prev_spo_number)
+            if grn.spo_number and str(grn.spo_number).strip():
+                self.sync_received_for_spo_number(grn.spo_number)
 
         return grn
 
@@ -1348,8 +1373,8 @@ class PickingHeaderService:
     ) -> None:
         """Create picking lines for a GRN, assigning spo_allocation_id via FIFO by SPO number + product.
         Matches import logic: same SPO number + product, consume from allocations (same warehouse first, then others)."""
-        spo_normalized = _normalize_spo_number(spo_number)
-        if not spo_normalized:
+        spo_key = _spo_match_key(spo_number)
+        if not spo_key:
             for line_data in lines_payload:
                 line_dict = {k: v for k, v in line_data.items() if k != "quantity_discrepancy"}
                 line = PickingLine(**line_dict, picking_header_id=grn_id)
@@ -1366,7 +1391,7 @@ class PickingHeaderService:
             if quantity_expected <= 0 and quantity_picked <= 0:
                 continue
 
-            # SPO allocations for this product, same normalized spo_number, FIFO by created_at
+            # SPO allocations for this product, same SPO match key, FIFO by created_at
             allocations = (
                 self.db.query(SPOAllocation)
                 .filter(
@@ -1378,7 +1403,7 @@ class PickingHeaderService:
             )
             spo_allocations = [
                 a for a in allocations
-                if _normalize_spo_number(a.spo_number) == spo_normalized
+                if _spo_match_key(a.spo_number) == spo_key
             ]
             # Pool: [alloc_id, alloc_warehouse_id, available]
             spo_pool: List[List[Any]] = []
@@ -1388,7 +1413,8 @@ class PickingHeaderService:
                 if available > 0:
                     spo_pool.append([str(alloc.id), alloc.warehouse_id, available])
 
-            remaining = quantity_picked
+            # Consume from SPO pool by received qty when present; otherwise expected (draft line with only expected filled).
+            remaining = quantity_picked if quantity_picked > 0 else quantity_expected
             first_chunk = True
 
             # First pass: same warehouse
@@ -1496,13 +1522,13 @@ class PickingHeaderService:
         """Re-sync DB quantity_received for all allocations under this SPO (optional background use)."""
         if not spo_number or not spo_number.strip():
             return
-        target_norm = _normalize_spo_number(spo_number)
-        if not target_norm:
+        target_key = _spo_match_key(spo_number)
+        if not target_key:
             return
         allocations = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None)).all()
         shipment_ids = set()
         for alloc in allocations:
-            if _normalize_spo_number(alloc.spo_number) != target_norm:
+            if _spo_match_key(alloc.spo_number) != target_key:
                 continue
             alloc_id = str(alloc.id)
             total = self.compute_received_for_allocation(alloc_id)
@@ -1517,27 +1543,23 @@ class PickingHeaderService:
 
     def get_linked_grns_for_spo(self, spo_number: Optional[str]):
         """Return list of GRN headers (id, picking_number, picking_status, picking_date) for this SPO number.
-        Matches by normalized SPO number. Filter at DB level to avoid loading all GRNs."""
+        Matches by alphanumeric SPO key so variant formats (e.g. SPO-202602-0102 vs SPO-2026/02-0102) align."""
         if not spo_number or not spo_number.strip():
             return []
-        target_norm = _normalize_spo_number(spo_number)
-        if not target_norm:
+        target_key = _spo_match_key(spo_number)
+        if not target_key:
             return []
-        norm_expr = func.replace(
-            func.replace(func.trim(PickingHeader.spo_number), "/", "."),
-            "\\", ".",
-        )
         rows = (
             self.db.query(
                 PickingHeader.id,
                 PickingHeader.picking_number,
                 PickingHeader.picking_status,
                 PickingHeader.picking_date,
+                PickingHeader.spo_number,
             )
             .filter(
                 PickingHeader.picking_type == "goods_received",
                 PickingHeader.spo_number.isnot(None),
-                norm_expr == target_norm,
             )
             .order_by(PickingHeader.picking_date.desc().nulls_last(), PickingHeader.picking_number)
             .all()
@@ -1545,6 +1567,7 @@ class PickingHeaderService:
         return [
             {"id": str(r[0]), "picking_number": r[1], "picking_status": r[2], "picking_date": r[3]}
             for r in rows
+            if _spo_match_key(r[4]) == target_key
         ]
 
 

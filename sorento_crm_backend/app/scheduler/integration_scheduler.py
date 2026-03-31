@@ -10,6 +10,7 @@ from app.services.scheduled_task_service import (
     register_handler,
 )
 from app.services.respond_sync_handler import run_respond_contacts_sync
+from app.services.user_sla_daily_summary_service import run_user_sla_daily_summary
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,11 @@ def _handler_notification_delivery_processor(db, task):
     """Handler for notification_delivery_processor: process notification email/push deliveries from queue."""
     result = _run_notification_delivery_jobs_impl()
     return result
+
+
+def _handler_user_sla_daily_summary(db, task):
+    """Daily in-app/email summary of SLA performance and outstanding assignments per user."""
+    return run_user_sla_daily_summary(db, task)
 
 
 def _run_notification_delivery_jobs_impl():
@@ -284,6 +290,7 @@ def start_scheduler():
     register_handler("integration_log_retry", _handler_integration_log_retry)
     register_handler("import_job_processor", _handler_import_job_processor)
     register_handler("notification_delivery_processor", _handler_notification_delivery_processor)
+    register_handler("user_sla_daily_summary", _handler_user_sla_daily_summary)
     register_handler("respond_contacts_sync", run_respond_contacts_sync)
 
     scheduler = BackgroundScheduler()

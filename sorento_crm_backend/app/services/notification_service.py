@@ -39,6 +39,55 @@ class NotificationService:
                 .first()
             )
             if existing:
+                # Idempotent record already exists; ensure requested channels exist on it.
+                existing_deliveries = {
+                    d.channel: d
+                    for d in self.db.query(NotificationDelivery)
+                    .filter(NotificationDelivery.notification_id == existing.id)
+                    .all()
+                }
+                now = datetime.utcnow()
+                created_pending_delivery = False
+                if send_in_app and "in_app" not in existing_deliveries:
+                    self.db.add(
+                        NotificationDelivery(
+                            notification_id=existing.id,
+                            channel="in_app",
+                            status="sent",
+                            sent_at=now,
+                        )
+                    )
+                if send_email and "email" not in existing_deliveries:
+                    self.db.add(
+                        NotificationDelivery(
+                            notification_id=existing.id,
+                            channel="email",
+                            status="pending",
+                        )
+                    )
+                    created_pending_delivery = True
+                if send_web_push and "web_push" not in existing_deliveries:
+                    self.db.add(
+                        NotificationDelivery(
+                            notification_id=existing.id,
+                            channel="web_push",
+                            status="pending",
+                        )
+                    )
+                    created_pending_delivery = True
+                if created_pending_delivery:
+                    self.db.commit()
+                    try:
+                        from app.services.queue_service import enqueue_job
+                        from app.tasks import notification_tasks
+
+                        enqueue_job(
+                            notification_tasks.send_notification_deliveries,
+                            str(existing.id),
+                            queue_name="notifications",
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to enqueue notification deliveries: %s", e)
                 return existing
         notification = Notification(
             user_id=user_id,
@@ -128,6 +177,93 @@ class NotificationService:
         ))
         self.db.commit()
         self.db.refresh(notification)
+        return notification
+
+    def create_with_channel_preferences(
+        self,
+        user_id: str,
+        type: str,
+        title: str,
+        body: Optional[str] = None,
+        data: Optional[dict] = None,
+        source_entity_type: Optional[str] = None,
+        source_entity_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+        send_in_app: bool = True,
+        send_email: bool = True,
+        send_web_push: bool = False,
+    ) -> Optional[Notification]:
+        """
+        Create notification and only create deliveries for selected channels.
+        Enqueues async processing when email or web_push deliveries are pending.
+        """
+        if not send_in_app and not send_email and not send_web_push:
+            raise ValueError("At least one delivery channel must be enabled")
+        if source_entity_type and source_entity_id and event_type:
+            existing = (
+                self.db.query(Notification)
+                .filter(
+                    Notification.user_id == user_id,
+                    Notification.source_entity_type == source_entity_type,
+                    Notification.source_entity_id == source_entity_id,
+                    Notification.event_type == event_type,
+                )
+                .first()
+            )
+            if existing:
+                return existing
+        notification = Notification(
+            user_id=user_id,
+            type=type,
+            title=title,
+            body=body,
+            data=data or {},
+            source_entity_type=source_entity_type,
+            source_entity_id=source_entity_id,
+            event_type=event_type,
+        )
+        self.db.add(notification)
+        self.db.flush()
+        now = datetime.utcnow()
+        if send_in_app:
+            self.db.add(
+                NotificationDelivery(
+                    notification_id=notification.id,
+                    channel="in_app",
+                    status="sent",
+                    sent_at=now,
+                )
+            )
+        if send_email:
+            self.db.add(
+                NotificationDelivery(
+                    notification_id=notification.id,
+                    channel="email",
+                    status="pending",
+                )
+            )
+        if send_web_push:
+            self.db.add(
+                NotificationDelivery(
+                    notification_id=notification.id,
+                    channel="web_push",
+                    status="pending",
+                )
+            )
+        self.db.commit()
+        self.db.refresh(notification)
+        if send_email or send_web_push:
+            try:
+                from app.services.queue_service import enqueue_job
+                from app.tasks import notification_tasks
+
+                enqueue_job(
+                    notification_tasks.send_notification_deliveries,
+                    str(notification.id),
+                    queue_name="notifications",
+                )
+            except Exception as e:
+                logger.warning("Failed to enqueue notification deliveries: %s", e)
         return notification
 
     def list(

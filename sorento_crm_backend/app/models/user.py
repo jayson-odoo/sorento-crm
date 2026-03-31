@@ -38,6 +38,7 @@ class User(Base):
     respond_synced = Column(String, default="pending", nullable=False)
     superior_id = Column(String, ForeignKey("users.id"), nullable=True)
     tier = Column(Integer, nullable=True)  # Conversation SLA policy tier (1, 2, ...)
+    daily_sla_summary_subscribed = Column(Boolean, default=True, nullable=False)
     
     role_assignments = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
     system_logs = relationship("SystemLog", back_populates="user")

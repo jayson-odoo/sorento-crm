@@ -147,8 +147,20 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking-detail', trackingId] });
-    setIsRefreshing(false);
+    try {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ['conversation-sla-tracking-detail', trackingId],
+          refetchType: 'active',
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['conversation-sla-event-logs', trackingId],
+          refetchType: 'active',
+        }),
+      ]);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const handleDelete = () => {

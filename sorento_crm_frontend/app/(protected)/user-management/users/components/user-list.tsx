@@ -13,7 +13,7 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, LoaderCircleIcon, Mail, Plus, Search, Settings, Trash2, UserCheck, UserX, X } from 'lucide-react';
+import { ChevronRight, LoaderCircleIcon, Mail, Plus, Search, Settings, Trash2, UserCheck, UserX, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import {
   AlertDialog,
@@ -29,7 +29,7 @@ import { formatDateSafe, formatDateTimeInMalaysia, getInitials } from '@/lib/hel
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardHeader, CardTable, CardToolbar } from '@/components/ui/card';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,14 +42,15 @@ import {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridStandardToolbar } from '@/components/ui/data-grid-standard-toolbar';
 import {
   DataGridTable,
   DataGridTableRowSelect,
   DataGridTableRowSelectAll,
 } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
   Select,
@@ -84,6 +85,7 @@ const UserList = () => {
   const [bulkActionPending, setBulkActionPending] = useState(false);
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [bulkConfirmAction, setBulkConfirmAction] = useState<'delete' | 'activate' | 'deactivate' | 'permanent_delete' | 'resend_invite' | null>(null);
+  const [togglingSubscriptionByUser, setTogglingSubscriptionByUser] = useState<Record<string, boolean>>({});
 
   // Role select query
   const { data: roleList } = useRoleSelectQuery();
@@ -136,9 +138,35 @@ const UserList = () => {
       json.data = json.data.map((u: Record<string, unknown>) => ({
         ...u,
         isTrashed: u.is_trashed ?? u.isTrashed,
+        dailySlaSummarySubscribed:
+          u.daily_sla_summary_subscribed ?? u.dailySlaSummarySubscribed ?? true,
       }));
     }
     return json;
+  };
+
+  const updateDailySummarySubscription = async (userId: string, subscribed: boolean) => {
+    setTogglingSubscriptionByUser((prev) => ({ ...prev, [userId]: true }));
+    try {
+      const res = await apiFetch(
+        `/api/user-management/users/${userId}/daily-sla-summary-subscription`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subscribed }),
+        },
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload.detail || payload.message || 'Failed to update setting');
+      }
+      toast.success('Conversation summary setting updated');
+      queryClient.invalidateQueries({ queryKey: ['user-users'] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update setting');
+    } finally {
+      setTogglingSubscriptionByUser((prev) => ({ ...prev, [userId]: false }));
+    }
   };
 
   // Users query
@@ -385,6 +413,47 @@ const UserList = () => {
         enableHiding: true,
       },
       {
+        accessorKey: 'dailySlaSummarySubscribed',
+        id: 'dailySlaSummarySubscribed',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Conversation Summary"
+            visibility={true}
+            column={column}
+          />
+        ),
+        cell: ({ row }) => {
+          const user = row.original;
+          const userId = user.id;
+          const subscribed =
+            user.dailySlaSummarySubscribed ??
+            user.daily_sla_summary_subscribed ??
+            true;
+          const isPending = Boolean(togglingSubscriptionByUser[userId]);
+          return (
+            <div
+              className="flex items-center gap-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Switch
+                checked={Boolean(subscribed)}
+                disabled={isPending}
+                onCheckedChange={(next) => {
+                  void updateDailySummarySubscription(userId, next);
+                }}
+              />
+            </div>
+          );
+        },
+        size: 170,
+        meta: {
+          headerTitle: 'Conversation Summary',
+          skeleton: <Skeleton className="w-10 h-6" />,
+        },
+        enableSorting: false,
+        enableHiding: true,
+      },
+      {
         accessorKey: 'createdAt',
         id: 'createdAt',
         header: ({ column }) => (
@@ -442,7 +511,7 @@ const UserList = () => {
         enableResizing: false,
       },
     ],
-    [],
+    [togglingSubscriptionByUser],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
@@ -476,6 +545,51 @@ const UserList = () => {
 
   const DataGridToolbar = () => {
     const [inputValue, setInputValue] = useState(searchQuery);
+    type UserFilterField = 'role' | 'status' | 'trashed';
+    type UserFilterCondition = { id: string; field: UserFilterField; value: string };
+
+    const initialConditionsFromApplied = (): UserFilterCondition[] => {
+      const out: UserFilterCondition[] = [];
+      if ((selectedRole || 'all') !== 'all') {
+        out.push({ id: crypto.randomUUID(), field: 'role', value: selectedRole || 'all' });
+      }
+      if ((selectedStatus || 'all') !== 'all') {
+        out.push({ id: crypto.randomUUID(), field: 'status', value: selectedStatus || 'all' });
+      }
+      if (selectedTrashed !== 'exclude') {
+        out.push({ id: crypto.randomUUID(), field: 'trashed', value: selectedTrashed });
+      }
+      return out;
+    };
+
+    const [draftConditions, setDraftConditions] = useState<UserFilterCondition[]>(() => initialConditionsFromApplied());
+
+    const addCondition = () => {
+      setDraftConditions((prev) => [...prev, { id: crypto.randomUUID(), field: 'role', value: 'all' }]);
+    };
+
+    const updateCondition = (id: string, patch: Partial<UserFilterCondition>) => {
+      setDraftConditions((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+    };
+
+    const removeCondition = (id: string) => {
+      setDraftConditions((prev) => prev.filter((c) => c.id !== id));
+    };
+
+    const applyConditions = () => {
+      let role = 'all';
+      let status = 'all';
+      let trashed = 'exclude';
+      for (const c of draftConditions) {
+        if (c.field === 'role' && c.value) role = c.value;
+        if (c.field === 'status' && c.value) status = c.value;
+        if (c.field === 'trashed' && c.value) trashed = c.value;
+      }
+      setSelectedRole(role);
+      setSelectedStatus(status);
+      setSelectedTrashed(trashed);
+      setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+    };
 
     const handleSearch = () => {
       setSearchQuery(inputValue);
@@ -483,156 +597,216 @@ const UserList = () => {
     };
 
     return (
-      <CardHeader className="flex-col flex-wrap sm:flex-row items-stretch sm:items-center py-5">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search users"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              disabled={isLoading}
-              className="ps-9 w-full sm:40 md:w-64"
-            />
-            {searchQuery.length > 0 && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
-              </Button>
-            )}
-          </div>
-          <Select
-            onValueChange={handleRoleSelection}
-            value={selectedRole || 'all'}
-            defaultValue="all"
-            disabled={isLoading}
-          >
-            <SelectTrigger className="w-full sm:w-36">
-              <SelectValue placeholder="Filter by role" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All roles</SelectItem>
-              {roleList?.map((role: User) => (
-                <SelectItem key={role.id} value={role.id}>
-                  {role.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            onValueChange={handleStatusSelection}
-            value={selectedStatus || 'all'}
-            defaultValue="all"
-            disabled={isLoading}
-          >
-            <SelectTrigger className="w-full sm:w-36">
-              <SelectValue placeholder="Filter by status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All users</SelectItem>
-              {Object.entries(UserStatusProps).map(([status, { label }]) => (
-                <SelectItem key={status} value={status}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            onValueChange={handleTrashedSelection}
-            value={selectedTrashed}
-            disabled={isLoading}
-          >
-            <SelectTrigger className="w-full sm:w-40">
-              <SelectValue placeholder="Trashed" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="exclude">Active only</SelectItem>
-              <SelectItem value="only">Trashed only</SelectItem>
-              <SelectItem value="all">All</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <CardToolbar className="flex items-center gap-2">
-          <DataGridColumnVisibility
-            table={table}
-            trigger={
-              <Button variant="outline" size="sm" className="gap-1" disabled={isLoading}>
-                <Columns3 className="size-4" />
-                Columns
-              </Button>
-            }
-          />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={isLoading || bulkActionPending || selectedRowIds.length === 0}
-                title={selectedRowIds.length === 0 ? 'Select users to perform bulk actions' : 'Bulk actions'}
-              >
-                <Settings className="size-4" />
-                {selectedRowIds.length > 0 && (
-                  <span className="ml-1.5">({selectedRowIds.length})</span>
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() => runBulkAction('activate')}
-                disabled={bulkActionPending || selectedTrashed === 'only'}
-              >
-                <UserCheck className="size-4" />
-                Bulk activate
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => runBulkAction('deactivate')}
-                disabled={bulkActionPending || selectedTrashed === 'only'}
-              >
-                <UserX className="size-4" />
-                Bulk deactivate
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => runBulkAction('resend_invite')}
-                disabled={bulkActionPending || selectedTrashed === 'only'}
-              >
-                <Mail className="size-4" />
-                Bulk send invitation
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => runBulkAction('delete')}
-                disabled={bulkActionPending || selectedTrashed === 'only'}
-                className="text-destructive focus:text-destructive"
-              >
-                <Trash2 className="size-4" />
-                Trash
-              </DropdownMenuItem>
-              {selectedTrashed === 'only' && (
+        <CardHeader className="py-5">
+        <DataGridStandardToolbar
+          table={table}
+          searchSlot={
+            <div className="relative">
+              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+              <Input
+                placeholder="Search users"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                disabled={isLoading}
+                className="ps-9 w-full sm:40 md:w-64"
+              />
+              {searchQuery.length > 0 && (
+                <Button
+                  mode="icon"
+                  variant="dim"
+                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                  onClick={() => setSearchQuery('')}
+                >
+                  <X />
+                </Button>
+              )}
+            </div>
+          }
+          advancedFilters={{
+            active:
+              (selectedRole || 'all') !== 'all' ||
+              (selectedStatus || 'all') !== 'all' ||
+              selectedTrashed !== 'exclude',
+            content: (
+              <div className="space-y-3">
+                <p className="text-sm font-medium">Advanced filters</p>
+                <div className="space-y-2">
+                  {draftConditions.map((cond) => (
+                    <div key={cond.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                      <Select
+                        value={cond.field}
+                        onValueChange={(v) =>
+                          updateCondition(cond.id, {
+                            field: v as UserFilterField,
+                            value: v === 'trashed' ? 'exclude' : 'all',
+                          })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="role">Role</SelectItem>
+                          <SelectItem value="status">Status</SelectItem>
+                          <SelectItem value="trashed">Trashed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {cond.field === 'role' ? (
+                        <Select
+                          value={cond.value}
+                          onValueChange={(v) => updateCondition(cond.id, { value: v })}
+                          disabled={isLoading}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All roles</SelectItem>
+                            {roleList?.map((role: User) => (
+                              <SelectItem key={role.id} value={role.id}>
+                                {role.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : cond.field === 'status' ? (
+                        <Select
+                          value={cond.value}
+                          onValueChange={(v) => updateCondition(cond.id, { value: v })}
+                          disabled={isLoading}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All users</SelectItem>
+                            {Object.entries(UserStatusProps).map(([status, { label }]) => (
+                              <SelectItem key={status} value={status}>
+                                {label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Select
+                          value={cond.value}
+                          onValueChange={(v) => updateCondition(cond.id, { value: v })}
+                          disabled={isLoading}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="exclude">Active only</SelectItem>
+                            <SelectItem value="only">Trashed only</SelectItem>
+                            <SelectItem value="all">All</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                      <Button type="button" mode="icon" variant="ghost" onClick={() => removeCondition(cond.id)}>
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" size="sm" className="flex-1" onClick={addCondition}>
+                    <Plus className="size-4" />
+                    Add condition
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" className="flex-1" onClick={applyConditions}>
+                    Apply
+                  </Button>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => {
+                    setDraftConditions([]);
+                    setSelectedRole('all');
+                    setSelectedStatus('all');
+                    setSelectedTrashed('exclude');
+                    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                  }}
+                >
+                  Clear filters
+                </Button>
+              </div>
+            ),
+          }}
+          exportConfig={{ filename: 'users_export.xlsx' }}
+          secondaryActionsSlot={
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isLoading || bulkActionPending || selectedRowIds.length === 0}
+                  title={selectedRowIds.length === 0 ? 'Select users to perform bulk actions' : 'Bulk actions'}
+                >
+                  <Settings className="size-4" />
+                  {selectedRowIds.length > 0 && (
+                    <span className="ml-1.5">({selectedRowIds.length})</span>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
                 <DropdownMenuItem
-                  onClick={() => runBulkAction('permanent_delete')}
-                  disabled={bulkActionPending}
+                  onClick={() => runBulkAction('activate')}
+                  disabled={bulkActionPending || selectedTrashed === 'only'}
+                >
+                  <UserCheck className="size-4" />
+                  Bulk activate
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => runBulkAction('deactivate')}
+                  disabled={bulkActionPending || selectedTrashed === 'only'}
+                >
+                  <UserX className="size-4" />
+                  Bulk deactivate
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => runBulkAction('resend_invite')}
+                  disabled={bulkActionPending || selectedTrashed === 'only'}
+                >
+                  <Mail className="size-4" />
+                  Bulk send invitation
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => runBulkAction('delete')}
+                  disabled={bulkActionPending || selectedTrashed === 'only'}
                   className="text-destructive focus:text-destructive"
                 >
                   <Trash2 className="size-4" />
-                  Permanently delete
+                  Trash
                 </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            disabled={isLoading && true}
-            onClick={() => {
-              setInviteDialogOpen(true);
-            }}
-          >
-            <Plus />
-            Add user
-          </Button>
-        </CardToolbar>
+                {selectedTrashed === 'only' && (
+                  <DropdownMenuItem
+                    onClick={() => runBulkAction('permanent_delete')}
+                    disabled={bulkActionPending}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <Trash2 className="size-4" />
+                    Permanently delete
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          }
+          primaryActionsSlot={
+            <Button
+              disabled={isLoading && true}
+              onClick={() => {
+                setInviteDialogOpen(true);
+              }}
+            >
+              <Plus />
+              Add user
+            </Button>
+          }
+        />
       </CardHeader>
     );
   };
@@ -644,6 +818,7 @@ const UserList = () => {
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
         onRowClick={handleRowClick}
+        standardToolbar={false}
         tableLayout={{
           columnsResizable: true,
           columnsPinnable: true,

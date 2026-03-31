@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { CardNotification } from '@/partials/cards';
 import {
   CalendarClock,
@@ -15,13 +16,64 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { apiFetch } from '@/lib/api';
+import { toast } from 'sonner';
 import {
   IChannelsItem,
   IChannelsItems,
 } from '@/app/(protected)/account/notifications/components/channels';
 
 const OtherNotifications = () => {
+  const [dailySubscribed, setDailySubscribed] = useState(true);
+  const [loadingDaily, setLoadingDaily] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await apiFetch('/api/v1/notifications/preferences/daily-sla-summary');
+        if (!res.ok) throw new Error('Failed to load preference');
+        const data = (await res.json()) as { subscribed?: boolean };
+        setDailySubscribed(Boolean(data.subscribed));
+      } catch {
+        // keep existing default to avoid blocking the page
+      } finally {
+        setLoadingDaily(false);
+      }
+    };
+    void load();
+  }, []);
+
+  const onToggleDaily = async (next: boolean) => {
+    setDailySubscribed(next);
+    try {
+      const res = await apiFetch(
+        `/api/v1/notifications/preferences/daily-sla-summary?subscribed=${next ? 'true' : 'false'}`,
+        { method: 'PATCH' },
+      );
+      if (!res.ok) throw new Error('Failed to save preference');
+      toast.success(next ? 'Subscribed to daily SLA summary' : 'Unsubscribed from daily SLA summary');
+    } catch {
+      setDailySubscribed(!next);
+      toast.error('Unable to update daily summary preference');
+    }
+  };
+
   const items: IChannelsItems = [
+    {
+      icon: ClipboardCheck,
+      title: 'Daily SLA Summary Newsletter',
+      description:
+        'Receive your daily responded/resolved performance and outstanding assigned conversations summary.',
+      actions: (
+        <Switch
+          id="daily-sla-summary-subscription"
+          size="sm"
+          checked={dailySubscribed}
+          disabled={loadingDaily}
+          onCheckedChange={onToggleDaily}
+        />
+      ),
+    },
     {
       icon: Tablet,
       title: 'Task Alert',

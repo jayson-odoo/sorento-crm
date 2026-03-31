@@ -55,6 +55,23 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
     teamsList.forEach((t: { id: string; name: string }) => m.set(t.id, t.name));
     return m;
   }, [teamsList]);
+  const groupedAssignments = useMemo(() => {
+    const groups = new Map<string, AgentTeamAssignment[]>();
+    for (const assignment of assignments) {
+      const code = String(assignment.code ?? '').trim();
+      const key = code || '(no code)';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)?.push(assignment);
+    }
+    return Array.from(groups.entries()).map(([code, rows]) => ({
+      code,
+      rows: [...rows].sort((a, b) => {
+        const ta = typeof a.tier === 'number' ? a.tier : 999;
+        const tb = typeof b.tier === 'number' ? b.tier : 999;
+        return ta - tb;
+      }),
+    }));
+  }, [assignments]);
 
   const toggleTeam = (assignmentKey: string) => {
     setExpandedTeams((prev) => {
@@ -182,8 +199,14 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
               </Button>
             </div>
           ) : (
-            <div className="space-y-2">
-              {assignments.map((a) => {
+            <div className="space-y-4">
+              {groupedAssignments.map((group) => (
+                <div key={group.code} className="rounded-lg border p-3">
+                  <div className="mb-3">
+                    <span className="font-mono text-sm font-semibold">{group.code}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {group.rows.map((a) => {
                 const assignmentKey = `${a.code}::${a.tier ?? 'none'}::${a.team_id}`;
                 const isExpanded = expandedTeams.has(assignmentKey);
                 const members = a.members ?? [];
@@ -209,7 +232,6 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                             </div>
                             <div className="text-left flex-1">
                               <div className="flex items-center gap-3 flex-wrap">
-                                <span className="font-mono text-sm font-medium">{a.code}</span>
                                 {typeof (a as AgentTeamAssignment).tier === 'number' &&
                                   (a as AgentTeamAssignment).tier! >= 1 &&
                                   (a as AgentTeamAssignment).tier! <= 3 && (
@@ -302,8 +324,11 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                       </CollapsibleContent>
                     </div>
                   </Collapsible>
-                );
-              })}
+                    );
+                  })}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>

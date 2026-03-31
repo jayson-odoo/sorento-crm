@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
@@ -11,13 +11,13 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, Columns3 } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridStandardToolbar } from '@/components/ui/data-grid-standard-toolbar';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -49,6 +49,10 @@ export default function EventLogList() {
     event_type: eventType && eventType !== '__all__' ? eventType : undefined,
     assigned_to: assignedTo && assignedTo !== '__all__' ? assignedTo : undefined,
   });
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [trackingId, eventType, assignedTo]);
 
   const { data: respondUsers } = useQuery({
     queryKey: ['respond-synced-users'],
@@ -135,51 +139,68 @@ export default function EventLogList() {
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
       tableLayout={{ columnsVisibility: true }}
+      standardToolbar={false}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between flex-wrap gap-3">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Filter by tracking ID..."
-              value={trackingId}
-              onChange={(e) => setTrackingId(e.target.value)}
-              className="ps-9 w-64"
-            />
-          </div>
-          <Select value={eventType} onValueChange={(value) => setEventType(value)}>
-            <SelectTrigger className="w-56">
-              <SelectValue placeholder="Event type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">All events</SelectItem>
-              <SelectItem value="escalation">Escalation</SelectItem>
-              <SelectItem value="response">Response</SelectItem>
-              <SelectItem value="resolution">Resolution</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={assignedTo} onValueChange={(value) => setAssignedTo(value)}>
-            <SelectTrigger className="w-64">
-              <SelectValue placeholder="Assigned to" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">All assignees</SelectItem>
-              {(respondUsers || []).map((user: { id: string; name?: string | null; respond_user_id?: string | null; email: string }) => (
-                <SelectItem key={user.id} value={user.respond_user_id || user.id}>
-                  {user.name || user.email}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-                    <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
+        <CardHeader>
+          <DataGridStandardToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Filter by tracking ID..."
+                  value={trackingId}
+                  onChange={(e) => setTrackingId(e.target.value)}
+                  className="w-64 ps-9"
+                />
+              </div>
+            }
+            advancedFilters={{
+              active: eventType !== '__all__' || assignedTo !== '__all__',
+              content: (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium">Advanced filters</p>
+                  <Select value={eventType} onValueChange={(value) => setEventType(value)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Event type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">All events</SelectItem>
+                      <SelectItem value="escalation">Escalation</SelectItem>
+                      <SelectItem value="response">Response</SelectItem>
+                      <SelectItem value="resolution">Resolution</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={assignedTo} onValueChange={(value) => setAssignedTo(value)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Assigned to" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">All assignees</SelectItem>
+                      {(respondUsers || []).map((user: { id: string; name?: string | null; respond_user_id?: string | null; email: string }) => (
+                        <SelectItem key={user.id} value={user.respond_user_id || user.id}>
+                          {user.name || user.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      setEventType('__all__');
+                      setAssignedTo('__all__');
+                    }}
+                  >
+                    Clear advanced filters
+                  </Button>
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'sla_event_logs_export.xlsx' }}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>

@@ -38,6 +38,9 @@ interface AccessAgentFormProps {
   onSuccess?: () => void;
 }
 
+type AssignmentRow = { id: string; tier: number | null; team_id: string };
+type AssignmentGroup = { id: string; code: string; rows: AssignmentRow[] };
+
 export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgentFormProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -59,11 +62,30 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
   const navigationItems = navigationData?.data ?? [];
   const { data: agentTeamsData } = useAgentTeams(isEditMode ? accessAgentId ?? null : null);
   const { data: teamsList = [] } = useTeams();
-  const [localAssignments, setLocalAssignments] = useState<{ code: string; team_id: string }[]>([]);
+  const [assignmentGroups, setAssignmentGroups] = useState<AssignmentGroup[]>([]);
 
   useEffect(() => {
     const fromServer = agentTeamsData?.assignments;
-    setLocalAssignments(fromServer ? [...fromServer] : []);
+    if (!fromServer || fromServer.length === 0) {
+      setAssignmentGroups([]);
+      return;
+    }
+    const grouped = new Map<string, AssignmentGroup>();
+    for (const assignment of fromServer) {
+      const code = String(assignment.code ?? '').trim();
+      if (!grouped.has(code)) {
+        grouped.set(code, { id: crypto.randomUUID(), code, rows: [] });
+      }
+      grouped.get(code)?.rows.push({
+        id: crypto.randomUUID(),
+        tier:
+          assignment.tier != null && Number(assignment.tier) >= 1 && Number(assignment.tier) <= 3
+            ? Number(assignment.tier)
+            : null,
+        team_id: String(assignment.team_id ?? ''),
+      });
+    }
+    setAssignmentGroups(Array.from(grouped.values()));
   }, [agentTeamsData?.assignments]);
 
 
@@ -118,9 +140,15 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
 
       if (isEditMode && accessAgentId) {
         await updateMutation.mutateAsync({ id: accessAgentId, data: formData });
-        const validAssignments = localAssignments
-          .filter((a) => a.code.trim() && a.team_id)
-          .map((a) => ({ code: String(a.code).trim(), team_id: String(a.team_id) }));
+        const validAssignments = assignmentGroups
+          .flatMap((group) =>
+            group.rows.map((row) => ({
+              code: String(group.code).trim(),
+              team_id: String(row.team_id),
+              tier: row.tier != null && row.tier >= 1 && row.tier <= 3 ? row.tier : undefined,
+            })),
+          )
+          .filter((a) => a.code && a.team_id);
         await setAgentTeams(accessAgentId, validAssignments);
         queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
       } else {
@@ -273,59 +301,125 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                 <p className="text-sm text-muted-foreground">No teams yet. Create teams under User Management → Teams.</p>
               ) : (
                 <div className="space-y-4">
-                  {localAssignments.map((a: { code: string; team_id: string }, idx: number) => (
-                    <div
-                      key={idx}
-                      className="flex flex-wrap items-center gap-3 rounded-md border p-3"
-                    >
-                      <div className="flex-1 min-w-[140px]">
-                        <label className="text-xs text-muted-foreground mb-1 block">Code</label>
-                        <Input
-                          placeholder="e.g. marketing"
-                          value={a.code}
+                  {assignmentGroups.map((group, groupIdx) => (
+                    <div key={group.id} className="space-y-3 rounded-md border p-3">
+                      <div className="flex items-end gap-3">
+                        <div className="flex-1 min-w-[140px]">
+                          <label className="text-xs text-muted-foreground mb-1 block">Code</label>
+                          <Input
+                            placeholder="e.g. marketing"
+                            value={group.code}
+                            disabled={isLoading}
+                            onChange={(e) => {
+                              const next = [...assignmentGroups];
+                              next[groupIdx] = { ...next[groupIdx], code: e.target.value };
+                              setAssignmentGroups(next);
+                            }}
+                            className="font-mono text-sm"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive hover:text-destructive"
                           disabled={isLoading}
-                          onChange={(e) => {
-                            const next = [...localAssignments];
-                            next[idx] = { ...next[idx], code: e.target.value };
-                            setLocalAssignments(next);
-                          }}
-                          className="font-mono text-sm"
-                        />
-                      </div>
-                      <div className="flex-1 min-w-[180px]">
-                        <label className="text-xs text-muted-foreground mb-1 block">Team</label>
-                        <Select
-                          value={a.team_id}
-                          disabled={isLoading}
-                          onValueChange={(teamId) => {
-                            const next = [...localAssignments];
-                            next[idx] = { ...next[idx], team_id: teamId };
-                            setLocalAssignments(next);
-                          }}
+                          onClick={() => setAssignmentGroups(assignmentGroups.filter((_, i) => i !== groupIdx))}
                         >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select team" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {teamsList.map((team: { id: string; name: string }) => (
-                              <SelectItem key={team.id} value={team.id}>
-                                {team.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          <Trash2 className="size-4" />
+                        </Button>
                       </div>
+                      {group.rows.map((row, rowIdx) => {
+                        const usedTiers = new Set(
+                          group.rows
+                            .filter((_, i) => i !== rowIdx)
+                            .map((r) => r.tier)
+                            .filter((t): t is number => t != null),
+                        );
+                        return (
+                          <div key={row.id} className="flex flex-wrap items-end gap-3 rounded-md border p-3">
+                            <div className="w-[140px]">
+                              <label className="text-xs text-muted-foreground mb-1 block">Tier</label>
+                              <Select
+                                value={row.tier != null ? String(row.tier) : '__none__'}
+                                disabled={isLoading}
+                                onValueChange={(v) => {
+                                  const next = [...assignmentGroups];
+                                  next[groupIdx].rows[rowIdx] = {
+                                    ...next[groupIdx].rows[rowIdx],
+                                    tier: v === '__none__' ? null : Number(v),
+                                  };
+                                  setAssignmentGroups(next);
+                                }}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="—" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">—</SelectItem>
+                                  <SelectItem value="1" disabled={usedTiers.has(1)}>1</SelectItem>
+                                  <SelectItem value="2" disabled={usedTiers.has(2)}>2</SelectItem>
+                                  <SelectItem value="3" disabled={usedTiers.has(3)}>3</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="flex-1 min-w-[180px]">
+                              <label className="text-xs text-muted-foreground mb-1 block">Team</label>
+                              <Select
+                                value={row.team_id}
+                                disabled={isLoading}
+                                onValueChange={(teamId) => {
+                                  const next = [...assignmentGroups];
+                                  next[groupIdx].rows[rowIdx] = { ...next[groupIdx].rows[rowIdx], team_id: teamId };
+                                  setAssignmentGroups(next);
+                                }}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select team" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {teamsList.map((team: { id: string; name: string }) => (
+                                    <SelectItem key={team.id} value={team.id}>
+                                      {team.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive"
+                              disabled={isLoading}
+                              onClick={() => {
+                                const next = [...assignmentGroups];
+                                next[groupIdx].rows = next[groupIdx].rows.filter((_, i) => i !== rowIdx);
+                                setAssignmentGroups(next);
+                              }}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </div>
+                        );
+                      })}
                       <Button
                         type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="text-destructive hover:text-destructive mt-6"
-                        disabled={isLoading}
+                        variant="outline"
+                        size="sm"
+                        disabled={isLoading || teamsList.length === 0}
                         onClick={() => {
-                          setLocalAssignments(localAssignments.filter((_, i) => i !== idx));
+                          const next = [...assignmentGroups];
+                          next[groupIdx].rows.push({
+                            id: crypto.randomUUID(),
+                            tier: null,
+                            team_id: teamsList[0]?.id ?? '',
+                          });
+                          setAssignmentGroups(next);
                         }}
                       >
-                        <Trash2 className="size-4" />
+                        <Plus className="mr-2 size-4" />
+                        Add tier
                       </Button>
                     </div>
                   ))}
@@ -334,14 +428,18 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                     variant="outline"
                     disabled={isLoading || teamsList.length === 0}
                     onClick={() => {
-                      setLocalAssignments([
-                        ...localAssignments,
-                        { code: '', team_id: teamsList[0]?.id ?? '' },
+                      setAssignmentGroups([
+                        ...assignmentGroups,
+                        {
+                          id: crypto.randomUUID(),
+                          code: '',
+                          rows: [{ id: crypto.randomUUID(), tier: null, team_id: teamsList[0]?.id ?? '' }],
+                        },
                       ]);
                     }}
                   >
                     <Plus className="mr-2 size-4" />
-                    Add assignment
+                    Add group
                   </Button>
                 </div>
               )}

@@ -11,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, Plus, Search, Settings, Trash2, Upload, X } from 'lucide-react';
+import { ChevronRight, Plus, Search, Settings, Trash2, Upload, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -24,12 +24,13 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridStandardToolbar } from '@/components/ui/data-grid-standard-toolbar';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useGRNs } from '../hooks/useGRN';
 import type { GRN } from '../types/grn.types';
 import { formatDate } from '@/lib/helpers';
@@ -58,14 +59,20 @@ export default function GRNList() {
     { id: 'created_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
 
   const { data, isLoading } = useGRNs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
+    picking_status: statusFilter === 'all' ? undefined : statusFilter,
     spo_allocation_id: spoAllocationId || undefined,
   });
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [searchQuery, statusFilter, spoAllocationId]);
 
   const handleRowClick = (row: GRN) => {
     const grnId = row.id;
@@ -205,73 +212,92 @@ export default function GRNList() {
       isLoading={isLoading}
       onRowClick={handleRowClick}
       tableLayout={{ columnsVisibility: true }}
+      standardToolbar={false}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search GRN..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
-            />
-            {searchQuery && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
+        <CardHeader>
+          <DataGridStandardToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Search GRN..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-64 ps-9"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            secondaryActionsSlot={
+              <>
+                {selectedGrnIds.size > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setBulkDeleteDialogOpen(true)}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <Trash2 className="size-4" />
+                    Bulk Delete ({selectedGrnIds.size})
+                  </Button>
+                )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="icon" className="h-8 w-8" title="Import options">
+                      <Settings className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => setUploadMode('listing')}>
+                      <Upload className="size-4" />
+                      Upload GRN
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setUploadMode('lines')}>
+                      <Upload className="size-4" />
+                      Upload GRN Lines
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            }
+            primaryActionsSlot={
+              <Button onClick={() => router.push('/procurement-management/grn/new')}>
+                <Plus />
+                Create GRN
               </Button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-            {selectedGrnIds.size > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setBulkDeleteDialogOpen(true)}
-                className="text-destructive hover:text-destructive"
-              >
-                <Trash2 className="size-4" />
-                Bulk Delete ({selectedGrnIds.size})
-              </Button>
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon" className="h-8 w-8" title="Import options">
-                  <Settings className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => setUploadMode('listing')}>
-                  <Upload className="size-4" />
-                  Upload GRN
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setUploadMode('lines')}>
-                  <Upload className="size-4" />
-                  Upload GRN Lines
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button
-              onClick={() => router.push('/procurement-management/grn/new')}
-            >
-              <Plus />
-              Create GRN
-            </Button>
-          </div>
+            }
+            advancedFilters={{
+              active: statusFilter !== 'all',
+              content: (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium">Advanced filters</p>
+                  <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All statuses</SelectItem>
+                      <SelectItem value="draft">Draft</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="rejected">Rejected</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'grn_export.xlsx' }}
+          />
         </CardHeader>
         <div className="mx-5 mb-2 flex flex-wrap gap-4">
           <LatestImportStatusPanel jobType="grn_listing_import" title="Latest GRN listing import" />

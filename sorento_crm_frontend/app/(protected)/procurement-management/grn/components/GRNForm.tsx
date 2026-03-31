@@ -40,7 +40,7 @@ import { useCreateGRN, useUpdateGRN, useGRN } from '../hooks/useGRN';
 import { grnSchema, type GRNSchemaType } from '../forms/grn-schema';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
-import type { GRNDetail } from '../types/grn.types';
+import type { GRNDetail, GRNFormData } from '../types/grn.types';
 import type { Warehouse } from '@/app/(protected)/inventory-management/warehouses/types/warehouse.types';
 
 interface GRNFormProps {
@@ -54,6 +54,7 @@ type RemoveConfirmState =
   | { type: 'bulk'; indices: number[] };
 
 type PickingStatusForm = 'draft' | 'approved' | 'rejected';
+const VALID_PICKING_STATUSES: PickingStatusForm[] = ['draft', 'approved', 'rejected'];
 
 function normalizePickingStatus(g: { picking_status?: string; pickingStatus?: string; status?: string }): PickingStatusForm {
   const raw =
@@ -153,7 +154,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
     if (!isEditMode || !grn) return;
     const wanted = normalizePickingStatus(grn);
     const current = form.getValues('picking_status');
-    if (current !== wanted && ['draft', 'approved', 'rejected'].includes(wanted)) {
+    if (current !== wanted && VALID_PICKING_STATUSES.includes(wanted)) {
       form.setValue('picking_status', wanted);
     }
   }, [grn, isEditMode, form]);
@@ -205,6 +206,10 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
     setRemoveConfirm({ type: 'idle' });
   };
 
+  const grnDetail = grn as GRNDetail | undefined;
+  const serverApproved =
+    isEditMode && !!grnDetail && normalizePickingStatus(grnDetail) === 'approved';
+
   const onSubmit = async (data: GRNSchemaType) => {
     try {
       const lines = data.picking_lines
@@ -219,15 +224,18 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
         }));
 
       if (isEditMode && grnId) {
+        const editPayload: Partial<GRNFormData> = {
+          spo_number: data.spo_number || undefined,
+          picking_date: data.picking_date,
+          picking_status: data.picking_status,
+          notes: data.notes || undefined,
+        };
+        if (!serverApproved) {
+          editPayload.picking_lines = lines?.length ? lines : [];
+        }
         await updateMutation.mutateAsync({
           id: grnId,
-          data: {
-            spo_number: data.spo_number || undefined,
-            picking_date: data.picking_date,
-            picking_status: data.picking_status,
-            notes: data.notes || undefined,
-            picking_lines: lines?.length ? lines : [],
-          },
+          data: editPayload,
         });
       } else {
         await createMutation.mutateAsync({
@@ -264,7 +272,6 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
   }
 
   const isLoading = createMutation.isPending || updateMutation.isPending;
-  const grnDetail = grn as GRNDetail | undefined;
   const pickingLines = grnDetail?.picking_lines ?? [];
 
   return (
@@ -274,7 +281,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
           <Card>
             <CardHeader>
               <CardTitle>
-                {isEditMode ? 'Edit GRN' : 'Create GRN'}
+                {isEditMode ? (serverApproved ? 'View GRN' : 'Edit GRN') : 'Create GRN'}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -303,7 +310,11 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                     <FormItem>
                       <FormLabel>SPO Number</FormLabel>
                       <FormControl>
-                        <Input placeholder="e.g. SPO-2026/01-0001" {...field} />
+                        <Input
+                          placeholder="e.g. SPO-2026/01-0001"
+                          {...field}
+                          disabled={serverApproved}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -316,7 +327,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                     <FormItem>
                       <FormLabel>Picking Date *</FormLabel>
                       <FormControl>
-                        <Input type="date" {...field} />
+                        <Input type="date" {...field} disabled={serverApproved} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -327,7 +338,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                   name="picking_status"
                   render={({ field }) => {
                     const fromForm = field.value as string | undefined;
-                    const validFormValue = fromForm && ['draft', 'approved', 'rejected'].includes(fromForm);
+                    const validFormValue = fromForm && VALID_PICKING_STATUSES.includes(fromForm as PickingStatusForm);
                     const resolvedStatus: PickingStatusForm = validFormValue
                       ? (fromForm as PickingStatusForm)
                       : (isEditMode && grn ? normalizePickingStatus(grn) : 'draft');
@@ -336,7 +347,13 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                         <FormLabel>Status</FormLabel>
                         <Select
                           value={resolvedStatus}
-                          onValueChange={(v) => field.onChange(v as PickingStatusForm)}
+                          onValueChange={(v) => {
+                            if (!VALID_PICKING_STATUSES.includes(v as PickingStatusForm)) {
+                              return;
+                            }
+                            field.onChange(v as PickingStatusForm);
+                          }}
+                          disabled={serverApproved}
                         >
                           <FormControl>
                             <SelectTrigger>
@@ -361,7 +378,11 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                     <FormItem className="sm:col-span-2">
                       <FormLabel>Notes</FormLabel>
                       <FormControl>
-                        <Input placeholder="Optional notes" {...field} />
+                        <Input
+                          placeholder="Optional notes"
+                          {...field}
+                          disabled={serverApproved}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -380,6 +401,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                     type="button"
                     variant="outline"
                     size="sm"
+                    disabled={serverApproved}
                     onClick={() =>
                       append({
                         product_id: '',
@@ -399,6 +421,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                         variant="outline"
                         size="sm"
                         onClick={selectAllLines}
+                        disabled={serverApproved}
                       >
                         {selectedLineIndices.size === fields.length
                           ? 'Deselect All'
@@ -410,7 +433,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                         size="sm"
                         className="text-destructive"
                         onClick={handleBulkRemove}
-                        disabled={selectedLineIndices.size === 0}
+                        disabled={serverApproved || selectedLineIndices.size === 0}
                       >
                         <Trash2 className="size-4" />
                         Bulk Remove ({selectedLineIndices.size})
@@ -432,6 +455,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                         <Checkbox
                           checked={selectedLineIndices.has(index)}
                           onCheckedChange={() => toggleLineSelection(index)}
+                          disabled={serverApproved}
                         />
                       </FormControl>
                     </FormItem>
@@ -446,6 +470,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                               value={f.value}
                               onChange={f.onChange}
                               fetchProducts={fetchProducts}
+                              disabled={serverApproved}
                               productFallback={
                                 pickingLines[index]?.product
                                   ? {
@@ -475,6 +500,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                               type="number"
                               min={0}
                               {...f}
+                              disabled={serverApproved}
                               onChange={(e) =>
                                 f.onChange(
                                   parseInt(e.target.value, 10) || 0,
@@ -497,6 +523,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                               type="number"
                               min={0}
                               {...f}
+                              disabled={serverApproved}
                               onChange={(e) =>
                                 f.onChange(
                                   parseInt(e.target.value, 10) || 0,
@@ -519,6 +546,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                               value={f.value ?? ''}
                               onChange={f.onChange}
                               warehouses={warehouses}
+                              disabled={serverApproved}
                               warehouseFallback={
                                 pickingLines[index]?.source_warehouse
                                   ? {
@@ -545,6 +573,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                       size="icon"
                       onClick={() => handleRemoveSingle(index)}
                       className="text-destructive"
+                      disabled={serverApproved}
                     >
                       <Trash2 className="size-4" />
                     </Button>
@@ -555,7 +584,7 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
           </Card>
 
           <div className="flex gap-2">
-            <Button type="submit" disabled={isLoading}>
+            <Button type="submit" disabled={isLoading || serverApproved}>
               {isLoading && (
                 <LoaderCircleIcon className="me-2 size-4 animate-spin" />
               )}

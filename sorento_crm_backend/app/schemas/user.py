@@ -141,6 +141,7 @@ class UserBase(BaseModel):
     respond_synced: Optional[str] = "pending"
     superior_id: Optional[str] = None
     tier: Optional[int] = None  # Conversation SLA policy tier (1, 2, ...)
+    daily_sla_summary_subscribed: Optional[bool] = True
 
 
 class UserCreate(UserBase):

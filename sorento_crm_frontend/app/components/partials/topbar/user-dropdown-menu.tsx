@@ -63,7 +63,7 @@ export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
             />
             <div className="flex flex-col">
               <Link
-                href="/account/home/get-started"
+                href="/user-management/account"
                 className="text-sm text-mono hover:text-primary font-semibold"
               >
                 {displayName || session?.user.name || ''}
@@ -107,11 +107,11 @@ export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
           <DropdownMenuSubContent className="w-48">
             <DropdownMenuItem asChild>
               <Link
-                href="/account/home/get-started"
+                href="/user-management/account"
                 className="flex items-center gap-2"
               >
                 <Coffee />
-                Get Started
+                Profile & Settings
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>

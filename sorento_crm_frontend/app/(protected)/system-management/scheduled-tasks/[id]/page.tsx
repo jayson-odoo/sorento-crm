@@ -32,7 +32,10 @@ import {
 } from '../hooks/useScheduledTasks';
 import { ScheduledTaskForm } from '../components/ScheduledTaskForm';
 import { RunLogsTable } from '../components/RunLogsTable';
-import type { ScheduledTaskUpdateBody } from '../types/scheduledTask.types';
+import type {
+  ScheduledTask,
+  ScheduledTaskUpdateBody,
+} from '../types/scheduledTask.types';
 import type { FormValues } from '../components/ScheduledTaskForm';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 
@@ -40,8 +43,11 @@ type DetailPageProps = {
   params: Promise<{ id: string }>;
 };
 
-function mapFormToUpdateBody(values: FormValues): ScheduledTaskUpdateBody {
-  return {
+function mapFormToUpdateBody(
+  values: FormValues,
+  task: ScheduledTask,
+): ScheduledTaskUpdateBody {
+  const body: ScheduledTaskUpdateBody = {
     name: values.name,
     description: values.description ?? null,
     enabled: values.enabled,
@@ -50,6 +56,14 @@ function mapFormToUpdateBody(values: FormValues): ScheduledTaskUpdateBody {
     timezone: values.timezone,
     start_at: values.start_at ? values.start_at.toISOString() : null,
   };
+  if (task.key === 'user_sla_daily_summary') {
+    body.metadata = {
+      ...(task.metadata || {}),
+      send_in_app: values.send_in_app !== false,
+      send_email: values.send_email !== false,
+    };
+  }
+  return body;
 }
 
 export default function ScheduledTaskDetailPage({ params }: DetailPageProps) {
@@ -61,7 +75,8 @@ export default function ScheduledTaskDetailPage({ params }: DetailPageProps) {
   const runNowMutation = useRunScheduledTaskNow(id);
 
   const handleSubmit = (values: FormValues) => {
-    updateMutation.mutate(mapFormToUpdateBody(values), {
+    if (!task) return;
+    updateMutation.mutate(mapFormToUpdateBody(values, task), {
       onSuccess: () => toast.success('Task updated'),
       onError: (e) => toast.error(e instanceof Error ? e.message : 'Update failed'),
     });

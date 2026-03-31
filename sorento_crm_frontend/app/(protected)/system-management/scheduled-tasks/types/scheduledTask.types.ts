@@ -36,6 +36,7 @@ export interface ScheduledTaskUpdateBody {
   interval_value?: number;
   timezone?: string;
   start_at?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface ListResponse<T> {

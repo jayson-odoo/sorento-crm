@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
@@ -14,13 +14,13 @@ import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridStandardToolbar } from '@/components/ui/data-grid-standard-toolbar';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
-import { Search, Columns3 } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useStockLedger } from '../hooks/useStockLedger';
 import type { StockLedgerEntry } from '../types/stockLedger.types';
@@ -40,6 +40,10 @@ export default function StockLedgerList() {
     warehouse_id: warehouseId || undefined,
     transaction_type: transactionType || undefined,
   });
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [productId, warehouseId, transactionType]);
 
   const columns = useMemo<ColumnDef<StockLedgerEntry>[]>(
     () => [
@@ -129,43 +133,56 @@ export default function StockLedgerList() {
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
       tableLayout={{ columnsVisibility: true }}
+      standardToolbar={false}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between flex-wrap gap-3">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Filter by product ID..."
-              value={productId}
-              onChange={(e) => setProductId(e.target.value)}
-              className="ps-9 w-64"
-            />
-          </div>
-          <div className="relative">
-            <Input
-              placeholder="Warehouse ID"
-              value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
-              className="w-52"
-            />
-          </div>
-          <div className="relative">
-            <Input
-              placeholder="Transaction type"
-              value={transactionType}
-              onChange={(e) => setTransactionType(e.target.value)}
-              className="w-52"
-            />
-          </div>
-                    <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
+        <CardHeader>
+          <DataGridStandardToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Filter by product ID..."
+                  value={productId}
+                  onChange={(e) => setProductId(e.target.value)}
+                  className="w-64 ps-9"
+                />
+              </div>
+            }
+            advancedFilters={{
+              active: Boolean(warehouseId || transactionType),
+              content: (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium">Advanced filters</p>
+                  <div className="space-y-2">
+                    <Input
+                      placeholder="Warehouse ID"
+                      value={warehouseId}
+                      onChange={(e) => setWarehouseId(e.target.value)}
+                    />
+                    <Input
+                      placeholder="Transaction type"
+                      value={transactionType}
+                      onChange={(e) => setTransactionType(e.target.value)}
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => {
+                        setWarehouseId('');
+                        setTransactionType('');
+                      }}
+                    >
+                      Clear advanced filters
+                    </Button>
+                  </div>
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'stock_ledger_export.xlsx' }}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>
