@@ -7,7 +7,7 @@ on:
 
 env:
   IMAGE_REPO: jayson1004/sorento-crm
-  RELEASE_TAG: 1.0.2
+  RELEASE_TAG: 1.0.1
 
 jobs:
   build-and-deploy:
