@@ -517,13 +517,10 @@ class SPOAllocationService:
         sort_field: str = "shipment_number",
         sort_dir: str = "asc",
     ):
-        """List inbound shipments that have SPO allocations, each with its allocations (for grouped list view)."""
-        from sqlalchemy.orm import joinedload
+        """List inbound shipments that have matching SPO allocations as shipment summaries."""
         from app.schemas.procurement import (
             InboundShipmentSimple,
-            InboundShipmentLineResponse,
-            SPOAllocationResponse,
-            ShipmentWithAllocationsGroup,
+            ShipmentAllocationSummaryGroup,
         )
 
         # Subquery / join: shipments that have at least one allocation matching filters
@@ -588,67 +585,41 @@ class SPOAllocationService:
                 "empty": True,
             }
 
-        # Load shipment lines (packing list quantities) in a separate query so they are always
-        # populated regardless of the main query join/distinct
-        lines_query = (
-            self.db.query(InboundShipmentLine)
-            .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
-            .options(joinedload(InboundShipmentLine.product))
-        )
-        all_lines = lines_query.all()
-        lines_by_shipment: dict[str, list] = {}
-        for line in all_lines:
-            lines_by_shipment.setdefault(line.shipment_id, []).append(line)
-
-        # Load all allocations for these shipments (same filters) with relations
         q_alloc = (
-            self.db.query(SPOAllocation)
-            .filter(SPOAllocation.inbound_shipment_id.in_(shipment_ids))
-            .options(
-                joinedload(SPOAllocation.product),
-                joinedload(SPOAllocation.warehouse),
-                joinedload(SPOAllocation.inbound_shipment),
+            self.db.query(
+                SPOAllocation.inbound_shipment_id,
+                func.count(SPOAllocation.id).label("matched_spo_allocations_count"),
             )
+            .filter(SPOAllocation.inbound_shipment_id.in_(shipment_ids))
+            .group_by(SPOAllocation.inbound_shipment_id)
         )
         if allocation_filters:
             q_alloc = q_alloc.filter(and_(*allocation_filters))
-        q_alloc = q_alloc.order_by(SPOAllocation.spo_number, SPOAllocation.id)
-        allocations = q_alloc.all()
+        allocation_counts = {
+            str(shipment_id): int(count or 0)
+            for shipment_id, count in q_alloc.all()
+        }
 
-        # Group by inbound_shipment_id preserving shipment order
-        by_shipment: dict[str, list] = {}
-        for a in allocations:
-            by_shipment.setdefault(a.inbound_shipment_id, []).append(a)
-
-        try:
-            all_alloc_ids = [str(a.id) for a in allocations]
-            received_map = self.get_computed_received_map(all_alloc_ids)
-        except Exception:
-            received_map = {}
+        line_counts = {
+            str(shipment_id): int(count or 0)
+            for shipment_id, count in (
+                self.db.query(
+                    InboundShipmentLine.shipment_id,
+                    func.count(InboundShipmentLine.id).label("shipment_lines_count"),
+                )
+                .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
+                .group_by(InboundShipmentLine.shipment_id)
+                .all()
+            )
+        }
 
         groups = []
         for ship in shipments_page:
-            allocs = by_shipment.get(ship.id, [])
-            raw_lines = lines_by_shipment.get(ship.id, [])
-            shipment_lines = [
-                InboundShipmentLineResponse.model_validate(line) for line in raw_lines
-            ]
-            alloc_responses = []
-            for a in allocs:
-                resp = SPOAllocationResponse.model_validate(a)
-                try:
-                    rec = received_map.get(str(a.id), 0)
-                    alloc_responses.append(resp.model_copy(update={
-                        "quantity_received": rec,
-                        "receipt_status": "received" if rec >= (a.allocated_quantity or 0) else "pending",
-                    }))
-                except Exception:
-                    alloc_responses.append(resp)
             groups.append(
-                ShipmentWithAllocationsGroup(
+                ShipmentAllocationSummaryGroup(
                     inbound_shipment=InboundShipmentSimple.model_validate(ship),
-                    spo_allocations=alloc_responses,
-                    shipment_lines=shipment_lines if shipment_lines else None,
+                    matched_spo_allocations_count=allocation_counts.get(str(ship.id), 0),
+                    shipment_lines_count=line_counts.get(str(ship.id), 0),
                 )
             )
 

@@ -337,11 +337,11 @@ class SPOAllocationResponse(SPOAllocationBase):
         from_attributes = True
 
 
-class ShipmentWithAllocationsGroup(BaseModel):
-    """Inbound shipment with its SPO allocations for grouped list view."""
+class ShipmentAllocationSummaryGroup(BaseModel):
+    """Inbound shipment summary for grouped shipment search."""
     inbound_shipment: InboundShipmentSimple
-    spo_allocations: List[SPOAllocationResponse]
-    shipment_lines: Optional[List[InboundShipmentLineResponse]] = None
+    matched_spo_allocations_count: int = 0
+    shipment_lines_count: int = 0
 
 
 class SPOAllocationWithShippedResponse(SPOAllocationResponse):

@@ -413,7 +413,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- order-management ---
     ToolSpec(
         "crm_order_management_orders_list",
-        "List orders (customer, status, has_order_lines, search).",
+        "List orders (customer, status, has_order_lines, actual delivery date filters, search). Parameter `query` matches order number, debtor name/code, and customer name/code.",
         "/api/v1/order-management/orders",
         (),
         (
@@ -423,6 +423,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "customer_id",
             "order_status_id",
             "has_order_lines",
+            "has_actual_delivery_date",
+            "actual_delivery_date_from",
+            "actual_delivery_date_to",
             "sort",
             "dir",
         ),
@@ -433,6 +436,23 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/order-management/orders/{order_id}",
         ("order_id",),
         (),
+    ),
+    ToolSpec(
+        "crm_order_management_orders_by_product_list",
+        "List distinct orders matched by product search. Supports actual delivery date filters. Parameter `query` matches product code, name, description, order number, and debtor name.",
+        "/api/v1/order-management/orders/by-product",
+        (),
+        (
+            "page",
+            "limit",
+            "query",
+            "product_id",
+            "has_actual_delivery_date",
+            "actual_delivery_date_from",
+            "actual_delivery_date_to",
+            "sort",
+            "dir",
+        ),
     ),
     # --- procurement ---
     ToolSpec(
@@ -451,7 +471,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_procurement_spo_allocations_grouped_by_shipment",
-        "SPO allocations grouped by shipment.",
+        "Find inbound shipments in summary form using SPO allocation filters. Returns shipment summary plus counts only; use crm_procurement_packing_lists_get or crm_procurement_spo_allocations_list for details.",
         "/api/v1/procurement/spo-allocations/grouped-by-shipment",
         (),
         (

@@ -4,8 +4,9 @@ import uuid
 import time
 from typing import Any, Optional
 from io import BytesIO
+from datetime import datetime
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func, exists
 from decimal import Decimal
 from app.models.order import Order, OrderStatus, Customer, OrderLine
@@ -37,6 +38,9 @@ class OrderService:
         customer_id: Optional[str] = None,
         order_status_id: Optional[str] = None,
         has_order_lines: Optional[str] = None,
+        has_actual_delivery_date: Optional[str] = None,
+        actual_delivery_date_from: Optional[datetime] = None,
+        actual_delivery_date_to: Optional[datetime] = None,
         sort_field: str = "created_at",
         sort_dir: str = "asc",
         advanced_filter_clause: Optional[Any] = None,
@@ -57,11 +61,25 @@ class OrderService:
             filters.append(exists().where(OrderLine.order_id == Order.id))
         elif hol == "no":
             filters.append(~exists().where(OrderLine.order_id == Order.id))
+
+        hadd = (has_actual_delivery_date or "").strip().lower()
+        if hadd == "yes":
+            filters.append(Order.actual_delivery_date.is_not(None))
+        elif hadd == "no":
+            filters.append(Order.actual_delivery_date.is_(None))
+
+        if actual_delivery_date_from is not None:
+            filters.append(Order.actual_delivery_date >= actual_delivery_date_from)
+
+        if actual_delivery_date_to is not None:
+            filters.append(Order.actual_delivery_date <= actual_delivery_date_to)
         
-        if query:
+        if query and (query := (query or "").strip()):
             filters.append(
                 or_(
                     Order.order_number.ilike(f"%{query}%"),
+                    Order.debtor_name.ilike(f"%{query}%"),
+                    Order.debtor_code.ilike(f"%{query}%"),
                     Order.customer.has(Customer.customer_name.ilike(f"%{query}%")),
                     Order.customer.has(Customer.customer_code.ilike(f"%{query}%"))
                 )
@@ -139,7 +157,6 @@ class OrderService:
     
     def get_order(self, order_id: str):
         """Get a single order by ID with lines, product and warehouse loaded for each line."""
-        from sqlalchemy.orm import joinedload
         order = (
             self.db.query(Order)
             .filter(Order.id == order_id, Order.deleted_at.is_(None))
@@ -152,6 +169,87 @@ class OrderService:
         if not order:
             raise handle_not_found("Order", order_id)
         return order
+
+    def list_orders_by_product(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        product_id: Optional[str] = None,
+        has_actual_delivery_date: Optional[str] = None,
+        actual_delivery_date_from: Optional[datetime] = None,
+        actual_delivery_date_to: Optional[datetime] = None,
+        sort_field: str = "order_date",
+        sort_dir: str = "desc",
+    ):
+        """List distinct orders matched by product search."""
+        q = (
+            self.db.query(Order)
+            .join(Order.lines)
+            .join(OrderLine.product)
+            .filter(Order.deleted_at.is_(None))
+            .distinct()
+        )
+
+        filters = []
+
+        if product_id and product_id != "all":
+            filters.append(OrderLine.product_id == product_id)
+
+        hadd = (has_actual_delivery_date or "").strip().lower()
+        if hadd == "yes":
+            filters.append(Order.actual_delivery_date.is_not(None))
+        elif hadd == "no":
+            filters.append(Order.actual_delivery_date.is_(None))
+
+        if actual_delivery_date_from is not None:
+            filters.append(Order.actual_delivery_date >= actual_delivery_date_from)
+
+        if actual_delivery_date_to is not None:
+            filters.append(Order.actual_delivery_date <= actual_delivery_date_to)
+
+        if query and (query := (query or "").strip()):
+            term = f"%{query}%"
+            filters.append(
+                or_(
+                    Order.order_number.ilike(term),
+                    Order.debtor_name.ilike(term),
+                    Product.product_code.ilike(term),
+                    Product.product_name.ilike(term),
+                    Product.description.ilike(term),
+                )
+            )
+
+        if filters:
+            q = q.filter(and_(*filters))
+
+        sort_map = {
+            "order_number": Order.order_number,
+            "order_date": Order.order_date,
+            "actual_delivery_date": Order.actual_delivery_date,
+            "debtor_name": Order.debtor_name,
+            "created_at": Order.created_at,
+            "updated_at": Order.updated_at,
+        }
+        sort_column = sort_map.get(sort_field, Order.order_date)
+        if (sort_dir or "").lower() == "asc":
+            q = q.order_by(sort_column.asc().nulls_last())
+        else:
+            q = q.order_by(sort_column.desc().nulls_last())
+
+        total = q.count()
+        offset = (page - 1) * limit
+        orders = q.offset(offset).limit(limit).all()
+
+        return {
+            "data": orders,
+            "pagination": {
+                "total": total,
+                "page": page,
+                "limit": limit,
+            },
+            "empty": total == 0,
+        }
     
     @staticmethod
     def _normalize_uuid_fields(data: dict, keys: tuple = ("customer_id", "order_status_id", "billing_address_id", "shipping_address_id")) -> dict:

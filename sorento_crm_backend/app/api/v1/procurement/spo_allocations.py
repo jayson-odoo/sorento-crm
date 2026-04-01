@@ -14,7 +14,7 @@ from app.schemas.procurement import (
     SPOAllocationUpdate,
     SPOAllocationResponse,
     LinkedGRNSimple,
-    ShipmentWithAllocationsGroup,
+    ShipmentAllocationSummaryGroup,
     SPOWithAllocationsGroup,
     BulkDeleteSPOAllocationsRequest,
 )
@@ -24,7 +24,7 @@ from app.services.error_handler import handle_internal_error
 router = APIRouter()
 
 
-@router.get("/grouped-by-shipment", response_model=ListResponse[ShipmentWithAllocationsGroup])
+@router.get("/grouped-by-shipment", response_model=ListResponse[ShipmentAllocationSummaryGroup])
 async def get_spo_allocations_grouped_by_shipment(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),

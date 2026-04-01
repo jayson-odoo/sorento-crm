@@ -1,4 +1,6 @@
 """Orders API routes."""
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Body
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -10,6 +12,7 @@ from app.schemas.order import (
     OrderCreate,
     OrderUpdate,
     OrderResponse,
+    OrderSimpleRef,
     OrderLineCreate,
     OrderLineUpdate,
     OrderLineResponse,
@@ -34,6 +37,12 @@ async def get_orders(
         None,
         description="Filter by lines: 'yes' = at least one line, 'no' = no lines, omit = all",
     ),
+    has_actual_delivery_date: Optional[str] = Query(
+        None,
+        description="Filter by actual delivery date: 'yes' = has date, 'no' = missing date, omit = all",
+    ),
+    actual_delivery_date_from: Optional[datetime] = Query(None),
+    actual_delivery_date_to: Optional[datetime] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -49,10 +58,48 @@ async def get_orders(
             customer_id=customer_id,
             order_status_id=order_status_id,
             has_order_lines=has_order_lines,
+            has_actual_delivery_date=has_actual_delivery_date,
+            actual_delivery_date_from=actual_delivery_date_from,
+            actual_delivery_date_to=actual_delivery_date_to,
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
         )
         return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/by-product", response_model=ListResponse[OrderSimpleRef])
+async def get_orders_by_product(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=1000),
+    query: Optional[str] = Query(None, description="Matches product code, name, description, order number, or debtor name"),
+    product_id: Optional[str] = Query(None),
+    has_actual_delivery_date: Optional[str] = Query(
+        None,
+        description="Filter by actual delivery date: 'yes' = has date, 'no' = missing date, omit = all",
+    ),
+    actual_delivery_date_from: Optional[datetime] = Query(None),
+    actual_delivery_date_to: Optional[datetime] = Query(None),
+    sort: Optional[str] = Query("order_date"),
+    dir: Optional[str] = Query("desc"),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db)
+):
+    """Get distinct orders matched by product search."""
+    try:
+        service = OrderService(db)
+        return service.list_orders_by_product(
+            page=page,
+            limit=limit,
+            query=query,
+            product_id=product_id,
+            has_actual_delivery_date=has_actual_delivery_date,
+            actual_delivery_date_from=actual_delivery_date_from,
+            actual_delivery_date_to=actual_delivery_date_to,
+            sort_field=sort or "order_date",
+            sort_dir=dir or "desc",
+        )
     except Exception as e:
         raise handle_internal_error(str(e))
 

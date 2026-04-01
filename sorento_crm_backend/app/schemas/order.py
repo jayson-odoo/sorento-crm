@@ -154,6 +154,17 @@ class OrderStatusSimple(BaseModel):
         from_attributes = True
 
 
+class OrderSimpleRef(BaseModel):
+    id: str
+    order_number: str
+    order_date: Optional[datetime] = None
+    actual_delivery_date: Optional[datetime] = None
+    debtor_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class OrderResponse(OrderBase):
     id: str
     created_at: datetime

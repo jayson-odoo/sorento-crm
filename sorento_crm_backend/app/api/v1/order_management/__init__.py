@@ -1,6 +1,12 @@
 """Order management API routes."""
 from fastapi import APIRouter
-from app.api.v1.order_management import orders, customers, customers_select, order_statuses, order_statuses_select
+from app.api.v1.order_management import (
+    orders,
+    customers,
+    customers_select,
+    order_statuses,
+    order_statuses_select,
+)
 
 router = APIRouter()
 
