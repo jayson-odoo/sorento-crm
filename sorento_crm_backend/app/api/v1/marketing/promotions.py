@@ -10,6 +10,7 @@ from app.schemas.marketing import (
     PromotionCreate,
     PromotionUpdate,
     PromotionResponse,
+    PromotionListItemResponse,
     PromotionGroupCreate,
     PromotionGroupUpdate,
     PromotionGroupResponse,
@@ -32,7 +33,7 @@ class BulkUpdateAccessLevelsRequest(BaseModel):
     access_levels: list[str]
 
 
-@router.get("/", response_model=ListResponse[PromotionResponse])
+@router.get("/", response_model=ListResponse[PromotionListItemResponse])
 async def get_promotions(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),

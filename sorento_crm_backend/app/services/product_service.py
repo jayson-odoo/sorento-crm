@@ -65,10 +65,12 @@ class ProductService:
             filters.append(and_(*price_filters))
         
         if query:
+            term = f"%{query.strip()}%"
             filters.append(
                 or_(
-                    Product.product_code.ilike(f"%{query}%"),
-                    Product.product_name.ilike(f"%{query}%")
+                    Product.product_code.ilike(term),
+                    Product.product_name.ilike(term),
+                    Product.description.ilike(term),
                 )
             )
 

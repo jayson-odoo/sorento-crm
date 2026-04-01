@@ -18,7 +18,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- master-data ---
     ToolSpec(
         "crm_master_products_list",
-        "List products with filters (category, brand, status, price range, item_type) and pagination.",
+        "List products with filters and pagination. Parameter `query` matches product code, name, and description.",
         "/api/v1/master-data/products",
         (),
         (
@@ -143,7 +143,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- marketing ---
     ToolSpec(
         "crm_marketing_promotions_list",
-        "List promotions (filters: user_type/access, status, promo_type, sort).",
+        "List promotions in summary form (filters: user_type/access, status, promo_type, sort). Use crm_marketing_promotions_get for full nested group/product details.",
         "/api/v1/marketing/promotions",
         (),
         ("page", "limit", "query", "user_type", "status", "promo_type", "sort", "dir"),

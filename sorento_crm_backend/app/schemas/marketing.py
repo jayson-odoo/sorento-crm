@@ -120,6 +120,27 @@ class PromotionResponse(PromotionBase):
         from_attributes = True
 
 
+class PromotionListItemResponse(PromotionBase):
+    id: str
+    created_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    products_count: Optional[int] = 0
+
+    @field_validator('id', 'created_by', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v)
+
+    class Config:
+        from_attributes = True
+
+
 class PromotionProductBase(BaseModel):
     promotion_id: str
     product_id: str
