@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_permission, require_permission_with_api_key
 from app.services.product_service import BrandService
 from app.schemas.product import BrandCreate, BrandUpdate, BrandResponse
 from app.schemas.common import ListResponse
@@ -17,7 +17,7 @@ async def get_brands(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(require_permission("master_data.brands.view")),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.brands.view")),
     db: Session = Depends(get_db)
 ):
     """Get brands with pagination and search."""
@@ -32,7 +32,7 @@ async def get_brands(
 @router.get("/select", response_model=List[BrandResponse])
 async def get_brands_select(
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(require_permission("master_data.brands.view")),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.brands.view")),
     db: Session = Depends(get_db)
 ):
     """Get brands for select dropdowns."""
@@ -58,7 +58,7 @@ async def get_brands_select(
 @router.get("/{brand_id}", response_model=BrandResponse)
 async def get_brand(
     brand_id: str,
-    current_user: dict = Depends(require_permission("master_data.brands.view")),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.brands.view")),
     db: Session = Depends(get_db)
 ):
     """Get a single brand by ID."""

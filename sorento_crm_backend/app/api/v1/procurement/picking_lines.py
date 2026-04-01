@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_or_api_key
 from app.services.procurement_service import PickingHeaderService
 from app.schemas.procurement import PickingLineResponse
 from app.schemas.common import ListResponse
@@ -19,7 +19,7 @@ async def get_picking_lines(
     query: Optional[str] = Query(None, description="Search by SPO allocation or product"),
     sort: Optional[str] = Query("spo_allocation"),
     dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """List picking lines with pagination, search (SPO allocation or product), and sort."""

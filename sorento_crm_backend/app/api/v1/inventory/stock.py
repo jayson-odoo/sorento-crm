@@ -6,7 +6,12 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import (
+    get_current_user,
+    get_current_user_or_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.services.inventory_service import StockService
 from app.schemas.inventory import StockResponse, StockDashboardResponse, BulkImportStockRequest, BulkImportStockResponse, StockLedgerResponse
 from app.schemas.common import ListResponse, ValidateImportResponse
@@ -31,7 +36,7 @@ async def get_stock_balance(
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="Filter by status: critical, low, normal, overstock"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get stock balance with pagination and filtering."""
@@ -56,7 +61,7 @@ async def get_stock_balance(
 
 @router.get("/dashboard", response_model=StockDashboardResponse)
 async def get_stock_dashboard(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get stock dashboard statistics."""
@@ -70,7 +75,7 @@ async def get_stock_dashboard(
 
 @router.get("/alerts")
 async def get_stock_alerts(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get low stock alerts."""
@@ -88,7 +93,7 @@ async def export_stock_balance(
     product_id: Optional[str] = Query(None),
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
-    current_user: dict = Depends(require_permission("inventory.stock.export")),
+    current_user: dict = Depends(require_permission_with_api_key("inventory.stock.export")),
     db: Session = Depends(get_db)
 ):
     """Export all stock balance data (no pagination, returns all records)."""
@@ -129,7 +134,7 @@ async def get_stock_ledger_by_stock(
     warehouse_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get stock ledger entries for a specific product and warehouse."""

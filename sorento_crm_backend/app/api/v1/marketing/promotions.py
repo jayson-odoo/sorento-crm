@@ -4,7 +4,7 @@ from typing import Optional
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import PromotionService, PromotionProductService
 from app.schemas.marketing import (
     PromotionCreate,
@@ -42,7 +42,7 @@ async def get_promotions(
     promo_type: Optional[str] = Query(None, description="Filter by promotion type e.g. price_override"),
     sort: Optional[str] = Query(None, description="Sort field e.g. created_at, promo_code, products_count"),
     dir: Optional[str] = Query("desc", description="asc or desc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get promotions with pagination. Search and filter by status, access level, type."""
@@ -67,7 +67,7 @@ async def get_promotions(
 async def get_promotion(
     promotion_id: str,
     user_type: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single promotion by ID."""
@@ -246,7 +246,7 @@ nested_promotion_products_router = APIRouter()
 @nested_promotion_products_router.get("/", response_model=list[PromotionProductResponse])
 async def get_promotion_products_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get products for a specific promotion (nested route)."""

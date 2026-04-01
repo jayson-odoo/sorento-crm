@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.resources_service import AttachmentTypeService
 from app.schemas.resources import AttachmentTypeCreate, AttachmentTypeUpdate, AttachmentTypeResponse
 from app.schemas.common import ListResponse
@@ -19,7 +19,7 @@ async def get_attachment_types(
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query("desc", regex="^(asc|desc)$"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get attachment types with pagination and filtering."""
@@ -40,7 +40,7 @@ async def get_attachment_types(
 @router.get("/{type_id}", response_model=AttachmentTypeResponse)
 async def get_attachment_type(
     type_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single attachment type by ID."""

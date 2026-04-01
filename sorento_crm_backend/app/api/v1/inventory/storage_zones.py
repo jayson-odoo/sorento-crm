@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.inventory_service import StorageZoneService
 from app.schemas.inventory import StorageZoneCreate, StorageZoneUpdate, StorageZoneResponse, StorageZoneTreeItem
 from app.schemas.common import ListResponse
@@ -17,7 +17,7 @@ async def get_storage_zones(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     warehouse_id: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get storage zones with pagination."""
@@ -32,7 +32,7 @@ async def get_storage_zones(
 @router.get("/tree", response_model=list[StorageZoneTreeItem])
 async def get_storage_zones_tree(
     warehouse_id: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get storage zones in tree format."""
@@ -47,7 +47,7 @@ async def get_storage_zones_tree(
 @router.get("/{zone_id}", response_model=StorageZoneResponse)
 async def get_storage_zone(
     zone_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single storage zone by ID."""

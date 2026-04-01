@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import Any, Optional
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import PromotionAttachmentService
 from app.schemas.marketing import PromotionAttachmentCreate, PromotionAttachmentUpdate, PromotionAttachmentResponse
 from app.schemas.common import ListResponse
@@ -27,7 +27,7 @@ async def get_promotion_attachments(
     dir: Optional[str] = Query("asc"),
     promotion_id: Optional[str] = Query(None),
     attachment_id: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get promotion attachments with pagination and filtering."""
@@ -50,7 +50,7 @@ async def get_promotion_attachments(
 @router.get("/{promotion_attachment_id}", response_model=PromotionAttachmentResponse)
 async def get_promotion_attachment(
     promotion_attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single promotion attachment by ID."""
@@ -120,7 +120,7 @@ async def delete_promotion_attachment(
 @router.get("/promotion/{promotion_id}")
 async def get_promotion_attachments_by_promotion(
     promotion_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get all attachments for a specific promotion."""

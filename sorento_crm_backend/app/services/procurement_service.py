@@ -704,12 +704,10 @@ class SPOAllocationService:
         if filters:
             q_base = q_base.filter(and_(*filters))
 
-        sort_map = {
-            "spo_number": SPOAllocation.spo_number,
-            "created_at": SPOAllocation.created_at,
-        }
-        sort_col = sort_map.get(sort_field, SPOAllocation.spo_number)
-        order = sort_col.desc() if sort_dir == "desc" else sort_col.asc()
+        sort_field_norm = (sort_field or "spo_number").strip().lower()
+        sort_dir_norm = (sort_dir or "asc").strip().lower()
+        if sort_dir_norm not in {"asc", "desc"}:
+            sort_dir_norm = "asc"
 
         # Total count of distinct SPO numbers
         total = q_base.with_entities(func.count(func.distinct(SPOAllocation.spo_number))).scalar() or 0
@@ -721,14 +719,20 @@ class SPOAllocationService:
                 "empty": True,
             }
 
-        # Page of distinct spo_numbers at DB level (same filters and order)
-        q_spo_page = (
-            q_base.with_entities(SPOAllocation.spo_number)
-            .distinct()
-            .order_by(order)
-            .offset(offset)
-            .limit(limit)
-        )
+        # Page of distinct spo_numbers at DB level.
+        # For created_at sorting, order grouped spo_number rows by aggregate timestamp.
+        spo_number_col = SPOAllocation.spo_number.label("spo_number")
+        latest_created_at_col = func.max(SPOAllocation.created_at).label("latest_created_at")
+        q_spo_page = q_base.with_entities(
+            spo_number_col,
+            latest_created_at_col,
+        ).group_by(SPOAllocation.spo_number)
+
+        order_col = latest_created_at_col if sort_field_norm == "created_at" else spo_number_col
+        q_spo_page = q_spo_page.order_by(
+            order_col.desc() if sort_dir_norm == "desc" else order_col.asc()
+        ).offset(offset).limit(limit)
+
         spo_page = [r[0] for r in q_spo_page.all() if r[0]]
 
         if not spo_page:

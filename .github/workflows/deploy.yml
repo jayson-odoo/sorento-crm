@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+env:
+  IMAGE_REPO: jayson1004/sorento-crm
+  RELEASE_TAG: 1.0.2
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -27,8 +31,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            jayson1004/sorento-crm:frontend-1.0.1
-            jayson1004/sorento-crm:frontend-${{ github.sha }}
+            ${{ env.IMAGE_REPO }}:frontend-${{ env.RELEASE_TAG }}
+            ${{ env.IMAGE_REPO }}:frontend-${{ github.sha }}
 
       # BACKEND IMAGE
       - name: Build and Push Backend
@@ -38,8 +42,19 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            jayson1004/sorento-crm:backend-1.0.1
-            jayson1004/sorento-crm:backend-${{ github.sha }}
+            ${{ env.IMAGE_REPO }}:backend-${{ env.RELEASE_TAG }}
+            ${{ env.IMAGE_REPO }}:backend-${{ github.sha }}
+
+      # MCP IMAGE
+      - name: Build and Push MCP
+        uses: docker/build-push-action@v5
+        with:
+          context: ./sorento_crm_mcp
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE_REPO }}:mcp-${{ env.RELEASE_TAG }}
+            ${{ env.IMAGE_REPO }}:mcp-${{ github.sha }}
 
       # DEPLOY USING DOCKER COMPOSE
       - name: Deploy to Server
@@ -55,11 +70,11 @@ jobs:
             git pull || true
 
             # pull latest images used by docker-compose.yml
-            docker pull jayson1004/sorento-crm:frontend-1.0.1
-            docker pull jayson1004/sorento-crm:backend-1.0.1
+            docker pull ${{ env.IMAGE_REPO }}:frontend-${{ env.RELEASE_TAG }}
+            docker pull ${{ env.IMAGE_REPO }}:backend-${{ env.RELEASE_TAG }}
+            docker pull ${{ env.IMAGE_REPO }}:mcp-${{ env.RELEASE_TAG }}
 
-            # recreate containers with new images
-            docker compose down
-            docker compose up -d
+            # recreate/update containers with latest images
+            docker compose up -d --remove-orphans
 
             docker system prune -f

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.inventory_service import WarehouseService
 from app.schemas.inventory import WarehouseCreate, WarehouseUpdate, WarehouseResponse
 from app.schemas.common import ListResponse
@@ -18,7 +18,7 @@ async def get_warehouses(
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get warehouses with pagination and search. Use is_active=true for active-only."""
@@ -33,7 +33,7 @@ async def get_warehouses(
 @router.get("/{warehouse_id}", response_model=WarehouseResponse)
 async def get_warehouse(
     warehouse_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single warehouse by ID."""

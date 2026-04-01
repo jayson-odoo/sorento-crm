@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.order_service import OrderService
 from app.schemas.order import (
     OrderCreate,
@@ -36,7 +36,7 @@ async def get_orders(
     ),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get orders with pagination, filtering, and sorting."""
@@ -60,7 +60,7 @@ async def get_orders(
 @router.get("/{order_id}", response_model=OrderResponse)
 async def get_order(
     order_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single order by ID."""

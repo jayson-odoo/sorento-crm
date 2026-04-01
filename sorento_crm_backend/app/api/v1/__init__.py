@@ -42,49 +42,49 @@ api_router.include_router(
     master_data.router,
     prefix="/master-data",
     tags=["master-data"],
-    dependencies=[Depends(require_module_enabled("product"))],
+    dependencies=[Depends(require_module_enabled_with_api_key("product"))],
 )
 api_router.include_router(
     order_management.router,
     prefix="/order-management",
     tags=["order-management"],
-    dependencies=[Depends(require_module_enabled("order"))],
+    dependencies=[Depends(require_module_enabled_with_api_key("order"))],
 )
 api_router.include_router(
     inventory.router,
     prefix="/inventory",
     tags=["inventory"],
-    dependencies=[Depends(require_module_enabled("inventory"))],
+    dependencies=[Depends(require_module_enabled_with_api_key("inventory"))],
 )
 api_router.include_router(
     procurement.router,
     prefix="/procurement",
     tags=["procurement"],
-    dependencies=[Depends(require_module_enabled("procurement"))],
+    dependencies=[Depends(require_module_enabled_with_api_key("procurement"))],
 )
 api_router.include_router(
     marketing.router,
     prefix="/marketing",
     tags=["marketing"],
-    dependencies=[Depends(require_module_enabled("marketing"))],
+    dependencies=[Depends(require_module_enabled_with_api_key("marketing"))],
 )
 api_router.include_router(
     forms.router,
     prefix="/forms-management",
     tags=["forms"],
-    dependencies=[Depends(require_module_enabled("forms"))],
+    dependencies=[Depends(require_module_enabled_with_api_key("forms"))],
 )
 api_router.include_router(
     workflow_forms.router,
     prefix="/workflow-forms",
     tags=["workflow-forms"],
-    dependencies=[Depends(require_module_enabled("workflow_forms"))],
+    dependencies=[Depends(require_module_enabled_with_api_key("workflow_forms"))],
 )
 api_router.include_router(
     complaints.router,
     prefix="/complaints-management",
     tags=["complaints"],
-    dependencies=[Depends(require_module_enabled("complaints"))],
+    dependencies=[Depends(require_module_enabled_with_api_key("complaints"))],
 )
 api_router.include_router(
     sla.router,
@@ -97,7 +97,7 @@ api_router.include_router(
     resources.router,
     prefix="/resource-management",
     tags=["resources"],
-    dependencies=[Depends(require_module_enabled("resources"))],
+    dependencies=[Depends(require_module_enabled_with_api_key("resources"))],
 )
 api_router.include_router(
     user_management.router,

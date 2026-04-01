@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.forms_service import FormService
 from app.schemas.forms import (
     FormCreate,
@@ -34,7 +34,7 @@ async def get_forms(
     status: Optional[str] = Query(None),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get forms with pagination and filtering."""
@@ -65,7 +65,7 @@ async def get_forms(
 @router.get("/{form_id}", response_model=FormResponse)
 async def get_form(
     form_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single form by ID."""

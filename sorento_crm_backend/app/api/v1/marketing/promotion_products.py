@@ -1,9 +1,9 @@
 """Promotion products API routes."""
-from fastapi import APIRouter, Depends, Path, HTTPException, status, Body, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_or_api_key
 from app.services.marketing_service import PromotionProductService
 from app.schemas.marketing import PromotionProductCreate, PromotionProductUpdate, PromotionProductResponse
 from app.schemas.common import ListResponse
@@ -20,7 +20,7 @@ async def list_all_promotion_products(
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get all promotion products with pagination and filtering."""

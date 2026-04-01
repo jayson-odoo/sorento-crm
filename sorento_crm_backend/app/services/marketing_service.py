@@ -2,7 +2,7 @@
 import math
 import re
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, exists, select
+from sqlalchemy import func, or_, exists, select, text
 from sqlalchemy.exc import IntegrityError
 from typing import Any, Optional
 from decimal import Decimal
@@ -753,15 +753,74 @@ class CampaignTypeService:
     
     def list_campaign_types(self):
         """List all campaign types."""
-        types = self.db.query(CampaignType).all()
-        return types
+        try:
+            return self.db.query(CampaignType).all()
+        except Exception as exc:
+            # Backward-compat for environments where campaign_types.type_code is missing.
+            if "campaign_types.type_code" not in str(exc):
+                raise
+            self.db.rollback()
+            rows = self._fallback_campaign_type_rows()
+            fallback = []
+            for row in rows:
+                fallback.append(
+                    {
+                        "id": str(row.id),
+                        "type_code": str(row.type_name or row.id),
+                        "type_name": row.type_name,
+                        "description": row.description,
+                        "created_at": row.created_at,
+                        "updated_at": row.updated_at or row.created_at,
+                    }
+                )
+            return fallback
     
     def get_campaign_type(self, type_id: str):
         """Get a campaign type by ID."""
-        campaign_type = self.db.query(CampaignType).filter(CampaignType.id == type_id).first()
-        if not campaign_type:
-            raise handle_not_found("Campaign Type", type_id)
-        return campaign_type
+        try:
+            campaign_type = self.db.query(CampaignType).filter(CampaignType.id == type_id).first()
+            if not campaign_type:
+                raise handle_not_found("Campaign Type", type_id)
+            return campaign_type
+        except Exception as exc:
+            if "campaign_types.type_code" not in str(exc):
+                raise
+            self.db.rollback()
+            rows = self._fallback_campaign_type_rows(type_id=type_id)
+            row = rows[0] if rows else None
+            if not row:
+                raise handle_not_found("Campaign Type", type_id)
+            return {
+                "id": str(row.id),
+                "type_code": str(row.type_name or row.id),
+                "type_name": row.type_name,
+                "description": row.description,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at or row.created_at,
+            }
+
+    def _fallback_campaign_type_rows(self, type_id: str | None = None):
+        """Read campaign_types using only columns that exist in older DBs."""
+        cols = self.db.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'campaign_types'"
+            )
+        ).all()
+        existing = {c[0] for c in cols}
+        select_parts = [
+            "id",
+            "type_name",
+            "description" if "description" in existing else "NULL::text AS description",
+            "created_at" if "created_at" in existing else "NOW() AS created_at",
+            "updated_at" if "updated_at" in existing else "NULL::timestamp AS updated_at",
+        ]
+        sql = "SELECT " + ", ".join(select_parts) + " FROM campaign_types"
+        params = {}
+        if type_id is not None:
+            sql += " WHERE id = :type_id"
+            params["type_id"] = type_id
+        return self.db.execute(text(sql), params).all()
     
     def create_campaign_type(self, type_data: CampaignTypeCreate):
         """Create a new campaign type."""

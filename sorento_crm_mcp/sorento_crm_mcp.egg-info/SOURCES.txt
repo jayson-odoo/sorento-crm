@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+sorento_crm_mcp/__init__.py
+sorento_crm_mcp/__main__.py
+sorento_crm_mcp/catalog.py
+sorento_crm_mcp/http_client.py
+sorento_crm_mcp/server.py
+sorento_crm_mcp/settings.py
+sorento_crm_mcp.egg-info/PKG-INFO
+sorento_crm_mcp.egg-info/SOURCES.txt
+sorento_crm_mcp.egg-info/dependency_links.txt
+sorento_crm_mcp.egg-info/entry_points.txt
+sorento_crm_mcp.egg-info/requires.txt
+sorento_crm_mcp.egg-info/top_level.txt
+tests/test_catalog_compile.py

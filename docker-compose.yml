@@ -7,7 +7,7 @@ services:
       context: ./sorento_crm_backend
       dockerfile: Dockerfile
     container_name: sorento_crm_backend
-    image: jayson1004/sorento-crm:backend-1.0.0
+    image: jayson1004/sorento-crm:backend-1.0.2
     environment:
       # Database - use environment variables to ensure password matches
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -42,6 +42,9 @@ services:
       
       # Redis (RQ queue for import jobs)
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      # External API key auth for MCP/read-only integrations
+      EXTERNAL_API_KEY: ${EXTERNAL_API_KEY:-}
+      EXTERNAL_API_KEY_ACT_AS_USER_ID: ${EXTERNAL_API_KEY_ACT_AS_USER_ID:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -73,7 +76,7 @@ services:
       context: ./sorento_crm_frontend
       dockerfile: Dockerfile
     container_name: sorento_crm_frontend
-    image: jayson1004/sorento-crm:frontend-1.0.0
+    image: jayson1004/sorento-crm:frontend-1.0.2
     environment:
       # Database - Next.js needs direct DB access for NextAuth with PrismaAdapter
       # Use external database by default, or override with DATABASE_URL env var
@@ -89,6 +92,29 @@ services:
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost}
     ports:
       - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - sorento_network
+
+  # Read-only MCP server for n8n/AI tool access
+  mcp:
+    build:
+      context: ./sorento_crm_mcp
+      dockerfile: Dockerfile
+    container_name: sorento_crm_mcp
+    image: jayson1004/sorento-crm:mcp-1.0.2
+    environment:
+      CRM_BASE_URL: ${CRM_BASE_URL:-http://backend:8000}
+      EXTERNAL_API_KEY: ${EXTERNAL_API_KEY:-}
+      CRM_MCP_HOST: 0.0.0.0
+      CRM_MCP_PORT: 8765
+      CRM_MCP_TIMEOUT: ${CRM_MCP_TIMEOUT:-60}
+      CRM_MCP_MAX_RESPONSE_BYTES: ${CRM_MCP_MAX_RESPONSE_BYTES:-8000000}
+      CRM_MCP_LOG_LEVEL: ${CRM_MCP_LOG_LEVEL:-INFO}
+    ports:
+      - "${MCP_PORT:-8765}:8765"
     depends_on:
       - backend
     restart: unless-stopped

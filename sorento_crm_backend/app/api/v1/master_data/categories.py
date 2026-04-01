@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_permission, require_permission_with_api_key
 from app.services.product_service import ProductCategoryService
 from app.schemas.product import ProductCategoryCreate, ProductCategoryUpdate, ProductCategoryResponse
 from app.schemas.common import ListResponse
@@ -14,7 +14,7 @@ router = APIRouter()
 
 @router.get("/tree")
 async def get_categories_tree(
-    current_user: dict = Depends(require_permission("master_data.product_categories.view")),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.product_categories.view")),
     db: Session = Depends(get_db)
 ):
     """Get product categories as a tree structure."""
@@ -36,7 +36,7 @@ async def get_categories(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(require_permission("master_data.product_categories.view")),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.product_categories.view")),
     db: Session = Depends(get_db)
 ):
     """Get product categories with pagination and search."""
@@ -51,7 +51,7 @@ async def get_categories(
 @router.get("/select", response_model=List[ProductCategoryResponse])
 async def get_categories_select(
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(require_permission("master_data.product_categories.view")),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.product_categories.view")),
     db: Session = Depends(get_db)
 ):
     """Get product categories for select dropdowns."""
@@ -77,7 +77,7 @@ async def get_categories_select(
 @router.get("/{category_id}", response_model=ProductCategoryResponse)
 async def get_category(
     category_id: str,
-    current_user: dict = Depends(require_permission("master_data.product_categories.view")),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.product_categories.view")),
     db: Session = Depends(get_db)
 ):
     """Get a single category by ID."""

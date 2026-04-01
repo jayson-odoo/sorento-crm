@@ -61,6 +61,8 @@ Tokens are sent in the `Authorization` header as:
 Authorization: Bearer <token>
 ```
 
+Some routes also accept `X-API-Key` when `EXTERNAL_API_KEY` is set. For automation (e.g. n8n via the read-only MCP server), set **`EXTERNAL_API_KEY_ACT_AS_USER_ID`** to a real `users.id` that has the needed **view** permissions; otherwise the legacy `system` principal from API key auth has no RBAC grants. See [sorento_crm_mcp/README.md](../sorento_crm_mcp/README.md).
+
 ## API Routes
 
 All business logic APIs are under `/api/v1/`:

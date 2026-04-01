@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 from app.database import get_db
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.procurement_service import SPOAllocationService
 from app.schemas.procurement import (
     SPOAllocationCreate,
@@ -34,7 +34,7 @@ async def get_spo_allocations_grouped_by_shipment(
     receipt_status: Optional[str] = Query(None),
     sort: Optional[str] = Query("shipment_number"),
     dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """Get SPO allocations grouped by inbound shipment (for list view with expandable groups)."""
@@ -65,7 +65,7 @@ async def get_spo_allocations_grouped_by_spo_number(
     receipt_status: Optional[str] = Query(None),
     sort: Optional[str] = Query("spo_number"),
     dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """Get SPO allocations grouped by SPO number (for list view by SPO)."""
@@ -165,7 +165,7 @@ async def get_spo_allocations(
     receipt_status: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get SPO allocations with pagination, filtering, and sorting."""
@@ -189,7 +189,7 @@ async def get_spo_allocations(
 @router.get("/{allocation_id}", response_model=SPOAllocationResponse)
 async def get_spo_allocation(
     allocation_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single SPO allocation by ID. quantity_received is computed on load (sum quantity_expected from approved GRN lines); returns linked GRNs."""

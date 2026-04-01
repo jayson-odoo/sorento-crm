@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints
+    # When set, X-API-Key auth resolves RBAC as this users row (required for MCP/n8n read tools).
+    external_api_key_act_as_user_id: str | None = None  # EXTERNAL_API_KEY_ACT_AS_USER_ID
     
     # Redis Queue
     redis_url: str = "redis://localhost:6379/0"

@@ -11,7 +11,7 @@ import zipfile
 import io
 import mimetypes
 from app.database import get_db
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.integration_service import IntegrationLogService
@@ -76,7 +76,7 @@ async def get_attachments(
     directory_id: Optional[str] = Query(None),
     is_deleted: Optional[bool] = Query(None),
     resolve_signed_urls: bool = Query(False, description="When false, return stored file_path without CloudFront signing."),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get attachments with pagination and filtering (optional directory_id, query by filename, is_deleted for trash)."""
@@ -118,7 +118,7 @@ STOCK_LIST_TYPE_NAMES = ("Stock List", "Stock_List")
 
 @router.get("/current-stock-list", response_model=AttachmentResponse)
 async def get_current_stock_list(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """Get the current (non-archived) Stock_List attachment, if any. For quick access from Stock page and n8n."""
@@ -224,7 +224,7 @@ async def delete_attachment_link(
 @router.get("/{attachment_id}", response_model=AttachmentResponse)
 async def get_attachment(
     attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single attachment by ID."""
@@ -681,7 +681,7 @@ async def update_attachment(
 @router.get("/{attachment_id}/download")
 async def download_attachment(
     attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Download an attachment file from S3."""
@@ -714,7 +714,7 @@ async def download_attachment(
 @router.get("/{attachment_id}/metadata", response_model=AttachmentResponse)
 async def get_attachment_metadata(
     attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get attachment metadata without downloading the file."""
@@ -731,7 +731,7 @@ async def get_attachment_metadata(
 @router.get("/{attachment_id}/preview-url")
 async def get_attachment_preview_url(
     attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """Get a fresh signed URL for preview/open action."""

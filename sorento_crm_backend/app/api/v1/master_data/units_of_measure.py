@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_permission, require_permission_with_api_key
 from app.services.product_service import UnitOfMeasureService
 from app.schemas.product import UnitOfMeasureCreate, UnitOfMeasureUpdate, UnitOfMeasureResponse
 from app.schemas.common import ListResponse
@@ -17,7 +17,7 @@ async def get_units_of_measure(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(require_permission("master_data.units_of_measure.view")),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.units_of_measure.view")),
     db: Session = Depends(get_db)
 ):
     """Get units of measure with pagination and search."""
@@ -32,7 +32,7 @@ async def get_units_of_measure(
 @router.get("/select", response_model=List[UnitOfMeasureResponse])
 async def get_uoms_select(
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(require_permission("master_data.units_of_measure.view")),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.units_of_measure.view")),
     db: Session = Depends(get_db)
 ):
     """Get units of measure for select dropdowns."""
@@ -58,7 +58,7 @@ async def get_uoms_select(
 @router.get("/{uom_id}", response_model=UnitOfMeasureResponse)
 async def get_uom(
     uom_id: str,
-    current_user: dict = Depends(require_permission("master_data.units_of_measure.view")),
+    current_user: dict = Depends(require_permission_with_api_key("master_data.units_of_measure.view")),
     db: Session = Depends(get_db)
 ):
     """Get a single UOM by ID."""

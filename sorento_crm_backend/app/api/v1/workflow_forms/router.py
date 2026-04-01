@@ -7,7 +7,13 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.dependencies import get_current_user, require_any_permission, require_permission
+from app.dependencies import (
+    get_current_user,
+    require_any_permission,
+    require_any_permission_with_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.schemas.common import ListResponse, PaginationResponse
 from app.schemas.workflow_forms import (
     WorkflowFormDefinitionCreate,
@@ -54,7 +60,7 @@ def list_definitions(
     q: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_permission("workflow_forms.definitions.view")),
+    _user: dict = Depends(require_permission_with_api_key("workflow_forms.definitions.view")),
 ):
     svc = WorkflowFormsService(db)
     result = svc.list_definitions(page=page, limit=limit, query=q, is_active=is_active)
@@ -78,7 +84,7 @@ _RUNTIME_DEF_PERMS = (
 )
 def list_published_definitions_for_submission(
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_any_permission(list(_RUNTIME_DEF_PERMS))),
+    _user: dict = Depends(require_any_permission_with_api_key(list(_RUNTIME_DEF_PERMS))),
 ):
     """Published workflow forms only — for sidebar menus and users who can submit but cannot list all definitions."""
     svc = WorkflowFormsService(db)
@@ -105,7 +111,7 @@ def create_definition(
 def get_definition(
     definition_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_permission("workflow_forms.definitions.view")),
+    _user: dict = Depends(require_permission_with_api_key("workflow_forms.definitions.view")),
 ):
     svc = WorkflowFormsService(db)
     d = svc.get_definition(definition_id)
@@ -155,7 +161,7 @@ def preview_definition(
     definition_id: str,
     source: Literal["draft", "published"] = Query("draft"),
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_permission("workflow_forms.definitions.view")),
+    _user: dict = Depends(require_permission_with_api_key("workflow_forms.definitions.view")),
 ):
     svc = WorkflowFormsService(db)
     schema, src = svc.preview(definition_id, source=source)
@@ -166,7 +172,7 @@ def preview_definition(
 def published_schema_for_submission(
     definition_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_any_permission(list(_RUNTIME_DEF_PERMS))),
+    _user: dict = Depends(require_any_permission_with_api_key(list(_RUNTIME_DEF_PERMS))),
 ):
     """Published schema for creating/viewing submissions (no definitions.view required)."""
     svc = WorkflowFormsService(db)
@@ -179,7 +185,7 @@ def flow_graph(
     definition_id: str,
     source: Literal["draft", "published"] = Query("draft"),
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_permission("workflow_forms.definitions.view")),
+    _user: dict = Depends(require_permission_with_api_key("workflow_forms.definitions.view")),
 ):
     svc = WorkflowFormsService(db)
     schema, _src = svc.preview(definition_id, source=source)
@@ -229,7 +235,7 @@ def list_submissions(
     definition_id: Optional[str] = Query(None),
     state_code: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_permission("workflow_forms.submissions.view")),
+    _user: dict = Depends(require_permission_with_api_key("workflow_forms.submissions.view")),
 ):
     svc = WorkflowFormsService(db)
     result = svc.list_submissions(page=page, limit=limit, definition_id=definition_id, state_code=state_code)
@@ -260,7 +266,7 @@ def create_submission(
 def get_submission(
     submission_id: str,
     db: Session = Depends(get_db),
-    _user: dict = Depends(require_permission("workflow_forms.submissions.view")),
+    _user: dict = Depends(require_permission_with_api_key("workflow_forms.submissions.view")),
 ):
     svc = WorkflowFormsService(db)
     return _serialize_submission(svc, submission_id)
@@ -299,7 +305,7 @@ def delete_submission(
 def allowed_transitions(
     submission_id: str,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_permission("workflow_forms.submissions.view")),
+    current_user: dict = Depends(require_permission_with_api_key("workflow_forms.submissions.view")),
 ):
     svc = WorkflowFormsService(db)
     return {"transitions": svc.allowed_transitions_for_user(submission_id, current_user.get("id") or "")}

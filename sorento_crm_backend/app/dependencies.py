@@ -247,6 +247,139 @@ def require_any_permission(permission_slugs: List[str]):
     return _require
 
 
+def require_permission_with_api_key(permission_slug: str):
+    """
+    Same as require_permission but allows X-API-Key (with act-as user) for GET-style automation.
+    Use only on read endpoints; keep writes on require_permission + get_current_user.
+    """
+
+    async def _require(
+        current_user: dict = Depends(get_current_user_or_api_key),
+        db: Session = Depends(get_db),
+    ) -> dict:
+        service = UserPermissionService(db)
+        if not service.check_user_has_permission(current_user["id"], permission_slug):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission required: {permission_slug}",
+            )
+        if getattr(settings, "module_guard_strict", False):
+            from app.modules.runtime.installer import (
+                DEFAULT_TENANT_ID,
+                is_module_enabled,
+                tenant_has_any_module_row,
+            )
+            from app.modules.runtime.permission_module_map import module_for_permission
+
+            uid = current_user["id"]
+            if not (
+                service.get_user_role_slugs(uid)
+                & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}
+            ):
+                mod = module_for_permission(permission_slug)
+                if mod and tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
+                    if not is_module_enabled(db, DEFAULT_TENANT_ID, mod):
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Module not enabled: {mod}",
+                        )
+        return current_user
+
+    return _require
+
+
+def require_any_permission_with_api_key(permission_slugs: List[str]):
+    """Like require_any_permission but uses get_current_user_or_api_key (read/automation only)."""
+
+    async def _require(
+        current_user: dict = Depends(get_current_user_or_api_key),
+        db: Session = Depends(get_db),
+    ) -> dict:
+        service = UserPermissionService(db)
+        uid = current_user["id"]
+        if service.get_user_role_slugs(uid) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
+            return current_user
+        user_slugs = service.get_user_permission_slugs(uid)
+        if getattr(settings, "module_guard_strict", False):
+            from app.modules.runtime.installer import (
+                DEFAULT_TENANT_ID,
+                is_module_enabled,
+                tenant_has_any_module_row,
+            )
+            from app.modules.runtime.permission_module_map import module_for_permission
+
+            if tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
+                allowed = False
+                for slug in permission_slugs:
+                    if slug not in user_slugs:
+                        continue
+                    mod = module_for_permission(slug)
+                    if not mod or is_module_enabled(db, DEFAULT_TENANT_ID, mod):
+                        allowed = True
+                        break
+                if not allowed:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"One of these permissions required (module may be disabled): {', '.join(permission_slugs)}",
+                    )
+                return current_user
+        if not any(s in user_slugs for s in permission_slugs):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"One of these permissions required: {', '.join(permission_slugs)}",
+            )
+        return current_user
+
+    return _require
+
+
+def _user_dict_from_api_key_act_as(db: Session, request: Request) -> dict:
+    """Build current_user for valid X-API-Key: act-as DB user if configured, else legacy system user."""
+    act_as_id = getattr(settings, "external_api_key_act_as_user_id", None) or None
+    if not act_as_id:
+        user = {
+            "id": "system",
+            "email": "api@system",
+            "role_id": "system",
+            "name": "API User",
+            "avatar": None,
+            "status": "ACTIVE",
+            "role_name": "API",
+        }
+        from app.audit_context import set_audit_context
+
+        ip = request.client.host if request.client else None
+        set_audit_context(user["id"], ip)
+        return user
+
+    from app.models.user import User
+
+    row = (
+        db.query(User)
+        .filter(User.id == act_as_id, User.is_trashed.is_(False))
+        .first()
+    )
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key configuration: act-as user not found",
+        )
+    user = {
+        "id": row.id,
+        "email": row.email,
+        "role_id": None,
+        "name": row.name,
+        "avatar": row.avatar,
+        "status": row.status,
+        "role_name": None,
+    }
+    from app.audit_context import set_audit_context
+
+    ip = request.client.host if request.client else None
+    set_audit_context(row.id, ip)
+    return user
+
+
 async def get_external_api_user(
     api_key: Optional[str] = Depends(get_api_key),
 ) -> dict:
@@ -317,21 +450,8 @@ async def get_current_user_or_api_key(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid API key"
             )
-        
-        # Return a system user dict for API key access
-        user = {
-            "id": "system",
-            "email": "api@system",
-            "role_id": "system",
-            "name": "API User",
-            "avatar": None,
-            "status": "ACTIVE",
-            "role_name": "API",
-        }
-        from app.audit_context import set_audit_context
-        ip = request.client.host if request.client else None
-        set_audit_context(user["id"], ip)
-        return user
+
+        return _user_dict_from_api_key_act_as(db, request)
 
     # Otherwise, try JWT token authentication
     if not token:

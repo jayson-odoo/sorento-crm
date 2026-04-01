@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import CampaignTypeService
 from app.schemas.marketing import CampaignTypeCreate, CampaignTypeUpdate, CampaignTypeResponse
 from app.schemas.common import ListResponse
@@ -13,7 +13,7 @@ router = APIRouter()
 
 @router.get("/", response_model=ListResponse[CampaignTypeResponse])
 async def get_campaign_types(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get all campaign types."""
@@ -32,7 +32,7 @@ async def get_campaign_types(
 @router.get("/{type_id}", response_model=CampaignTypeResponse)
 async def get_campaign_type(
     type_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single campaign type by ID."""

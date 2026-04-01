@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.inventory_service import StockBatchService
 from app.schemas.inventory import StockBatchCreate, StockBatchUpdate, StockBatchResponse
 from app.schemas.common import ListResponse
@@ -18,7 +18,7 @@ async def get_stock_batches(
     limit: int = Query(50, ge=1, le=100),
     product_id: Optional[str] = Query(None),
     warehouse_id: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get stock batches with pagination and filtering."""
@@ -38,7 +38,7 @@ async def get_stock_batches(
 @router.get("/{batch_id}", response_model=StockBatchResponse)
 async def get_stock_batch(
     batch_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single stock batch by ID."""

@@ -6,7 +6,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.procurement_service import PickingHeaderService
 from app.services.job_service import JobService
 from app.services.queue_service import enqueue_job
@@ -30,7 +30,7 @@ async def get_grns(
     inspection_status: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get GRNs (Goods Receipt Notes) with pagination, filtering, and sorting."""
@@ -145,7 +145,7 @@ async def import_grn_lines(
 @router.get("/{grn_id}", response_model=PickingHeaderResponse)
 async def get_grn(
     grn_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single GRN by ID."""

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.product_service import ProductAttachmentService
 from app.schemas.product import ProductAttachmentCreate, ProductAttachmentUpdate, ProductAttachmentResponse
 from app.schemas.common import ListResponse
@@ -21,7 +21,7 @@ async def get_product_attachments(
     product_id: Optional[str] = Query(None),
     attachment_id: Optional[str] = Query(None),
     user_type: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get product attachments with pagination and filtering."""
@@ -44,7 +44,7 @@ async def get_product_attachments(
 @router.get("/{product_attachment_id}", response_model=ProductAttachmentResponse)
 async def get_product_attachment(
     product_attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single product attachment by ID."""
@@ -115,7 +115,7 @@ async def delete_product_attachment(
 async def get_product_attachments_by_product(
     product_id: str,
     user_type: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get all attachments for a specific product."""

@@ -6,7 +6,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.models.procurement import SPOAllocation, PickingHeader, PickingLine
 from app.services.procurement_service import InboundShipmentService
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentUpdate, InboundShipmentResponse
@@ -29,7 +29,7 @@ async def get_packing_lists(
     shipment_status: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get packing lists (inbound shipments) with pagination, filtering, and sorting."""
@@ -52,7 +52,7 @@ async def get_packing_lists(
 @router.get("/{shipment_id}", response_model=InboundShipmentResponse)
 async def get_packing_list(
     shipment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single packing list by ID. Shipment lines include spo_allocated_quantity, quantity_received, and line_status (stored in DB for n8n/API)."""

@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.product_service import ProductService
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, BulkImportProductsRequest, BulkDeleteProductsRequest
 from app.schemas.common import ListResponse, ErrorResponse, ValidateImportResponse
@@ -26,7 +26,7 @@ async def get_products(
     item_type: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get products with pagination, filtering, and sorting."""
@@ -53,7 +53,7 @@ async def get_products(
 @router.get("/{product_id}", response_model=ProductResponse)
 async def get_product(
     product_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single product by ID."""

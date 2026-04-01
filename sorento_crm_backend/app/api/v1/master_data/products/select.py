@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_or_api_key
 from app.models.product import Product
 from app.services.error_handler import handle_internal_error
 
@@ -13,7 +13,7 @@ router = APIRouter()
 @router.get("/select")
 async def get_products_select(
     query: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get products for select/dropdown (simplified list)."""
