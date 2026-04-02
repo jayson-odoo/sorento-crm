@@ -1045,7 +1045,6 @@ model SPOAllocation {
   id                    String   @id @default(uuid())
   spoNumber             String?  @map("spo_number") @db.VarChar(50)
   spoLineNumber         Int?     @map("spo_line_number")
-  inboundShipmentLinesId String? @map("inbound_shipment_lines_id")
   inboundShipmentId     String   @map("inbound_shipment_id")
   warehouseId           String   @map("warehouse_id")
   storageZoneId         String?  @map("storage_zone_id")
@@ -1062,7 +1061,6 @@ model SPOAllocation {
   updatedAt             DateTime?       @map("updated_at")
   lastSyncedToExcel     DateTime?      @map("last_synced_to_excel")
 
-  inboundShipmentLine InboundShipmentLine? @relation(fields: [inboundShipmentLinesId], references: [id], onDelete: Cascade)
   inboundShipment     InboundShipment     @relation(fields: [inboundShipmentId], references: [id], onDelete: Cascade)
   warehouse           Warehouse           @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   storageZone         StorageZone?       @relation(fields: [storageZoneId], references: [id], onDelete: SetNull)

@@ -228,6 +228,7 @@ class InboundShipmentService:
 
         shipment_ids = [s.id for s in shipments]
         line_counts: dict[str, int] = {}
+        non_received_counts: dict[str, int] = {}
         spo_counts: dict[str, int] = {}
         if shipment_ids:
             line_counts = {
@@ -238,6 +239,21 @@ class InboundShipmentService:
                         func.count(InboundShipmentLine.id),
                     )
                     .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
+                    .group_by(InboundShipmentLine.shipment_id)
+                    .all()
+                )
+            }
+            non_received_counts = {
+                str(shipment_id): int(count or 0)
+                for shipment_id, count in (
+                    self.db.query(
+                        InboundShipmentLine.shipment_id,
+                        func.count(InboundShipmentLine.id),
+                    )
+                    .filter(
+                        InboundShipmentLine.shipment_id.in_(shipment_ids),
+                        InboundShipmentLine.line_status != "received",
+                    )
                     .group_by(InboundShipmentLine.shipment_id)
                     .all()
                 )
@@ -255,8 +271,15 @@ class InboundShipmentService:
                 )
             }
         for shipment in shipments:
-            setattr(shipment, "lines_count", line_counts.get(str(shipment.id), 0))
-            setattr(shipment, "spo_allocations_count", spo_counts.get(str(shipment.id), 0))
+            shipment_id = str(shipment.id)
+            total_lines = line_counts.get(shipment_id, 0)
+            non_received_lines = non_received_counts.get(shipment_id, 0)
+            setattr(shipment, "lines_count", total_lines)
+            setattr(shipment, "spo_allocations_count", spo_counts.get(shipment_id, 0))
+            if total_lines > 0 and non_received_lines == 0:
+                shipment.shipment_status = "received"
+            elif (shipment.shipment_status or "").strip().lower() == "received":
+                shipment.shipment_status = "in_transit"
 
         return {
             "data": shipments,
@@ -377,6 +400,17 @@ class InboundShipmentService:
             line.line_status = compute_inbound_shipment_line_status(
                 line.quantity_shipped or 0, alloc, recv
             )
+        shipment = (
+            self.db.query(InboundShipment)
+            .filter(InboundShipment.id == shipment_id)
+            .first()
+        )
+        if shipment:
+            all_lines_received = all((line.line_status or "").strip().lower() == "received" for line in lines)
+            if all_lines_received:
+                shipment.shipment_status = "received"
+            elif (shipment.shipment_status or "").strip().lower() == "received":
+                shipment.shipment_status = "in_transit"
         self.db.commit()
     
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):

@@ -14,7 +14,6 @@ from app.api.v1.external.utils import (
     get_products_by_code,
     get_warehouses_by_code_or_name,
     get_inbound_shipment_by_container_number,
-    get_shipment_line_by_product,
     normalize_code,
 )
 
@@ -230,17 +229,10 @@ def create_spo_allocations(
             cn = (first.shipping_container_number or "").strip()
             inbound_shipment_id = shipment_by_container[normalize_code(cn)].id
 
-        line_id = first.inbound_shipment_lines_id
-        if not line_id:
-            line = get_shipment_line_by_product(db, inbound_shipment_id, product.id)
-            if line:
-                line_id = line.id
-
         allocations.append(
             SPOAllocation(
                 spo_number=spo_number,
                 spo_line_number=None,
-                inbound_shipment_lines_id=line_id,
                 inbound_shipment_id=inbound_shipment_id,
                 warehouse_id=warehouse_id,
                 storage_zone_id=first.storage_zone_id,

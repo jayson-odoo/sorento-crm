@@ -59,7 +59,6 @@ class PackingListCreateResponse(BaseModel):
 class SPOAllocationItem(BaseModel):
     spo_number: Optional[str] = None
     spo_line_number: Optional[int] = None  # also accepts string "1" via validator
-    inbound_shipment_lines_id: Optional[str] = None
     inbound_shipment_id: Optional[str] = None  # required if shipping_container_number not provided
     shipping_container_number: Optional[str] = None  # resolve inbound_shipment by container number
     warehouse_id: Optional[str] = None  # required if location not provided

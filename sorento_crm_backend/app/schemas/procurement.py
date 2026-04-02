@@ -259,7 +259,6 @@ class InboundShipmentListItemResponse(InboundShipmentBase):
 class SPOAllocationBase(BaseModel):
     spo_number: Optional[str] = None
     spo_line_number: Optional[int] = None
-    inbound_shipment_lines_id: Optional[str] = None
     inbound_shipment_id: str
     warehouse_id: str
     storage_zone_id: Optional[str] = None

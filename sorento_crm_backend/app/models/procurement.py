@@ -152,12 +152,6 @@ class InboundShipmentLine(Base):
     shipment = relationship("InboundShipment", back_populates="shipment_lines")
     product = relationship("Product", back_populates="inbound_shipment_lines")
     uom = relationship("UnitOfMeasure", foreign_keys=[uom_id])
-    spo_allocations = relationship(
-        "SPOAllocation",
-        back_populates="inbound_shipment_line",
-        cascade="all, delete-orphan",
-    )
-    
     __table_args__ = (
         Index("ix_inbound_shipment_lines_shipment_id", "shipment_id"),
         Index("ix_inbound_shipment_lines_product_id", "product_id"),
@@ -171,7 +165,6 @@ class SPOAllocation(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     spo_number = Column(String(50), nullable=True)
     spo_line_number = Column(Integer, nullable=True)
-    inbound_shipment_lines_id = Column(UUID(as_uuid=False), ForeignKey("inbound_shipment_lines.id", ondelete="CASCADE"), nullable=True)
     inbound_shipment_id = Column(UUID(as_uuid=False), ForeignKey("inbound_shipments.id", ondelete="CASCADE"), nullable=False)
     warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=False)
     storage_zone_id = Column(UUID(as_uuid=False), ForeignKey("storage_zones.id", ondelete="SET NULL"), nullable=True)
@@ -188,7 +181,6 @@ class SPOAllocation(Base):
     updated_at = Column(DateTime(timezone=False), nullable=True)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     
-    inbound_shipment_line = relationship("InboundShipmentLine", back_populates="spo_allocations")
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
     warehouse = relationship("Warehouse", back_populates="spo_allocations")
     storage_zone = relationship("StorageZone", back_populates="spo_allocations")

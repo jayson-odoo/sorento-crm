@@ -2,7 +2,6 @@ export interface SPOAllocation {
   id: string;
   spo_number?: string | null;
   spo_line_number?: number | null;
-  inbound_shipment_lines_id?: string | null;
   inbound_shipment_id: string;
   warehouse_id: string;
   storage_zone_id?: string | null;
@@ -84,7 +83,6 @@ export interface SPOWithAllocationsGroup {
 export interface SPOAllocationFormData {
   spo_number?: string;
   spo_line_number?: number;
-  inbound_shipment_lines_id?: string;
   inbound_shipment_id: string;
   warehouse_id: string;
   storage_zone_id?: string;
