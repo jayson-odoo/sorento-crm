@@ -457,7 +457,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- procurement ---
     ToolSpec(
         "crm_procurement_packing_lists_list",
-        "Inbound shipments (packing lists).",
+        "Inbound shipment summaries (packing lists). Returns compact shipment headers only; use crm_procurement_packing_lists_get for full shipment lines. `shipment_status=open` means shipments with at least one line not fully received yet.",
         "/api/v1/procurement/packing-lists",
         (),
         ("page", "limit", "query", "supplier_id", "shipment_status", "sort", "dir"),

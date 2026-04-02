@@ -229,6 +229,33 @@ class InboundShipmentResponse(InboundShipmentBase):
         from_attributes = True
 
 
+class InboundShipmentListItemResponse(InboundShipmentBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    created_by: Optional[str] = None
+    synced_to_excel: bool = False
+    last_synced_to_excel: Optional[datetime] = None
+    supplier: Optional[SupplierSimple] = None
+    lines_count: Optional[int] = 0
+    spo_allocations_count: Optional[int] = 0
+    display_total_items: Optional[int] = None
+    display_total_cartons: Optional[int] = None
+
+    @field_validator('created_by', mode='before')
+    @classmethod
+    def convert_created_by_uuid(cls, v):
+        """Convert UUID objects to strings for created_by."""
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v) if v else None
+
+    class Config:
+        from_attributes = True
+
+
 class SPOAllocationBase(BaseModel):
     spo_number: Optional[str] = None
     spo_line_number: Optional[int] = None

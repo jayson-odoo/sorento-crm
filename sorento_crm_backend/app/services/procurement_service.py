@@ -176,8 +176,18 @@ class InboundShipmentService:
         if supplier_id and supplier_id != "all":
             filters.append(InboundShipment.supplier_id == supplier_id)
         
-        if shipment_status and shipment_status != "all":
-            filters.append(InboundShipment.shipment_status == shipment_status)
+        status_norm = (shipment_status or "").strip().lower()
+        if status_norm and status_norm != "all":
+            if status_norm == "open":
+                filters.append(
+                    InboundShipment.shipment_lines.any(InboundShipmentLine.line_status != "received")
+                )
+            elif status_norm in ("received", "closed"):
+                filters.append(
+                    ~InboundShipment.shipment_lines.any(InboundShipmentLine.line_status != "received")
+                )
+            else:
+                filters.append(InboundShipment.shipment_status == shipment_status)
         
         if query:
             filters.append(
@@ -210,11 +220,43 @@ class InboundShipmentService:
         offset = (page - 1) * limit
         from sqlalchemy.orm import joinedload
         shipments = (
-            q.options(joinedload(InboundShipment.shipment_lines))
+            q.options(joinedload(InboundShipment.supplier))
             .offset(offset)
             .limit(limit)
             .all()
         )
+
+        shipment_ids = [s.id for s in shipments]
+        line_counts: dict[str, int] = {}
+        spo_counts: dict[str, int] = {}
+        if shipment_ids:
+            line_counts = {
+                str(shipment_id): int(count or 0)
+                for shipment_id, count in (
+                    self.db.query(
+                        InboundShipmentLine.shipment_id,
+                        func.count(InboundShipmentLine.id),
+                    )
+                    .filter(InboundShipmentLine.shipment_id.in_(shipment_ids))
+                    .group_by(InboundShipmentLine.shipment_id)
+                    .all()
+                )
+            }
+            spo_counts = {
+                str(shipment_id): int(count or 0)
+                for shipment_id, count in (
+                    self.db.query(
+                        SPOAllocation.inbound_shipment_id,
+                        func.count(SPOAllocation.id),
+                    )
+                    .filter(SPOAllocation.inbound_shipment_id.in_(shipment_ids))
+                    .group_by(SPOAllocation.inbound_shipment_id)
+                    .all()
+                )
+            }
+        for shipment in shipments:
+            setattr(shipment, "lines_count", line_counts.get(str(shipment.id), 0))
+            setattr(shipment, "spo_allocations_count", spo_counts.get(str(shipment.id), 0))
 
         return {
             "data": shipments,

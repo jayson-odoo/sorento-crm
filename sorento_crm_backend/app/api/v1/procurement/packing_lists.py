@@ -9,7 +9,12 @@ from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.models.procurement import SPOAllocation, PickingHeader, PickingLine
 from app.services.procurement_service import InboundShipmentService
-from app.schemas.procurement import InboundShipmentCreate, InboundShipmentUpdate, InboundShipmentResponse
+from app.schemas.procurement import (
+    InboundShipmentCreate,
+    InboundShipmentUpdate,
+    InboundShipmentListItemResponse,
+    InboundShipmentResponse,
+)
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
@@ -20,7 +25,7 @@ class BulkDeletePackingListsRequest(BaseModel):
     ids: list[str]
 
 
-@router.get("/", response_model=ListResponse[InboundShipmentResponse])
+@router.get("/", response_model=ListResponse[InboundShipmentListItemResponse])
 async def get_packing_lists(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
