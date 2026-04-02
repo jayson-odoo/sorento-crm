@@ -1,5 +1,6 @@
 """Product service for business logic."""
 from datetime import datetime
+import uuid
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func
 from typing import Any, Optional, List, Callable
@@ -868,6 +869,27 @@ class ProductAttachmentService:
     
     def __init__(self, db: Session):
         self.db = db
+
+    def _resolve_product_identifier(self, product_identifier: Optional[str]) -> Optional[str]:
+        """Accept either product UUID or product_code and return the UUID string."""
+        if not product_identifier:
+            return None
+        normalized = str(product_identifier).strip()
+        if not normalized:
+            return None
+
+        try:
+            uuid.UUID(normalized)
+            return normalized
+        except (ValueError, AttributeError, TypeError):
+            pass
+
+        product = (
+            self.db.query(Product.id)
+            .filter(Product.product_code == normalized)
+            .first()
+        )
+        return str(product.id) if product else None
     
     def list_product_attachments(
         self,
@@ -888,7 +910,14 @@ class ProductAttachmentService:
         )
         
         if product_id:
-            q = q.filter(ProductAttachment.product_id == product_id)
+            resolved_product_id = self._resolve_product_identifier(product_id)
+            if not resolved_product_id:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            q = q.filter(ProductAttachment.product_id == resolved_product_id)
         
         if attachment_id:
             q = q.filter(ProductAttachment.attachment_id == attachment_id)
@@ -983,13 +1012,16 @@ class ProductAttachmentService:
         return {"message": "Product attachment deleted successfully"}
     
     def get_product_attachments_by_product(self, product_id: str, user_type: Optional[str] = None):
-        """Get all non-deleted attachments for a specific product."""
+        """Get all non-deleted attachments for a specific product UUID or product code."""
         from sqlalchemy.orm import joinedload
+        resolved_product_id = self._resolve_product_identifier(product_id)
+        if not resolved_product_id:
+            return []
         q = self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
         ).filter(
-            ProductAttachment.product_id == product_id,
+            ProductAttachment.product_id == resolved_product_id,
             ProductAttachment.attachment.has(Attachment.is_deleted == False),
         ).order_by(
             ProductAttachment.sort_order.asc().nulls_last(),

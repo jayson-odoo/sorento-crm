@@ -121,7 +121,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_master_product_attachments_list",
-        "List product–attachment links with filters.",
+        "List product–attachment links with filters. `product_id` accepts a product UUID or exact product code.",
         "/api/v1/master-data/product-attachments",
         (),
         ("page", "limit", "sort", "dir", "product_id", "attachment_id", "user_type"),
@@ -135,7 +135,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_master_product_attachments_by_product",
-        "All attachment links for a product id.",
+        "All attachment links for a product. `product_id` accepts a product UUID or exact product code.",
         "/api/v1/master-data/product-attachments/product/{product_id}",
         ("product_id",),
         ("user_type",),
