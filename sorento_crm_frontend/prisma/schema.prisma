@@ -1027,10 +1027,9 @@ model InboundShipmentLine {
   lastSyncedToExcel   DateTime? @map("last_synced_to_excel")
   updatedAt           DateTime? @map("updated_at")
 
-  shipment      InboundShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
-  product       Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
-  uom           UnitOfMeasure? @relation("InboundShipmentLineUOM", fields: [uomId], references: [id], onDelete: SetNull)
-  spoAllocations SPOAllocation[]
+  shipment      InboundShipment  @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  product       Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  uom           UnitOfMeasure?   @relation("InboundShipmentLineUOM", fields: [uomId], references: [id], onDelete: SetNull)
 
   @@index([shipmentId])
   @@index([productId])
