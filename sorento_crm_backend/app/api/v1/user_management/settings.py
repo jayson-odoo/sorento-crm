@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import SystemSetting, UserRole
@@ -54,6 +54,8 @@ class SystemSettingUpdate(BaseModel):
     smtp_username: Optional[str] = None
     smtp_password: Optional[str] = None  # update-only; never returned in GET
     smtp_from: Optional[str] = None
+    default_product_supplier_id: Optional[str] = None
+    default_product_standard_lead_time_days: Optional[int] = Field(None, ge=0, le=10950)
 
 
 class SmtpTestResult(BaseModel):
@@ -95,6 +97,10 @@ async def get_settings(
                 "timezone": settings.timezone if settings else None,
                 "currency": settings.currency if settings else None,
                 "currency_format": settings.currency_format if settings else None,
+                "default_product_supplier_id": settings.default_product_supplier_id if settings else None,
+                "default_product_standard_lead_time_days": (
+                    settings.default_product_standard_lead_time_days if settings else None
+                ),
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -105,10 +111,24 @@ async def get_settings(
 
 def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Session):
     """Shared implementation for PUT/POST general settings."""
+    from app.models.procurement import Supplier
+
     settings = db.query(SystemSetting).first()
     if not settings:
         raise HTTPException(status_code=404, detail="Settings not found")
     update_data = settings_data.model_dump(exclude_unset=True)
+
+    if "default_product_supplier_id" in update_data:
+        sid = update_data["default_product_supplier_id"]
+        if sid is not None and str(sid).strip():
+            sid_clean = str(sid).strip()
+            found = db.query(Supplier.id).filter(Supplier.id == sid_clean).first()
+            if not found:
+                raise HTTPException(status_code=400, detail="Default product supplier not found")
+            update_data["default_product_supplier_id"] = sid_clean
+        else:
+            update_data["default_product_supplier_id"] = None
+
     for key, value in update_data.items():
         setattr(settings, key, value)
     db.commit()

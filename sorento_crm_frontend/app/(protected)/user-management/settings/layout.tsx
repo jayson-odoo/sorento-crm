@@ -41,6 +41,11 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
     timezone: (raw.timezone as string) ?? 'Europe/London',
     currency: (raw.currency as string) ?? 'MYR',
     currencyFormat: (raw.currency_format as string) ?? 'RM {value}',
+    defaultProductSupplierId: (raw.default_product_supplier_id as string | null) ?? null,
+    defaultProductStandardLeadTimeDays:
+      typeof raw.default_product_standard_lead_time_days === 'number'
+        ? raw.default_product_standard_lead_time_days
+        : 90,
     smtp: raw.smtp as SystemSetting['smtp'] ?? null,
   } as SystemSetting;
 }
@@ -71,6 +76,8 @@ function createDefaultSettings(): SystemSetting {
     timezone: 'Europe/London',
     currency: 'MYR',
     currencyFormat: 'RM {value}',
+    defaultProductSupplierId: null,
+    defaultProductStandardLeadTimeDays: 90,
     notifyStockEmail: false,
     notifyStockWeb: false,
     notifyStockThreshold: 0,

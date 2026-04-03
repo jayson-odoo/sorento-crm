@@ -1,7 +1,7 @@
 """User management models."""
 import enum
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index, Integer, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -193,6 +193,14 @@ class SystemSetting(Base):
     smtp_username = Column(String(255), nullable=True)
     smtp_password = Column(String(255), nullable=True)
     smtp_from = Column(String(255), nullable=True)  # sender address or "Name <email>"
+
+    # New products / import: default product_supplier (standard lead time + supplier)
+    default_product_supplier_id = Column(
+        PG_UUID(as_uuid=False),
+        ForeignKey("suppliers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    default_product_standard_lead_time_days = Column(Integer, nullable=False, server_default="90", default=90)
 
 
 class UserQuickAccess(Base):

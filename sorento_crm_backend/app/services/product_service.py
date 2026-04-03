@@ -15,6 +15,7 @@ from app.schemas.product import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.schemas.common import PaginationResponse
+from app.models.user import SystemSetting
 
 
 class ProductService:
@@ -125,27 +126,63 @@ class ProductService:
             raise handle_not_found("Product", product_id)
         return product
     
-    DEFAULT_LEAD_TIME_DAYS = 90
+    def _system_settings_row(self) -> Optional[SystemSetting]:
+        return self.db.query(SystemSetting).first()
 
-    def _ensure_default_supplier_lead_time(self, product_id: str, lead_time_days: int = DEFAULT_LEAD_TIME_DAYS) -> None:
-        """Link product to the first supplier in the system with the given lead time, if any supplier exists and no link exists."""
-        first_supplier = self.db.query(Supplier).order_by(Supplier.created_at.asc(), Supplier.id.asc()).first()
-        if not first_supplier:
+    def _default_standard_lead_time_days(self) -> int:
+        row = self._system_settings_row()
+        if row is not None:
+            try:
+                n = int(row.default_product_standard_lead_time_days)
+            except (TypeError, ValueError):
+                n = 90
+        else:
+            n = 90
+        return max(0, n)
+
+    def _resolve_default_supplier_for_new_product(self) -> Optional[Supplier]:
+        """
+        Supplier for auto-created product_suppliers rows.
+        Uses system_settings.default_product_supplier_id when set and valid; else oldest supplier by created_at.
+        """
+        row = self._system_settings_row()
+        sid = (row.default_product_supplier_id or "").strip() if row else ""
+        if sid:
+            s = self.db.query(Supplier).filter(Supplier.id == sid).first()
+            if s:
+                return s
+        return (
+            self.db.query(Supplier)
+            .order_by(Supplier.created_at.asc(), Supplier.id.asc())
+            .first()
+        )
+
+    def _ensure_default_supplier_lead_time(self, product_id: str, lead_time_days: Optional[int] = None) -> None:
+        """Link product to the configured default supplier with standard lead time (see app config)."""
+        if lead_time_days is None:
+            days = self._default_standard_lead_time_days()
+        else:
+            try:
+                days = max(0, int(lead_time_days))
+            except (TypeError, ValueError):
+                days = self._default_standard_lead_time_days()
+        supplier = self._resolve_default_supplier_for_new_product()
+        if not supplier:
             return
         existing = self.db.query(ProductSupplier).filter(
             ProductSupplier.product_id == product_id,
-            ProductSupplier.supplier_id == first_supplier.id,
+            ProductSupplier.supplier_id == supplier.id,
         ).first()
         if existing:
-            if existing.standard_lead_time_days != lead_time_days:
-                existing.standard_lead_time_days = lead_time_days
+            if existing.standard_lead_time_days != days:
+                existing.standard_lead_time_days = days
                 self.db.flush()
             return
         self.db.add(
             ProductSupplier(
                 product_id=product_id,
-                supplier_id=first_supplier.id,
-                standard_lead_time_days=lead_time_days,
+                supplier_id=supplier.id,
+                standard_lead_time_days=days,
             )
         )
         self.db.flush()
@@ -290,6 +327,32 @@ class ProductService:
                 result[p.product_code] = p
         return result
 
+    def _fetch_product_ids_with_configured_lead_time(self, product_ids: List[str]) -> set:
+        """Product IDs that have at least one product_suppliers row with standard_lead_time_days set."""
+        if not product_ids:
+            return set()
+        seen: set = set()
+        unique: List[str] = []
+        for pid in product_ids:
+            if pid and pid not in seen:
+                seen.add(pid)
+                unique.append(pid)
+        out: set = set()
+        for i in range(0, len(unique), self._BULK_FETCH_CODES_BATCH):
+            batch = unique[i : i + self._BULK_FETCH_CODES_BATCH]
+            rows = (
+                self.db.query(ProductSupplier.product_id)
+                .filter(
+                    ProductSupplier.product_id.in_(batch),
+                    ProductSupplier.standard_lead_time_days.isnot(None),
+                )
+                .distinct()
+                .all()
+            )
+            for (pid,) in rows:
+                out.add(pid)
+        return out
+
     def bulk_import_products(
         self,
         products_data: List[dict],
@@ -301,6 +364,7 @@ class ProductService:
         Expects each row: product_code, product_name?, description?, item_group?, item_brand?, list_price?, is_active?
         item_group is matched to category (code or name); item_brand to brand (code or name).
         Creates or updates by product_code. Uses default UOM for new products.
+        On update, if the product has no product_suppliers row with standard_lead_time_days set, applies the same default supplier/lead time as new products.
         Optimized: pre-loads categories, brands, and existing products to avoid per-row queries.
         on_progress: optional callback(processed, successful, failed, skipped) called at chunk boundaries for real-time UI.
         """
@@ -319,6 +383,9 @@ class ProductService:
             if code:
                 all_codes.append(code)
         existing_by_code = self._fetch_existing_products_by_codes(all_codes)
+        products_with_lead_time = self._fetch_product_ids_with_configured_lead_time(
+            [p.id for p in existing_by_code.values()]
+        )
 
         for idx, row in enumerate(products_data, start=1):
             try:
@@ -381,6 +448,9 @@ class ProductService:
                     existing.is_active = is_active
                     existing.updated_by = user_id
                     existing.updated_at = datetime.utcnow()
+                    if existing.id not in products_with_lead_time:
+                        self._ensure_default_supplier_lead_time(existing.id)
+                        products_with_lead_time.add(existing.id)
                     updated += 1
                 else:
                     product = Product(
@@ -397,6 +467,7 @@ class ProductService:
                     self.db.add(product)
                     self.db.flush()  # get product.id for default supplier link
                     self._ensure_default_supplier_lead_time(product.id)
+                    products_with_lead_time.add(product.id)
                     existing_by_code[product_code] = product  # avoid duplicate add if same code again
                     created += 1
 

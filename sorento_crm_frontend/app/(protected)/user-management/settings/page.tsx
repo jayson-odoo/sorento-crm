@@ -1,9 +1,9 @@
 'use client';
 
-import { ChangeEvent, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ControllerRenderProps, FieldErrors, useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
@@ -37,7 +37,14 @@ import TimezoneSelect from './components/timezone-select';
 import {
   GeneralSettingsSchema,
   GeneralSettingsSchemaType,
+  NO_DEFAULT_SUPPLIER_VALUE,
 } from './forms/general-settings-schema';
+
+type SupplierSelectRow = {
+  id: string;
+  supplier_code: string;
+  supplier_name: string;
+};
 
 const languages = [
   {
@@ -80,6 +87,60 @@ const languages = [
 export default function Page() {
   const { settings } = useSettings();
   const queryClient = useQueryClient();
+  const { data: supplierOptions = [] } = useQuery({
+    queryKey: ['suppliers-select-for-settings'],
+    queryFn: async () => {
+      const r = await apiFetch('/api/procurement/suppliers/select');
+      if (!r.ok) throw new Error('Failed to load suppliers');
+      return r.json() as Promise<SupplierSelectRow[]>;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const savedSupplierId = settings?.defaultProductSupplierId ?? null;
+  const savedSupplierMissingFromList =
+    !!savedSupplierId &&
+    !supplierOptions.some((s) => s.id === savedSupplierId);
+
+  const { data: savedSupplierFallback, isFetching: savedSupplierFallbackFetching } =
+    useQuery({
+      queryKey: ['supplier-detail-settings', savedSupplierId],
+      enabled: savedSupplierMissingFromList && !!savedSupplierId,
+      queryFn: async () => {
+        const r = await apiFetch(`/api/procurement/suppliers/${savedSupplierId}`);
+        if (!r.ok) return null;
+        return r.json() as Promise<SupplierSelectRow>;
+      },
+      staleTime: 5 * 60 * 1000,
+    });
+
+  const suppliersForSelect = useMemo((): SupplierSelectRow[] => {
+    const byId = new Map(supplierOptions.map((s) => [s.id, s]));
+    if (savedSupplierId && savedSupplierMissingFromList) {
+      if (savedSupplierFallback) {
+        byId.set(savedSupplierFallback.id, savedSupplierFallback);
+      } else if (savedSupplierFallbackFetching) {
+        byId.set(savedSupplierId, {
+          id: savedSupplierId,
+          supplier_code: '…',
+          supplier_name: 'Loading…',
+        });
+      } else {
+        byId.set(savedSupplierId, {
+          id: savedSupplierId,
+          supplier_code: '—',
+          supplier_name: 'Saved supplier (unavailable)',
+        });
+      }
+    }
+    return Array.from(byId.values());
+  }, [
+    supplierOptions,
+    savedSupplierFallback,
+    savedSupplierId,
+    savedSupplierMissingFromList,
+    savedSupplierFallbackFetching,
+  ]);
   const [logoExistingPreview, setLogoExistingPreview] = useState<string | null>(
     '',
   );
@@ -103,6 +164,11 @@ export default function Page() {
     currency: settings?.currency || 'MYR',
     currencyFormat: settings?.currencyFormat || 'RM {value}',
     timezone: settings?.timezone || 'Europe/London',
+    defaultProductSupplierId:
+      settings?.defaultProductSupplierId && settings.defaultProductSupplierId.length > 0
+        ? settings.defaultProductSupplierId
+        : NO_DEFAULT_SUPPLIER_VALUE,
+    defaultProductStandardLeadTimeDays: settings?.defaultProductStandardLeadTimeDays ?? 90,
   };
 
   useEffect(() => {
@@ -136,6 +202,11 @@ export default function Page() {
       currency: settings.currency ?? 'MYR',
       currencyFormat: settings.currencyFormat ?? 'RM {value}',
       timezone: settings.timezone ?? 'Europe/London',
+      defaultProductSupplierId:
+        settings.defaultProductSupplierId && settings.defaultProductSupplierId.length > 0
+          ? settings.defaultProductSupplierId
+          : NO_DEFAULT_SUPPLIER_VALUE,
+      defaultProductStandardLeadTimeDays: settings.defaultProductStandardLeadTimeDays ?? 90,
     });
   }, [settings, form]);
 
@@ -153,6 +224,11 @@ export default function Page() {
         timezone: values.timezone,
         currency: values.currency,
         currency_format: values.currencyFormat,
+        default_product_supplier_id:
+          values.defaultProductSupplierId === NO_DEFAULT_SUPPLIER_VALUE
+            ? null
+            : values.defaultProductSupplierId,
+        default_product_standard_lead_time_days: values.defaultProductStandardLeadTimeDays,
       };
 
       const response = await apiFetch('/api/user-management/settings/general', {
@@ -625,6 +701,65 @@ export default function Page() {
                     Choose how the currency is displayed (e.g., symbol before or
                     after value).
                   </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="defaultProductSupplierId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Default supplier (new products)</FormLabel>
+                  <FormControl>
+                    <Select
+                      key={`def-sup-${field.value}-${suppliersForSelect.length}-${savedSupplierFallback?.id ?? ''}`}
+                      onValueChange={field.onChange}
+                      value={field.value}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select supplier" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value={NO_DEFAULT_SUPPLIER_VALUE}>
+                            Automatic
+                          </SelectItem>
+                          {suppliersForSelect.map((s) => (
+                            <SelectItem key={s.id} value={s.id}>
+                              {s.supplier_code} — {s.supplier_name}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="defaultProductStandardLeadTimeDays"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Standard lead time (days)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={10950}
+                      value={field.value}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '') return;
+                        const n = parseInt(v, 10);
+                        if (!Number.isNaN(n)) field.onChange(n);
+                      }}
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

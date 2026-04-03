@@ -28,6 +28,9 @@ export interface SystemSetting {
   currency: string;
   currencyFormat: string;
 
+  defaultProductSupplierId?: string | null;
+  defaultProductStandardLeadTimeDays?: number;
+
   socialFacebook?: string | null;
   socialTwitter?: string | null;
   socialInstagram?: string | null;

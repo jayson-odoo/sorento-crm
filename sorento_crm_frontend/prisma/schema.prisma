@@ -177,6 +177,9 @@ model SystemSetting {
   currency       String  @default("USD")
   currencyFormat String  @default("$ {value}") @map("currency_format")
 
+  defaultProductSupplierId           String? @map("default_product_supplier_id")
+  defaultProductStandardLeadTimeDays Int     @default(90) @map("default_product_standard_lead_time_days")
+
   socialFacebook  String? @map("social_facebook")
   socialTwitter   String? @map("social_twitter")
   socialInstagram String? @map("social_instagram")

@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+/** Select value when no explicit default supplier is chosen (backend: null → oldest supplier). */
+export const NO_DEFAULT_SUPPLIER_VALUE = '__none__';
+
 export const GeneralSettingsSchema = z.object({
   name: z.string().min(1, 'Company name is required'),
   logoFile: z
@@ -24,6 +27,8 @@ export const GeneralSettingsSchema = z.object({
   timezone: z.string(),
   currency: z.string(),
   currencyFormat: z.string(),
+  defaultProductSupplierId: z.string(),
+  defaultProductStandardLeadTimeDays: z.coerce.number().int().min(0).max(10950),
 });
 
 export type GeneralSettingsSchemaType = z.infer<typeof GeneralSettingsSchema>;
