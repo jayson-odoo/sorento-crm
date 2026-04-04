@@ -20,6 +20,21 @@ from app.services.n8n_webhook_settings import get_n8n_crm_chat_outbound_webhook_
 logger = logging.getLogger(__name__)
 
 
+def send_crm_chat_outbound_webhook_for_log(log_id: str) -> None:
+    """POST the integration log payload to the configured webhook (own DB session)."""
+    try:
+        from app.database import SessionLocal
+
+        bg_db = SessionLocal()
+        try:
+            bg_service = IntegrationLogService(bg_db)
+            bg_service.send_webhook_for_log(log_id)
+        finally:
+            bg_db.close()
+    except Exception as e:
+        logger.error("CRM chat outbound webhook failed for log %s: %s", log_id, e, exc_info=True)
+
+
 def _int_or_none(v: Any) -> Optional[int]:
     if v is None:
         return None
@@ -148,7 +163,7 @@ def enqueue_crm_chat_outbound_webhook(
     crm_sender_user_id: Optional[str],
     respond_user_id_fallback: str,
 ) -> None:
-    """Create integration log + fire webhook in background (same pattern as attachment webhook)."""
+    """Create integration log and POST the webhook asynchronously (daemon thread; non-blocking)."""
     url = get_n8n_crm_chat_outbound_webhook_url(db)
     if not url:
         return
@@ -192,16 +207,6 @@ def enqueue_crm_chat_outbound_webhook(
     log_id = str(integration_log.id)
 
     def send_async() -> None:
-        try:
-            from app.database import SessionLocal
-
-            bg_db = SessionLocal()
-            try:
-                bg_service = IntegrationLogService(bg_db)
-                bg_service.send_webhook_for_log(log_id)
-            finally:
-                bg_db.close()
-        except Exception as e:
-            logger.error("CRM chat outbound webhook failed for log %s: %s", log_id, e, exc_info=True)
+        send_crm_chat_outbound_webhook_for_log(log_id)
 
     threading.Thread(target=send_async, daemon=True).start()
