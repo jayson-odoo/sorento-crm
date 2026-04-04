@@ -5,13 +5,19 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { AlertCircle, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { format } from 'date-fns';
+import {
+  ProductInquiryFormLayout,
+  InquiryFormTableRow,
+  InquiryReadValue,
+} from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 
 interface StockInquiryViewSummary {
   entity_type: string;
   entity_id: string;
+  inquiry_number?: string | null;
   salesperson?: string | null;
   product_code?: string | null;
   item_description?: string | null;
@@ -28,16 +34,6 @@ interface StockInquiryViewSummary {
   updated_at?: string | null;
 }
 
-function formatDateStr(value: string | null | undefined): string {
-  if (!value) return '—';
-  try {
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString(undefined, { dateStyle: 'medium' });
-  } catch {
-    return value;
-  }
-}
-
 function formatDateTimeStr(value: string | null | undefined): string {
   if (!value) return '—';
   try {
@@ -46,16 +42,6 @@ function formatDateTimeStr(value: string | null | undefined): string {
   } catch {
     return value;
   }
-}
-
-function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
-  if (value == null || value === '' || (typeof value === 'string' && value.trim() === '')) return null;
-  return (
-    <div className="py-2.5 border-b border-border/60 last:border-0">
-      <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">{label}</p>
-      <p className="text-sm font-medium break-words whitespace-pre-wrap">{value}</p>
-    </div>
-  );
 }
 
 function ViewStockInquiryContent() {
@@ -100,7 +86,7 @@ function ViewStockInquiryContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen max-w-lg mx-auto px-4 py-6 space-y-4">
+      <div className="min-h-screen max-w-4xl mx-auto px-4 py-6 space-y-4">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-48 w-full" />
       </div>
@@ -109,7 +95,7 @@ function ViewStockInquiryContent() {
 
   if (error && !summary) {
     return (
-      <div className="min-h-screen max-w-lg mx-auto px-4 py-6 space-y-6">
+      <div className="min-h-screen max-w-4xl mx-auto px-4 py-6 space-y-6">
         <h1 className="text-xl sm:text-2xl font-semibold">View Stock Inquiry</h1>
         <Alert variant="destructive">
           <AlertIcon>
@@ -126,11 +112,23 @@ function ViewStockInquiryContent() {
     : null;
 
   return (
-    <div className="min-h-screen max-w-lg mx-auto px-4 py-6 space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl sm:text-2xl font-semibold leading-tight">Stock Inquiry</h1>
+    <div className="min-h-screen max-w-4xl mx-auto px-4 py-6 space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-2 min-w-0">
+          {summary?.inquiry_number ? (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Inquiry no.
+              </p>
+              <p className="text-2xl sm:text-3xl font-bold tabular-nums tracking-tight break-all">
+                {summary.inquiry_number}
+              </p>
+            </div>
+          ) : null}
+          <h1 className="text-xl sm:text-2xl font-semibold leading-tight">Stock Inquiry</h1>
+        </div>
         {viewInSystemPath && (
-          <Button variant="outline" size="sm" className="shrink-0" asChild>
+          <Button variant="outline" size="sm" className="shrink-0 self-start" asChild>
             <Link href={viewInSystemPath}>
               <ExternalLink className="h-4 w-4 mr-2" />
               View in system
@@ -146,29 +144,69 @@ function ViewStockInquiryContent() {
           <AlertTitle>{error}</AlertTitle>
         </Alert>
       )}
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base sm:text-lg">
-            {summary?.product_code ? `Product: ${summary.product_code}` : 'Stock inquiry details'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 sm:px-6 -mt-2 space-y-0">
-          <DetailRow label="Salesperson" value={summary?.salesperson ?? undefined} />
-          <DetailRow label="Product code" value={summary?.product_code ?? undefined} />
-          <DetailRow label="Item description" value={summary?.item_description ?? undefined} />
-          <DetailRow label="Project customer" value={summary?.project_customer ?? undefined} />
-          <DetailRow label="Project name" value={summary?.project_name ?? undefined} />
-          <DetailRow label="Quantity" value={summary?.quantity ?? undefined} />
-          <DetailRow label="Delivery date" value={summary?.delivery_date ?? undefined} />
-          <DetailRow label="Remark" value={summary?.remark ?? undefined} />
-          <DetailRow label="Additional remark" value={summary?.additional_remark ?? undefined} />
-          <DetailRow label="Purchasing response" value={summary?.purchasing_response ?? undefined} />
-          <DetailRow label="Status" value={summary?.status ?? undefined} />
-          <DetailRow label="Last responded at" value={summary?.last_responded_at ? formatDateTimeStr(summary.last_responded_at) : undefined} />
-          <DetailRow label="Created at" value={summary?.created_at ? formatDateTimeStr(summary.created_at) : undefined} />
-          <DetailRow label="Updated at" value={summary?.updated_at ? formatDateTimeStr(summary.updated_at) : undefined} />
-        </CardContent>
-      </Card>
+      <ProductInquiryFormLayout>
+        <InquiryFormTableRow label="Date">
+          <InquiryReadValue empty="—">
+            {summary?.created_at
+              ? format(new Date(summary.created_at), 'dd/MM/yy')
+              : ''}
+          </InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Sales person">
+          <InquiryReadValue>{summary?.salesperson}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Product code">
+          <InquiryReadValue>{summary?.product_code}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Item description" labelClassName="items-start pt-3">
+          <InquiryReadValue>{summary?.item_description}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Project customer">
+          <InquiryReadValue>{summary?.project_customer}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Project name">
+          <InquiryReadValue>{summary?.project_name}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Qty">
+          <InquiryReadValue>
+            {summary?.quantity != null && summary.quantity !== ''
+              ? String(summary.quantity)
+              : ''}
+          </InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Delivery date">
+          <InquiryReadValue>{summary?.delivery_date}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Remark" labelClassName="items-start pt-3">
+          <InquiryReadValue>{summary?.remark}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Additional remark" labelClassName="items-start pt-3">
+          <InquiryReadValue>{summary?.additional_remark}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow
+          label="Comment / reply by purchasing"
+          labelClassName="items-start pt-3 sm:whitespace-normal"
+        >
+          <InquiryReadValue>{summary?.purchasing_response}</InquiryReadValue>
+        </InquiryFormTableRow>
+      </ProductInquiryFormLayout>
+
+      {summary && (
+        <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm space-y-1">
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            <span className="text-muted-foreground">Status</span>
+            <span className="font-medium">{summary.status ?? '—'}</span>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            {summary.last_responded_at && (
+              <span>Last responded: {formatDateTimeStr(summary.last_responded_at)}</span>
+            )}
+            {summary.updated_at && (
+              <span>Updated: {formatDateTimeStr(summary.updated_at)}</span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

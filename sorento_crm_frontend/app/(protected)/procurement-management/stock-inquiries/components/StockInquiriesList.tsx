@@ -105,12 +105,21 @@ export default function StockInquiriesList() {
           <Checkbox
             checked={selectedInquiryIds.has(row.original.id)}
             onCheckedChange={() => toggleInquirySelection(row.original.id)}
-            aria-label={`Select ${row.original.product_code ?? row.original.id}`}
+            aria-label={`Select ${row.original.inquiry_number ?? row.original.product_code ?? row.original.id}`}
             onClick={(e) => e.stopPropagation()}
           />
         ),
         size: 44,
         enableResizing: false,
+      },
+      {
+        accessorKey: 'inquiry_number',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Inquiry no." column={column} />
+        ),
+        size: 130,
+        cell: ({ row }) => row.original.inquiry_number || '—',
+        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'product_code',

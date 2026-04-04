@@ -26,12 +26,20 @@ const textareaVariants = cva(
   },
 );
 
-function Textarea({
-  className,
-  variant,
-  ...props
-}: React.ComponentProps<'textarea'> & VariantProps<typeof textareaVariants>) {
-  return <textarea data-slot="textarea" className={cn(textareaVariants({ variant }), className)} {...props} />;
-}
+const Textarea = React.forwardRef<
+  HTMLTextAreaElement,
+  React.ComponentProps<'textarea'> & VariantProps<typeof textareaVariants>
+>(function Textarea({ className, variant, ...props }, ref) {
+  return (
+    <textarea
+      ref={ref}
+      data-slot="textarea"
+      className={cn(textareaVariants({ variant }), className)}
+      {...props}
+    />
+  );
+});
+
+Textarea.displayName = 'Textarea';
 
 export { Textarea, textareaVariants };

@@ -30,6 +30,11 @@ interface StockInquiryConversationPanelProps {
   purchasingResponse?: string | null;
   /** Called when "Attach view link" is clicked; return value is appended to the reply. */
   onGetViewLink?: () => Promise<string>;
+  /**
+   * When `key` changes, replaces the compose field with `text` (e.g. after "Update & Reply" opens chat).
+   * Parent should clear when the sheet closes so "Chat records" alone does not reuse stale drafts.
+   */
+  replyComposePrefill?: { key: number; text: string } | null;
 }
 
 export default function StockInquiryConversationPanel({
@@ -39,10 +44,13 @@ export default function StockInquiryConversationPanel({
   showAsPopup = false,
   purchasingResponse,
   onGetViewLink,
+  replyComposePrefill,
 }: StockInquiryConversationPanelProps) {
   const [replyText, setReplyText] = useState('');
   const [viewLinkLoading, setViewLinkLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const appliedPrefillKeyRef = useRef(0);
   const { data, isLoading, refetch, isRefetching } = useStockInquiryConversation(inquiryId, { limit: 50 });
   const updateAndReplyMutation = useUpdateStockInquiryAndReply();
 
@@ -61,6 +69,14 @@ export default function StockInquiryConversationPanel({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sortedItems.length]);
+
+  useEffect(() => {
+    if (!replyComposePrefill) return;
+    if (replyComposePrefill.key === appliedPrefillKeyRef.current) return;
+    appliedPrefillKeyRef.current = replyComposePrefill.key;
+    setReplyText(replyComposePrefill.text);
+    queueMicrotask(() => replyTextareaRef.current?.focus());
+  }, [replyComposePrefill]);
 
   const handleSend = async () => {
     const text = replyText.trim();
@@ -175,6 +191,7 @@ export default function StockInquiryConversationPanel({
         <div className="space-y-2">
           <div className="flex gap-2">
             <Textarea
+              ref={replyTextareaRef}
               placeholder="Type your response..."
               value={replyText}
               onChange={(e) => setReplyText(e.target.value)}

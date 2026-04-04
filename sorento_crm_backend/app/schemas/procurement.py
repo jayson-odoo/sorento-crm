@@ -552,6 +552,7 @@ class StockInquiryRejectReopenRequest(BaseModel):
 
 class StockInquiryResponse(StockInquiryBase):
     id: str
+    inquiry_number: Optional[str] = None
     respond_inbox_url: Optional[str] = None
     status: Optional[str] = None
     last_responded_by: Optional[str] = None

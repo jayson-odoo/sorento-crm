@@ -1,5 +1,6 @@
 export interface StockInquiry {
   id: string;
+  inquiry_number?: string | null;
   salesperson?: string | null;
   product_code?: string | null;
   item_description?: string | null;

@@ -1842,9 +1842,10 @@ class StockInquiryService:
         if query:
             q = q.filter(
                 or_(
+                    StockInquiry.inquiry_number.ilike(f"%{query}%"),
                     StockInquiry.product_code.ilike(f"%{query}%"),
                     StockInquiry.item_description.ilike(f"%{query}%"),
-                    StockInquiry.project_customer.ilike(f"%{query}%")
+                    StockInquiry.project_customer.ilike(f"%{query}%"),
                 )
             )
         
@@ -1860,6 +1861,7 @@ class StockInquiryService:
 
         sort_map = {
             "id": StockInquiry.id,
+            "inquiry_number": StockInquiry.inquiry_number,
             "product_code": StockInquiry.product_code,
             "item_description": StockInquiry.item_description,
             "project_customer": StockInquiry.project_customer,
@@ -1995,6 +1997,7 @@ class StockInquiryService:
         return {
             "entity_type": "stock_inquiry",
             "entity_id": inquiry.id,
+            "inquiry_number": getattr(inquiry, "inquiry_number", None),
             "salesperson": getattr(inquiry, "salesperson", None),
             "product_code": getattr(inquiry, "product_code", None),
             "item_description": getattr(inquiry, "item_description", None),
@@ -2033,6 +2036,8 @@ class StockInquiryService:
 
     def create_inquiry(self, inquiry_data: StockInquiryCreate):
         """Create a new stock inquiry. Status may be set via API to start in project sales or purchasing queue."""
+        from datetime import date as date_cls
+
         data = inquiry_data.model_dump()
         contact_id = data.get("contact_id")
         space_id = data.get("space_id")
@@ -2047,6 +2052,11 @@ class StockInquiryService:
             )
         if status is None:
             data["status"] = "new"
+        from app.services.numbering_service import NumberingService
+
+        generated = NumberingService(self.db).get_next_number("stock_inquiry", date_cls.today())
+        if generated:
+            data["inquiry_number"] = generated
         inquiry = StockInquiry(**data)
         self.db.add(inquiry)
         self.db.commit()
@@ -2107,6 +2117,7 @@ class StockInquiryService:
 
         update_data = inquiry_data.model_dump(exclude_unset=True)
         update_data.pop("status", None)  # Status only via workflow endpoints
+        update_data.pop("inquiry_number", None)  # System-assigned; not editable via update API
 
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
@@ -2156,6 +2167,7 @@ class StockInquiryService:
             )
 
         update_data = inquiry_data.model_dump(exclude_unset=True)
+        update_data.pop("inquiry_number", None)
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)

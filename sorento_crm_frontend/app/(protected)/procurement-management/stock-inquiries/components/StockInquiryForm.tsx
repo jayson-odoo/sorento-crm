@@ -20,12 +20,16 @@ import {
   FormControl,
   FormField,
   FormItem,
-  FormLabel,
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { format } from 'date-fns';
+import {
+  ProductInquiryFormLayout,
+  InquiryFormTableRow,
+} from './ProductInquiryFormLayout';
+import { PRODUCT_INQUIRY_REMARK_HINT } from '../productInquiryFormConstants';
 import {
   useCreateStockInquiry,
   useUpdateStockInquiry,
@@ -209,227 +213,256 @@ export default function StockInquiryForm({
 
   const isLoading = createMutation.isPending || updateMutation.isPending;
 
+  const inquiryDateStr =
+    isEditMode && inquiry?.created_at
+      ? format(new Date(inquiry.created_at), 'dd/MM/yy')
+      : format(new Date(), 'dd/MM/yy');
+
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left Column */}
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Inquiry Information</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="salesperson"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Salesperson</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter salesperson name"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+        <ProductInquiryFormLayout>
+          <InquiryFormTableRow label="Date">
+            <p className="text-sm font-medium tabular-nums py-1">{inquiryDateStr}</p>
+          </InquiryFormTableRow>
 
-                <FormField
-                  control={form.control}
-                  name="product_code"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Product Code</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter product code"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+          <InquiryFormTableRow label="Inquiry no.">
+            <p className="text-sm font-medium tabular-nums py-1">
+              {isEditMode && inquiry?.inquiry_number ? (
+                inquiry.inquiry_number
+              ) : (
+                <span className="text-muted-foreground font-normal">
+                  Assigned when you save
+                </span>
+              )}
+            </p>
+          </InquiryFormTableRow>
 
-                <FormField
-                  control={form.control}
-                  name="item_description"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Item Description</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Enter item description"
-                          {...field}
-                          value={field.value || ''}
-                          rows={3}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+          <InquiryFormTableRow label="Sales person">
+            <FormField
+              control={form.control}
+              name="salesperson"
+              render={({ field }) => (
+                <FormItem className="space-y-1">
+                  <FormControl>
+                    <Input
+                      className="h-9"
+                      placeholder="Name"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </InquiryFormTableRow>
 
-                <FormField
-                  control={form.control}
-                  name="quantity"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Quantity</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter quantity"
-                          {...field}
-                          value={field.value ?? ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+          <InquiryFormTableRow label="Product code">
+            <FormField
+              control={form.control}
+              name="product_code"
+              render={({ field }) => (
+                <FormItem className="space-y-1">
+                  <FormControl>
+                    <Input
+                      className="h-9"
+                      placeholder="Code"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </InquiryFormTableRow>
 
-                <FormField
-                  control={form.control}
-                  name="delivery_date"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Delivery Date</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter delivery date"
-                          {...field}
-                          value={field.value ?? ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+          <InquiryFormTableRow label="Item description" labelClassName="items-start pt-3">
+            <FormField
+              control={form.control}
+              name="item_description"
+              render={({ field }) => (
+                <FormItem className="space-y-1">
+                  <FormControl>
+                    <Textarea
+                      placeholder="Description"
+                      {...field}
+                      value={field.value || ''}
+                      rows={3}
+                      className="min-h-[4.5rem] resize-y"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </InquiryFormTableRow>
 
-                <FormField
-                  control={form.control}
-                  name="remark"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Remark</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Enter remark"
-                          {...field}
-                          value={field.value ?? ''}
-                          rows={3}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </CardContent>
-            </Card>
-          </div>
+          <InquiryFormTableRow label="Project customer">
+            <FormField
+              control={form.control}
+              name="project_customer"
+              render={({ field }) => (
+                <FormItem className="space-y-1">
+                  <FormControl>
+                    <Input
+                      className="h-9"
+                      placeholder="Customer / site"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </InquiryFormTableRow>
 
-          {/* Right Column */}
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Project & Response</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {inquiry?.respond_inbox_url && (
-                  <div className="space-y-2">
-                    <p className="text-sm text-muted-foreground">Respond Inbox</p>
-                    <a
-                      href={inquiry.respond_inbox_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline text-sm break-all"
-                    >
-                      {inquiry.respond_inbox_url}
-                    </a>
-                  </div>
+          <InquiryFormTableRow label="Project name">
+            <FormField
+              control={form.control}
+              name="project_name"
+              render={({ field }) => (
+                <FormItem className="space-y-1">
+                  <FormControl>
+                    <Input
+                      className="h-9"
+                      placeholder="Project name"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </InquiryFormTableRow>
+
+          <InquiryFormTableRow label="Qty">
+            <FormField
+              control={form.control}
+              name="quantity"
+              render={({ field }) => (
+                <FormItem className="space-y-1">
+                  <FormControl>
+                    <Input
+                      className="h-9"
+                      placeholder="Quantity"
+                      {...field}
+                      value={field.value ?? ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </InquiryFormTableRow>
+
+          <InquiryFormTableRow label="Delivery date">
+            <FormField
+              control={form.control}
+              name="delivery_date"
+              render={({ field }) => (
+                <FormItem className="space-y-1">
+                  <FormControl>
+                    <Input
+                      className="h-9"
+                      placeholder="e.g. MOCK UP – MAY 2026, BALANCE BY AUG/SEPT 2026"
+                      {...field}
+                      value={field.value ?? ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </InquiryFormTableRow>
+
+          <InquiryFormTableRow label="Remark" labelClassName="items-start pt-3">
+            <div className="space-y-2">
+              <FormField
+                control={form.control}
+                name="remark"
+                render={({ field }) => (
+                  <FormItem className="space-y-1">
+                    <FormControl>
+                      <Textarea
+                        placeholder="Remarks"
+                        {...field}
+                        value={field.value ?? ''}
+                        rows={6}
+                        className="min-h-[8rem] resize-y font-normal"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
                 )}
-                <FormField
-                  control={form.control}
-                  name="project_customer"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Project Customer</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter project customer"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              />
+              <p className="text-xs text-muted-foreground leading-snug">
+                {PRODUCT_INQUIRY_REMARK_HINT}
+              </p>
+            </div>
+          </InquiryFormTableRow>
 
-                <FormField
-                  control={form.control}
-                  name="project_name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Project Name</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter project name"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+          <InquiryFormTableRow label="Additional remark" labelClassName="items-start pt-3">
+            <FormField
+              control={form.control}
+              name="additional_remark"
+              render={({ field }) => (
+                <FormItem className="space-y-1">
+                  <FormControl>
+                    <Textarea
+                      placeholder="Additional notes"
+                      {...field}
+                      value={field.value || ''}
+                      rows={4}
+                      className="min-h-[6rem] resize-y"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </InquiryFormTableRow>
 
-                <FormField
-                  control={form.control}
-                  name="additional_remark"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Additional Remark</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Enter additional remarks"
-                          {...field}
-                          value={field.value || ''}
-                          rows={4}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+          {inquiry?.respond_inbox_url && (
+            <InquiryFormTableRow label="Respond inbox">
+              <a
+                href={inquiry.respond_inbox_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline text-sm break-all font-medium py-1 inline-block"
+              >
+                {inquiry.respond_inbox_url}
+              </a>
+            </InquiryFormTableRow>
+          )}
 
-                <FormField
-                  control={form.control}
-                  name="purchasing_response"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Purchasing Response</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Enter purchasing response"
-                          {...field}
-                          value={field.value || ''}
-                          rows={4}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </CardContent>
-            </Card>
-          </div>
-        </div>
+          <InquiryFormTableRow
+            label="Comment / reply by purchasing"
+            labelClassName="items-start pt-3 sm:whitespace-normal"
+          >
+            <FormField
+              control={form.control}
+              name="purchasing_response"
+              render={({ field }) => (
+                <FormItem className="space-y-1">
+                  <FormControl>
+                    <Textarea
+                      placeholder="For purchasing use"
+                      {...field}
+                      value={field.value || ''}
+                      rows={5}
+                      className="min-h-[6rem] resize-y"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </InquiryFormTableRow>
+        </ProductInquiryFormLayout>
 
         {isEditMode && inquiryId && (
           <StockInquiryAttachmentsSection

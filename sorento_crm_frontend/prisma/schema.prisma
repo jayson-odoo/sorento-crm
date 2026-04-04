@@ -1150,6 +1150,7 @@ model PickingLine {
 
 model StockInquiry {
   id                 String   @id @default(uuid())
+  inquiryNumber      String?  @map("inquiry_number") @db.VarChar(50)
   salesperson        String?  @db.Text
   productCode        String?  @map("product_code") @db.Text
   itemDescription    String?  @map("item_description") @db.Text

@@ -274,6 +274,7 @@ class StockInquiry(Base):
     __audit_entity_type__ = "stock_inquiry"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    inquiry_number = Column(String(50), nullable=True)
     salesperson = Column(Text, nullable=True)
     product_code = Column(Text, nullable=True)
     item_description = Column(Text, nullable=True)
@@ -304,6 +305,7 @@ class StockInquiry(Base):
         Index("ix_stock_inquiries_product_code", "product_code"),
         Index("ix_stock_inquiries_delivery_date", "delivery_date"),
         Index("ix_stock_inquiries_created_at", "created_at"),
+        Index("ix_stock_inquiries_inquiry_number", "inquiry_number"),
     )
 
 

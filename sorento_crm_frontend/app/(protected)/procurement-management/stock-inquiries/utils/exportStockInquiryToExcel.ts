@@ -1,5 +1,5 @@
 /**
- * Export stock inquiry to Excel in the STOCK INQUIRY FORM layout.
+ * Export stock inquiry to Excel in the PRODUCT INQUIRY FORM layout.
  * Uses ExcelJS for borders, alignment, and bold (label column).
  */
 
@@ -25,9 +25,10 @@ function buildFormRows(inquiry: StockInquiryDetail | StockInquiry): (string | nu
     ? formatDateForExport(inquiry.created_at)
     : '';
   const rows: (string | number)[][] = [
-    ['STOCK INQUIRY FORM'],
+    ['PRODUCT INQUIRY FORM'],
     [],
     ['DATE:', dateStr],
+    ['INQUIRY NO.:', inquiry.inquiry_number ?? ''],
     ['SALES PERSON:', inquiry.salesperson ?? ''],
     ['PRODUCT CODE:', inquiry.product_code ?? ''],
     ['ITEM DESCRIPTION:', inquiry.item_description ?? ''],

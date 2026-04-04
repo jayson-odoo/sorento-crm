@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,13 +17,17 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { exportStockInquiryToExcel } from '../utils/exportStockInquiryToExcel';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { format } from 'date-fns';
+import {
+  ProductInquiryFormLayout,
+  InquiryFormTableRow,
+  InquiryReadValue,
+} from './ProductInquiryFormLayout';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useStockInquiry,
   useStockInquiryNeighbours,
   useUpdateStockInquiry,
-  useUpdateStockInquiryAndReply,
   useSubmitStockInquiryForProjectSales,
   useProjectSalesApproveStockInquiry,
   useProjectSalesRejectStockInquiry,
@@ -58,15 +62,17 @@ export default function StockInquiryDetail({
   );
   const { data: neighbours } = useStockInquiryNeighbours(isValidId ? inquiryId : null);
   const updateInquiryMutation = useUpdateStockInquiry();
-  const updateAndReplyMutation = useUpdateStockInquiryAndReply();
   const submitForProjectSalesMutation = useSubmitStockInquiryForProjectSales();
   const projectSalesApproveMutation = useProjectSalesApproveStockInquiry();
   const projectSalesRejectMutation = useProjectSalesRejectStockInquiry();
   const purchasingRejectMutation = usePurchasingRejectStockInquiry();
   const reopenMutation = useReopenStockInquiry();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
-  const [replyMessage, setReplyMessage] = useState('');
+  const [replyComposePrefill, setReplyComposePrefill] = useState<{
+    key: number;
+    text: string;
+  } | null>(null);
+  const [openingReplySheet, setOpeningReplySheet] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectAction, setRejectAction] = useState<'project_sales' | 'purchasing' | null>(null);
@@ -93,6 +99,28 @@ export default function StockInquiryDetail({
       setExporting(false);
     }
   };
+
+  const openUpdateAndReplyInChat = useCallback(async () => {
+    if (!inquiry) return;
+    let viewUrl = '';
+    if (publicViewLinksEnabled) {
+      try {
+        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+        const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+        viewUrl = res.view_url ?? '';
+      } catch {
+        // continue without view link
+      }
+    }
+    const purchasingResponse = (inquiry.purchasing_response ?? '').trim();
+    const linkPart = viewUrl ? ` ${viewUrl}` : '';
+    const fullMessage = `There is a response to your stock inquiry${linkPart}: ${purchasingResponse}`;
+    setReplyComposePrefill((p) => ({
+      key: (p?.key ?? 0) + 1,
+      text: fullMessage,
+    }));
+    setConversationSheetOpen(true);
+  }, [inquiry, inquiryId, publicViewLinksEnabled]);
 
   if (!isValidId) {
     return (
@@ -139,7 +167,8 @@ export default function StockInquiryDetail({
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h1 className="text-2xl font-bold">
-            Stock Inquiry - {inquiry.product_code || 'Details'}
+            Stock Inquiry -{' '}
+            {inquiry.inquiry_number || inquiry.product_code || 'Details'}
           </h1>
           <p className="text-sm text-muted-foreground">
             Created:{' '}
@@ -205,51 +234,40 @@ export default function StockInquiryDetail({
               )}
             </>
           )}
-          {inquiry.status === 'pending_purchasing' && (
-            <>
-              {inquiry.respond_inbox_url && (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  disabled={updateAndReplyMutation.isPending}
-                  onClick={async () => {
-                    let viewUrl = '';
-                    if (publicViewLinksEnabled) {
-                      try {
-                        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                        const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-                        viewUrl = res.view_url ?? '';
-                      } catch {
-                        // continue
-                      }
-                    }
-                    const purchasingResponse = (inquiry.purchasing_response ?? '').trim();
-                    const linkPart = viewUrl ? ` ${viewUrl}` : '';
-                    const fullMessage = `There is a response to your stock inquiry${linkPart}: ${purchasingResponse}`;
-                    setReplyMessage(fullMessage);
-                    setUpdateAndReplyDialogOpen(true);
-                  }}
-                >
-                  <Send className="size-4 mr-1" />
-                  Update & Reply
-                </Button>
-              )}
-              {canPurchasingReject && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={purchasingRejectMutation.isPending}
-                  onClick={() => {
-                    setRejectAction('purchasing');
-                    setRejectReason('');
-                    setRejectDialogOpen(true);
-                  }}
-                >
-                  <XCircle className="size-4 mr-1" />
-                  Reject
-                </Button>
-              )}
-            </>
+          {(inquiry.status === 'pending_purchasing' ||
+            inquiry.status === 'responded') &&
+            inquiry.respond_inbox_url && (
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={openingReplySheet}
+                onClick={async () => {
+                  setOpeningReplySheet(true);
+                  try {
+                    await openUpdateAndReplyInChat();
+                  } finally {
+                    setOpeningReplySheet(false);
+                  }
+                }}
+              >
+                <Send className="size-4 mr-1" />
+                {openingReplySheet ? 'Opening…' : 'Update & Reply'}
+              </Button>
+            )}
+          {inquiry.status === 'pending_purchasing' && canPurchasingReject && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={purchasingRejectMutation.isPending}
+              onClick={() => {
+                setRejectAction('purchasing');
+                setRejectReason('');
+                setRejectDialogOpen(true);
+              }}
+            >
+              <XCircle className="size-4 mr-1" />
+              Reject
+            </Button>
           )}
           {inquiry.status === 'rejected' && canReopen && (
             <Button
@@ -321,31 +339,24 @@ export default function StockInquiryDetail({
                 View in system
               </DropdownMenuItem>
             )}
-            {inquiry.respond_inbox_url && inquiry.status === 'pending_purchasing' && (
-              <DropdownMenuItem
-                disabled={updateAndReplyMutation.isPending}
-                onClick={async () => {
-                  let viewUrl = '';
-                  if (publicViewLinksEnabled) {
+            {inquiry.respond_inbox_url &&
+              (inquiry.status === 'pending_purchasing' ||
+                inquiry.status === 'responded') && (
+                <DropdownMenuItem
+                  disabled={openingReplySheet}
+                  onClick={async () => {
+                    setOpeningReplySheet(true);
                     try {
-                      const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                      const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-                      viewUrl = res.view_url ?? '';
-                    } catch {
-                      // continue without view link
+                      await openUpdateAndReplyInChat();
+                    } finally {
+                      setOpeningReplySheet(false);
                     }
-                  }
-                  const purchasingResponse = (inquiry.purchasing_response ?? '').trim();
-                  const linkPart = viewUrl ? ` ${viewUrl}` : '';
-                  const fullMessage = `There is a response to your stock inquiry${linkPart}: ${purchasingResponse}`;
-                  setReplyMessage(fullMessage);
-                  setUpdateAndReplyDialogOpen(true);
-                }}
-              >
-                <Send className="size-4" />
-                {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
-              </DropdownMenuItem>
-            )}
+                  }}
+                >
+                  <Send className="size-4" />
+                  {openingReplySheet ? 'Opening…' : 'Update & Reply'}
+                </DropdownMenuItem>
+              )}
             <DropdownMenuItem
               onClick={handleExportExcel}
               disabled={exporting}
@@ -460,56 +471,6 @@ export default function StockInquiryDetail({
         />
       )}
 
-      <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Update & Reply</DialogTitle>
-            <DialogDescription>
-              Edit the message below. It will be saved as the purchasing response and sent to the customer via Respond.io. The conversation will be marked as responded.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="stock-inquiry-detail-reply-message">Message to send</Label>
-              <Textarea
-                id="stock-inquiry-detail-reply-message"
-                value={replyMessage}
-                onChange={(e) => setReplyMessage(e.target.value)}
-                placeholder="Purchasing response..."
-                rows={5}
-                className="resize-none"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setUpdateAndReplyDialogOpen(false)}
-              disabled={updateAndReplyMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              disabled={updateAndReplyMutation.isPending || !replyMessage.trim()}
-              onClick={async () => {
-                try {
-                  await updateAndReplyMutation.mutateAsync({
-                    id: inquiryId,
-                    data: { purchasing_response: replyMessage.trim() },
-                  });
-                  setUpdateAndReplyDialogOpen(false);
-                  setReplyMessage('');
-                } catch {
-                  // toast from mutation
-                }
-              }}
-            >
-              {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={editPurchasingResponseOpen} onOpenChange={setEditPurchasingResponseOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -551,147 +512,147 @@ export default function StockInquiryDetail({
         </DialogContent>
       </Dialog>
 
-      {/* Stock Inquiry Information */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Inquiry Information</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <p className="text-sm text-muted-foreground">Salesperson</p>
-                <p className="font-medium">{inquiry.salesperson || '-'}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Product Code</p>
-                <p className="font-medium">{inquiry.product_code || '-'}</p>
-              </div>
-              <div className="md:col-span-2">
-                <p className="text-sm text-muted-foreground">Item Description</p>
-                <p className="font-medium">{inquiry.item_description || '-'}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Quantity</p>
-                <p className="font-medium">{inquiry.quantity ?? '-'}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Delivery Date</p>
-                <p className="font-medium">{inquiry.delivery_date ?? '-'}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Remark</p>
-                <p className="font-medium whitespace-pre-wrap">{inquiry.remark ?? '-'}</p>
-              </div>
+      <ProductInquiryFormLayout>
+        <InquiryFormTableRow label="Date">
+          <InquiryReadValue empty="—">
+            {inquiry.created_at
+              ? format(new Date(inquiry.created_at), 'dd/MM/yy')
+              : ''}
+          </InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Inquiry no.">
+          <InquiryReadValue>{inquiry.inquiry_number}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Sales person">
+          <InquiryReadValue>{inquiry.salesperson}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Product code">
+          <InquiryReadValue>{inquiry.product_code}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Item description" labelClassName="items-start pt-3">
+          <InquiryReadValue>{inquiry.item_description}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Project customer">
+          <InquiryReadValue>{inquiry.project_customer}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Project name">
+          <InquiryReadValue>{inquiry.project_name}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Qty">
+          <InquiryReadValue>{inquiry.quantity != null ? String(inquiry.quantity) : ''}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Delivery date">
+          <InquiryReadValue>{inquiry.delivery_date}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Remark" labelClassName="items-start pt-3">
+          <InquiryReadValue>{inquiry.remark}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Additional remark" labelClassName="items-start pt-3">
+          <InquiryReadValue>{inquiry.additional_remark}</InquiryReadValue>
+        </InquiryFormTableRow>
+        {inquiry.respond_inbox_url && (
+          <InquiryFormTableRow label="Respond inbox">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-0.5">
+              <a
+                href={inquiry.respond_inbox_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline text-sm break-all font-medium"
+              >
+                {inquiry.respond_inbox_url}
+              </a>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0 w-fit"
+                onClick={() => setConversationSheetOpen(true)}
+                aria-label="Open chat records"
+              >
+                <MessageSquare className="size-4 mr-1" />
+                Chat
+              </Button>
             </div>
-            {inquiry.additional_remark && (
-              <div>
-                <p className="text-sm text-muted-foreground">Additional Remark</p>
-                <p className="font-medium whitespace-pre-wrap">
-                  {inquiry.additional_remark}
-                </p>
+          </InquiryFormTableRow>
+        )}
+        <InquiryFormTableRow
+          label="Comment / reply by purchasing"
+          labelClassName="items-start pt-3 sm:whitespace-normal"
+        >
+          <div className="space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <InquiryReadValue>{inquiry.purchasing_response}</InquiryReadValue>
               </div>
-            )}
-          </CardContent>
-        </Card>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="shrink-0"
+                onClick={() => {
+                  setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
+                  setEditPurchasingResponseOpen(true);
+                }}
+                aria-label="Edit purchasing response"
+              >
+                <Edit className="size-4" />
+                Edit
+              </Button>
+            </div>
+          </div>
+        </InquiryFormTableRow>
+      </ProductInquiryFormLayout>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Project & Response</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {inquiry.respond_inbox_url && (
-              <div>
-                <p className="text-sm text-muted-foreground">Respond Inbox</p>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <a
-                    href={inquiry.respond_inbox_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline text-sm break-all font-medium"
-                  >
-                    {inquiry.respond_inbox_url}
-                  </a>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setConversationSheetOpen(true)}
-                    aria-label="Open chat records"
-                  >
-                    <MessageSquare className="size-4 mr-1" />
-                  </Button>
-                </div>
-              </div>
-            )}
+      {(inquiry.rejection_reason != null && inquiry.rejection_reason !== '') ||
+      (inquiry.reopen_reason != null && inquiry.reopen_reason !== '') ||
+      inquiry.last_responded_at ? (
+        <div className="rounded-md border border-border bg-muted/20 px-4 py-3 space-y-3 text-sm">
+          {inquiry.rejection_reason != null && inquiry.rejection_reason !== '' && (
             <div>
-              <p className="text-sm text-muted-foreground">Project Customer</p>
-              <p className="font-medium">{inquiry.project_customer || '-'}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Project Name</p>
-              <p className="font-medium">{inquiry.project_name || '-'}</p>
-            </div>
-            <div>
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm text-muted-foreground">
-                  Purchasing Response
+              <p className="text-muted-foreground">Rejection reason</p>
+              <p className="font-medium whitespace-pre-wrap">{inquiry.rejection_reason}</p>
+              {(inquiry.rejected_at || inquiry.rejected_by) && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {inquiry.rejected_at && formatDate(new Date(inquiry.rejected_at))}
+                  {(inquiry.rejected_by_name ?? inquiry.rejected_by) &&
+                    ` by ${inquiry.rejected_by_name ?? inquiry.rejected_by}`}
                 </p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
-                    setEditPurchasingResponseOpen(true);
-                  }}
-                  aria-label="Edit purchasing response"
-                >
-                  <Edit className="size-4" />
-                  Edit
-                </Button>
-              </div>
-              <p className="font-medium whitespace-pre-wrap">
-                {inquiry.purchasing_response ?? '-'}
+              )}
+            </div>
+          )}
+          {inquiry.reopen_reason != null && inquiry.reopen_reason !== '' && (
+            <div>
+              <p className="text-muted-foreground">Reopen reason</p>
+              <p className="font-medium whitespace-pre-wrap">{inquiry.reopen_reason}</p>
+              {(inquiry.reopened_at || inquiry.reopened_by) && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {inquiry.reopened_at && formatDate(new Date(inquiry.reopened_at))}
+                  {(inquiry.reopened_by_name ?? inquiry.reopened_by) &&
+                    ` by ${inquiry.reopened_by_name ?? inquiry.reopened_by}`}
+                </p>
+              )}
+            </div>
+          )}
+          {inquiry.last_responded_at && (
+            <div>
+              <p className="text-muted-foreground">Last responded</p>
+              <p className="font-medium">
+                {formatDate(new Date(inquiry.last_responded_at))}
+                {inquiry.last_responded_by_name && ` by ${inquiry.last_responded_by_name}`}
               </p>
             </div>
-            {inquiry.rejection_reason != null && inquiry.rejection_reason !== '' && (
-              <div>
-                <p className="text-sm text-muted-foreground">Rejection reason</p>
-                <p className="font-medium whitespace-pre-wrap">{inquiry.rejection_reason}</p>
-                {(inquiry.rejected_at || inquiry.rejected_by) && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {inquiry.rejected_at && formatDate(new Date(inquiry.rejected_at))}
-                    {(inquiry.rejected_by_name ?? inquiry.rejected_by) && ` by ${inquiry.rejected_by_name ?? inquiry.rejected_by}`}
-                  </p>
-                )}
-              </div>
-            )}
-            {inquiry.reopen_reason != null && inquiry.reopen_reason !== '' && (
-              <div>
-                <p className="text-sm text-muted-foreground">Reopen reason</p>
-                <p className="font-medium whitespace-pre-wrap">{inquiry.reopen_reason}</p>
-                {(inquiry.reopened_at || inquiry.reopened_by) && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {inquiry.reopened_at && formatDate(new Date(inquiry.reopened_at))}
-                    {(inquiry.reopened_by_name ?? inquiry.reopened_by) && ` by ${inquiry.reopened_by_name ?? inquiry.reopened_by}`}
-                  </p>
-                )}
-              </div>
-            )}
-            {inquiry.last_responded_at && (
-              <div>
-                <p className="text-sm text-muted-foreground">Last responded</p>
-                <p className="font-medium">
-                  {formatDate(new Date(inquiry.last_responded_at))}
-                  {inquiry.last_responded_by_name && ` by ${inquiry.last_responded_by_name}`}
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+          )}
+        </div>
+      ) : null}
 
       {inquiry.respond_inbox_url && (
-        <Sheet open={conversationSheetOpen} onOpenChange={setConversationSheetOpen}>
+        <Sheet
+          open={conversationSheetOpen}
+          onOpenChange={(open) => {
+            setConversationSheetOpen(open);
+            if (!open) {
+              setReplyComposePrefill(null);
+            }
+          }}
+        >
           <SheetContent side="right" className="flex flex-col w-full sm:max-w-lg overflow-y-auto">
             <SheetHeader className="sr-only">
               <SheetTitle>Chat Records</SheetTitle>
@@ -703,6 +664,7 @@ export default function StockInquiryDetail({
                 respondInboxUrl={inquiry.respond_inbox_url}
                 showAsPopup
                 purchasingResponse={inquiry.purchasing_response}
+                replyComposePrefill={replyComposePrefill}
                 onGetViewLink={
                   publicViewLinksEnabled
                     ? async () => {
