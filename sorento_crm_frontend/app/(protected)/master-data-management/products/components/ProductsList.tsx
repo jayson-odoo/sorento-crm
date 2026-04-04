@@ -28,7 +28,7 @@ import {
   SlidersHorizontal,
   Columns3,
 } from 'lucide-react';
-import { formatDate, formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -505,7 +505,10 @@ const ProductsList = () => {
             column={column}
           />
         ),
-        cell: (info) => formatDateTime(new Date(info.getValue() as string)),
+        cell: (info) => {
+          const v = info.getValue() as string | null | undefined;
+          return v ? formatDateTimeInMalaysia(v) : '-';
+        },
         size: 180,
         meta: {
           headerTitle: 'Created',
@@ -526,7 +529,7 @@ const ProductsList = () => {
         ),
         cell: (info) => {
           const val = info.getValue() as string | null | undefined;
-          return val ? formatDateTime(new Date(val)) : '-';
+          return val ? formatDateTimeInMalaysia(val) : '-';
         },
         size: 180,
         meta: {
