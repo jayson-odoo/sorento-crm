@@ -63,6 +63,15 @@ def _name_from_contact(contact: dict) -> str | None:
     return None
 
 
+def _first_last_from_contact(contact: dict) -> tuple[str | None, str | None]:
+    """Extract first/last name fields from Respond contact payload."""
+    fn = contact.get("firstName") or contact.get("first_name")
+    ln = contact.get("lastName") or contact.get("last_name")
+    fn_s = str(fn).strip() if fn is not None and str(fn).strip() else None
+    ln_s = str(ln).strip() if ln is not None and str(ln).strip() else None
+    return fn_s, ln_s
+
+
 def _respond_io_id_from_contact(contact: dict) -> str | None:
     """Extract Respond.io contact id from payload (for inbox URL)."""
     cid = contact.get("contactId") or contact.get("id")
@@ -221,9 +230,20 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
                 local_id = existing.id
                 name = _name_from_contact(contact)
                 user_type = _user_type_from_contact(contact)
-                if name is not None or user_type is not None or respond_io_id is not None:
+                fn, ln = _first_last_from_contact(contact)
+                if (
+                    name is not None
+                    or user_type is not None
+                    or respond_io_id is not None
+                    or fn is not None
+                    or ln is not None
+                ):
                     if name is not None:
                         setattr(existing, "name", name)
+                    if fn is not None:
+                        setattr(existing, "first_name", fn)
+                    if ln is not None:
+                        setattr(existing, "last_name", ln)
                     if user_type is not None:
                         setattr(existing, "user_type", user_type)
                     if respond_io_id is not None:
@@ -232,10 +252,13 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
                     db.refresh(existing)
             else:
                 contact_service = ContactService(db)
+                fn, ln = _first_last_from_contact(contact)
                 new_contact = contact_service.create_contact(
                     RespondContactCreate(
                         phone_number=phone,
                         name=_name_from_contact(contact),
+                        first_name=fn,
+                        last_name=ln,
                         user_type=_user_type_from_contact(contact),
                         respond_io_id=respond_io_id,
                     )

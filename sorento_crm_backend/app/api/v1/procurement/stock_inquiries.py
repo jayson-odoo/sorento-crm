@@ -277,7 +277,7 @@ async def update_stock_inquiry_and_reply(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Update inquiry, send purchasing response to customer via Respond.io, and mark SLA as responded. Allowed when status is pending_purchasing or responded."""
+    """Update inquiry and send message via Respond.io from Chat Records. SLA/status move to responded only when status is pending_purchasing or responded; other statuses only send and record last_responded."""
     try:
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = StockInquiryService(db)
@@ -286,6 +286,7 @@ async def update_stock_inquiry_and_reply(
             inquiry_data,
             respond_user_id=respond_user_id,
             request_url=str(request.url) if request else "",
+            crm_sender_user_id=current_user.get("id"),
         )
         db.commit()
         return inquiry

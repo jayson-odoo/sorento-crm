@@ -599,49 +599,61 @@ export default function StockInquiryDetail({
             </div>
           </div>
         </InquiryFormTableRow>
+        {(inquiry.last_responded_at || inquiry.last_responded_by) && (
+          <>
+            <InquiryFormTableRow label="Last responded by">
+              <InquiryReadValue empty="—">
+                {inquiry.last_responded_by_name ?? inquiry.last_responded_by}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+            <InquiryFormTableRow label="Last responded at">
+              <InquiryReadValue empty="—">
+                {inquiry.last_responded_at
+                  ? formatDate(new Date(inquiry.last_responded_at))
+                  : ''}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+          </>
+        )}
+        {(inquiry.rejected_by ||
+          inquiry.rejected_at ||
+          (inquiry.rejection_reason != null && inquiry.rejection_reason !== '')) && (
+          <>
+            <InquiryFormTableRow label="Rejected by">
+              <InquiryReadValue empty="—">
+                {inquiry.rejected_by_name ?? inquiry.rejected_by}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+            <InquiryFormTableRow label="Rejected at">
+              <InquiryReadValue empty="—">
+                {inquiry.rejected_at ? formatDate(new Date(inquiry.rejected_at)) : ''}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+            <InquiryFormTableRow label="Rejection reason" labelClassName="items-start pt-3">
+              <InquiryReadValue>{inquiry.rejection_reason}</InquiryReadValue>
+            </InquiryFormTableRow>
+          </>
+        )}
+        {((inquiry.reopen_reason != null && inquiry.reopen_reason !== '') ||
+          inquiry.reopened_at ||
+          inquiry.reopened_by) && (
+          <>
+            <InquiryFormTableRow label="Reopen reason" labelClassName="items-start pt-3">
+              <InquiryReadValue>{inquiry.reopen_reason}</InquiryReadValue>
+            </InquiryFormTableRow>
+            <InquiryFormTableRow label="Reopened by">
+              <InquiryReadValue empty="—">
+                {inquiry.reopened_by_name ?? inquiry.reopened_by}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+            <InquiryFormTableRow label="Reopened at">
+              <InquiryReadValue empty="—">
+                {inquiry.reopened_at ? formatDate(new Date(inquiry.reopened_at)) : ''}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+          </>
+        )}
       </ProductInquiryFormLayout>
-
-      {(inquiry.rejection_reason != null && inquiry.rejection_reason !== '') ||
-      (inquiry.reopen_reason != null && inquiry.reopen_reason !== '') ||
-      inquiry.last_responded_at ? (
-        <div className="rounded-md border border-border bg-muted/20 px-4 py-3 space-y-3 text-sm">
-          {inquiry.rejection_reason != null && inquiry.rejection_reason !== '' && (
-            <div>
-              <p className="text-muted-foreground">Rejection reason</p>
-              <p className="font-medium whitespace-pre-wrap">{inquiry.rejection_reason}</p>
-              {(inquiry.rejected_at || inquiry.rejected_by) && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  {inquiry.rejected_at && formatDate(new Date(inquiry.rejected_at))}
-                  {(inquiry.rejected_by_name ?? inquiry.rejected_by) &&
-                    ` by ${inquiry.rejected_by_name ?? inquiry.rejected_by}`}
-                </p>
-              )}
-            </div>
-          )}
-          {inquiry.reopen_reason != null && inquiry.reopen_reason !== '' && (
-            <div>
-              <p className="text-muted-foreground">Reopen reason</p>
-              <p className="font-medium whitespace-pre-wrap">{inquiry.reopen_reason}</p>
-              {(inquiry.reopened_at || inquiry.reopened_by) && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  {inquiry.reopened_at && formatDate(new Date(inquiry.reopened_at))}
-                  {(inquiry.reopened_by_name ?? inquiry.reopened_by) &&
-                    ` by ${inquiry.reopened_by_name ?? inquiry.reopened_by}`}
-                </p>
-              )}
-            </div>
-          )}
-          {inquiry.last_responded_at && (
-            <div>
-              <p className="text-muted-foreground">Last responded</p>
-              <p className="font-medium">
-                {formatDate(new Date(inquiry.last_responded_at))}
-                {inquiry.last_responded_by_name && ` by ${inquiry.last_responded_by_name}`}
-              </p>
-            </div>
-          )}
-        </div>
-      ) : null}
 
       {inquiry.respond_inbox_url && (
         <Sheet
@@ -660,7 +672,7 @@ export default function StockInquiryDetail({
             <div className="flex-1 min-h-0 pt-2">
               <StockInquiryConversationPanel
                 inquiryId={inquiryId}
-                canReply={inquiry.status === 'pending_purchasing' || inquiry.status === 'responded'}
+                canReply
                 respondInboxUrl={inquiry.respond_inbox_url}
                 showAsPopup
                 purchasingResponse={inquiry.purchasing_response}

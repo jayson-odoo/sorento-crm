@@ -8,6 +8,8 @@ from datetime import datetime
 class RespondContactBase(BaseModel):
     phone_number: str
     name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     user_type: Optional[str] = None
     respond_io_id: Optional[str] = None  # Respond.io contact id for inbox URL
 
@@ -19,6 +21,8 @@ class RespondContactCreate(RespondContactBase):
 class RespondContactUpdate(BaseModel):
     phone_number: Optional[str] = None
     name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     user_type: Optional[str] = None
     respond_io_id: Optional[str] = None
 

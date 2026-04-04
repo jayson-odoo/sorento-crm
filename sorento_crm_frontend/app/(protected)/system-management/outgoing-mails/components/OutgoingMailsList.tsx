@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   ColumnDef,
   PaginationState,
@@ -40,6 +40,40 @@ import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** Split plain text on http(s) URLs and render anchors so the Outgoing Mails preview is clickable. */
+function linkifyPlainText(text: string): ReactNode {
+  const parts = text.split(/(https?:\/\/[^\s<]+)/gi);
+  return parts.map((part, i) => {
+    if (!/^https?:\/\//i.test(part)) {
+      return <span key={i}>{part}</span>;
+    }
+    let href = part;
+    let suffix = '';
+    const trailing = part.match(/[.,;:!?]+$/);
+    if (trailing) {
+      const t = trailing[0];
+      const candidate = part.slice(0, -t.length);
+      if (candidate.length > 'https://x'.length && /^https?:\/\/\S+$/i.test(candidate)) {
+        href = candidate;
+        suffix = t;
+      }
+    }
+    return (
+      <span key={i}>
+        <a
+          href={href}
+          className="text-primary underline font-medium break-all"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {href}
+        </a>
+        {suffix}
+      </span>
+    );
+  });
 }
 
 export default function OutgoingMailsList() {
@@ -218,7 +252,9 @@ export default function OutgoingMailsList() {
                 dangerouslySetInnerHTML={{ __html: contentMail.body }}
               />
             ) : (
-              <pre className="whitespace-pre-wrap break-words font-sans">{contentMail?.body ?? '-'}</pre>
+              <div className="whitespace-pre-wrap break-words font-sans">
+                {contentMail?.body ? linkifyPlainText(contentMail.body) : '-'}
+              </div>
             )}
           </div>
         </DialogContent>

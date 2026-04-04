@@ -5,17 +5,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Send, ExternalLink, RefreshCw } from 'lucide-react';
+import { Send, ExternalLink, RefreshCw, Link2 } from 'lucide-react';
 import { usePurchaseRequestConversation, useUpdatePurchaseRequestAndReply } from '../hooks/usePurchaseRequests';
 import type { RespondMessageItem } from '../services/purchaseRequestService';
 import { formatDateTimeInMalaysia, respondIoTimestampToDate } from '@/lib/helpers';
-
-function getSenderLabel(item: RespondMessageItem): string {
-  const source = (item.sender?.source ?? '').toLowerCase();
-  if (source === 'workflow') return 'Workflow';
-  if (source === 'ai_agent' || source === 'agent') return 'AI Agent';
-  return 'User';
-}
+import {
+  getNormalizedRespondSource,
+  getOutgoingBubbleClass,
+  getOutgoingSenderLabel,
+} from '@/lib/respondIoOutgoingMessage';
 
 interface PurchaseRequestConversationPanelProps {
   requestId: string;
@@ -29,6 +27,8 @@ interface PurchaseRequestConversationPanelProps {
    * Parent should clear when the sheet closes so "Chat records" alone does not reuse stale drafts.
    */
   replyComposePrefill?: { key: number; text: string } | null;
+  /** Called when "Attach view link" is clicked; return value is appended to the reply. */
+  onGetViewLink?: () => Promise<string>;
 }
 
 function parseCursorFromNext(nextUrl: string | undefined): string | undefined {
@@ -48,8 +48,10 @@ export default function PurchaseRequestConversationPanel({
   showAsPopup = false,
   requestNumber,
   replyComposePrefill,
+  onGetViewLink,
 }: PurchaseRequestConversationPanelProps) {
   const [replyText, setReplyText] = useState('');
+  const [viewLinkLoading, setViewLinkLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
   const appliedPrefillKeyRef = useRef(0);
@@ -93,7 +95,10 @@ export default function PurchaseRequestConversationPanel({
         },
       });
       setReplyText('');
-      refetch();
+      await refetch();
+      window.setTimeout(() => {
+        void refetch();
+      }, 1600);
     } catch {
       // toast from mutation
     }
@@ -162,16 +167,10 @@ export default function PurchaseRequestConversationPanel({
                 ts && !Number.isNaN(tsDate.getTime())
                   ? formatDateTimeInMalaysia(tsDate)
                   : '';
-              const senderLabel = isOutgoing ? getSenderLabel(item) : 'Contact';
-              const source = (item.sender?.source ?? '').toLowerCase();
-              const isWorkflow = source === 'workflow';
-              const isAiAgent = source === 'ai_agent' || source === 'agent';
+              const sourceNorm = getNormalizedRespondSource(item);
+              const senderLabel = isOutgoing ? getOutgoingSenderLabel(sourceNorm) : 'Contact';
               const bubbleClass = isOutgoing
-                ? isWorkflow
-                  ? 'bg-violet-600 text-white'
-                  : isAiAgent
-                    ? 'bg-violet-500/90 text-white'
-                    : 'bg-primary text-primary-foreground'
+                ? getOutgoingBubbleClass(sourceNorm)
                 : 'bg-muted';
               return (
                 <div
@@ -195,30 +194,54 @@ export default function PurchaseRequestConversationPanel({
         )}
 
         {canReply && (
-          <div className="flex gap-2">
-            <Textarea
-              ref={replyTextareaRef}
-              placeholder="Type your response..."
-              value={replyText}
-              onChange={(e) => setReplyText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              rows={3}
-              className="resize-none flex-1 min-w-0"
-            />
-            <Button
-              size="icon"
-              className="shrink-0"
-              disabled={!replyText.trim() || updateAndReplyMutation.isPending}
-              onClick={handleSend}
-              aria-label="Send"
-            >
-              <Send className="size-4" />
-            </Button>
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <Textarea
+                ref={replyTextareaRef}
+                placeholder="Type your response..."
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                rows={3}
+                className="resize-none flex-1 min-w-0"
+              />
+              <Button
+                size="icon"
+                className="shrink-0"
+                disabled={!replyText.trim() || updateAndReplyMutation.isPending}
+                onClick={handleSend}
+                aria-label="Send"
+              >
+                <Send className="size-4" />
+              </Button>
+            </div>
+            {onGetViewLink && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={viewLinkLoading}
+                onClick={async () => {
+                  setViewLinkLoading(true);
+                  try {
+                    const url = await onGetViewLink();
+                    if (url) {
+                      setReplyText((prev) => (prev.trim() ? `${prev.trim()}\n\n${url}` : url));
+                    }
+                  } finally {
+                    setViewLinkLoading(false);
+                  }
+                }}
+              >
+                <Link2 className="size-4 mr-1" />
+                {viewLinkLoading ? 'Getting link…' : 'Attach view link'}
+              </Button>
+            )}
           </div>
         )}
       </CardContent>

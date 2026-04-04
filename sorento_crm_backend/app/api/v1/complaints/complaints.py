@@ -348,6 +348,7 @@ async def update_complaint_and_reply(
             complaint_data,
             respond_user_id=respond_user_id,
             request_url=str(request.url) if request else "",
+            crm_sender_user_id=current_user.get("id"),
         )
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)

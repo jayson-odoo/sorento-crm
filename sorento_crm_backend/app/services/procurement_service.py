@@ -1,4 +1,11 @@
 """Procurement service for business logic."""
+# ORM models declare Column[T] on the class; at runtime instance attributes are Python values.
+# Pyright reports false positives here until models use SQLAlchemy 2.0 Mapped[] typing.
+# pyright: reportAttributeAccessIssue=false
+# pyright: reportGeneralTypeIssues=false
+# pyright: reportArgumentType=false
+# pyright: reportCallIssue=false
+# pyright: reportReturnType=false
 import json
 import logging
 import re
@@ -2066,6 +2073,28 @@ class StockInquiryService:
             "purchasing_response": getattr(inquiry, "purchasing_response", None),
             "status": getattr(inquiry, "status", None),
             "last_responded_at": getattr(inquiry, "last_responded_at", None),
+            "last_responded_by": getattr(inquiry, "last_responded_by", None),
+            "last_responded_by_name": (
+                self._resolve_user_display_name(inquiry.last_responded_by)
+                if getattr(inquiry, "last_responded_by", None)
+                else None
+            ),
+            "rejection_reason": getattr(inquiry, "rejection_reason", None),
+            "rejected_at": getattr(inquiry, "rejected_at", None),
+            "rejected_by": getattr(inquiry, "rejected_by", None),
+            "rejected_by_name": (
+                self._resolve_user_display_name(inquiry.rejected_by)
+                if getattr(inquiry, "rejected_by", None)
+                else None
+            ),
+            "reopen_reason": getattr(inquiry, "reopen_reason", None),
+            "reopened_at": getattr(inquiry, "reopened_at", None),
+            "reopened_by": getattr(inquiry, "reopened_by", None),
+            "reopened_by_name": (
+                self._resolve_user_display_name(inquiry.reopened_by)
+                if getattr(inquiry, "reopened_by", None)
+                else None
+            ),
             "created_at": getattr(inquiry, "created_at", None),
             "updated_at": getattr(inquiry, "updated_at", None),
             "attachments": [
@@ -2272,6 +2301,7 @@ class StockInquiryService:
         inquiry_data: StockInquiryUpdate,
         respond_user_id: str,
         request_url: str = "",
+        crm_sender_user_id: Optional[str] = None,
     ):
         """
         Update inquiry, send message to Respond.io, update SLA tracking to responded, set status=responded.
@@ -2289,13 +2319,8 @@ class StockInquiryService:
         log_service = IntegrationLogService(self.db)
 
         inquiry = self.get_inquiry(inquiry_id)
-        allowed_statuses = {"pending_purchasing", "responded"}
-        if inquiry.status not in allowed_statuses:
-            from app.services.error_handler import handle_validation_error
-            raise handle_validation_error(
-                "Update & Reply is only allowed when inquiry is pending purchasing review or responded. "
-                "Current status: " + (inquiry.status or "unknown")
-            )
+        # Chat can be sent from any status; workflow transition to "responded" only for purchasing/responded stages.
+        transition_to_responded_workflow = inquiry.status in {"pending_purchasing", "responded"}
 
         update_data = inquiry_data.model_dump(exclude_unset=True)
         update_data.pop("inquiry_number", None)
@@ -2396,6 +2421,20 @@ class StockInquiryService:
                     delivery_failed_message or "Respond.io failed to deliver the message."
                 )
 
+            from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+
+            enqueue_crm_chat_outbound_webhook(
+                self.db,
+                business_table="stock_inquiries",
+                business_id=inquiry_id,
+                contact_respond_io_id=identifier,
+                message_text=message_to_send,
+                respond_api_response=response if isinstance(response, dict) else None,
+                space_id=getattr(inquiry, "space_id", None),
+                crm_sender_user_id=crm_sender_user_id,
+                respond_user_id_fallback=respond_user_id,
+            )
+
             log_service.create_integration_log(
                 IntegrationLogCreate(
                     integration_channel="respond_io",
@@ -2432,49 +2471,51 @@ class StockInquiryService:
             raise
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-        sla_service = ConversationSLATrackingService(self.db)
-        tracking = sla_service.get_tracking_by_source_entity("stock_inquiry", inquiry_id)
-        if tracking:
-            try:
-                sla_service.update_tracking(
-                    str(tracking.id),
-                    ConversationSLATrackingUpdate(
-                        is_responded=True,
-                        responded_at=now_utc,
-                        responded_by=respond_user_id,
-                    ),
-                )
-                log_service.create_integration_log(
-                    IntegrationLogCreate(
-                        integration_channel="sla_management",
-                        business_table="conversation_sla_tracking",
-                        business_id=str(tracking.id),
-                        external_reference=inquiry_id,
-                        direction="inbound",
-                        endpoint=request_url or "/api/v1/procurement/stock-inquiries/update-and-reply",
-                        http_method="POST",
-                        status="success",
-                    ),
-                    request_payload_dict={"is_responded": True, "responded_by": respond_user_id},
-                )
-            except Exception as sla_err:
-                logger.warning("SLA tracking update failed for stock_inquiry %s: %s", inquiry_id, sla_err)
-                log_service.create_integration_log(
-                    IntegrationLogCreate(
-                        integration_channel="sla_management",
-                        business_table="conversation_sla_tracking",
-                        business_id=str(tracking.id),
-                        external_reference=inquiry_id,
-                        direction="inbound",
-                        endpoint=request_url or "/api/v1/procurement/stock-inquiries/update-and-reply",
-                        http_method="POST",
-                        status="failed",
-                        error_message=str(sla_err),
-                    ),
-                    request_payload_dict={"is_responded": True, "responded_by": respond_user_id},
-                )
+        if transition_to_responded_workflow:
+            sla_service = ConversationSLATrackingService(self.db)
+            tracking = sla_service.get_tracking_by_source_entity("stock_inquiry", inquiry_id)
+            if tracking:
+                try:
+                    sla_service.update_tracking(
+                        str(tracking.id),
+                        ConversationSLATrackingUpdate(
+                            is_responded=True,
+                            responded_at=now_utc,
+                            responded_by=respond_user_id,
+                        ),
+                    )
+                    log_service.create_integration_log(
+                        IntegrationLogCreate(
+                            integration_channel="sla_management",
+                            business_table="conversation_sla_tracking",
+                            business_id=str(tracking.id),
+                            external_reference=inquiry_id,
+                            direction="inbound",
+                            endpoint=request_url or "/api/v1/procurement/stock-inquiries/update-and-reply",
+                            http_method="POST",
+                            status="success",
+                        ),
+                        request_payload_dict={"is_responded": True, "responded_by": respond_user_id},
+                    )
+                except Exception as sla_err:
+                    logger.warning("SLA tracking update failed for stock_inquiry %s: %s", inquiry_id, sla_err)
+                    log_service.create_integration_log(
+                        IntegrationLogCreate(
+                            integration_channel="sla_management",
+                            business_table="conversation_sla_tracking",
+                            business_id=str(tracking.id),
+                            external_reference=inquiry_id,
+                            direction="inbound",
+                            endpoint=request_url or "/api/v1/procurement/stock-inquiries/update-and-reply",
+                            http_method="POST",
+                            status="failed",
+                            error_message=str(sla_err),
+                        ),
+                        request_payload_dict={"is_responded": True, "responded_by": respond_user_id},
+                    )
 
-        inquiry.status = "responded"
+            inquiry.status = "responded"
+
         inquiry.last_responded_by = respond_user_id
         inquiry.last_responded_at = now_utc
         self.db.commit()
@@ -3095,7 +3136,7 @@ class PurchaseRequestService:
         # Wording aligned with external stock inquiry: "New … created" vs "… updated (integration …)".
         if rt == "purchase_request":
             title = (
-                "Purchase request updated (integration)"
+                "Purchase request updated"
                 if updated
                 else "New purchase request created"
             )
@@ -3106,7 +3147,7 @@ class PurchaseRequestService:
             )
         elif rt == "sponsorship_form":
             title = (
-                "Sponsorship form updated (integration)"
+                "Sponsorship form updated"
                 if updated
                 else "New sponsorship form created"
             )
@@ -3526,6 +3567,7 @@ class PurchaseRequestService:
         data: PurchaseRequestUpdateAndReply,
         respond_user_id: str,
         request_url: str = "",
+        crm_sender_user_id: Optional[str] = None,
     ):
         """
         Update purchase request (e.g. request_number), then send a reply to the conversation via Respond.io.
@@ -3593,6 +3635,19 @@ class PurchaseRequestService:
         try:
             client = RespondClient()
             response = client.send_message(identifier, display_message)
+            from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+
+            enqueue_crm_chat_outbound_webhook(
+                self.db,
+                business_table="purchase_requests",
+                business_id=request_id,
+                contact_respond_io_id=identifier,
+                message_text=display_message,
+                respond_api_response=response if isinstance(response, dict) else None,
+                space_id=getattr(header, "space_id", None),
+                crm_sender_user_id=crm_sender_user_id,
+                respond_user_id_fallback=respond_user_id,
+            )
             log_service.create_integration_log(
                 IntegrationLogCreate(
                     integration_channel="respond_io",
@@ -3832,6 +3887,10 @@ class PurchaseRequestService:
             "approval_status": getattr(header, "approval_status", None),
             "approver_display_name": approver_display_name,
             "approver_email": approver_email,
+            "requested_at": getattr(header, "requested_at", None),
+            "approved_at": getattr(header, "approved_at", None),
+            "approved_by": getattr(header, "approved_by", None),
+            "approval_comments": getattr(header, "approval_comments", None),
         }
 
     def get_or_create_view_token(self, entity_id: str) -> str:
@@ -3922,6 +3981,15 @@ class PurchaseRequestService:
                     grand_total = total_sum
                 except (InvalidOperation, ValueError, TypeError):
                     grand_total = None
+        approver_display_name = None
+        approver_email = getattr(header, "approver_email", None) or None
+        approver_user_id = getattr(header, "approver_user_id", None)
+        if approver_user_id:
+            user = self.db.query(User).filter(User.id == approver_user_id).first()
+            if user:
+                approver_display_name = (user.name and user.name.strip()) or user.email or None
+                if not approver_email and user.email:
+                    approver_email = user.email
         entity_type = view_token.entity_type if view_token else "purchase_request"
         return {
             "entity_type": entity_type,
@@ -3937,6 +4005,7 @@ class PurchaseRequestService:
             "sponsor_subject": getattr(header, "sponsor_subject", None),
             "requested_by": header.requested_by,
             "request_date": getattr(header, "request_date", None),
+            "requested_at": getattr(header, "requested_at", None),
             "created_at": getattr(header, "created_at", None),
             "expected_delivery_date": getattr(header, "expected_delivery_date", None),
             "expected_po_date": getattr(header, "expected_po_date", None),
@@ -3945,6 +4014,11 @@ class PurchaseRequestService:
             "lines": lines,
             "grand_total": grand_total,
             "approval_status": getattr(header, "approval_status", None),
+            "approver_display_name": approver_display_name,
+            "approver_email": approver_email,
+            "approved_at": getattr(header, "approved_at", None),
+            "approved_by": getattr(header, "approved_by", None),
+            "approval_comments": getattr(header, "approval_comments", None),
         }
 
     def submit_approval(

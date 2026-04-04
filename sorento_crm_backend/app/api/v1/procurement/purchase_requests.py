@@ -224,6 +224,7 @@ async def update_purchase_request_and_reply(
             data,
             respond_user_id=respond_user_id,
             request_url=str(request.url) if request else "",
+            crm_sender_user_id=current_user.get("id"),
         )
         db.commit()
         if getattr(header, "approver_user_id", None):

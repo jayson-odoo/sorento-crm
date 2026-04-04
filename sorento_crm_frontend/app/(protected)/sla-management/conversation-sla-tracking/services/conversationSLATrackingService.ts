@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import type { RespondConversationResponse } from '@/app/(protected)/procurement-management/stock-inquiries/services/stockInquiryService';
 import type { ConversationSLATracking, ConversationSLATrackingDetail, ConversationSLAEventLog, SLATrackingDashboardMetrics } from '../types/conversationSLATracking.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
@@ -134,4 +135,46 @@ export async function postConversationSLATestOverrides(
     throw new Error(msg);
   }
   return response.json();
+}
+
+export async function getSlaTrackingConversation(
+  trackingId: string,
+  params?: { limit?: number; cursor?: string },
+): Promise<RespondConversationResponse> {
+  const sp = new URLSearchParams();
+  if (params?.limit != null) sp.set('limit', String(params.limit));
+  if (params?.cursor) sp.set('cursor', params.cursor);
+  const qs = sp.toString();
+  const url = `/api/v1/sla-management/conversation-sla-tracking/${trackingId}/conversation${qs ? `?${qs}` : ''}`;
+  const response = await apiFetch(url);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || 'Failed to load conversation');
+  }
+  return response.json();
+}
+
+export async function postSlaTrackingConversationReply(
+  trackingId: string,
+  message: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${trackingId}/conversation/reply`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    const detail = err.detail;
+    const msg =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: { msg?: string }) => d.msg).filter(Boolean).join(' ')
+          : err.message || 'Failed to send message';
+    throw new Error(msg);
+  }
 }

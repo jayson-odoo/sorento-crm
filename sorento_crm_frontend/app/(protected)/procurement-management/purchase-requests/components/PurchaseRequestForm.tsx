@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Save, Send, Plus, Trash2 } from 'lucide-react';
+import { LoaderCircleIcon, Save, Send, Plus, Trash2, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -55,6 +55,7 @@ import {
 } from '../forms/purchase-request-schema';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
+import { PurchaseRequestDocumentEditCard } from './PurchaseRequestDocumentEditCard';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { cn } from '@/lib/utils';
@@ -117,6 +118,7 @@ export default function PurchaseRequestForm({
   const updateAndReplyMutation = useUpdatePurchaseRequestAndReply();
   const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
   const [replyMessage, setReplyMessage] = useState('');
+  const [replyViewLinkLoading, setReplyViewLinkLoading] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
 
   // Redirect to the correct edit page if record type doesn't match (e.g. opened purchase-request edit but record is sponsorship_form)
@@ -293,6 +295,18 @@ export default function PurchaseRequestForm({
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {isEditMode && request ? (
+          <PurchaseRequestDocumentEditCard
+            form={form}
+            request={request}
+            isSponsorship={isSponsorship}
+            showTypeSelect={defaultRequestType !== 'sponsorship_form'}
+            fields={fields}
+            append={append}
+            remove={remove}
+            sponsorshipLineGrandTotal={sponsorshipLineGrandTotal}
+          />
+        ) : (
         <div className="space-y-6">
           <Card className={cn(isSponsorship && 'border-2 shadow-sm')}>
             <CardHeader>
@@ -797,13 +811,15 @@ export default function PurchaseRequestForm({
               </CardContent>
             </Card>
 
-          {isEditMode && requestId && (
-            <PurchaseRequestAttachmentsSection
-              requestId={requestId}
-              attachments={request?.attachments}
-            />
-          )}
         </div>
+        )}
+
+        {isEditMode && requestId && (
+          <PurchaseRequestAttachmentsSection
+            requestId={requestId}
+            attachments={request?.attachments}
+          />
+        )}
 
         <div className="flex justify-end gap-4">
           <Button
@@ -889,6 +905,33 @@ export default function PurchaseRequestForm({
                   rows={4}
                   className="resize-none"
                 />
+                {publicViewLinksEnabled && requestId && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-1"
+                    disabled={replyViewLinkLoading || updateAndReplyMutation.isPending}
+                    onClick={async () => {
+                      setReplyViewLinkLoading(true);
+                      try {
+                        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                        const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
+                        if (view_url) {
+                          const line = `View full details: ${view_url}`;
+                          setReplyMessage((prev) => (prev.trim() ? `${prev.trim()}\n\n${line}` : line));
+                        }
+                      } catch {
+                        toast.error('Could not get view link');
+                      } finally {
+                        setReplyViewLinkLoading(false);
+                      }
+                    }}
+                  >
+                    <Link2 className="size-4 mr-1" />
+                    {replyViewLinkLoading ? 'Getting link…' : 'Attach view link'}
+                  </Button>
+                )}
               </div>
             </div>
             <DialogFooter>

@@ -10,14 +10,11 @@ import { useStockInquiryConversation } from '../hooks/useStockInquiries';
 import { useUpdateStockInquiryAndReply } from '../hooks/useStockInquiries';
 import type { RespondMessageItem } from '../services/stockInquiryService';
 import { formatDateTimeInMalaysia, respondIoTimestampToDate } from '@/lib/helpers';
-
-/** Map Respond sender.source to display label for outgoing messages. */
-function getSenderLabel(item: RespondMessageItem): string {
-  const source = (item.sender?.source ?? '').toLowerCase();
-  if (source === 'workflow') return 'Workflow';
-  if (source === 'ai_agent' || source === 'agent') return 'AI Agent';
-  return 'User';
-}
+import {
+  getNormalizedRespondSource,
+  getOutgoingBubbleClass,
+  getOutgoingSenderLabel,
+} from '@/lib/respondIoOutgoingMessage';
 
 interface StockInquiryConversationPanelProps {
   inquiryId: string;
@@ -87,7 +84,10 @@ export default function StockInquiryConversationPanel({
         data: { purchasing_response: text },
       });
       setReplyText('');
-      refetch();
+      await refetch();
+      window.setTimeout(() => {
+        void refetch();
+      }, 1600);
     } catch {
       // toast from mutation
     }
@@ -156,16 +156,10 @@ export default function StockInquiryConversationPanel({
                 ts && !Number.isNaN(tsDate.getTime())
                   ? formatDateTimeInMalaysia(tsDate)
                   : '';
-              const senderLabel = isOutgoing ? getSenderLabel(item) : 'Contact';
-              const source = (item.sender?.source ?? '').toLowerCase();
-              const isWorkflow = source === 'workflow';
-              const isAiAgent = source === 'ai_agent' || source === 'agent';
+              const sourceNorm = getNormalizedRespondSource(item);
+              const senderLabel = isOutgoing ? getOutgoingSenderLabel(sourceNorm) : 'Contact';
               const bubbleClass = isOutgoing
-                ? isWorkflow
-                  ? 'bg-violet-600 text-white'
-                  : isAiAgent
-                    ? 'bg-violet-500/90 text-white'
-                    : 'bg-primary text-primary-foreground'
+                ? getOutgoingBubbleClass(sourceNorm)
                 : 'bg-muted';
               return (
                 <div

@@ -803,6 +803,10 @@ class PublicApprovalSummaryResponse(BaseModel):
     approval_status: Optional[str] = None  # draft | pending | approved | rejected
     approver_display_name: Optional[str] = None  # Prefill "Your name" when approver is system user
     approver_email: Optional[str] = None  # Prefill fallback when no display name
+    requested_at: Optional[date] = None  # Date next to Requested by (document footer)
+    approved_at: Optional[datetime] = None  # Set when approved or rejected via link
+    approved_by: Optional[str] = None  # Approver name/email (same field for approve/reject)
+    approval_comments: Optional[str] = None  # Approval notes or rejection reason
 
 
 class PublicApprovalSubmitRequest(BaseModel):

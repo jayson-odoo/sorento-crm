@@ -105,9 +105,10 @@ export function useUpdateStockInquiryAndReply() {
       id: string;
       data: Partial<StockInquiryFormData>;
     }) => updateStockInquiryAndReply(id, data),
-    onSuccess: () => {
+    onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
       queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiry-conversation', id] });
       toast.success('Reply sent to customer successfully');
     },
     onError: (error: Error) =>

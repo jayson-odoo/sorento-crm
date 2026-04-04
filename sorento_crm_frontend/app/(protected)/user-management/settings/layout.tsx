@@ -46,6 +46,8 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
       typeof raw.default_product_standard_lead_time_days === 'number'
         ? raw.default_product_standard_lead_time_days
         : 90,
+    n8nAttachmentWebhookUrl: (raw.n8n_attachment_webhook_url as string | null) ?? null,
+    n8nCrmChatOutboundWebhookUrl: (raw.n8n_crm_chat_outbound_webhook_url as string | null) ?? null,
     smtp: raw.smtp as SystemSetting['smtp'] ?? null,
   } as SystemSetting;
 }
@@ -132,6 +134,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       social: {
         title: 'Social',
         path: '/user-management/settings/social',
+      },
+      integrations: {
+        title: 'Integrations',
+        path: '/user-management/settings/integrations',
       },
     }),
     [],

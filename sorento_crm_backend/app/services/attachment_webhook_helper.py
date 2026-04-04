@@ -1,5 +1,4 @@
 """Shared helper for creating and sending attachment webhooks (used by upload API and bulk-import task)."""
-import os
 import json
 import logging
 import threading
@@ -9,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.services.integration_service import IntegrationLogService
 from app.schemas.integration import IntegrationLogCreate
+from app.services.n8n_webhook_settings import get_n8n_attachment_webhook_url
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,9 @@ def create_and_send_webhook(
     current_user_id: str,
 ) -> None:
     """Create integration log for attachment and send webhook in background (same behaviour as single upload)."""
-    n8n_webhook_url = os.getenv("N8N_WEBHOOK_URL", "").strip()
+    n8n_webhook_url = get_n8n_attachment_webhook_url(db)
     if not n8n_webhook_url:
         return
-    if not n8n_webhook_url.startswith(("http://", "https://")):
-        if n8n_webhook_url.startswith("//"):
-            n8n_webhook_url = "https:" + n8n_webhook_url
-        else:
-            n8n_webhook_url = "https://" + n8n_webhook_url
     integration_service = IntegrationLogService(db)
     integration_log_data = IntegrationLogCreate(
         integration_channel="n8n",

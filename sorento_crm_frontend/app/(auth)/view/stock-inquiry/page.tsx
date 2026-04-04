@@ -30,6 +30,16 @@ interface StockInquiryViewSummary {
   purchasing_response?: string | null;
   status?: string | null;
   last_responded_at?: string | null;
+  last_responded_by?: string | null;
+  last_responded_by_name?: string | null;
+  rejection_reason?: string | null;
+  rejected_at?: string | null;
+  rejected_by?: string | null;
+  rejected_by_name?: string | null;
+  reopen_reason?: string | null;
+  reopened_at?: string | null;
+  reopened_by?: string | null;
+  reopened_by_name?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -189,6 +199,60 @@ function ViewStockInquiryContent() {
         >
           <InquiryReadValue>{summary?.purchasing_response}</InquiryReadValue>
         </InquiryFormTableRow>
+        {(summary?.last_responded_at || summary?.last_responded_by) && (
+          <>
+            <InquiryFormTableRow label="Last responded by">
+              <InquiryReadValue empty="—">
+                {summary?.last_responded_by_name ?? summary?.last_responded_by}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+            <InquiryFormTableRow label="Last responded at">
+              <InquiryReadValue empty="—">
+                {summary?.last_responded_at
+                  ? formatDateTimeStr(summary.last_responded_at)
+                  : ''}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+          </>
+        )}
+        {(summary?.rejected_by ||
+          summary?.rejected_at ||
+          (summary?.rejection_reason != null && summary.rejection_reason !== '')) && (
+          <>
+            <InquiryFormTableRow label="Rejected by">
+              <InquiryReadValue empty="—">
+                {summary?.rejected_by_name ?? summary?.rejected_by}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+            <InquiryFormTableRow label="Rejected at">
+              <InquiryReadValue empty="—">
+                {summary?.rejected_at ? formatDateTimeStr(summary.rejected_at) : ''}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+            <InquiryFormTableRow label="Rejection reason" labelClassName="items-start pt-3">
+              <InquiryReadValue>{summary?.rejection_reason}</InquiryReadValue>
+            </InquiryFormTableRow>
+          </>
+        )}
+        {((summary?.reopen_reason != null && summary.reopen_reason !== '') ||
+          summary?.reopened_at ||
+          summary?.reopened_by) && (
+          <>
+            <InquiryFormTableRow label="Reopen reason" labelClassName="items-start pt-3">
+              <InquiryReadValue>{summary?.reopen_reason}</InquiryReadValue>
+            </InquiryFormTableRow>
+            <InquiryFormTableRow label="Reopened by">
+              <InquiryReadValue empty="—">
+                {summary?.reopened_by_name ?? summary?.reopened_by}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+            <InquiryFormTableRow label="Reopened at">
+              <InquiryReadValue empty="—">
+                {summary?.reopened_at ? formatDateTimeStr(summary.reopened_at) : ''}
+              </InquiryReadValue>
+            </InquiryFormTableRow>
+          </>
+        )}
       </ProductInquiryFormLayout>
 
       {summary && (

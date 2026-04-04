@@ -56,6 +56,8 @@ class RespondContact(Base):
     id = Column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
     phone_number = Column(Text, unique=True, nullable=False)
     name = Column(Text, nullable=True)
+    first_name = Column(Text, nullable=True)
+    last_name = Column(Text, nullable=True)
     user_type = Column(Text, nullable=True)  # Raw value from Respond; kept for display/sync
     access_type_code = Column(String(50), ForeignKey("contact_access_types.code", ondelete="SET NULL"), nullable=True)  # Resolved catalog code (one per contact)
     respond_io_id = Column(Text, nullable=True)  # Respond.io contact id for inbox URL

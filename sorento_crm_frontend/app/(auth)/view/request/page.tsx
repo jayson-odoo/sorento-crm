@@ -16,6 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { PurchaseRequestSignoffFooter } from '@/app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestSignoffFooter';
 
 interface ViewLineSummary {
   item_code?: string | null;
@@ -48,6 +49,10 @@ interface ViewSummary {
   lines?: ViewLineSummary[] | null;
   grand_total?: number | null;
   approval_status?: string | null;
+  requested_at?: string | null;
+  approved_at?: string | null;
+  approved_by?: string | null;
+  approval_comments?: string | null;
 }
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
@@ -250,11 +255,6 @@ function ViewRequestContent() {
                 <p className="text-sm font-medium">{poDisplay ?? '—'}</p>
               </div>
             </div>
-            <DetailRow label="Requested by" value={summary?.requested_by ?? undefined} />
-            <DetailRow
-              label="Created at"
-              value={summary?.created_at ? formatDateTimeStr(summary.created_at) : undefined}
-            />
             {summary?.lines && summary.lines.length > 0 && (
               <div className="pt-6 mt-2 border-t border-border">
                 <p className="text-sm font-medium mb-3">Line items</p>
@@ -280,6 +280,13 @@ function ViewRequestContent() {
                 </Table>
               </div>
             )}
+            {summary && (
+              <PurchaseRequestSignoffFooter request={summary} variant="publicCard" />
+            )}
+            <DetailRow
+              label="Created at"
+              value={summary?.created_at ? formatDateTimeStr(summary.created_at) : undefined}
+            />
           </CardContent>
         ) : isSf ? (
           <CardContent className="px-5 sm:px-8 py-6 space-y-0">
@@ -341,11 +348,6 @@ function ViewRequestContent() {
                 </p>
               </div>
             </div>
-            <DetailRow label="Requested by" value={summary?.requested_by ?? undefined} />
-            <DetailRow
-              label="Created at"
-              value={summary?.created_at ? formatDateTimeStr(summary.created_at) : undefined}
-            />
             {summary?.lines && summary.lines.length > 0 && (
               <div className="pt-6 mt-2 border-t border-border">
                 <p className="text-sm font-medium mb-3">Line items</p>
@@ -378,6 +380,13 @@ function ViewRequestContent() {
                 )}
               </div>
             )}
+            {summary && (
+              <PurchaseRequestSignoffFooter request={summary} variant="publicCard" />
+            )}
+            <DetailRow
+              label="Created at"
+              value={summary?.created_at ? formatDateTimeStr(summary.created_at) : undefined}
+            />
           </CardContent>
         ) : (
           <>

@@ -2,7 +2,7 @@
 import os
 import logging
 import httpx
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union, List
 from datetime import datetime, timedelta
 import json
 
@@ -19,7 +19,7 @@ class WebhookService:
     def send_webhook(
         self,
         url: str,
-        payload: Dict[str, Any],
+        payload: Union[Dict[str, Any], List[Any]],
         headers: Optional[Dict[str, str]] = None
     ) -> tuple[bool, Optional[int], Optional[Dict[str, Any]], Optional[str], Optional[str]]:
         """

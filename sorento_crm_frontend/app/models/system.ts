@@ -31,6 +31,11 @@ export interface SystemSetting {
   defaultProductSupplierId?: string | null;
   defaultProductStandardLeadTimeDays?: number;
 
+  /** When set, used for attachment upload webhooks; otherwise backend may use N8N_WEBHOOK_URL env. */
+  n8nAttachmentWebhookUrl?: string | null;
+  /** Webhook for CRM Chat Records replies (Respond.io-shaped payload for n8n). */
+  n8nCrmChatOutboundWebhookUrl?: string | null;
+
   socialFacebook?: string | null;
   socialTwitter?: string | null;
   socialInstagram?: string | null;

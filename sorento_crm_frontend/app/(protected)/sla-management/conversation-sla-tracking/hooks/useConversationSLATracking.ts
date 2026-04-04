@@ -2,7 +2,19 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ConversationSLATrackingDetail } from '../types/conversationSLATracking.types';
-import { getConversationSLATracking, getConversationSLATrackingDetail, getSLATrackingDashboardMetrics, deleteConversationSLATracking, deleteConversationSLAEventLog, getConversationSLAEventLogs, syncAssigneeFromRespond, postConversationSLATestOverrides, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
+import {
+  getConversationSLATracking,
+  getConversationSLATrackingDetail,
+  getSLATrackingDashboardMetrics,
+  deleteConversationSLATracking,
+  deleteConversationSLAEventLog,
+  getConversationSLAEventLogs,
+  syncAssigneeFromRespond,
+  postConversationSLATestOverrides,
+  getSlaTrackingConversation,
+  postSlaTrackingConversationReply,
+  type ConversationSLATestOverridesBody,
+} from '../services/conversationSLATrackingService';
 import type { ConversationSLAEventLogsParams } from '../services/conversationSLATrackingService';
 
 export function useConversationSLATracking(params: DataGridApiFetchParams & { policy_id?: string; status?: string; assigned_to?: string }) {
@@ -99,5 +111,33 @@ export function useConversationSLATestOverrides(trackingId: string) {
     onError: (error: Error) => {
       toast.error(error.message || 'Update failed.');
     },
+  });
+}
+
+export function useSlaTrackingConversation(
+  trackingId: string | null,
+  options?: { limit?: number; cursor?: string; enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['sla-tracking-conversation', trackingId, options?.limit, options?.cursor],
+    queryFn: () =>
+      getSlaTrackingConversation(trackingId!, {
+        limit: options?.limit ?? 50,
+        cursor: options?.cursor,
+      }),
+    enabled: !!trackingId && (options?.enabled !== false),
+    staleTime: 30 * 1000,
+  });
+}
+
+export function useSlaTrackingConversationReply(trackingId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (message: string) => postSlaTrackingConversationReply(trackingId, message),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sla-tracking-conversation', trackingId] });
+      toast.success('Message sent');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to send'),
   });
 }

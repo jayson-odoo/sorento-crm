@@ -21,7 +21,7 @@ import {
 import { useConversationSLATrackingDetail, useConversationSLATracking, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
 import { formatDate, formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info, Settings, ExternalLink, CalendarClock, UserCog } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info, Settings, ExternalLink, CalendarClock, UserCog, MessageSquare } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Popover,
@@ -57,6 +57,8 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { getUsersSelect } from '@/services/userSelectService';
 import { toast } from 'sonner';
 import RecordNavigation from '@/components/common/RecordNavigation';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import SlaTrackingConversationPanel from './SlaTrackingConversationPanel';
 
 const RESPOND_IO_INBOX_BASE_URL = 'https://app.respond.io/space/364817/inbox';
 
@@ -305,6 +307,15 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
             items={navigationItems}
             basePath="/sla-management/conversation-sla-tracking"
           />
+          {respondInboxUrl && (
+            <Button
+              variant="outline"
+              onClick={() => setConversationSheetOpen(true)}
+            >
+              <MessageSquare className="size-4 mr-2" />
+              Chat Records
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={handleRefresh}
@@ -887,6 +898,23 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
           />
         </TabsContent>
       </Tabs>
+
+      {respondInboxUrl && (
+        <Sheet open={conversationSheetOpen} onOpenChange={setConversationSheetOpen}>
+          <SheetContent side="right" className="flex flex-col w-full sm:max-w-lg overflow-y-auto">
+            <SheetHeader className="sr-only">
+              <SheetTitle>Chat Records</SheetTitle>
+            </SheetHeader>
+            <div className="flex-1 min-h-0 pt-2">
+              <SlaTrackingConversationPanel
+                trackingId={trackingId}
+                respondInboxUrl={respondInboxUrl}
+                showAsPopup
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
     </div>
   );
 }

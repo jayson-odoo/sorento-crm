@@ -607,6 +607,8 @@ class RespondContactSyncResponse(BaseModel):
     id: str
     phone_number: str
     name: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     user_type: Optional[str] = None
     respond_io_id: Optional[str] = None
     action: str  # "created" | "updated"

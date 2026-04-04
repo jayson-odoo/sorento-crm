@@ -54,6 +54,7 @@ import { exportPurchaseRequestOrSponsorshipToExcel } from '../lib/purchase-reque
 import { toast } from 'sonner';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
 import PurchaseRequestConversationPanel from './PurchaseRequestConversationPanel';
+import { PurchaseRequestSignoffFooter } from './PurchaseRequestSignoffFooter';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 
@@ -692,28 +693,7 @@ export default function PurchaseRequestDetail({
                   )}
                 </div>
 
-                <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-8 pt-6 border-t border-border">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Requested by</p>
-                    <p className="font-medium">{request.requested_by || '—'}</p>
-                    <p className="text-sm text-muted-foreground mt-3">Date</p>
-                    <p className="font-medium">
-                      {request.requested_at
-                        ? formatDate(new Date(request.requested_at))
-                        : '—'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Approved by</p>
-                    <p className="font-medium">{request.approved_by || '—'}</p>
-                    <p className="text-sm text-muted-foreground mt-3">Date</p>
-                    <p className="font-medium">
-                      {request.approved_at
-                        ? formatDate(new Date(request.approved_at))
-                        : '—'}
-                    </p>
-                  </div>
-                </div>
+                <PurchaseRequestSignoffFooter request={request} variant="detailCard" />
               </CardContent>
             </Card>
           </div>
@@ -869,28 +849,7 @@ export default function PurchaseRequestDetail({
                   )}
                 </div>
 
-                <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-8 pt-6 border-t border-border">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Requested by</p>
-                    <p className="font-medium">{request.requested_by || '—'}</p>
-                    <p className="text-sm text-muted-foreground mt-3">Date</p>
-                    <p className="font-medium">
-                      {request.requested_at
-                        ? formatDate(new Date(request.requested_at))
-                        : '—'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Approved by</p>
-                    <p className="font-medium">{request.approved_by || '—'}</p>
-                    <p className="text-sm text-muted-foreground mt-3">Date</p>
-                    <p className="font-medium">
-                      {request.approved_at
-                        ? formatDate(new Date(request.approved_at))
-                        : '—'}
-                    </p>
-                  </div>
-                </div>
+                <PurchaseRequestSignoffFooter request={request} variant="detailCard" />
               </CardContent>
             </Card>
           </div>
@@ -925,6 +884,15 @@ export default function PurchaseRequestDetail({
                   respondInboxUrl={request.respond_inbox_url}
                   showAsPopup
                   replyComposePrefill={replyComposePrefill}
+                  onGetViewLink={
+                    publicViewLinksEnabled
+                      ? async () => {
+                          const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                          const res = await getOrCreateViewLink(requestId, baseUrl);
+                          return res.view_url ?? '';
+                        }
+                      : undefined
+                  }
                 />
               </div>
             </SheetContent>

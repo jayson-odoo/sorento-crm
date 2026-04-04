@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import httpx
 from app.database import get_db
-from app.dependencies import get_current_user_or_api_key, require_permission
+from pydantic import BaseModel, Field
+from app.dependencies import get_current_user_or_api_key, require_permission, get_current_user
 from app.services.sla_service import (
     ConversationSLATrackingService,
     to_naive_datetime,
@@ -27,11 +28,28 @@ from app.schemas.sla import (
 )
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
-from app.services.error_handler import handle_internal_error, handle_validation_error, handle_not_found
+from app.services.error_handler import handle_internal_error, handle_validation_error, handle_not_found, AppException
 from app.models.sla import ConversationSLATracking, SLAPolicyTier
 from app.models.user import User
 
 router = APIRouter()
+
+
+class SlaTrackingConversationReplyBody(BaseModel):
+    message: str = Field(..., min_length=1)
+
+
+def _sla_reply_respond_user_id(current_user: dict) -> str:
+    rid = (current_user or {}).get("respond_user_id") or (current_user or {}).get("respondUserId")
+    if rid and str(rid).strip():
+        return str(rid).strip()
+    uid = (current_user or {}).get("id")
+    if uid and str(uid).strip():
+        return str(uid).strip()
+    raise HTTPException(
+        status_code=400,
+        detail="User respond_user_id or id is required to send a message.",
+    )
 
 
 @router.get("/dashboard")
@@ -752,6 +770,57 @@ async def get_event_logs(
             date_to=date_to,
         )
         return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{tracking_id}/conversation")
+async def get_sla_tracking_conversation(
+    tracking_id: UUID,
+    limit: int = Query(50, ge=1, le=50),
+    cursor: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """List Respond.io messages for the contact linked to this SLA tracking (respond_io_id on respond_contacts)."""
+    try:
+        service = ConversationSLATrackingService(db)
+        return service.fetch_respond_conversation_for_tracking(
+            str(tracking_id), limit=limit, cursor=cursor
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{tracking_id}/conversation/reply")
+async def post_sla_tracking_conversation_reply(
+    tracking_id: UUID,
+    body: SlaTrackingConversationReplyBody,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Send a text message to the Respond.io contact for this SLA tracking."""
+    try:
+        respond_user_id = _sla_reply_respond_user_id(current_user)
+        service = ConversationSLATrackingService(db)
+        service.send_conversation_reply_for_tracking(
+            str(tracking_id),
+            body.message,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=current_user.get("id"),
+            request_url=str(request.url) if request else "",
+        )
+        db.commit()
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except AppException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 

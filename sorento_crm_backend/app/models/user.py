@@ -202,6 +202,10 @@ class SystemSetting(Base):
     )
     default_product_standard_lead_time_days = Column(Integer, nullable=False, server_default="90", default=90)
 
+    # n8n integration (optional; attachment URL falls back to N8N_WEBHOOK_URL env if unset)
+    n8n_attachment_webhook_url = Column(Text, nullable=True)
+    n8n_crm_chat_outbound_webhook_url = Column(Text, nullable=True)
+
 
 class UserQuickAccess(Base):
     """Per-user quick access (pinned menu items and attachment folders) for sidebar."""

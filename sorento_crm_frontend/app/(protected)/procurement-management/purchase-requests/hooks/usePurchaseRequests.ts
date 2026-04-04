@@ -140,6 +140,7 @@ export function useUpdatePurchaseRequestAndReply() {
     onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
       queryClient.invalidateQueries({ queryKey: ['purchase-request', id] });
+      queryClient.invalidateQueries({ queryKey: ['purchase-request-conversation', id] });
       toast.success('Updated and reply sent to conversation');
     },
     onError: (error: Error) =>

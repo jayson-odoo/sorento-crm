@@ -72,6 +72,10 @@ async def sync_respond_contact(
         update_dict: dict = {}
         if name is not None:
             update_dict["name"] = name
+        if payload.firstName is not None:
+            update_dict["first_name"] = (payload.firstName or "").strip() or None
+        if payload.lastName is not None:
+            update_dict["last_name"] = (payload.lastName or "").strip() or None
         if payload.user_type is not None:
             update_dict["user_type"] = payload.user_type
         if respond_io_id is not None:
@@ -81,6 +85,8 @@ async def sync_respond_contact(
                 id=str(existing.id),
                 phone_number=str(existing.phone_number),
                 name=getattr(existing, "name", None),
+                first_name=getattr(existing, "first_name", None),
+                last_name=getattr(existing, "last_name", None),
                 user_type=getattr(existing, "user_type", None),
                 respond_io_id=getattr(existing, "respond_io_id", None),
                 action="updated",
@@ -90,22 +96,31 @@ async def sync_respond_contact(
             id=str(contact.id),
             phone_number=str(contact.phone_number),
             name=getattr(contact, "name", None),
+            first_name=getattr(contact, "first_name", None),
+            last_name=getattr(contact, "last_name", None),
             user_type=getattr(contact, "user_type", None),
             respond_io_id=getattr(contact, "respond_io_id", None),
             action="updated",
         )
     else:
-        create_data = RespondContactCreate(
-            phone_number=phone,
-            name=name,
-            user_type=payload.user_type,
-            respond_io_id=respond_io_id,
-        )
+        create_kwargs: dict = {
+            "phone_number": phone,
+            "name": name,
+            "user_type": payload.user_type,
+            "respond_io_id": respond_io_id,
+        }
+        if payload.firstName is not None:
+            create_kwargs["first_name"] = (payload.firstName or "").strip() or None
+        if payload.lastName is not None:
+            create_kwargs["last_name"] = (payload.lastName or "").strip() or None
+        create_data = RespondContactCreate(**create_kwargs)
         contact = service.create_contact(create_data)
         return RespondContactSyncResponse(
             id=str(contact.id),
             phone_number=str(contact.phone_number),
             name=getattr(contact, "name", None),
+            first_name=getattr(contact, "first_name", None),
+            last_name=getattr(contact, "last_name", None),
             user_type=getattr(contact, "user_type", None),
             respond_io_id=getattr(contact, "respond_io_id", None),
             action="created",

@@ -442,6 +442,7 @@ class ComplaintService:
         complaint_data: "ComplaintUpdate",
         respond_user_id: str,
         request_url: str = "",
+        crm_sender_user_id: Optional[str] = None,
     ):
         """
         Update complaint, send technical team response to Respond.io, update SLA tracking to responded, set status=responded.
@@ -490,6 +491,19 @@ class ComplaintService:
             try:
                 client = RespondClient()
                 response = client.send_message(identifier, display_message)
+                from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+
+                enqueue_crm_chat_outbound_webhook(
+                    self.db,
+                    business_table="complaints",
+                    business_id=complaint_id,
+                    contact_respond_io_id=identifier,
+                    message_text=display_message,
+                    respond_api_response=response if isinstance(response, dict) else None,
+                    space_id=getattr(complaint, "space_id", None),
+                    crm_sender_user_id=crm_sender_user_id,
+                    respond_user_id_fallback=respond_user_id,
+                )
                 log_service.create_integration_log(
                     IntegrationLogCreate(
                         integration_channel="respond_io",

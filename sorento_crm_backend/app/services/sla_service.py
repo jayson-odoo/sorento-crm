@@ -1872,3 +1872,61 @@ class ConversationSLATrackingService:
             "pending_response_overdue_breakdown": pending_response_overdue_breakdown,
             "responded_resolution_overdue_breakdown": responded_resolution_overdue_breakdown,
         }
+
+    def _respond_io_identifier_for_tracking(self, tracking: ConversationSLATracking) -> Optional[str]:
+        if tracking.contact and getattr(tracking.contact, "respond_io_id", None):
+            s = str(tracking.contact.respond_io_id).strip()
+            return s or None
+        return None
+
+    def fetch_respond_conversation_for_tracking(
+        self, tracking_id: str, limit: int = 50, cursor: Optional[str] = None
+    ) -> dict:
+        tracking = self.get_tracking(tracking_id)
+        ident = self._respond_io_identifier_for_tracking(tracking)
+        if not ident:
+            return {"items": [], "pagination": {}, "error": "No Respond.io contact linked"}
+        from app.services.integration_service import RespondClient
+
+        client = RespondClient()
+        return client.list_messages(ident, limit=limit, cursor=cursor)
+
+    def send_conversation_reply_for_tracking(
+        self,
+        tracking_id: str,
+        message: str,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str] = None,
+        request_url: str = "",
+    ) -> dict:
+        import logging
+
+        logger = logging.getLogger(__name__)
+        tracking = self.get_tracking(tracking_id)
+        ident = self._respond_io_identifier_for_tracking(tracking)
+        if not ident:
+            raise handle_validation_error("No Respond.io contact linked for this tracking.")
+        text = (message or "").strip()
+        if not text:
+            raise handle_validation_error("message is required.")
+        from app.services.integration_service import RespondClient
+        from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+
+        client = RespondClient()
+        try:
+            response = client.send_message(ident, text)
+        except Exception:
+            logger.exception("Respond send failed for SLA tracking %s", tracking_id)
+            raise
+        enqueue_crm_chat_outbound_webhook(
+            self.db,
+            business_table="conversation_sla_tracking",
+            business_id=str(tracking_id),
+            contact_respond_io_id=ident,
+            message_text=text,
+            respond_api_response=response if isinstance(response, dict) else None,
+            space_id=None,
+            crm_sender_user_id=crm_sender_user_id,
+            respond_user_id_fallback=respond_user_id,
+        )
+        return response if isinstance(response, dict) else {}
