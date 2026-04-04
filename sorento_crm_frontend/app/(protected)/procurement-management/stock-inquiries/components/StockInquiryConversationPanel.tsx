@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -9,7 +9,7 @@ import { Send, ExternalLink, RefreshCw, FileText, Link2 } from 'lucide-react';
 import { useStockInquiryConversation } from '../hooks/useStockInquiries';
 import { useUpdateStockInquiryAndReply } from '../hooks/useStockInquiries';
 import type { RespondMessageItem } from '../services/stockInquiryService';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, respondIoTimestampToDate } from '@/lib/helpers';
 
 /** Map Respond sender.source to display label for outgoing messages. */
 function getSenderLabel(item: RespondMessageItem): string {
@@ -47,10 +47,20 @@ export default function StockInquiryConversationPanel({
   const updateAndReplyMutation = useUpdateStockInquiryAndReply();
 
   const items: RespondMessageItem[] = data?.items ?? [];
+  const sortedItems = useMemo(() => {
+    return [...items].sort((a, b) => {
+      const ta = respondIoTimestampToDate(a.status?.[0]?.timestamp ?? 0).getTime();
+      const tb = respondIoTimestampToDate(b.status?.[0]?.timestamp ?? 0).getTime();
+      if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+      if (Number.isNaN(ta)) return 1;
+      if (Number.isNaN(tb)) return -1;
+      return ta - tb;
+    });
+  }, [items]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [items.length]);
+  }, [sortedItems.length]);
 
   const handleSend = async () => {
     const text = replyText.trim();
@@ -121,11 +131,15 @@ export default function StockInquiryConversationPanel({
             {items.length === 0 && !data?.error && (
               <p className="text-sm text-muted-foreground py-4 text-center">No messages yet.</p>
             )}
-            {items.map((item) => {
+            {sortedItems.map((item, idx) => {
               const isOutgoing = item.traffic === 'outgoing';
               const text = item.message?.text ?? '';
               const ts = item.status?.[0]?.timestamp ?? 0;
-              const dateStr = ts ? formatDateTimeInMalaysia(new Date(ts * 1000)) : '';
+              const tsDate = respondIoTimestampToDate(ts);
+              const dateStr =
+                ts && !Number.isNaN(tsDate.getTime())
+                  ? formatDateTimeInMalaysia(tsDate)
+                  : '';
               const senderLabel = isOutgoing ? getSenderLabel(item) : 'Contact';
               const source = (item.sender?.source ?? '').toLowerCase();
               const isWorkflow = source === 'workflow';
@@ -139,7 +153,7 @@ export default function StockInquiryConversationPanel({
                 : 'bg-muted';
               return (
                 <div
-                  key={item.messageId ?? Math.random()}
+                  key={item.messageId != null ? String(item.messageId) : `msg-${idx}`}
                   className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}
                 >
                   <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${bubbleClass}`}>

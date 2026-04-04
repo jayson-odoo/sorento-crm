@@ -2,6 +2,7 @@
 import logging
 import re
 import secrets
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_, func
 from sqlalchemy import inspect
@@ -1695,6 +1696,20 @@ class StockInquiryService:
         rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
         return [str(r[0]) for r in rows if r and r[0]]
 
+    def _get_team_user_ids_for_agent_tier_safe(self, agent_code: str, tier: int) -> List[str]:
+        """Tier lookup; returns [] if multiple teams share the same tier (ambiguous) or lookup fails."""
+        try:
+            return self._get_team_user_ids_for_agent_tier(agent_code, tier)
+        except HTTPException:
+            logger.warning(
+                "Tier %s for agent %s is ambiguous or invalid (e.g. multiple team sets at tier %s). "
+                "Assign team code project_sales under this agent.",
+                tier,
+                agent_code,
+                tier,
+            )
+            return []
+
     def _build_stock_inquiry_view_url(self, inquiry_id: str, base_url_override: Optional[str] = None) -> str:
         """Build a shareable (no-auth) frontend link for a stock inquiry using view token."""
         from app.models.user import SystemSetting
@@ -1730,9 +1745,11 @@ class StockInquiryService:
 
         if team_assignment_code:
             if team_assignment_code == "project_sales":
+                # Prefer explicit team assignment code over tier 1: multiple tier-1 rows (e.g. purchasing +
+                # project_sales + customer_service) make tier lookup raise conflict or pick the wrong team.
                 user_ids = (
-                    self._get_team_user_ids_for_agent_tier(agent_code, 1)
-                    or self._get_team_user_ids_for_agent_team_assignment(agent_code, "project_sales")
+                    self._get_team_user_ids_for_agent_team_assignment(agent_code, "project_sales")
+                    or self._get_team_user_ids_for_agent_tier_safe(agent_code, 1)
                 )
             else:
                 user_ids = self._get_team_user_ids_for_agent_team_assignment(agent_code, team_assignment_code)
@@ -1831,34 +1848,40 @@ class StockInquiryService:
                 )
             )
         
-        # Normalize sort parameters - default to id since created_at may not exist in DB
         if sort_field and isinstance(sort_field, str):
-            sort_field = sort_field.strip().lower() or "id"
+            sort_field = sort_field.strip().lower() or "created_at"
         else:
-            sort_field = "id"
-        
+            sort_field = "created_at"
+
         if sort_dir and isinstance(sort_dir, str):
             sort_dir = sort_dir.strip().lower() or "desc"
         else:
             sort_dir = "desc"
-        
+
         sort_map = {
             "id": StockInquiry.id,
             "product_code": StockInquiry.product_code,
+            "item_description": StockInquiry.item_description,
+            "project_customer": StockInquiry.project_customer,
+            "project_name": StockInquiry.project_name,
+            "quantity": StockInquiry.quantity,
             "delivery_date": StockInquiry.delivery_date,
+            "remark": StockInquiry.remark,
+            "created_at": StockInquiry.created_at,
+            "updated_at": StockInquiry.updated_at,
+            "salesperson": StockInquiry.salesperson,
+            "status": StockInquiry.status,
+            "last_responded_at": StockInquiry.last_responded_at,
         }
-        # Only use created_at/updated_at if explicitly requested and column exists
-        # For now, default to id to avoid database errors
-        sort_column = sort_map.get(sort_field, StockInquiry.id)
-        
-        # Ensure sort_dir is either "asc" or "desc"
-        if sort_dir not in ["asc", "desc"]:
+        sort_column = sort_map.get(sort_field, StockInquiry.created_at)
+
+        if sort_dir not in ("asc", "desc"):
             sort_dir = "desc"
-        
+
         if sort_dir == "desc":
-            q = q.order_by(sort_column.desc())
+            q = q.order_by(sort_column.desc().nulls_last())
         else:
-            q = q.order_by(sort_column.asc())
+            q = q.order_by(sort_column.asc().nulls_last())
         
         total = q.count()
         offset = (page - 1) * limit
@@ -2658,51 +2681,37 @@ class PurchaseRequestService:
                 base_url_override=base_url_override,
             )
         except Exception as e:
-            logger.warning("Failed to notify team for external purchase request %s: %s", header_id, e)
+            logger.warning(
+                "Failed to notify team for external purchase request %s: %s",
+                header_id,
+                e,
+                exc_info=True,
+            )
         return header
 
-    def _get_team_user_ids_for_agent_code(self, agent_code: str) -> List[str]:
-        """Return user IDs of all teams assigned to the access agent with the given code.
-
-        Note: AgentTeam.code is an assignment code (e.g. customer_service), not necessarily the access agent code.
-        So we resolve the access agent by code, then include all team assignments for that agent.
-        """
-        from app.services.user_service import AccessAgentService
-        from app.models.access import AgentTeam, TeamMember
-
-        agent_id = AccessAgentService(self.db).get_agent_id_by_code(agent_code)
-        if not agent_id:
-            logger.debug("No access agent found for code=%s", agent_code)
-            return []
-
-        rows = (
-            self.db.query(TeamMember.user_id)
-            .join(AgentTeam, AgentTeam.team_id == TeamMember.team_id)
-            .filter(AgentTeam.agent_id == agent_id)
-            .distinct()
-            .all()
-        )
-        return [str(r[0]) for r in rows if r and r[0]]
-
-    def _get_team_user_ids_for_agent_team_assignment_pr(
-        self, agent_code: str, team_assignment_code: str
-    ) -> List[str]:
-        """Return user IDs of the team assigned to the agent with the given team assignment code (e.g. project_sales)."""
+    def _get_purchase_request_project_sales_tier1_user_ids(self) -> List[str]:
+        """Members of Tier 1 under team set code project_sales for access agent purchase_request."""
         from app.services.user_service import AccessAgentService
         from app.models.access import TeamMember
 
         agent_svc = AccessAgentService(self.db)
-        agent_id = agent_svc.get_agent_id_by_code(agent_code)
+        agent_id = agent_svc.get_agent_id_by_code("purchase_request")
         if not agent_id:
-            logger.debug("No access agent found for code=%s", agent_code)
+            logger.debug("No access agent found for code=purchase_request")
             return []
-        team_id = agent_svc.get_team_id_by_code(agent_id, team_assignment_code)
+        team_id = agent_svc.get_team_id_by_tier(agent_id, 1, team_set_code="project_sales")
         if not team_id:
-            logger.debug(
-                "No team assignment found for agent %s with code=%s",
-                agent_code,
-                team_assignment_code,
-            )
+            team_id = agent_svc.get_team_id_by_code(agent_id, "project_sales")
+        if not team_id:
+            try:
+                team_id = agent_svc.get_team_id_by_tier(agent_id, 1)
+            except HTTPException:
+                logger.warning(
+                    "Tier 1 for agent 'purchase_request' is ambiguous (multiple team sets). "
+                    "Assign team set code 'project_sales' on Tier 1 (Project Sales Executive) in Team Assignments."
+                )
+                return []
+        if not team_id:
             return []
         rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
         return [str(r[0]) for r in rows if r and r[0]]
@@ -2716,28 +2725,39 @@ class PurchaseRequestService:
         base_url_override: Optional[str] = None,
         sync_email: bool = False,
     ) -> None:
-        """Notify tier 1 team under agent purchase_request (fallback project_sales): one email to all, plus in-app for each. Email is enqueued by default so API returns quickly."""
+        """Notify Tier 1 project_sales under agent purchase_request: one email to all, plus in-app for each."""
         from app.models.user import User, SystemSetting
         from app.models.notification import Notification, NotificationDelivery
         from app.services.notification_service import NotificationService
         from datetime import datetime
 
-        user_ids = (
-            self._get_team_user_ids_for_agent_tier("purchase_request", 1)
-            or self._get_team_user_ids_for_agent_team_assignment_pr("purchase_request", "project_sales")
-        )
+        user_ids = self._get_purchase_request_project_sales_tier1_user_ids()
         if not user_ids:
             logger.warning(
-                "No team members found for agent 'purchase_request' with Tier 1 or 'project_sales'. "
-                "Create an Access Agent with code 'purchase_request' and a Team Assignment with Tier = 1 (or code 'project_sales')."
+                "No team members found for agent 'purchase_request', Tier 1, team set code 'project_sales'. "
+                "Create an Access Agent with code 'purchase_request' and assign Project Sales Executive at Tier 1 under code 'project_sales'."
             )
             return
         users = self.db.query(User).filter(User.id.in_(user_ids)).all()
         emails = [u.email for u in users if getattr(u, "email", None) and str(u.email).strip()]
         if not emails:
-            logger.warning("Team members for purchase_request (Tier 1 / project_sales) have no email addresses; skipping email.")
-        type_label = "Purchase Request" if request_type == "purchase_request" else "Sponsorship Form"
-        title = f"New {type_label} created"
+            logger.warning(
+                "Project Sales (Tier 1) team members have no email addresses; skipping email delivery row."
+            )
+        rt = (request_type or "").strip()
+        if rt == "purchase_request":
+            title = "New purchase request"
+            kind_sentence = (
+                "A purchase request has been created via system integration and requires your review."
+            )
+        elif rt == "sponsorship_form":
+            title = "New sponsorship form"
+            kind_sentence = (
+                "A sponsorship form has been created via system integration and requires your review."
+            )
+        else:
+            title = "New request"
+            kind_sentence = "A new request has been created via system integration and requires your review."
         view_token = self.get_or_create_view_token(header_id)
         base_url = (base_url_override or "").strip().rstrip("/")
         if not base_url:
@@ -2752,13 +2772,13 @@ class PurchaseRequestService:
                 "or FRONTEND_BASE_URL in backend .env, or pass base_url in the external create payload."
             )
         view_url = f"{base_url}/view/request?token={view_token}" if base_url else f"/view/request?token={view_token}"
+        detail_plain = f"Reference: {request_number}\nProject: {project_title}"
         intro_plain = (
-            "Dear Project Sales Team,\n\n"
-            f"A new {type_label.lower()} has been created via system integration and requires your review."
+            f"Dear Project Sales Team,\n\n{kind_sentence}\n\n{detail_plain}"
         )
         intro_html = (
-            f"Dear Project Sales Team,<br /><br />"
-            f"A new {type_label.lower()} has been created via system integration and requires your review."
+            f"Dear Project Sales Team,<br /><br />{kind_sentence}<br /><br />"
+            f"Reference: {request_number}<br />Project: {project_title}"
         )
         body_plain = (
             f"{intro_plain}\n\n"

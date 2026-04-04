@@ -1,6 +1,7 @@
 """Complaints service for business logic."""
 import logging
 import secrets
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, inspect
 from typing import List, Optional
@@ -175,49 +176,38 @@ class ComplaintService:
         self.db.flush()
         return token_value
 
-    def _get_team_user_ids_for_agent_team_assignment(
-        self, agent_code: str, team_assignment_code: str
-    ) -> List[str]:
-        """Return user IDs of the team assigned to the agent with the given team assignment code (e.g. project_sales)."""
+    def _get_complaint_handler_user_ids(self) -> List[str]:
+        """
+        Members of the Tier 1 Complaint team under Access Agent code `complaint`.
+
+        Uses team set code `complaint` + tier 1 so multiple tier-1 rows on the same agent
+        (e.g. complaint + customer_service) do not trigger a conflict and the wrong team is not chosen.
+        """
         from app.services.user_service import AccessAgentService
         from app.models.access import TeamMember
 
+        log = logging.getLogger(__name__)
         agent_svc = AccessAgentService(self.db)
-        agent_id = agent_svc.get_agent_id_by_code(agent_code)
+        agent_id = agent_svc.get_agent_id_by_code("complaint")
         if not agent_id:
-            logging.getLogger(__name__).debug("No access agent found for code=%s", agent_code)
+            log.debug("No access agent found for code=complaint")
             return []
-        team_id = agent_svc.get_team_id_by_code(agent_id, team_assignment_code)
-        if not team_id:
-            logging.getLogger(__name__).debug(
-                "No team assignment found for agent %s with code=%s",
-                agent_code,
-                team_assignment_code,
-            )
-            return []
-        rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
-        return [str(r[0]) for r in rows if r and r[0]]
 
-    def _get_team_user_ids_for_agent_tier(
-        self, agent_code: str, tier: int
-    ) -> List[str]:
-        """Return user IDs of the team assigned to the agent with the given tier (1=initial, 2/3=escalation)."""
-        from app.services.user_service import AccessAgentService
-        from app.models.access import TeamMember
-
-        agent_svc = AccessAgentService(self.db)
-        agent_id = agent_svc.get_agent_id_by_code(agent_code)
-        if not agent_id:
-            logging.getLogger(__name__).debug("No access agent found for code=%s", agent_code)
-            return []
-        team_id = agent_svc.get_team_id_by_tier(agent_id, tier)
+        team_id = agent_svc.get_team_id_by_tier(agent_id, 1, team_set_code="complaint")
         if not team_id:
-            logging.getLogger(__name__).debug(
-                "No team assignment found for agent %s with tier=%s",
-                agent_code,
-                tier,
-            )
+            team_id = agent_svc.get_team_id_by_code(agent_id, "complaint")
+        if not team_id:
+            try:
+                team_id = agent_svc.get_team_id_by_tier(agent_id, 1)
+            except HTTPException:
+                log.warning(
+                    "Tier 1 for agent 'complaint' is ambiguous (multiple team sets). "
+                    "Use team set code 'complaint' on Tier 1 in Team Assignments."
+                )
+                return []
+        if not team_id:
             return []
+
         rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
         return [str(r[0]) for r in rows if r and r[0]]
 
@@ -248,27 +238,26 @@ class ComplaintService:
         from app.services.notification_service import NotificationService
 
         logger = logging.getLogger(__name__)
-        user_ids = (
-            self._get_team_user_ids_for_agent_tier("complaint", 1)
-            or self._get_team_user_ids_for_agent_team_assignment("complaint", "project_sales")
-        )
+        user_ids = self._get_complaint_handler_user_ids()
         if not user_ids:
             logger.warning(
-                "No team members found for agent 'complaint' with Tier 1 or 'project_sales'. "
-                "Create an Access Agent with code 'complaint' and a Team Assignment with Tier = 1 (or code 'project_sales')."
+                "No team members found for agent 'complaint' Tier 1 under team set code 'complaint'. "
+                "In Team Assignments for the Complaint agent, set code 'complaint' on Tier 1 (Complaint team)."
             )
             return
         users = self.db.query(User).filter(User.id.in_(user_ids)).all()
         emails = [u.email for u in users if getattr(u, "email", None) and str(u.email).strip()]
         if not emails:
-            logger.warning("Team members for complaint (Tier 1 / project_sales) have no email addresses; skipping email.")
+            logger.warning(
+                "Complaint handler team members have no email addresses; skipping email delivery row."
+            )
         title = "New Complaint created"
         intro_plain = (
-            "Dear Project Sales Team,\n\n"
+            "Dear Complaint Team,\n\n"
             "A new complaint has been created via system integration and requires your review."
         )
         intro_html = (
-            "Dear Project Sales Team,<br /><br />"
+            "Dear Complaint Team,<br /><br />"
             "A new complaint has been created via system integration and requires your review."
         )
         view_url = self._build_complaint_view_url(complaint_id, base_url_override=base_url_override)

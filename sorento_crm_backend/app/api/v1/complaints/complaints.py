@@ -1,4 +1,6 @@
 """Complaints API routes."""
+import logging
+
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
 from sqlalchemy.orm import Session
 from typing import Optional, Union, List, Any
@@ -21,7 +23,20 @@ from app.services.error_handler import handle_internal_error
 from app.config import settings as app_settings
 from app.modules.runtime.guards import require_public_view_links_enabled
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+def _request_has_valid_external_api_key(request: Optional[Request]) -> bool:
+    """True when X-API-Key header matches configured external API key (same as get_current_user_or_api_key)."""
+    if request is None:
+        return False
+    key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
+    valid = getattr(app_settings, "external_api_key", None)
+    if not key or not valid:
+        return False
+    return key.strip() == str(valid).strip()
 
 
 def _respond_user_id_from_current_user(current_user: dict) -> str:
@@ -177,8 +192,8 @@ def _is_integration_payload(body: Any) -> bool:
 
 @router.post("/", response_model=ComplaintResponse, status_code=status.HTTP_201_CREATED)
 async def create_complaint(
+    request: Request,
     body: Any = Body(..., embed=False),
-    request: Request = None,
     current_user: dict = Depends(get_current_user_or_api_key),  # Support both JWT and API key
     db: Session = Depends(get_db)
 ):
@@ -203,14 +218,20 @@ async def create_complaint(
         service = ComplaintService(db)
         complaint = service.create_complaint(complaint_data)
         db.commit()
-        if is_integration_payload:
+        should_notify_handlers = is_integration_payload or _request_has_valid_external_api_key(request)
+        if should_notify_handlers:
             try:
                 service.notify_team_complaint_external_created(
                     complaint_id=str(complaint.id),
                     sync_email=False,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Complaint notify (create) failed for complaint %s: %s",
+                    getattr(complaint, "id", None),
+                    e,
+                    exc_info=True,
+                )
         return service.get_complaint_with_attachments(complaint.id)
     except HTTPException:
         raise
@@ -243,8 +264,13 @@ async def create_complaint_integration(
                 complaint_id=str(complaint.id),
                 sync_email=False,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "Complaint notify (integration) failed for complaint %s: %s",
+                getattr(complaint, "id", None),
+                e,
+                exc_info=True,
+            )
 
         log_service = IntegrationLogService(db)
         log_service.create_integration_log(

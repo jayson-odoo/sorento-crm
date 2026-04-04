@@ -47,7 +47,7 @@ async def get_stock_inquiries(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
-    sort: Optional[str] = Query("id"),
+    sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)

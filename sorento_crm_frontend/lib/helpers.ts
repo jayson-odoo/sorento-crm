@@ -217,6 +217,18 @@ export function parseDateTimeAsUTC(dateString: string | Date): Date {
 /** Malaysia timezone (UTC+8) for display of API timestamps stored as UTC in DB */
 const MALAYSIA_TZ = 'Asia/Kuala_Lumpur';
 
+/**
+ * Respond.io message `status[0].timestamp` may be Unix seconds or milliseconds (API / payload variant).
+ * Treating ms as seconds and multiplying by 1000 yields invalid far-future dates (e.g. year 58xxx).
+ */
+export function respondIoTimestampToDate(timestamp: number): Date {
+  if (timestamp == null || !Number.isFinite(timestamp)) {
+    return new Date(NaN);
+  }
+  const ms = timestamp > 1e12 ? timestamp : timestamp * 1000;
+  return new Date(ms);
+}
+
 function toUTCDate(input: Date | string | number): Date {
   if (input instanceof Date) return input;
   if (typeof input === 'number') return new Date(input);

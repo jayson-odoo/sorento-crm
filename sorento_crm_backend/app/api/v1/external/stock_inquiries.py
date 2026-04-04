@@ -3,6 +3,8 @@
 Auth: X-API-Key header (get_external_api_user).
 """
 
+import logging
+
 from fastapi import APIRouter, Depends, Body, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,7 @@ from app.schemas.procurement import StockInquiryCreate, StockInquiryResponse
 from app.services.procurement_service import StockInquiryService
 from app.services.error_handler import handle_internal_error
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -39,9 +42,14 @@ async def create_stock_inquiry_external(
                 event_type="external_created",
                 sync_email=False,
             )
-        except Exception:
-            # Don't fail the API call if notifications fail.
-            pass
+        except Exception as e:
+            # Don't fail the API call if notifications fail; log for debugging (e.g. team resolution, SMTP enqueue).
+            logger.warning(
+                "Stock inquiry external notify failed for inquiry %s: %s",
+                getattr(inquiry, "id", None),
+                e,
+                exc_info=True,
+            )
         return service.get_inquiry_for_response(str(inquiry.id))
     except HTTPException:
         raise
