@@ -1982,6 +1982,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/user-management/settings/integrations/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/user-management/settings/integrations">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/user-management/settings/integrations/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/(protected)/user-management/settings/notifications/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/user-management/settings/notifications">> = Specific

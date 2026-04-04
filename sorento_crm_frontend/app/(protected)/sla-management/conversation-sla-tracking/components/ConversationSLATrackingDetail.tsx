@@ -116,6 +116,7 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
   const [initiatedDialogOpen, setInitiatedDialogOpen] = useState(false);
   const [markRespondedDialogOpen, setMarkRespondedDialogOpen] = useState(false);
   const [markResolvedDialogOpen, setMarkResolvedDialogOpen] = useState(false);
+  const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [assigneeComboOpen, setAssigneeComboOpen] = useState(false);
   const [selectedAssigneeId, setSelectedAssigneeId] = useState('');
   const [tierStartedLocal, setTierStartedLocal] = useState('');
