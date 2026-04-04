@@ -6,11 +6,29 @@ import { useAuditLogs } from '@/hooks/useAuditLogs';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { AuditLogEntry } from '@/types/audit.types';
 
-function formatChangeSummary(entry: AuditLogEntry): string {
-  if (entry.action === 'INSERT') return 'Record created';
-  if (entry.action === 'DELETE') return 'Record deleted';
+function formatAuditValue(v: unknown): string {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'object') {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
+  }
+  return String(v);
+}
+
+/** One line per field change for readable audit UI. */
+function collectChangeLines(entry: AuditLogEntry): string[] {
+  if (entry.action === 'INSERT') return ['Record created'];
+  if (entry.action === 'DELETE') return ['Record deleted'];
   if (entry.action === 'UPDATE') {
-    if (entry.description) return entry.description;
+    const desc = entry.description?.trim();
+    if (desc) {
+      // Same delimiter the UI used when joining changes; avoids splitting single values that contain ";"
+      const parts = desc.split(/;\s+/).map((s) => s.trim()).filter(Boolean);
+      return parts.length > 0 ? parts : [desc];
+    }
     const oldV = entry.old_values || {};
     const newV = entry.new_values || {};
     const keys = new Set([...Object.keys(oldV), ...Object.keys(newV)]);
@@ -19,13 +37,13 @@ function formatChangeSummary(entry: AuditLogEntry): string {
       const ov = oldV[key];
       const nv = newV[key];
       if (ov !== nv && (ov !== undefined || nv !== undefined)) {
-        changes.push(`${key}: ${ov ?? '—'} → ${nv ?? '—'}`);
+        changes.push(`${key}: ${formatAuditValue(ov)} → ${formatAuditValue(nv)}`);
       }
     });
-    if (changes.length === 0) return 'Updated';
-    return changes.slice(0, 5).join('; ') + (changes.length > 5 ? '…' : '');
+    if (changes.length === 0) return ['Updated'];
+    return changes;
   }
-  return entry.action;
+  return [entry.action];
 }
 
 interface AuditTrailProps {
@@ -79,9 +97,13 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
                     <span className="text-muted-foreground">by System</span>
                   )}
                 </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {formatChangeSummary(entry)}
-                </p>
+                <ul className="mt-1.5 list-none space-y-1.5 text-sm text-muted-foreground">
+                  {collectChangeLines(entry).map((line, idx) => (
+                    <li key={idx} className="break-words border-l-2 border-border/50 pl-2">
+                      {line}
+                    </li>
+                  ))}
+                </ul>
               </li>
             ))}
           </ul>

@@ -1,5 +1,7 @@
 """Stock inquiries API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
+import logging
+
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, Response
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
@@ -19,6 +21,8 @@ from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 from app.config import settings as app_settings
 from app.modules.runtime.guards import require_public_view_links_enabled
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -198,27 +202,46 @@ async def get_or_create_stock_inquiry_view_link(
 async def create_stock_inquiry(
     inquiry_data: StockInquiryCreate,
     request: Request,
+    response: Response,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Create a new stock inquiry. Notifies project sales team when status is new or pending_project_sales."""
+    """Create a new stock inquiry. If ``inquiry_number`` matches a rejected inquiry, that row is updated (200). Notifies project sales team when status is new or pending_project_sales."""
     try:
         service = StockInquiryService(db)
-        inquiry = service.create_inquiry(inquiry_data)
+        inquiry, outcome = service.create_inquiry(inquiry_data)
+        if outcome == "resubmitted":
+            response.status_code = status.HTTP_200_OK
         db.commit()
         if getattr(inquiry, "status", None) in ("new", "pending_project_sales"):
             try:
-                service._notify_team_stock_inquiry(
-                    inquiry_id=str(inquiry.id),
-                    agent_code="lead_time_enquiries",
-                    team_assignment_code="project_sales",
-                    title="New Stock Inquiry created",
-                    intro_plain="Dear Project Sales Team,\n\nA new stock inquiry has been created and requires your review.",
-                    intro_html="Dear Project Sales Team,<br /><br />A new stock inquiry has been created and requires your review.",
-                    event_type="created",
+                if outcome == "resubmitted":
+                    service._notify_team_stock_inquiry(
+                        inquiry_id=str(inquiry.id),
+                        agent_code="lead_time_enquiries",
+                        team_assignment_code="project_sales",
+                        title="Stock Inquiry updated (resubmitted)",
+                        intro_plain="Dear Project Sales Team,\n\nA previously rejected stock inquiry has been updated and resubmitted for your review.",
+                        intro_html="Dear Project Sales Team,<br /><br />A previously rejected stock inquiry has been updated and resubmitted for your review.",
+                        event_type="resubmitted",
+                    )
+                else:
+                    service._notify_team_stock_inquiry(
+                        inquiry_id=str(inquiry.id),
+                        agent_code="lead_time_enquiries",
+                        team_assignment_code="project_sales",
+                        title="New Stock Inquiry created",
+                        intro_plain="Dear Project Sales Team,\n\nA new stock inquiry has been created and requires your review.",
+                        intro_html="Dear Project Sales Team,<br /><br />A new stock inquiry has been created and requires your review.",
+                        event_type="created",
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Stock inquiry project_sales notify failed for inquiry %s: %s",
+                    getattr(inquiry, "id", None),
+                    e,
+                    exc_info=True,
                 )
-            except Exception:
-                pass
         return inquiry
     except HTTPException:
         raise

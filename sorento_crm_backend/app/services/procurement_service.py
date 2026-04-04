@@ -1783,55 +1783,110 @@ class StockInquiryService:
 
         notif_svc = NotificationService(self.db)
         first_uid = user_ids[0]
+        now = datetime.utcnow()
+        email_data = {"recipient_emails": emails, "single_email_to_all": True, "body_html": body_html}
 
-        if emails:
-            notification = Notification(
-                user_id=first_uid,
-                type="stock_inquiry_notification",
-                title=title,
-                body=body_plain,
-                data={"recipient_emails": emails, "single_email_to_all": True, "body_html": body_html},
-                source_entity_type="stock_inquiry",
-                source_entity_id=inquiry_id,
-                event_type=event_type,
-            )
-            self.db.add(notification)
-            self.db.flush()
-            self.db.add(
-                NotificationDelivery(
-                    notification_id=notification.id,
-                    channel="in_app",
-                    status="sent",
-                    sent_at=datetime.utcnow(),
-                )
-            )
-            self.db.add(NotificationDelivery(notification_id=notification.id, channel="email", status="pending"))
-            self.db.commit()
-            self.db.refresh(notification)
+        def _enqueue_deliveries(notification_id: str) -> None:
             try:
                 if sync_email:
                     from app.tasks import notification_tasks
-                    notification_tasks.send_notification_deliveries(str(notification.id))
+
+                    notification_tasks.send_notification_deliveries(notification_id)
                 else:
                     from app.services.queue_service import enqueue_job
                     from app.tasks import notification_tasks
-                    enqueue_job(notification_tasks.send_notification_deliveries, str(notification.id), queue_name="notifications")
+
+                    enqueue_job(
+                        notification_tasks.send_notification_deliveries,
+                        notification_id,
+                        queue_name="notifications",
+                    )
             except Exception as e:
                 logger.warning("Failed to send/enqueue notification deliveries: %s", e)
+
+        if emails:
+            existing_main = (
+                self.db.query(Notification)
+                .filter(
+                    Notification.user_id == first_uid,
+                    Notification.source_entity_type == "stock_inquiry",
+                    Notification.source_entity_id == inquiry_id,
+                    Notification.event_type == event_type,
+                )
+                .first()
+            )
+            if existing_main:
+                existing_main.title = title
+                existing_main.body = body_plain
+                existing_main.type = "stock_inquiry_notification"
+                merged = dict(existing_main.data or {})
+                merged.update(email_data)
+                existing_main.data = merged
+                self.db.add(
+                    NotificationDelivery(
+                        notification_id=existing_main.id,
+                        channel="email",
+                        status="pending",
+                    )
+                )
+                self.db.commit()
+                self.db.refresh(existing_main)
+                _enqueue_deliveries(str(existing_main.id))
+            else:
+                notification = Notification(
+                    user_id=first_uid,
+                    type="stock_inquiry_notification",
+                    title=title,
+                    body=body_plain,
+                    data=email_data,
+                    source_entity_type="stock_inquiry",
+                    source_entity_id=inquiry_id,
+                    event_type=event_type,
+                )
+                self.db.add(notification)
+                self.db.flush()
+                self.db.add(
+                    NotificationDelivery(
+                        notification_id=notification.id,
+                        channel="in_app",
+                        status="sent",
+                        sent_at=now,
+                    )
+                )
+                self.db.add(NotificationDelivery(notification_id=notification.id, channel="email", status="pending"))
+                self.db.commit()
+                self.db.refresh(notification)
+                _enqueue_deliveries(str(notification.id))
 
         for uid in user_ids:
             if uid == first_uid and emails:
                 continue
             try:
-                notif_svc.create_in_app_only(
-                    user_id=uid,
-                    type="stock_inquiry_notification",
-                    title=title,
-                    body=body_plain,
-                    source_entity_type="stock_inquiry",
-                    source_entity_id=inquiry_id,
-                    event_type=event_type,
+                existing_u = (
+                    self.db.query(Notification)
+                    .filter(
+                        Notification.user_id == uid,
+                        Notification.source_entity_type == "stock_inquiry",
+                        Notification.source_entity_id == inquiry_id,
+                        Notification.event_type == event_type,
+                    )
+                    .first()
                 )
+                if existing_u:
+                    existing_u.title = title
+                    existing_u.body = body_plain
+                    existing_u.type = "stock_inquiry_notification"
+                    self.db.commit()
+                else:
+                    notif_svc.create_in_app_only(
+                        user_id=uid,
+                        type="stock_inquiry_notification",
+                        title=title,
+                        body=body_plain,
+                        source_entity_type="stock_inquiry",
+                        source_entity_id=inquiry_id,
+                        event_type=event_type,
+                    )
             except Exception as e:
                 logger.warning("Failed to create in-app notification for user %s: %s", uid, e)
     
@@ -2034,11 +2089,87 @@ class StockInquiryService:
     # Allowed initial statuses when creating via API (e.g. external flow can start in pending_project_sales).
     _CREATE_ALLOWED_STATUSES = ("new", "pending_project_sales", "pending_purchasing")
 
+    def _resubmit_rejected_inquiry(
+        self, inquiry: StockInquiry, inquiry_data: StockInquiryCreate
+    ) -> StockInquiry:
+        """Apply create payload to an existing rejected inquiry; audit logs via ORM UPDATE tracking."""
+        from app.services.error_handler import handle_validation_error
+
+        data = inquiry_data.model_dump(exclude_unset=True)
+        data.pop("inquiry_number", None)
+
+        new_status = data.pop("status", None)
+        if new_status is not None and new_status not in self._CREATE_ALLOWED_STATUSES:
+            raise handle_validation_error(
+                f"status must be one of {self._CREATE_ALLOWED_STATUSES!r}, got {new_status!r}"
+            )
+        if new_status is None:
+            new_status = "new"
+
+        column_keys = {a.key for a in inspect(inquiry).mapper.column_attrs}
+        immutable = {"id", "created_at", "inquiry_number", "updated_at"}
+        for key, value in list(data.items()):
+            if key in immutable or key not in column_keys:
+                continue
+            setattr(inquiry, key, value)
+
+        inquiry.status = new_status
+
+        contact_id = inquiry.contact_id
+        space_id = inquiry.space_id
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+        if respond_inbox_url is not None:
+            inquiry.respond_inbox_url = respond_inbox_url
+        elif contact_id is None and space_id is None:
+            inquiry.respond_inbox_url = None
+
+        if new_status != "rejected":
+            inquiry.rejection_reason = None
+            inquiry.rejected_at = None
+            inquiry.rejected_by = None
+            inquiry.rejected_from = None
+
+        inquiry.reopen_reason = None
+        inquiry.reopened_at = None
+        inquiry.reopened_by = None
+
+        self.db.commit()
+        self.db.refresh(inquiry)
+        return inquiry
+
     def create_inquiry(self, inquiry_data: StockInquiryCreate):
-        """Create a new stock inquiry. Status may be set via API to start in project sales or purchasing queue."""
+        """
+        Create a new stock inquiry, or resubmit a rejected one.
+
+        When ``inquiry_number`` is set in the payload: if a row with that number exists and
+        ``status == rejected``, that row is updated (same id / number) and this returns
+        ``(inquiry, "resubmitted")``. If the number exists with any other status, validation fails.
+
+        Otherwise a new row is inserted and this returns ``(inquiry, "created")``.
+        """
         from datetime import date as date_cls
+        from app.services.error_handler import handle_validation_error
+
+        full = inquiry_data.model_dump()
+        lookup_raw = full.get("inquiry_number")
+        lookup = lookup_raw.strip() if isinstance(lookup_raw, str) else None
+        if lookup:
+            existing = (
+                self.db.query(StockInquiry)
+                .filter(StockInquiry.inquiry_number == lookup)
+                .first()
+            )
+            if existing is not None:
+                if existing.status != "rejected":
+                    raise handle_validation_error(
+                        f"Inquiry number {lookup!r} already exists with status {existing.status!r}. "
+                        "Use inquiry_number only to resubmit a rejected inquiry."
+                    )
+                updated = self._resubmit_rejected_inquiry(existing, inquiry_data)
+                return updated, "resubmitted"
 
         data = inquiry_data.model_dump()
+        data.pop("inquiry_number", None)
         contact_id = data.get("contact_id")
         space_id = data.get("space_id")
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -2046,7 +2177,6 @@ class StockInquiryService:
             data["respond_inbox_url"] = respond_inbox_url
         status = data.get("status")
         if status is not None and status not in self._CREATE_ALLOWED_STATUSES:
-            from app.services.error_handler import handle_validation_error
             raise handle_validation_error(
                 f"status must be one of {self._CREATE_ALLOWED_STATUSES!r}, got {status!r}"
             )
@@ -2061,7 +2191,7 @@ class StockInquiryService:
         self.db.add(inquiry)
         self.db.commit()
         self.db.refresh(inquiry)
-        return inquiry
+        return inquiry, "created"
 
     def delete_inquiry(self, inquiry_id: str) -> dict:
         """Delete a stock inquiry by ID."""

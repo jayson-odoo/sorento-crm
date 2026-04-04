@@ -1,5 +1,5 @@
 """Procurement schemas."""
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from datetime import datetime, date
 from decimal import Decimal
@@ -513,7 +513,13 @@ class StockInquiryBase(BaseModel):
 
 
 class StockInquiryCreate(StockInquiryBase):
-    pass
+    """Create payload. Optional ``inquiry_number`` is used only for lookup: if a rejected inquiry
+    with that number exists, that row is updated instead of inserting a new one."""
+
+    inquiry_number: Optional[str] = Field(
+        default=None,
+        description="When set, if a rejected inquiry with this number exists it is updated with the rest of the payload and status; otherwise 409 if the number exists and is not rejected.",
+    )
 
 
 class StockInquiryUpdate(BaseModel):

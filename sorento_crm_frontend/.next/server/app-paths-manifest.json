@@ -1,10 +1,10 @@
 {
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/api/auth/token/route": "app/api/auth/token/route.js",
+  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/api/user-management/account/route": "app/api/user-management/account/route.js",
-  "/(protected)/system-management/work-calendar/page": "app/(protected)/system-management/work-calendar/page.js",
   "/(auth)/signin/page": "app/(auth)/signin/page.js",
   "/(protected)/system-management/numbering-rules/page": "app/(protected)/system-management/numbering-rules/page.js",
   "/(protected)/procurement-management/stock-inquiries/[id]/page": "app/(protected)/procurement-management/stock-inquiries/[id]/page.js",
-  "/(protected)/procurement-management/stock-inquiries/[id]/edit/page": "app/(protected)/procurement-management/stock-inquiries/[id]/edit/page.js"
+  "/(protected)/procurement-management/stock-inquiries/[id]/edit/page": "app/(protected)/procurement-management/stock-inquiries/[id]/edit/page.js",
+  "/(protected)/procurement-management/stock-inquiries/page": "app/(protected)/procurement-management/stock-inquiries/page.js"
 }

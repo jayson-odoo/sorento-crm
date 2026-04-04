@@ -29,6 +29,7 @@ import { restrictToParentElement } from '@dnd-kit/modifiers';
 import { horizontalListSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Cell, flexRender, Header, HeaderGroup, Row } from '@tanstack/react-table';
+import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 import { GripVertical } from 'lucide-react';
 
 function DataGridTableDndHeader<TData>({ header }: { header: Header<TData, unknown> }) {
@@ -99,10 +100,12 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
     useSensor(KeyboardSensor, {}),
   );
 
-  const orderedIds =
-    Array.isArray(table.getState().columnOrder) && table.getState().columnOrder?.length > 0
+  const leafIds = table.getAllLeafColumns().map((c) => c.id);
+  const rawOrder =
+    Array.isArray(table.getState().columnOrder) && table.getState().columnOrder.length > 0
       ? (table.getState().columnOrder as string[])
-      : table.getAllLeafColumns().map((c) => c.id);
+      : leafIds;
+  const orderedIds = mergeColumnOrderWithLeafColumns(rawOrder, leafIds);
 
   return (
     <DndContext

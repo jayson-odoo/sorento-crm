@@ -93,6 +93,15 @@ export default function StockInquiriesList() {
   const columns = useMemo<ColumnDef<StockInquiry>[]>(
     () => [
       {
+        accessorKey: 'inquiry_number',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Inquiry no." column={column} />
+        ),
+        size: 130,
+        cell: ({ row }) => row.original.inquiry_number || '—',
+        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
         id: 'select',
         header: () => (
           <Checkbox
@@ -111,15 +120,6 @@ export default function StockInquiriesList() {
         ),
         size: 44,
         enableResizing: false,
-      },
-      {
-        accessorKey: 'inquiry_number',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Inquiry no." column={column} />
-        ),
-        size: 130,
-        cell: ({ row }) => row.original.inquiry_number || '—',
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'product_code',

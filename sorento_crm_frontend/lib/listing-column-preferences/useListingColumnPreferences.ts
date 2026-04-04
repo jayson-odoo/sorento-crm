@@ -10,6 +10,7 @@ import {
   upsertUserListColumnConfig,
   type UserListColumnConfigPayload,
 } from './listColumnPreferencesService';
+import { mergeColumnOrderWithLeafColumns } from './mergeColumnOrder';
 
 type ColumnVisibilityState = Record<string, boolean>;
 type ColumnStateFromTanStack = {
@@ -92,10 +93,12 @@ export function useListingColumnPreferences<TData extends object>({
     const canHideIds = new Set(table.getAllLeafColumns().filter((c) => c.getCanHide()).map((c) => c.id));
 
     if (Array.isArray(payload.columnOrder) && payload.columnOrder.length > 0) {
-      const allowed = new Set(table.getAllLeafColumns().map((c) => c.id));
+      const leafIds = table.getAllLeafColumns().map((c) => c.id);
+      const allowed = new Set(leafIds);
       const filteredOrder = payload.columnOrder.filter((id) => allowed.has(id));
+      const mergedOrder = mergeColumnOrderWithLeafColumns(filteredOrder, leafIds);
       skipSaveOnceRef.current = true;
-      table.setColumnOrder(filteredOrder);
+      table.setColumnOrder(mergedOrder);
     }
 
     if (payload.columnVisibility && typeof payload.columnVisibility === 'object') {
@@ -129,9 +132,10 @@ export function useListingColumnPreferences<TData extends object>({
   // Fingerprints must be derived from the current column model values (not state object references),
   // because TanStack can mutate `table.getState()` in-place and React won't reliably detect changes.
   const orderFingerprint = useMemo(() => {
-    const order = Array.isArray(columnOrderState) && columnOrderState.length > 0 ? columnOrderState : table.getAllLeafColumns().map((c) => c.id);
-    const allowed = new Set(table.getAllLeafColumns().map((c) => c.id));
-    return stableStringify(order.filter((id) => allowed.has(id)));
+    const leafIds = table.getAllLeafColumns().map((c) => c.id);
+    const raw =
+      Array.isArray(columnOrderState) && columnOrderState.length > 0 ? columnOrderState : leafIds;
+    return stableStringify(mergeColumnOrderWithLeafColumns(raw, leafIds));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [table, stableStringify(columnOrderState)]);
 
@@ -181,12 +185,12 @@ export function useListingColumnPreferences<TData extends object>({
       return;
     }
 
-    const currentOrder = Array.isArray(columnOrderState) && columnOrderState.length > 0
-      ? columnOrderState
-      : table.getAllLeafColumns().map((c) => c.id);
-
-    const allowed = new Set(table.getAllLeafColumns().map((c) => c.id));
-    const filteredOrder = currentOrder.filter((id) => allowed.has(id));
+    const leafIds = table.getAllLeafColumns().map((c) => c.id);
+    const rawOrder =
+      Array.isArray(columnOrderState) && columnOrderState.length > 0
+        ? columnOrderState
+        : leafIds;
+    const filteredOrder = mergeColumnOrderWithLeafColumns(rawOrder, leafIds);
 
     const canHideCols = table.getAllLeafColumns().filter((c) => c.getCanHide());
     const filteredVisibility: ColumnVisibilityState = {};

@@ -7,6 +7,7 @@ import { useDataGrid } from '@/components/ui/data-grid';
 import { DataGridTableDnd } from '@/components/ui/data-grid-table-dnd';
 import { Cell, Column, flexRender, Header, HeaderGroup, Row } from '@tanstack/react-table';
 import { cva } from 'class-variance-authority';
+import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 import { cn } from '@/lib/utils';
 
 const headerCellSpacingVariants = cva('', {
@@ -439,10 +440,10 @@ function DataGridTable<TData>() {
       if (!over) return;
 
       const columnOrderState = table.getState().columnOrder as string[] | undefined;
-      const effectiveOrder =
-        Array.isArray(columnOrderState) && columnOrderState.length > 0
-          ? columnOrderState
-          : table.getAllLeafColumns().map((c) => c.id);
+      const leafIds = table.getAllLeafColumns().map((c) => c.id);
+      const rawOrder =
+        Array.isArray(columnOrderState) && columnOrderState.length > 0 ? columnOrderState : leafIds;
+      const effectiveOrder = mergeColumnOrderWithLeafColumns(rawOrder, leafIds);
       if (!Array.isArray(effectiveOrder) || effectiveOrder.length === 0) return;
 
       const activeId = String(active.id);

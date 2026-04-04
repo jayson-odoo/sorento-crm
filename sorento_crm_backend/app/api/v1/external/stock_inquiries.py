@@ -5,7 +5,7 @@ Auth: X-API-Key header (get_external_api_user).
 
 import logging
 
-from fastapi import APIRouter, Depends, Body, HTTPException, status
+from fastapi import APIRouter, Depends, Body, HTTPException, status, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -21,6 +21,7 @@ router = APIRouter()
 
 @router.post("/", response_model=StockInquiryResponse, status_code=status.HTTP_201_CREATED)
 async def create_stock_inquiry_external(
+    response: Response,
     inquiry_data: StockInquiryCreate = Body(...),
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
@@ -28,20 +29,34 @@ async def create_stock_inquiry_external(
     """Create stock inquiry via external API and notify Project Sales team (in-app + email to all)."""
     try:
         service = StockInquiryService(db)
-        inquiry = service.create_inquiry(inquiry_data)
+        inquiry, outcome = service.create_inquiry(inquiry_data)
+        if outcome == "resubmitted":
+            response.status_code = status.HTTP_200_OK
         try:
             # Notify project sales team (lead_time_enquiries / project_sales). Email is enqueued so
             # API returns immediately; Notification Delivery Processor sends it in the background.
-            service._notify_team_stock_inquiry(
-                inquiry_id=str(inquiry.id),
-                agent_code="lead_time_enquiries",
-                team_assignment_code="project_sales",
-                title="New Stock Inquiry created",
-                intro_plain="Dear Project Sales Team,\n\nA new stock inquiry has been created via system integration and requires your review.",
-                intro_html="Dear Project Sales Team,<br /><br />A new stock inquiry has been created via system integration and requires your review.",
-                event_type="external_created",
-                sync_email=False,
-            )
+            if outcome == "resubmitted":
+                service._notify_team_stock_inquiry(
+                    inquiry_id=str(inquiry.id),
+                    agent_code="lead_time_enquiries",
+                    team_assignment_code="project_sales",
+                    title="Stock Inquiry updated (integration resubmit)",
+                    intro_plain="Dear Project Sales Team,\n\nA previously rejected stock inquiry has been updated and resubmitted via system integration for your review.",
+                    intro_html="Dear Project Sales Team,<br /><br />A previously rejected stock inquiry has been updated and resubmitted via system integration for your review.",
+                    event_type="external_resubmitted",
+                    sync_email=False,
+                )
+            else:
+                service._notify_team_stock_inquiry(
+                    inquiry_id=str(inquiry.id),
+                    agent_code="lead_time_enquiries",
+                    team_assignment_code="project_sales",
+                    title="New Stock Inquiry created",
+                    intro_plain="Dear Project Sales Team,\n\nA new stock inquiry has been created via system integration and requires your review.",
+                    intro_html="Dear Project Sales Team,<br /><br />A new stock inquiry has been created via system integration and requires your review.",
+                    event_type="external_created",
+                    sync_email=False,
+                )
         except Exception as e:
             # Don't fail the API call if notifications fail; log for debugging (e.g. team resolution, SMTP enqueue).
             logger.warning(
