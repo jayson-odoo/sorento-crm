@@ -13,6 +13,14 @@ import { Input } from '@/components/ui/input';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LoaderCircleIcon } from 'lucide-react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 interface ApprovalLineSummary {
   item_code?: string | null;
@@ -219,8 +227,13 @@ function ApprovalContent() {
         : `/procurement-management/purchase-requests/${summary.entity_id}`
       : null;
 
+  const isPr = summary?.request_type === 'purchase_request';
+  const isSf = summary?.request_type === 'sponsorship_form';
+
   return (
-    <div className="min-h-screen max-w-lg mx-auto px-4 py-6 sm:py-8 space-y-6">
+    <div
+      className={`min-h-screen mx-auto px-4 py-6 sm:py-8 space-y-6 ${isPr || isSf ? 'max-w-3xl' : 'max-w-lg'}`}
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl sm:text-2xl font-semibold leading-tight">{typeLabel} – Approval</h1>
         {viewInSystemPath && (
@@ -240,93 +253,173 @@ function ApprovalContent() {
           <AlertTitle>{error}</AlertTitle>
         </Alert>
       )}
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base sm:text-lg">
-            {summary?.request_number ? `Form #${summary.request_number}` : 'Details'}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 sm:px-6 -mt-2 space-y-0">
-          <DetailRow label="Type" value={typeLabel} />
-          <DetailRow label="Form number" value={summary?.request_number ?? undefined} />
-          <DetailRow label="Status" value={approvalStatusLabel(summary?.approval_status)} />
-          <DetailRow label="Customer" value={summary?.customer_name ?? undefined} />
-          <DetailRow label="Project" value={summary?.project_title ?? undefined} />
-          {summary?.request_type === 'purchase_request' && (
-            <DetailRow label="Purpose" value={summary?.purpose ?? undefined} />
-          )}
-          {summary?.request_type === 'sponsorship_form' && (
-            <>
-              <DetailRow label="Delivery address" value={summary?.delivery_address ?? undefined} />
-              <DetailRow
-                label="Total project value"
-                value={
-                  summary?.total_project_value_text?.trim()
+      <Card className={`overflow-hidden ${isPr || isSf ? 'border-2 shadow-sm' : ''}`}>
+        {isSf ? (
+          <CardContent className="px-5 sm:px-8 py-6 space-y-0">
+            <div className="flex flex-wrap gap-2 mb-4">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                {typeLabel}
+              </span>
+              <span className="text-xs text-muted-foreground">·</span>
+              <span className="text-xs font-medium">{approvalStatusLabel(summary?.approval_status)}</span>
+            </div>
+            <h2 className="text-center text-lg sm:text-xl font-semibold border-b border-border pb-4 mb-6">
+              Project Sales Sponsorship Form
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+              <div className="py-2 border-b border-border/60">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sales Order no.</p>
+                <p className="text-sm font-medium">{summary?.request_number ?? '—'}</p>
+              </div>
+              <div className="py-2 border-b border-border/60">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Date</p>
+                <p className="text-sm font-medium">
+                  {summary?.request_date ? formatDateStr(summary.request_date) : '—'}
+                </p>
+              </div>
+              <div className="sm:col-span-2 py-2 border-b border-border/60">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Customer Name</p>
+                <p className="text-sm font-medium break-words">{summary?.customer_name ?? '—'}</p>
+              </div>
+              <div className="sm:col-span-2 py-2 border-b border-border/60">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Delivery Address</p>
+                <p className="text-sm font-medium whitespace-pre-wrap break-words">
+                  {summary?.delivery_address ?? '—'}
+                </p>
+              </div>
+              <div className="sm:col-span-2 py-2 border-b border-border/60">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Project Title</p>
+                <p className="text-sm font-medium break-words">{summary?.project_title ?? '—'}</p>
+              </div>
+              <div className="sm:col-span-2 py-2 border-b border-border/60">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Total Project Value</p>
+                <p className="text-sm font-medium">
+                  {summary?.total_project_value_text?.trim()
                     ? summary.total_project_value_text
                     : summary?.total_project_value != null
                       ? String(summary.total_project_value)
-                      : undefined
-                }
+                      : '—'}
+                </p>
+              </div>
+              <div className="sm:col-span-2 py-2 border-b border-border/60">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sponsor Subject</p>
+                <p className="text-sm font-medium break-words">{summary?.sponsor_subject ?? '—'}</p>
+              </div>
+              <div className="sm:col-span-2 py-2 border-b border-border/60">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Date of Delivery</p>
+                <p className="text-sm font-medium">
+                  {summary?.expected_delivery_date
+                    ? formatDateStr(summary.expected_delivery_date)
+                    : '—'}
+                </p>
+              </div>
+            </div>
+            <DetailRow label="Requested by" value={summary?.requested_by ?? undefined} />
+            <DetailRow label="Created at" value={summary?.created_at ? formatDateTimeInMalaysia(summary.created_at) : undefined} />
+            <div className="py-2.5 border-b border-border/60">
+              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Link expires</p>
+              <p className="text-sm font-medium">
+                {summary?.expires_at ? new Date(summary.expires_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+              </p>
+            </div>
+            {summary?.lines && summary.lines.length > 0 && (
+              <div className="pt-6 mt-2 border-t border-border">
+                <p className="text-sm font-medium mb-3">Line items</p>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-10">NO.</TableHead>
+                      <TableHead>Item Code</TableHead>
+                      <TableHead className="w-20">Qty</TableHead>
+                      <TableHead className="w-24">U/P</TableHead>
+                      <TableHead className="w-24">Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {summary.lines.map((line, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell>{idx + 1}</TableCell>
+                        <TableCell className="font-medium">{line.item_code ?? '—'}</TableCell>
+                        <TableCell>{line.quantity != null ? String(line.quantity) : '—'}</TableCell>
+                        <TableCell>{line.unit_price != null ? String(line.unit_price) : '—'}</TableCell>
+                        <TableCell>{line.total != null ? String(line.total) : '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {summary.grand_total != null && (
+                  <div className="mt-4 flex justify-end">
+                    <p className="text-sm font-semibold">Grand Total: {String(summary.grand_total)}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        ) : (
+          <>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base sm:text-lg">
+                {isPr && summary?.request_number
+                  ? `Sales order no. ${summary.request_number}`
+                  : summary?.request_number
+                    ? `Form #${summary.request_number}`
+                    : 'Details'}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 sm:px-6 -mt-2 space-y-0">
+              <DetailRow label="Type" value={typeLabel} />
+              <DetailRow
+                label={isPr ? 'Sales order no.' : 'Form number'}
+                value={summary?.request_number ?? undefined}
               />
-              <DetailRow label="Sponsor subject" value={summary?.sponsor_subject ?? undefined} />
-            </>
-          )}
-          <DetailRow label="Requested by" value={summary?.requested_by ?? undefined} />
-          <DetailRow label="Request date" value={summary?.request_date ? formatDateStr(summary.request_date) : undefined} />
-          <DetailRow label="Created at" value={summary?.created_at ? formatDateTimeInMalaysia(summary.created_at) : undefined} />
-          <DetailRow label="Expected delivery" value={summary?.expected_delivery_date ? formatDateStr(summary.expected_delivery_date) : undefined} />
-          {summary?.request_type === 'purchase_request' && (
-            <DetailRow label="Expected PO date" value={poDisplay ?? undefined} />
-          )}
-          <div className="py-2.5 border-b border-border/60 last:border-0">
-            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Link expires</p>
-            <p className="text-sm font-medium">
-              {summary?.expires_at ? new Date(summary.expires_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
-            </p>
-          </div>
-          {summary?.lines && summary.lines.length > 0 && (
-            <div className="pt-4 mt-2 border-t border-border">
-              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Line items</p>
-              <div className="space-y-3">
-                {summary.lines.map((line, idx) => (
-                  <div
-                    key={idx}
-                    className="rounded-md border border-border/60 bg-muted/30 p-3 space-y-1.5"
-                  >
-                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Product</p>
-                    <p className="text-sm font-medium break-words">{line.item_code ?? '—'}</p>
-                    <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Quantity</p>
-                    <p className="text-sm font-medium">{line.quantity != null ? String(line.quantity) : '—'}</p>
-                    {summary?.request_type === 'sponsorship_form' && (
-                      <>
-                        {(line.unit_price != null || line.total != null) && (
+              <DetailRow label="Status" value={approvalStatusLabel(summary?.approval_status)} />
+              <DetailRow label="Customer" value={summary?.customer_name ?? undefined} />
+              <DetailRow label="Project" value={summary?.project_title ?? undefined} />
+              {isPr && <DetailRow label="Purpose" value={summary?.purpose ?? undefined} />}
+              <DetailRow label="Requested by" value={summary?.requested_by ?? undefined} />
+              <DetailRow
+                label={isPr ? 'Date' : 'Request date'}
+                value={summary?.request_date ? formatDateStr(summary.request_date) : undefined}
+              />
+              <DetailRow label="Created at" value={summary?.created_at ? formatDateTimeInMalaysia(summary.created_at) : undefined} />
+              <DetailRow
+                label={isPr ? 'Expected date of delivery' : 'Expected delivery'}
+                value={summary?.expected_delivery_date ? formatDateStr(summary.expected_delivery_date) : undefined}
+              />
+              {isPr && <DetailRow label="Expected date to receive PO" value={poDisplay ?? undefined} />}
+              <div className="py-2.5 border-b border-border/60 last:border-0">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Link expires</p>
+                <p className="text-sm font-medium">
+                  {summary?.expires_at ? new Date(summary.expires_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                </p>
+              </div>
+              {summary?.lines && summary.lines.length > 0 && (
+                <div className="pt-4 mt-2 border-t border-border">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Line items</p>
+                  <div className="space-y-3">
+                    {summary.lines.map((line, idx) => (
+                      <div
+                        key={idx}
+                        className="rounded-md border border-border/60 bg-muted/30 p-3 space-y-1.5"
+                      >
+                        <p className="text-xs text-muted-foreground uppercase tracking-wide">Product</p>
+                        <p className="text-sm font-medium break-words">{line.item_code ?? '—'}</p>
+                        <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Quantity</p>
+                        <p className="text-sm font-medium">{line.quantity != null ? String(line.quantity) : '—'}</p>
+                        {isPr && (line.remark != null && String(line.remark).trim() !== '') && (
                           <>
-                            <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Unit price</p>
-                            <p className="text-sm font-medium">{line.unit_price != null ? String(line.unit_price) : '—'}</p>
-                            <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Total</p>
-                            <p className="text-sm font-medium">{line.total != null ? String(line.total) : '—'}</p>
+                            <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Remarks</p>
+                            <p className="text-sm font-medium break-words">{line.remark}</p>
                           </>
                         )}
-                      </>
-                    )}
-                    {summary?.request_type === 'purchase_request' && (line.remark != null && String(line.remark).trim() !== '') && (
-                      <>
-                        <p className="text-xs text-muted-foreground uppercase tracking-wide mt-1.5">Remarks</p>
-                        <p className="text-sm font-medium break-words">{line.remark}</p>
-                      </>
-                    )}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              {summary?.request_type === 'sponsorship_form' && summary?.grand_total != null && (
-                <div className="mt-3 pt-3 border-t border-border">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Grand total</p>
-                  <p className="text-sm font-semibold">{String(summary.grand_total)}</p>
                 </div>
               )}
-            </div>
-          )}
-        </CardContent>
+            </CardContent>
+          </>
+        )}
       </Card>
 
       <Card className="overflow-hidden">

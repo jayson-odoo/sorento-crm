@@ -118,6 +118,7 @@ function toRequestBody(data: PurchaseRequestFormData) {
     purpose: data.purpose ?? null,
     delivery_address: data.delivery_address ?? null,
     total_project_value: data.total_project_value ?? null,
+    total_project_value_text: data.total_project_value_text ?? null,
     sponsor_subject: data.sponsor_subject ?? null,
     expected_delivery_date: data.expected_delivery_date || null,
     expected_po_date: data.expected_po_date ?? data.expected_po_date_text ?? null,

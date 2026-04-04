@@ -195,7 +195,7 @@ export default function PurchaseRequestsList({
       {
         accessorKey: 'request_number',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Form number" column={column} />
+          <DataGridColumnHeader title="Sales order no." column={column} />
         ),
         cell: ({ row }) => (
           <span className="font-medium tabular-nums">
@@ -208,7 +208,7 @@ export default function PurchaseRequestsList({
       {
         accessorKey: 'request_date',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Request Date" column={column} />
+          <DataGridColumnHeader title="Date" column={column} />
         ),
         cell: ({ row }) =>
           row.original.request_date

@@ -22,6 +22,13 @@ interface PurchaseRequestConversationPanelProps {
   canReply?: boolean;
   respondInboxUrl?: string | null;
   showAsPopup?: boolean;
+  /** Sent with update-and-reply when set (keeps form number in sync on Respond message). */
+  requestNumber?: string | null;
+  /**
+   * When `key` changes, replaces the compose field with `text` (e.g. after "Update & Reply" opens chat).
+   * Parent should clear when the sheet closes so "Chat records" alone does not reuse stale drafts.
+   */
+  replyComposePrefill?: { key: number; text: string } | null;
 }
 
 function parseCursorFromNext(nextUrl: string | undefined): string | undefined {
@@ -39,9 +46,13 @@ export default function PurchaseRequestConversationPanel({
   canReply = true,
   respondInboxUrl,
   showAsPopup = false,
+  requestNumber,
+  replyComposePrefill,
 }: PurchaseRequestConversationPanelProps) {
   const [replyText, setReplyText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const appliedPrefillKeyRef = useRef(0);
   const { data, isLoading, refetch, isRefetching } = usePurchaseRequestConversation(requestId, { limit: 50 });
   const updateAndReplyMutation = useUpdatePurchaseRequestAndReply();
 
@@ -61,13 +72,25 @@ export default function PurchaseRequestConversationPanel({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sortedItems.length]);
 
+  useEffect(() => {
+    if (!replyComposePrefill) return;
+    if (replyComposePrefill.key === appliedPrefillKeyRef.current) return;
+    appliedPrefillKeyRef.current = replyComposePrefill.key;
+    setReplyText(replyComposePrefill.text);
+    queueMicrotask(() => replyTextareaRef.current?.focus());
+  }, [replyComposePrefill]);
+
   const handleSend = async () => {
     const text = replyText.trim();
     if (!text || updateAndReplyMutation.isPending) return;
     try {
+      const rn = requestNumber != null && String(requestNumber).trim() !== '' ? requestNumber : undefined;
       await updateAndReplyMutation.mutateAsync({
         id: requestId,
-        data: { reply_message: text },
+        data: {
+          reply_message: text,
+          ...(rn !== undefined ? { request_number: rn } : {}),
+        },
       });
       setReplyText('');
       refetch();
@@ -174,6 +197,7 @@ export default function PurchaseRequestConversationPanel({
         {canReply && (
           <div className="flex gap-2">
             <Textarea
+              ref={replyTextareaRef}
               placeholder="Type your response..."
               value={replyText}
               onChange={(e) => setReplyText(e.target.value)}
@@ -183,8 +207,8 @@ export default function PurchaseRequestConversationPanel({
                   handleSend();
                 }
               }}
-              rows={2}
-              className="resize-none"
+              rows={3}
+              className="resize-none flex-1 min-w-0"
             />
             <Button
               size="icon"

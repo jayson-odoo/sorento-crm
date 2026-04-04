@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -24,7 +24,6 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Command,
   CommandCheck,
@@ -41,7 +40,7 @@ import {
 } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { usePurchaseRequest, usePurchaseRequestNeighbours, useUpdatePurchaseRequestAndReply } from '../hooks/usePurchaseRequests';
+import { usePurchaseRequest, usePurchaseRequestNeighbours } from '../hooks/usePurchaseRequests';
 import { formatDate } from '@/lib/helpers';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -101,13 +100,40 @@ export default function PurchaseRequestDetail({
   const [copied, setCopied] = useState(false);
   const [approverComboboxOpen, setApproverComboboxOpen] = useState(false);
   const [settingPending, setSettingPending] = useState(false);
-  const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
-  const [replyMessage, setReplyMessage] = useState('');
   const [exportingExcel, setExportingExcel] = useState(false);
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
-  const updateAndReplyMutation = useUpdatePurchaseRequestAndReply();
+  const [replyComposePrefill, setReplyComposePrefill] = useState<{
+    key: number;
+    text: string;
+  } | null>(null);
+  const [openingReplySheet, setOpeningReplySheet] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
+
+  const openUpdateAndReplyInChat = useCallback(async () => {
+    if (!request || !requestId || !isValidId) return;
+    let viewUrl = '';
+    if (publicViewLinksEnabled) {
+      try {
+        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+        const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
+        viewUrl = view_url ?? '';
+      } catch {
+        toast.error('Could not generate view link. You can still edit the message in chat.');
+      }
+    }
+    const typeLabelVal = REQUEST_TYPE_LABELS[request.request_type] ?? request.request_type;
+    const idPhrase = `sales order no. ${request.request_number ?? ''}`;
+    let fullMessage = `This is the ${idPhrase} for ${typeLabelVal} for project title ${request.project_title ?? ''}.`;
+    if (viewUrl) {
+      fullMessage += `\n\nView full details: ${viewUrl}`;
+    }
+    setReplyComposePrefill((p) => ({
+      key: (p?.key ?? 0) + 1,
+      text: fullMessage,
+    }));
+    setConversationSheetOpen(true);
+  }, [request, requestId, isValidId, publicViewLinksEnabled, request?.request_type]);
 
   const { data: usersForApprover = [] } = useQuery({
     queryKey: ['users-for-approver'],
@@ -170,6 +196,17 @@ export default function PurchaseRequestDetail({
 
   const typeLabel =
     REQUEST_TYPE_LABELS[request.request_type] ?? request.request_type;
+  const isPurchaseRequest = request.request_type === 'purchase_request';
+  const expectedPoDisplay =
+    request.expected_po_date_text?.trim() ||
+    (request.expected_po_date
+      ? formatDate(new Date(request.expected_po_date))
+      : null);
+  const sponsorshipTotalDisplay =
+    request.total_project_value_text?.trim() ||
+    (request.total_project_value != null
+      ? Number(request.total_project_value).toLocaleString()
+      : null);
 
   return (
     <div className="space-y-6">
@@ -279,29 +316,19 @@ export default function PurchaseRequestDetail({
                   Chat records
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  disabled={updateAndReplyMutation.isPending}
-                  onClick={async () => {
-                    const typeLabelVal =
-                      REQUEST_TYPE_LABELS[request.request_type] ?? request.request_type;
-                    let defaultReply =
-                      `This is the form number ${request.request_number ?? ''} for ${typeLabelVal} for project title ${request.project_title ?? ''}.`;
+                  disabled={openingReplySheet}
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    setOpeningReplySheet(true);
                     try {
-                      if (requestId && publicViewLinksEnabled) {
-                        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                        const { view_url } = await getOrCreateViewLink(requestId, baseUrl);
-                        if (view_url) {
-                          defaultReply += `\n\nView full details: ${view_url}`;
-                        }
-                      }
-                    } catch {
-                      toast.error('Could not generate view link. You can still send the message.');
+                      await openUpdateAndReplyInChat();
+                    } finally {
+                      setOpeningReplySheet(false);
                     }
-                    setReplyMessage(defaultReply);
-                    setUpdateAndReplyDialogOpen(true);
                   }}
                 >
-                  <MessageSquare className="size-4" />
-                  {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
+                  <Send className="size-4" />
+                  {openingReplySheet ? 'Opening…' : 'Update & Reply'}
                 </DropdownMenuItem>
               </>
             )}
@@ -523,60 +550,6 @@ export default function PurchaseRequestDetail({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Update & Reply</DialogTitle>
-            <DialogDescription>
-              This message will be sent to the conversation in Respond. It is pre-filled for this {request.request_type === 'sponsorship_form' ? 'Sponsorship Form' : 'Purchase Request'}. You can edit it below before sending.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="reply_message">Message to send</Label>
-              <Textarea
-                id="reply_message"
-                value={replyMessage}
-                onChange={(e) => setReplyMessage(e.target.value)}
-                placeholder="This is the form number ... for ... for project title ..."
-                rows={4}
-                className="resize-none"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setUpdateAndReplyDialogOpen(false)}
-              disabled={updateAndReplyMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              disabled={updateAndReplyMutation.isPending || !replyMessage.trim()}
-              onClick={async () => {
-                if (!requestId) return;
-                try {
-                  await updateAndReplyMutation.mutateAsync({
-                    id: requestId,
-                    data: {
-                      request_number: request.request_number ?? undefined,
-                      reply_message: replyMessage.trim(),
-                    },
-                  });
-                  setUpdateAndReplyDialogOpen(false);
-                  setReplyMessage('');
-                } catch {
-                  // toast handled by mutation
-                }
-              }}
-            >
-              {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <PurchaseRequestDeleteDialog
         open={deleteDialogOpen}
         closeDialog={() => setDeleteDialogOpen(false)}
@@ -586,212 +559,342 @@ export default function PurchaseRequestDetail({
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Header</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <p className="text-sm text-muted-foreground">Type</p>
-                <Badge variant="secondary">{typeLabel}</Badge>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Status</p>
-                <Badge
-                  variant={
-                    request.approval_status === 'approved'
-                      ? 'primary'
-                      : request.approval_status === 'rejected'
-                        ? 'destructive'
-                        : 'secondary'
-                  }
-                >
-                  {!request.approval_status || request.approval_status === ''
-                    ? 'Draft'
-                    : request.approval_status === 'pending'
-                      ? 'Pending approval'
-                      : request.approval_status === 'approved'
-                        ? 'Approved'
-                        : request.approval_status === 'rejected'
-                          ? 'Rejected'
-                          : request.approval_status}
-                </Badge>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Form number</p>
-                <p className="font-medium">{request.request_number || '—'}</p>
-              </div>
-              {request.approved_at && (
-                <div>
-                  <p className="text-sm text-muted-foreground">Approved at</p>
-                  <p className="font-medium">{formatDate(new Date(request.approved_at))}</p>
+        {isPurchaseRequest ? (
+          <div className="lg:col-span-2 max-w-5xl mx-auto w-full">
+            <Card className="border-2 shadow-sm">
+              <CardContent className="pt-6 pb-8 px-5 sm:px-10">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="secondary">{typeLabel}</Badge>
+                    <Badge
+                      variant={
+                        request.approval_status === 'approved'
+                          ? 'primary'
+                          : request.approval_status === 'rejected'
+                            ? 'destructive'
+                            : 'secondary'
+                      }
+                    >
+                      {!request.approval_status || request.approval_status === ''
+                        ? 'Draft'
+                        : request.approval_status === 'pending'
+                          ? 'Pending approval'
+                          : request.approval_status === 'approved'
+                            ? 'Approved'
+                            : request.approval_status === 'rejected'
+                              ? 'Rejected'
+                              : request.approval_status}
+                    </Badge>
+                  </div>
                 </div>
-              )}
-              {request.approved_by && (
-                <div>
-                  <p className="text-sm text-muted-foreground">Approved by</p>
-                  <p className="font-medium">{request.approved_by}</p>
-                </div>
-              )}
-              {(request.approver_email || request.approver_user_id) && !request.approved_at && (
-                <div>
-                  <p className="text-sm text-muted-foreground">Approver</p>
-                  <p className="font-medium">
-                    {request.approver_display_name
-                      ? `${request.approver_display_name} (${request.approver_email})`
-                      : request.approver_email}
-                  </p>
-                </div>
-              )}
-              <div>
-                <p className="text-sm text-muted-foreground">Request Date</p>
-                <p className="font-medium">
-                  {request.request_date
-                    ? formatDate(new Date(request.request_date))
-                    : '-'}
-                </p>
-              </div>
-              <div className="md:col-span-2">
-                <p className="text-sm text-muted-foreground">Customer</p>
-                <p className="font-medium">{request.customer_name || '-'}</p>
-              </div>
-              <div className="md:col-span-2">
-                <p className="text-sm text-muted-foreground">Project Title</p>
-                <p className="font-medium">{request.project_title || '-'}</p>
-              </div>
-              {request.request_type !== 'sponsorship_form' && (
-                <div>
-                  <p className="text-sm text-muted-foreground">Purpose</p>
-                  <p className="font-medium">{request.purpose || '-'}</p>
-                </div>
-              )}
-              {request.request_type === 'sponsorship_form' && (
-                <>
-                  <div className="md:col-span-2">
-                    <p className="text-sm text-muted-foreground">Delivery Address</p>
-                    <p className="font-medium">{request.delivery_address || '-'}</p>
+                <h2 className="text-center text-xl font-semibold tracking-tight border-b border-border pb-4 mb-6">
+                  Purchase Request
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Sales Order no.</p>
+                    <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Total Project Value</p>
+                    <p className="text-sm text-muted-foreground">Date</p>
                     <p className="font-medium">
-                      {request.total_project_value != null ? Number(request.total_project_value).toLocaleString() : '-'}
+                      {request.request_date
+                        ? formatDate(new Date(request.request_date))
+                        : '—'}
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Customer Name</p>
+                    <p className="font-medium">{request.customer_name || '—'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Project Title</p>
+                    <p className="font-medium">{request.project_title || '—'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Purpose</p>
+                    <p className="font-medium">{request.purpose || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Expected date of delivery</p>
+                    <p className="font-medium">
+                      {request.expected_delivery_date
+                        ? formatDate(new Date(request.expected_delivery_date))
+                        : '—'}
                     </p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Sponsor Subject</p>
-                    <p className="font-medium">{request.sponsor_subject || '-'}</p>
+                    <p className="text-sm text-muted-foreground">Expected date to receive PO</p>
+                    <p className="font-medium">{expectedPoDisplay || '—'}</p>
                   </div>
-                </>
-              )}
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  {request.request_type === 'sponsorship_form' ? 'Date of Delivery' : 'Expected Delivery'}
-                </p>
-                <p className="font-medium">
-                  {request.expected_delivery_date
-                    ? formatDate(new Date(request.expected_delivery_date))
-                    : '-'}
-                </p>
-              </div>
-              {request.request_type !== 'sponsorship_form' && (
-                <div>
-                  <p className="text-sm text-muted-foreground">Expected PO Date</p>
-                  <p className="font-medium">
-                    {request.expected_po_date_text ??
-                      (request.expected_po_date
-                        ? formatDate(new Date(request.expected_po_date))
-                        : '-')}
-                  </p>
+                  {(request.approver_email || request.approver_user_id) && !request.approved_at && (
+                    <div className="sm:col-span-2">
+                      <p className="text-sm text-muted-foreground">Approver</p>
+                      <p className="font-medium">
+                        {request.approver_display_name
+                          ? `${request.approver_display_name} (${request.approver_email})`
+                          : request.approver_email}
+                      </p>
+                    </div>
+                  )}
+                  {request.respond_inbox_url && (
+                    <div className="sm:col-span-2">
+                      <p className="text-sm text-muted-foreground">Respond conversation</p>
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-0.5">
+                        <a
+                          href={request.respond_inbox_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline text-sm break-all font-medium"
+                        >
+                          {request.respond_inbox_url}
+                        </a>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0 w-fit"
+                          onClick={() => setConversationSheetOpen(true)}
+                          aria-label="Open chat records"
+                        >
+                          <MessageSquare className="size-4 mr-1" />
+                          Chat
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
-              <div>
-                <p className="text-sm text-muted-foreground">Requested By</p>
-                <p className="font-medium">{request.requested_by || '-'}</p>
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Requested At</p>
-                <p className="font-medium">
-                  {request.requested_at
-                    ? formatDate(new Date(request.requested_at))
-                    : '-'}
-                </p>
-              </div>
-              {request.respond_inbox_url && (
-                <div className="md:col-span-2">
-                  <p className="text-sm text-muted-foreground">Respond conversation</p>
-                  <a
-                    href={request.respond_inbox_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline text-sm break-all font-medium"
-                  >
-                    {request.respond_inbox_url}
-                  </a>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Line Items</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {request.lines && request.lines.length > 0 ? (
-              <>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>#</TableHead>
-                      <TableHead>Item Code</TableHead>
-                      <TableHead>Quantity</TableHead>
-                      {request.request_type === 'sponsorship_form' && (
-                        <>
-                          <TableHead>Unit Price</TableHead>
-                          <TableHead>Total</TableHead>
-                        </>
-                      )}
-                      {request.request_type !== 'sponsorship_form' && <TableHead>Remark</TableHead>}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {request.lines.map((line, idx) => (
-                      <TableRow key={line.id}>
-                        <TableCell>{idx + 1}</TableCell>
-                        <TableCell>{line.item_code ?? '-'}</TableCell>
-                        <TableCell>{line.quantity ?? '-'}</TableCell>
-                        {request.request_type === 'sponsorship_form' && (
-                          <>
-                            <TableCell>
-                              {line.unit_price != null ? Number(line.unit_price).toLocaleString() : '-'}
-                            </TableCell>
-                            <TableCell>
-                              {line.total != null ? Number(line.total).toLocaleString() : '-'}
-                            </TableCell>
-                          </>
-                        )}
-                        {request.request_type !== 'sponsorship_form' && (
-                          <TableCell>{line.remark ?? '-'}</TableCell>
-                        )}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {request.request_type === 'sponsorship_form' && request.grand_total != null && (
-                  <div className="mt-4 flex justify-end">
-                    <p className="text-sm font-semibold">
-                      Grand Total: {Number(request.grand_total).toLocaleString()}
+                <div className="mt-8">
+                  <p className="text-sm font-medium mb-3">Line items</p>
+                  {request.lines && request.lines.length > 0 ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-12">#</TableHead>
+                          <TableHead>Item Code</TableHead>
+                          <TableHead className="w-28">Qty</TableHead>
+                          <TableHead>Remark</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {request.lines.map((line, idx) => (
+                          <TableRow key={line.id}>
+                            <TableCell>{idx + 1}</TableCell>
+                            <TableCell>{line.item_code ?? '—'}</TableCell>
+                            <TableCell>{line.quantity ?? '—'}</TableCell>
+                            <TableCell>{line.remark ?? '—'}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No line items.</p>
+                  )}
+                </div>
+
+                <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-8 pt-6 border-t border-border">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Requested by</p>
+                    <p className="font-medium">{request.requested_by || '—'}</p>
+                    <p className="text-sm text-muted-foreground mt-3">Date</p>
+                    <p className="font-medium">
+                      {request.requested_at
+                        ? formatDate(new Date(request.requested_at))
+                        : '—'}
                     </p>
                   </div>
-                )}
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">No line items.</p>
-            )}
-          </CardContent>
-        </Card>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Approved by</p>
+                    <p className="font-medium">{request.approved_by || '—'}</p>
+                    <p className="text-sm text-muted-foreground mt-3">Date</p>
+                    <p className="font-medium">
+                      {request.approved_at
+                        ? formatDate(new Date(request.approved_at))
+                        : '—'}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        ) : (
+          <div className="lg:col-span-2 max-w-5xl mx-auto w-full">
+            <Card className="border-2 shadow-sm">
+              <CardContent className="pt-6 pb-8 px-5 sm:px-10">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="secondary">{typeLabel}</Badge>
+                    <Badge
+                      variant={
+                        request.approval_status === 'approved'
+                          ? 'primary'
+                          : request.approval_status === 'rejected'
+                            ? 'destructive'
+                            : 'secondary'
+                      }
+                    >
+                      {!request.approval_status || request.approval_status === ''
+                        ? 'Draft'
+                        : request.approval_status === 'pending'
+                          ? 'Pending approval'
+                          : request.approval_status === 'approved'
+                            ? 'Approved'
+                            : request.approval_status === 'rejected'
+                              ? 'Rejected'
+                              : request.approval_status}
+                    </Badge>
+                  </div>
+                </div>
+                <h2 className="text-center text-xl font-semibold tracking-tight border-b border-border pb-4 mb-6">
+                  Project Sales Sponsorship Form
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Sales Order no.</p>
+                    <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Date</p>
+                    <p className="font-medium">
+                      {request.request_date
+                        ? formatDate(new Date(request.request_date))
+                        : '—'}
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Customer Name</p>
+                    <p className="font-medium">{request.customer_name || '—'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Delivery Address</p>
+                    <p className="font-medium whitespace-pre-wrap">{request.delivery_address || '—'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Project Title</p>
+                    <p className="font-medium">{request.project_title || '—'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Total Project Value</p>
+                    <p className="font-medium">{sponsorshipTotalDisplay || '—'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Sponsor Subject</p>
+                    <p className="font-medium">{request.sponsor_subject || '—'}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Date of Delivery</p>
+                    <p className="font-medium">
+                      {request.expected_delivery_date
+                        ? formatDate(new Date(request.expected_delivery_date))
+                        : '—'}
+                    </p>
+                  </div>
+                  {(request.approver_email || request.approver_user_id) && !request.approved_at && (
+                    <div className="sm:col-span-2">
+                      <p className="text-sm text-muted-foreground">Approver</p>
+                      <p className="font-medium">
+                        {request.approver_display_name
+                          ? `${request.approver_display_name} (${request.approver_email})`
+                          : request.approver_email}
+                      </p>
+                    </div>
+                  )}
+                  {request.respond_inbox_url && (
+                    <div className="sm:col-span-2">
+                      <p className="text-sm text-muted-foreground">Respond conversation</p>
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-0.5">
+                        <a
+                          href={request.respond_inbox_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary hover:underline text-sm break-all font-medium"
+                        >
+                          {request.respond_inbox_url}
+                        </a>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0 w-fit"
+                          onClick={() => setConversationSheetOpen(true)}
+                          aria-label="Open chat records"
+                        >
+                          <MessageSquare className="size-4 mr-1" />
+                          Chat
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-8">
+                  <p className="text-sm font-medium mb-3">Line items</p>
+                  {request.lines && request.lines.length > 0 ? (
+                    <>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-12">NO.</TableHead>
+                            <TableHead>Item Code</TableHead>
+                            <TableHead className="w-24">Qty</TableHead>
+                            <TableHead className="w-28">U/P</TableHead>
+                            <TableHead className="w-28">Total</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {request.lines.map((line, idx) => (
+                            <TableRow key={line.id}>
+                              <TableCell>{idx + 1}</TableCell>
+                              <TableCell>{line.item_code ?? '—'}</TableCell>
+                              <TableCell>{line.quantity ?? '—'}</TableCell>
+                              <TableCell>
+                                {line.unit_price != null ? Number(line.unit_price).toLocaleString() : '—'}
+                              </TableCell>
+                              <TableCell>
+                                {line.total != null ? Number(line.total).toLocaleString() : '—'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                      {request.grand_total != null && (
+                        <div className="mt-4 flex justify-end">
+                          <p className="text-sm font-semibold">
+                            Grand Total: {Number(request.grand_total).toLocaleString()}
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No line items.</p>
+                  )}
+                </div>
+
+                <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-8 pt-6 border-t border-border">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Requested by</p>
+                    <p className="font-medium">{request.requested_by || '—'}</p>
+                    <p className="text-sm text-muted-foreground mt-3">Date</p>
+                    <p className="font-medium">
+                      {request.requested_at
+                        ? formatDate(new Date(request.requested_at))
+                        : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Approved by</p>
+                    <p className="font-medium">{request.approved_by || '—'}</p>
+                    <p className="text-sm text-muted-foreground mt-3">Date</p>
+                    <p className="font-medium">
+                      {request.approved_at
+                        ? formatDate(new Date(request.approved_at))
+                        : '—'}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         <div className="lg:col-span-2">
           <PurchaseRequestAttachmentsSection
@@ -801,7 +904,15 @@ export default function PurchaseRequestDetail({
         </div>
 
         {request?.respond_inbox_url && (
-          <Sheet open={conversationSheetOpen} onOpenChange={setConversationSheetOpen}>
+          <Sheet
+            open={conversationSheetOpen}
+            onOpenChange={(open) => {
+              setConversationSheetOpen(open);
+              if (!open) {
+                setReplyComposePrefill(null);
+              }
+            }}
+          >
             <SheetContent side="right" className="flex flex-col w-full sm:max-w-lg overflow-y-auto">
               <SheetHeader className="sr-only">
                 <SheetTitle>Chat Records</SheetTitle>
@@ -809,9 +920,11 @@ export default function PurchaseRequestDetail({
               <div className="flex-1 min-h-0 pt-2">
                 <PurchaseRequestConversationPanel
                   requestId={requestId}
+                  requestNumber={request.request_number ?? undefined}
                   canReply
                   respondInboxUrl={request.respond_inbox_url}
                   showAsPopup
+                  replyComposePrefill={replyComposePrefill}
                 />
               </div>
             </SheetContent>

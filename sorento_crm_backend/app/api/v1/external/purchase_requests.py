@@ -1,5 +1,8 @@
 """External API for purchase requests / sponsorship forms.
 
+Pass ``request_number`` to update an existing form; leave it empty to create with an auto-assigned number.
+If ``request_number`` is set but not found, a new record is created with that number.
+
 Agent prompt: Ask the user for request_type first (purchase_request or sponsorship_form).
 Then ask for the relevant fields:
 - Purchase request: date, customer_name, project_title, purpose (showroom/mock up/others:__),
@@ -8,10 +11,12 @@ Then ask for the relevant fields:
 - Sponsorship form: date, customer_name, delivery_address, project_title, total_project_value,
   sponsor_subject (showroom/mockup/others:__), expected_delivery_date (date of delivery),
   line items (item_code, quantity, unit_price, total), requested_by, requested_at.
+- Optional ``approval_status``: pending, approved, rejected, or draft (draft clears approval status).
+  On update, include this key only when you want to change it.
 """
 from decimal import Decimal
 from typing import List, Optional, Union
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -49,11 +54,13 @@ def _grand_total(header) -> Optional[Decimal]:
 
 @router.post("/", response_model=PurchaseRequestExternalResponse)
 def create_purchase_request(
+    response: Response,
     payload: Union[PurchaseRequestExternalCreate, List[PurchaseRequestExternalCreate]] = Body(...),
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
-    """Create a purchase request or sponsorship form from external payload.
+    """Create or update a purchase request / sponsorship form from external payload (see ``request_number``).
+
     Get request_type from the user first, then the fields relevant to that type.
     Accepts either a single object or an array (e.g. from Respond/webhook); the first item is processed.
     """
@@ -65,12 +72,17 @@ def create_purchase_request(
         else:
             first = payload
         service = PurchaseRequestService(db)
-        header = service.create_external_request(first)
+        header, outcome = service.upsert_external_request(first)
+        response.status_code = (
+            status.HTTP_200_OK if outcome == "updated" else status.HTTP_201_CREATED
+        )
         expected_po_value = header.expected_po_date_text or header.expected_po_date
         products = [_line_to_external(line) for line in (header.lines or [])]
         return PurchaseRequestExternalResponse(
             id=header.id,
             request_type=header.request_type,
+            request_number=getattr(header, "request_number", None),
+            action=outcome,
             date=header.request_date,
             customer_name=header.customer_name,
             project_title=header.project_title,
@@ -85,9 +97,10 @@ def create_purchase_request(
             requested_by=header.requested_by,
             requested_at=header.requested_at,
             grand_total=_grand_total(header),
-            already_existed=False,
-            message=None,
+            already_existed=(outcome == "updated"),
+            message="Updated existing form." if outcome == "updated" else None,
             respond_inbox_url=getattr(header, "respond_inbox_url", None),
+            approval_status=getattr(header, "approval_status", None),
         )
     except HTTPException:
         raise

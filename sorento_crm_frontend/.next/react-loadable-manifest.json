@@ -1,4 +1,10 @@
 {
+  "app/(protected)/procurement-management/purchase-requests/lib/purchase-request-excel-export.ts -> xlsx": {
+    "id": "app/(protected)/procurement-management/purchase-requests/lib/purchase-request-excel-export.ts -> xlsx",
+    "files": [
+      "static/chunks/_app-pages-browser_node_modules_xlsx_xlsx_mjs.js"
+    ]
+  },
   "components/DynamicClientProviders.tsx -> @/components/ClientProviders": {
     "id": "components/DynamicClientProviders.tsx -> @/components/ClientProviders",
     "files": [

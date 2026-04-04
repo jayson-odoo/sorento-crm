@@ -1,9 +1,10 @@
 """Procurement service for business logic."""
+import json
 import logging
 import re
 import secrets
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func
 from sqlalchemy import inspect
 from decimal import Decimal, InvalidOperation
@@ -2725,6 +2726,72 @@ class PurchaseRequestService:
                     continue
         return None
 
+    def _snapshot_pr_lines_json(self, lines: List[Any]) -> str:
+        """Stable JSON for comparing line sets (ORM lines)."""
+        rows: List[dict] = []
+        ordered = sorted(
+            lines,
+            key=lambda l: (
+                l.sort_order is None,
+                l.sort_order if l.sort_order is not None else 0,
+                str(getattr(l, "id", "")),
+            ),
+        )
+        for l in ordered:
+            rows.append(
+                {
+                    "item_code": l.item_code,
+                    "quantity": str(l.quantity) if l.quantity is not None else None,
+                    "remark": l.remark,
+                    "unit_price": str(l.unit_price) if l.unit_price is not None else None,
+                    "total": str(l.total) if l.total is not None else None,
+                }
+            )
+        return json.dumps(rows, ensure_ascii=True)
+
+    def _snapshot_pr_lines_json_from_products(self, products: List[Any]) -> str:
+        """Stable JSON from external payload line objects."""
+        rows: List[dict] = []
+        for i, line_data in enumerate(products or []):
+            q = getattr(line_data, "quantity", None)
+            up = getattr(line_data, "unit_price", None)
+            tot = getattr(line_data, "total", None)
+            rows.append(
+                {
+                    "sort_order": i,
+                    "item_code": getattr(line_data, "item_code", None),
+                    "quantity": str(q) if q is not None else None,
+                    "remark": getattr(line_data, "remark", None),
+                    "unit_price": str(up) if up is not None else None,
+                    "total": str(tot) if tot is not None else None,
+                }
+            )
+        return json.dumps(rows, ensure_ascii=True)
+
+    def upsert_external_request(self, payload):
+        """
+        Create or update from external payload.
+
+        If ``request_number`` is non-empty after strip, look up that number; on match, update header
+        and replace lines (audited). If no row exists, create a new record (uses payload number or generated).
+
+        Returns ``(header, "created" | "updated")``.
+        """
+        rn_raw = getattr(payload, "request_number", None)
+        if rn_raw is None:
+            lookup = ""
+        else:
+            lookup = str(rn_raw).strip()
+        if lookup:
+            existing = (
+                self.db.query(PurchaseRequestHeader)
+                .filter(PurchaseRequestHeader.request_number == lookup)
+                .first()
+            )
+            if existing is not None:
+                return self._update_external_request(existing, payload), "updated"
+        return self.create_external_request(payload), "created"
+
     def create_external_request(self, payload):
         """Create purchase request header + lines from external payload."""
         expected_po_date_text = None
@@ -2755,12 +2822,18 @@ class PurchaseRequestService:
         space_id = getattr(payload, "space_id", None) or None
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
 
-        # Generate request_number if not provided
+        # Generate request_number if not provided (strip to match upsert lookup)
         request_number = getattr(payload, "request_number", None) or None
+        if isinstance(request_number, str):
+            request_number = request_number.strip() or None
         if not request_number:
             from app.services.numbering_service import NumberingService
             ref_date = self._parse_date(getattr(payload, "date", None)) or date.today()
             request_number = NumberingService(self.db).get_next_number(payload.request_type, ref_date)
+
+        initial_approval = None
+        if "approval_status" in payload.model_fields_set:
+            initial_approval = getattr(payload, "approval_status", None)
 
         header = PurchaseRequestHeader(
             request_type=payload.request_type,
@@ -2782,6 +2855,7 @@ class PurchaseRequestService:
             contact_id=contact_id,
             space_id=space_id,
             respond_inbox_url=respond_inbox_url,
+            approval_status=initial_approval,
             status="draft",
             source="external",
         )
@@ -2821,6 +2895,7 @@ class PurchaseRequestService:
                 request_number=header_request_number,
                 project_title=header_project_title,
                 base_url_override=base_url_override,
+                integration_action="created",
             )
         except Exception as e:
             logger.warning(
@@ -2830,6 +2905,133 @@ class PurchaseRequestService:
                 exc_info=True,
             )
         return header
+
+    def _update_external_request(self, header: PurchaseRequestHeader, payload) -> PurchaseRequestHeader:
+        """Apply external payload to an existing header; replace lines; audit line changes explicitly."""
+        from app.services.audit_service import log_audit
+        from app.audit_context import get_audit_context
+
+        row = (
+            self.db.query(PurchaseRequestHeader)
+            .options(joinedload(PurchaseRequestHeader.lines))
+            .filter(PurchaseRequestHeader.id == header.id)
+            .first()
+        )
+        if row is None:
+            raise handle_not_found("Purchase Request", str(header.id))
+
+        old_line_blob = self._snapshot_pr_lines_json(list(row.lines or []))
+        new_line_blob = self._snapshot_pr_lines_json_from_products(getattr(payload, "products", None) or [])
+
+        expected_po_date_text = None
+        if isinstance(payload.expected_po_date, str):
+            expected_po_date_text = payload.expected_po_date.strip() or None
+
+        expected_delivery_date = self._parse_date(getattr(payload, "expected_delivery_date", None))
+        if expected_delivery_date is None:
+            expected_delivery_date = self._parse_date(getattr(payload, "date_of_delivery", None))
+
+        raw_tpv = getattr(payload, "total_project_value", None)
+        total_project_value = None
+        total_project_value_text = None
+        if raw_tpv is not None:
+            if isinstance(raw_tpv, Decimal):
+                total_project_value = raw_tpv
+            elif isinstance(raw_tpv, str):
+                s = raw_tpv.strip()
+                if s:
+                    try:
+                        total_project_value = Decimal(s)
+                    except (InvalidOperation, ValueError):
+                        total_project_value_text = s
+
+        contact_id = getattr(payload, "contact_id", None) or None
+        space_id = getattr(payload, "space_id", None) or None
+        respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
+
+        row.request_type = payload.request_type
+        row.request_date = self._parse_date(payload.date)
+        row.customer_name = payload.customer_name
+        row.project_title = payload.project_title
+        row.purpose = payload.purpose
+        row.delivery_address = getattr(payload, "delivery_address", None)
+        row.total_project_value = total_project_value
+        row.total_project_value_text = total_project_value_text
+        row.sponsor_subject = getattr(payload, "sponsor_subject", None)
+        row.expected_delivery_date = expected_delivery_date
+        row.expected_po_date = self._parse_date(payload.expected_po_date)
+        row.expected_po_date_text = expected_po_date_text
+        row.requested_by = payload.requested_by
+        row.requested_at = self._parse_date(payload.requested_at)
+        row.external_reference = payload.external_reference
+        row.contact_id = contact_id
+        row.space_id = space_id
+        if respond_inbox_url is not None:
+            row.respond_inbox_url = respond_inbox_url
+        if "approval_status" in payload.model_fields_set:
+            row.approval_status = getattr(payload, "approval_status", None)
+
+        for line in list(row.lines or []):
+            self.db.delete(line)
+        self.db.flush()
+
+        if payload.products:
+            for index, line_data in enumerate(payload.products):
+                line = PurchaseRequestLine(
+                    purchase_request_id=row.id,
+                    item_code=line_data.item_code,
+                    quantity=line_data.quantity,
+                    remark=line_data.remark,
+                    unit_price=getattr(line_data, "unit_price", None),
+                    total=getattr(line_data, "total", None),
+                    sort_order=index,
+                )
+                self.db.add(line)
+
+        if old_line_blob != new_line_blob:
+            user_id, ip_address = get_audit_context()
+            log_audit(
+                self.db,
+                "purchase_request",
+                str(row.id),
+                "UPDATE",
+                old_values={"line_items": old_line_blob},
+                new_values={"line_items": new_line_blob},
+                user_id=user_id,
+                ip_address=ip_address,
+                skip_flush=True,
+            )
+
+        self.db.commit()
+        self.db.refresh(row)
+
+        header_id = str(row.id)
+        header_request_type = getattr(row, "request_type", None)
+        header_request_number = getattr(row, "request_number", None) or "N/A"
+        header_project_title = getattr(row, "project_title", None) or "N/A"
+        try:
+            self.get_or_create_view_token(header_id)
+            self.db.commit()
+        except Exception:
+            pass
+        try:
+            base_url_override = getattr(payload, "base_url", None) if payload else None
+            self._notify_team_on_external_pr_created(
+                header_id=header_id,
+                request_type=header_request_type,
+                request_number=header_request_number,
+                project_title=header_project_title,
+                base_url_override=base_url_override,
+                integration_action="updated",
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to notify team for external purchase request update %s: %s",
+                header_id,
+                e,
+                exc_info=True,
+            )
+        return row
 
     def _get_purchase_request_project_sales_tier1_user_ids(self) -> List[str]:
         """Members of Tier 1 under team set code project_sales for access agent purchase_request."""
@@ -2865,6 +3067,8 @@ class PurchaseRequestService:
         request_number: str = "N/A",
         project_title: str = "N/A",
         base_url_override: Optional[str] = None,
+        *,
+        integration_action: str = "created",
         sync_email: bool = False,
     ) -> None:
         """Notify Tier 1 project_sales under agent purchase_request: one email to all, plus in-app for each."""
@@ -2887,19 +3091,37 @@ class PurchaseRequestService:
                 "Project Sales (Tier 1) team members have no email addresses; skipping email delivery row."
             )
         rt = (request_type or "").strip()
+        updated = integration_action == "updated"
+        # Wording aligned with external stock inquiry: "New … created" vs "… updated (integration …)".
         if rt == "purchase_request":
-            title = "New purchase request"
+            title = (
+                "Purchase request updated (integration)"
+                if updated
+                else "New purchase request created"
+            )
             kind_sentence = (
-                "A purchase request has been created via system integration and requires your review."
+                "A purchase request has been updated via system integration and may need your review."
+                if updated
+                else "A new purchase request has been created via system integration and requires your review."
             )
         elif rt == "sponsorship_form":
-            title = "New sponsorship form"
+            title = (
+                "Sponsorship form updated (integration)"
+                if updated
+                else "New sponsorship form created"
+            )
             kind_sentence = (
-                "A sponsorship form has been created via system integration and requires your review."
+                "A sponsorship form has been updated via system integration and may need your review."
+                if updated
+                else "A new sponsorship form has been created via system integration and requires your review."
             )
         else:
-            title = "New request"
-            kind_sentence = "A new request has been created via system integration and requires your review."
+            title = "Request updated (integration)" if updated else "New request created"
+            kind_sentence = (
+                "A request has been updated via system integration and may need your review."
+                if updated
+                else "A new request has been created via system integration and requires your review."
+            )
         view_token = self.get_or_create_view_token(header_id)
         base_url = (base_url_override or "").strip().rstrip("/")
         if not base_url:
@@ -2932,51 +3154,121 @@ class PurchaseRequestService:
             f'<p><a href="{view_url}">{view_url}</a></p>\n'
             "<p>This is a system generated email. Please do not reply.</p>"
         )
+        event_type = "external_updated" if updated else "external_created"
+        notif_type = "purchase_request_updated" if updated else "purchase_request_created"
         notif_svc = NotificationService(self.db)
         first_uid = user_ids[0]
-        if emails:
-            notification = Notification(
-                user_id=first_uid,
-                type="purchase_request_created",
-                title=title,
-                body=body_plain,
-                data={"recipient_emails": emails, "single_email_to_all": True, "body_html": body_html},
-                source_entity_type="purchase_request",
-                source_entity_id=header_id,
-                event_type="external_created",
-            )
-            self.db.add(notification)
-            self.db.flush()
-            self.db.add(NotificationDelivery(notification_id=notification.id, channel="in_app", status="sent", sent_at=datetime.utcnow()))
-            self.db.add(NotificationDelivery(notification_id=notification.id, channel="email", status="pending"))
-            self.db.commit()
-            self.db.refresh(notification)
+        now = datetime.utcnow()
+        email_data = {"recipient_emails": emails, "single_email_to_all": True, "body_html": body_html}
+
+        def _enqueue_pr_notification_deliveries(notification_id: str) -> None:
             try:
                 if sync_email:
                     from app.tasks import notification_tasks
-                    notification_tasks.send_notification_deliveries(str(notification.id))
+
+                    notification_tasks.send_notification_deliveries(notification_id)
                 else:
                     from app.services.queue_service import enqueue_job
                     from app.tasks import notification_tasks
-                    enqueue_job(notification_tasks.send_notification_deliveries, str(notification.id), queue_name="notifications")
+
+                    enqueue_job(
+                        notification_tasks.send_notification_deliveries,
+                        notification_id,
+                        queue_name="notifications",
+                    )
             except Exception as e:
                 logger.warning("Failed to send/enqueue notification deliveries: %s", e)
+
+        if emails:
+            existing_main = (
+                self.db.query(Notification)
+                .filter(
+                    Notification.user_id == first_uid,
+                    Notification.source_entity_type == "purchase_request",
+                    Notification.source_entity_id == header_id,
+                    Notification.event_type == event_type,
+                )
+                .first()
+            )
+            if existing_main:
+                existing_main.title = title
+                existing_main.body = body_plain
+                existing_main.type = notif_type
+                merged = dict(existing_main.data or {})
+                merged.update(email_data)
+                existing_main.data = merged
+                self.db.add(
+                    NotificationDelivery(
+                        notification_id=existing_main.id,
+                        channel="email",
+                        status="pending",
+                    )
+                )
+                self.db.commit()
+                self.db.refresh(existing_main)
+                _enqueue_pr_notification_deliveries(str(existing_main.id))
+            else:
+                notification = Notification(
+                    user_id=first_uid,
+                    type=notif_type,
+                    title=title,
+                    body=body_plain,
+                    data=email_data,
+                    source_entity_type="purchase_request",
+                    source_entity_id=header_id,
+                    event_type=event_type,
+                )
+                self.db.add(notification)
+                self.db.flush()
+                self.db.add(
+                    NotificationDelivery(
+                        notification_id=notification.id,
+                        channel="in_app",
+                        status="sent",
+                        sent_at=now,
+                    )
+                )
+                self.db.add(NotificationDelivery(notification_id=notification.id, channel="email", status="pending"))
+                self.db.commit()
+                self.db.refresh(notification)
+                _enqueue_pr_notification_deliveries(str(notification.id))
         for uid in user_ids:
             if uid == first_uid and emails:
                 continue
             try:
-                notif_svc.create_in_app_only(
-                    user_id=uid,
-                    type="purchase_request_created",
-                    title=title,
-                    body=body_plain,
-                    source_entity_type="purchase_request",
-                    source_entity_id=header_id,
-                    event_type="external_created",
+                existing_u = (
+                    self.db.query(Notification)
+                    .filter(
+                        Notification.user_id == uid,
+                        Notification.source_entity_type == "purchase_request",
+                        Notification.source_entity_id == header_id,
+                        Notification.event_type == event_type,
+                    )
+                    .first()
                 )
+                if existing_u:
+                    existing_u.title = title
+                    existing_u.body = body_plain
+                    existing_u.type = notif_type
+                    self.db.commit()
+                else:
+                    notif_svc.create_in_app_only(
+                        user_id=uid,
+                        type=notif_type,
+                        title=title,
+                        body=body_plain,
+                        source_entity_type="purchase_request",
+                        source_entity_id=header_id,
+                        event_type=event_type,
+                    )
             except Exception as e:
                 logger.warning("Failed to create in-app notification for user %s: %s", uid, e)
-        logger.info("Notifying %s team member(s) for external PR/sponsorship created: %s (1 email to all)", len(user_ids), header_id)
+        logger.info(
+            "Notifying %s team member(s) for external PR/sponsorship %s: %s (1 email to all)",
+            len(user_ids),
+            integration_action,
+            header_id,
+        )
 
     def _notify_requester_on_approved(self, header: PurchaseRequestHeader) -> None:
         """Notify the user who requested approval when the purchase request / sponsorship form is approved."""

@@ -66,7 +66,9 @@ export default function NotificationItem({
   const jobId = item.data?.job_id as string | undefined;
   const isImportJob = item.type?.startsWith('import_job_') && jobId;
   const isPurchaseRequest =
-    (item.type === 'purchase_request_created' || item.type === 'purchase_request_approved') &&
+    (item.type === 'purchase_request_created' ||
+      item.type === 'purchase_request_updated' ||
+      item.type === 'purchase_request_approved') &&
     item.source_entity_type === 'purchase_request' &&
     item.source_entity_id;
 

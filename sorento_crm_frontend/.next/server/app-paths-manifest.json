@@ -1,10 +1,8 @@
 {
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/api/user-management/account/route": "app/api/user-management/account/route.js",
-  "/(auth)/signin/page": "app/(auth)/signin/page.js",
-  "/(protected)/system-management/numbering-rules/page": "app/(protected)/system-management/numbering-rules/page.js",
-  "/(protected)/procurement-management/stock-inquiries/[id]/page": "app/(protected)/procurement-management/stock-inquiries/[id]/page.js",
-  "/(protected)/procurement-management/stock-inquiries/[id]/edit/page": "app/(protected)/procurement-management/stock-inquiries/[id]/edit/page.js",
-  "/(protected)/procurement-management/stock-inquiries/page": "app/(protected)/procurement-management/stock-inquiries/page.js"
+  "/(protected)/procurement-management/purchase-requests/[id]/page": "app/(protected)/procurement-management/purchase-requests/[id]/page.js",
+  "/(protected)/procurement-management/sponsorship-forms/[id]/page": "app/(protected)/procurement-management/sponsorship-forms/[id]/page.js",
+  "/(protected)/system-management/outgoing-mails/page": "app/(protected)/system-management/outgoing-mails/page.js",
+  "/(protected)/procurement-management/sponsorship-forms/page": "app/(protected)/procurement-management/sponsorship-forms/page.js",
+  "/(auth)/signin/page": "app/(auth)/signin/page.js"
 }

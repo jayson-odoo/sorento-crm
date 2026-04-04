@@ -52,7 +52,7 @@ function str(value: unknown): string {
 
 /**
  * Export a purchase request to Excel in the Purchase Request form format:
- * DC no., Sales Order no., Date, Customer, Project, Purpose, Expected dates,
+ * Sales Order no., Date, Customer, Project, Purpose, Expected dates,
  * line items table (#, Item Code, Qty, Remark), Requested by, Approved by.
  */
 export async function exportPurchaseRequestToExcel(request: PurchaseRequest): Promise<void> {
@@ -69,7 +69,7 @@ export async function exportPurchaseRequestToExcel(request: PurchaseRequest): Pr
     : '';
 
   const aoa: (string | number)[][] = [
-    ['Purchase Request', '', '', 'DC no.: PPPF_RevA'],
+    ['Purchase Request'],
     ['Sales Order no.:', str(request.request_number), 'Date:', requestDate],
     [],
     ['Customer Name:', str(request.customer_name)],
@@ -113,7 +113,7 @@ const SORENTO_HEADER = [
 
 /**
  * Export a sponsorship form to Excel in the Project Sales Sponsorship Form format:
- * Company header, Sales Order no., DC no., Date, Customer, Delivery Address, Project Title,
+ * Company header, Sales Order no., Date, Customer, Delivery Address, Project Title,
  * Total Project Value, Sponsor Subject, Date of Delivery, line items (NO., Item Code, Qty, U/P, Total), Grand Total, Requested/Approved by.
  */
 export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Promise<void> {
@@ -125,6 +125,9 @@ export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Pr
   const approvedAt = request.approved_at
     ? formatDateForSponsorship(request.approved_at)
     : '';
+  const tpv =
+    str(request.total_project_value_text) ||
+    (request.total_project_value != null ? str(request.total_project_value) : '');
 
   const aoa: (string | number)[][] = [
     [SORENTO_HEADER[0]],
@@ -133,13 +136,13 @@ export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Pr
     [],
     ['Project Sales Sponsorship Form'],
     [],
-    ['Sales Order no.:', str(request.request_number), '', 'DC no.: PSSF_RevA', 'Date:', requestDate],
+    ['Sales Order no.:', str(request.request_number), 'Date:', requestDate],
     [],
     ['Customer Name:', str(request.customer_name)],
-    ['Delivery Address:', ''],
+    ['Delivery Address:', str(request.delivery_address)],
     ['Project Title:', str(request.project_title)],
-    ['Total Project Value:', ''],
-    ['Sponsor Subject:', str(request.purpose)],
+    ['Total Project Value:', tpv],
+    ['Sponsor Subject:', str(request.sponsor_subject)],
     ['Date of Delivery:', deliveryDate],
     [],
     ['NO.', 'Item Code', 'Qty', 'U/P', 'Total'],
@@ -149,15 +152,18 @@ export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Pr
   for (let i = 0; i < 13; i++) {
     const line = lines[i];
     const qty = line != null && line.quantity != null ? Number(line.quantity) : 0;
-    const unitPrice = 0;
-    const total = qty * unitPrice;
-    grandTotal += total;
+    const unitPrice = line != null && line.unit_price != null ? Number(line.unit_price) : 0;
+    const lineTotal =
+      line != null && line.total != null
+        ? Number(line.total)
+        : qty * unitPrice;
+    grandTotal += lineTotal;
     aoa.push([
       i + 1,
       line ? str(line.item_code) : '',
       line != null && line.quantity != null ? Number(line.quantity) : '',
       unitPrice,
-      total.toFixed(2),
+      lineTotal.toFixed(2),
     ]);
   }
 

@@ -32,6 +32,7 @@ export interface PurchaseRequest {
   purpose?: string | null;
   delivery_address?: string | null;
   total_project_value?: number | null;
+  total_project_value_text?: string | null;
   sponsor_subject?: string | null;
   expected_delivery_date?: string | null;
   expected_po_date?: string | null;
@@ -92,6 +93,7 @@ export interface PurchaseRequestFormData {
   purpose?: string;
   delivery_address?: string;
   total_project_value?: number;
+  total_project_value_text?: string;
   sponsor_subject?: string;
   expected_delivery_date?: string;
   expected_po_date?: string;

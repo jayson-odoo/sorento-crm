@@ -613,6 +613,7 @@ class PurchaseRequestHeaderBase(BaseModel):
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form
     total_project_value: Optional[Decimal] = None  # sponsorship form
+    total_project_value_text: Optional[str] = None  # sponsorship form (e.g. 800K)
     sponsor_subject: Optional[str] = None  # sponsorship: showroom/mockup/others
     expected_delivery_date: Optional[date] = None
     expected_po_date: Optional[date] = None
@@ -658,6 +659,7 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None
     total_project_value: Optional[Decimal] = None
+    total_project_value_text: Optional[str] = None
     sponsor_subject: Optional[str] = None
     expected_delivery_date: Optional[date] = None
     expected_po_date: Optional[date] = None

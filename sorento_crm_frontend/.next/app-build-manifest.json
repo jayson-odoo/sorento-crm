@@ -65,6 +65,36 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/v1/procurement/[...path]/route.js"
+    ],
+    "/(protected)/procurement-management/purchase-requests/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/purchase-requests/page.js"
+    ],
+    "/(protected)/procurement-management/purchase-requests/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/purchase-requests/[id]/page.js"
+    ],
+    "/api/v1/external/[...path]/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/v1/external/[...path]/route.js"
+    ],
+    "/(protected)/procurement-management/sponsorship-forms/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/sponsorship-forms/[id]/page.js"
+    ],
+    "/(protected)/system-management/outgoing-mails/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/system-management/outgoing-mails/page.js"
+    ],
+    "/(protected)/procurement-management/sponsorship-forms/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/procurement-management/sponsorship-forms/page.js"
     ]
   }
 }

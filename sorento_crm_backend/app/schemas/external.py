@@ -492,7 +492,11 @@ class PurchaseRequestExternalLine(BaseModel):
 
 
 class PurchaseRequestExternalCreate(BaseModel):
-    """Create a purchase request or sponsorship form. Ask request_type first, then the relevant fields.
+    """Create or upsert a purchase request or sponsorship form. Ask request_type first, then the relevant fields.
+
+    ``request_number``: when empty or omitted, a new record is created (server assigns ``request_number``).
+    When set to an existing number, that record is updated (header + line items) and changes are audit-logged.
+    If no row matches, a new record is created using this ``request_number`` (or generated if empty).
 
     Purchase request fields: date, customer_name, project_title, purpose (showroom/mock up/others:__),
     expected_delivery_date, expected_po_date, products (item_code, quantity, remark per line),
@@ -506,6 +510,7 @@ class PurchaseRequestExternalCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")  # allow response, complete, team, etc. from Respond/n8n
 
     request_type: str
+    request_number: Optional[str] = None  # upsert key: "" / null = create with auto number; else match or create with this number
     date: Optional[str | DateType] = None
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
@@ -523,6 +528,7 @@ class PurchaseRequestExternalCreate(BaseModel):
     contact_id: Optional[str] = None
     space_id: Optional[str] = None
     base_url: Optional[str] = None  # Frontend app origin for notification email link
+    approval_status: Optional[str] = None  # pending | approved | rejected | draft (draft clears to unset)
 
     @field_validator("request_type")
     @classmethod
@@ -532,10 +538,29 @@ class PurchaseRequestExternalCreate(BaseModel):
             raise ValueError("request_type must be purchase_request or sponsorship_form")
         return normalized
 
+    @field_validator("approval_status", mode="before")
+    @classmethod
+    def validate_approval_status(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        s = str(v).strip().lower()
+        allowed = {"pending", "approved", "rejected", "draft"}
+        if s not in allowed:
+            raise ValueError(
+                "approval_status must be one of: pending, approved, rejected, draft"
+            )
+        if s == "draft":
+            return None
+        return s
+
 
 class PurchaseRequestExternalResponse(BaseModel):
     id: str
     request_type: str
+    request_number: Optional[str] = None
+    action: str = "created"  # "created" | "updated"
     date: Optional[DateType] = None
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
@@ -553,6 +578,7 @@ class PurchaseRequestExternalResponse(BaseModel):
     already_existed: bool = False
     message: Optional[str] = None
     respond_inbox_url: Optional[str] = None
+    approval_status: Optional[str] = None
 
 
 # --- Respond contact sync (n8n / Respond.io webhook) ---
