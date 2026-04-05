@@ -1,10 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ComplaintsListParams } from '../services/complaintService';
 import {
   getComplaints,
   getComplaint,
+  getComplaintConversation,
   createComplaint,
   updateComplaint,
   updateComplaintAndReply,
@@ -90,13 +90,30 @@ export function useUpdateComplaintAndReply() {
       id: string;
       data: Partial<ComplaintFormData>;
     }) => updateComplaintAndReply(id, data),
-    onSuccess: () => {
+    onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: ['complaints'] });
       queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
       toast.success('Reply sent to customer successfully');
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to update and reply'),
+  });
+}
+
+export function useComplaintConversation(
+  complaintId: string | null,
+  options?: { limit?: number; cursor?: string; enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['complaint-conversation', complaintId, options?.limit, options?.cursor],
+    queryFn: () =>
+      getComplaintConversation(complaintId!, {
+        limit: options?.limit ?? 50,
+        cursor: options?.cursor,
+      }),
+    enabled: !!complaintId && (options?.enabled !== false),
+    staleTime: 30 * 1000,
   });
 }
 

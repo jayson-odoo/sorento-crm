@@ -198,6 +198,40 @@ export async function syncComplaintAssigneeFromRespond(
   return response.json();
 }
 
+export interface RespondMessageItem {
+  messageId?: number;
+  channelMessageId?: string;
+  contactId?: number;
+  channelId?: number;
+  traffic?: string;
+  message?: { type?: string; text?: string; messageTag?: string };
+  status?: Array<{ value?: string; timestamp?: number; message?: string }>;
+  sender?: { source?: string; userId?: number; teamId?: number };
+}
+
+export interface RespondConversationResponse {
+  items: RespondMessageItem[];
+  pagination?: { next?: string; previous?: string };
+  error?: string;
+}
+
+export async function getComplaintConversation(
+  complaintId: string,
+  params?: { limit?: number; cursor?: string },
+): Promise<RespondConversationResponse> {
+  const sp = new URLSearchParams();
+  if (params?.limit != null) sp.set('limit', String(params.limit));
+  if (params?.cursor) sp.set('cursor', params.cursor);
+  const qs = sp.toString();
+  const url = `/api/v1/complaints-management/complaints/${complaintId}/conversation${qs ? `?${qs}` : ''}`;
+  const response = await apiFetch(url);
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || 'Failed to load conversation');
+  }
+  return response.json();
+}
+
 export interface ViewLinkResponse {
   view_token: string;
   view_url: string;

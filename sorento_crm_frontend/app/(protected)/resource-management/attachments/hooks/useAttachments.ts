@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, getAttachmentMetadata, checkDuplicateByHash, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments } from '../services/attachmentService';
+import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
 import { getDirectoryTree, createDirectory, updateDirectory, deleteDirectory, restoreDirectory, permanentDeleteDirectory } from '../services/directoryService';
 import { apiFetch } from '@/lib/api';
@@ -205,18 +205,16 @@ export function useDownloadAttachment() {
 }
 
 export function useResubmitAttachmentWebhook() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => resubmitAttachmentWebhook(id),
     onSuccess: () => {
-      toast.success('Webhook resent with a fresh signed URL');
+      toast.success('Resubmitted successfully');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to resubmit webhook'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to resubmit'),
   });
 }
 
 export function useBulkImportAttachment() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
       zipFile,

@@ -73,6 +73,7 @@ import {
   type OrderListNavState,
 } from '../utils/orderListNavQuery';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
+import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
 
 export default function OrdersList() {
   const router = useRouter();
@@ -497,6 +498,10 @@ export default function OrdersList() {
             {error instanceof Error ? error.message : 'Failed to load orders'}
           </div>
         ) : null}
+        <div className="mx-5 mb-2 flex flex-wrap gap-4">
+          <LatestImportStatusPanel jobType="order_tracking_import" title="Latest tracking import" />
+          <LatestImportStatusPanel jobType="delivery_order_detail_import" title="Latest order lines import" />
+        </div>
         <CardTable>
           <ScrollArea>
             <DataGridTable />

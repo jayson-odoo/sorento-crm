@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Link2, ExternalLink } from 'lucide-react';
+import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,13 +18,15 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
-import { useComplaint, useUpdateComplaint, useUpdateComplaintAndReply } from '../hooks/useComplaints';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { useComplaint, useUpdateComplaint } from '../hooks/useComplaints';
 import { getOrCreateComplaintViewLink } from '../services/complaintService';
 import { toast } from 'sonner';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import ComplaintDeleteDialog from './complaint-delete-dialog';
 import ComplaintNavigation from './ComplaintNavigation';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
+import ComplaintConversationPanel from './ComplaintConversationPanel';
 import AuditTrail from '@/components/audit/AuditTrail';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
@@ -35,21 +37,56 @@ interface ComplaintDetailProps {
 
 export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const router = useRouter();
-  
+
   // Don't fetch if it's "new" or invalid
   const isValidId = complaintId && complaintId !== 'new' && complaintId !== 'edit';
   const { data: complaint, isLoading } = useComplaint(isValidId ? complaintId : null);
   const updateComplaintMutation = useUpdateComplaint();
-  const updateAndReplyMutation = useUpdateComplaintAndReply();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [updateAndReplyDialogOpen, setUpdateAndReplyDialogOpen] = useState(false);
-  const [replyMessage, setReplyMessage] = useState('');
-  const [replyViewUrl, setReplyViewUrl] = useState('');
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
   const [editTechnicalResponseOpen, setEditTechnicalResponseOpen] = useState(false);
   const [editTechnicalResponseValue, setEditTechnicalResponseValue] = useState('');
-  
+  const [replyComposePrefill, setReplyComposePrefill] = useState<{
+    key: number;
+    text: string;
+  } | null>(null);
+  const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
+  const [openingReplySheet, setOpeningReplySheet] = useState(false);
+
+  const openUpdateAndReplyInChatFromText = useCallback(
+    async (technicalTeamResponseText: string) => {
+      let viewUrl = '';
+      if (publicViewLinksEnabled) {
+        try {
+          const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+          const res = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+          viewUrl = res.view_url ?? '';
+        } catch {
+          // continue without view link
+        }
+      }
+      const technicalResponse = (technicalTeamResponseText ?? '').trim();
+      const doNumber = (complaint?.delivery_order_number ?? '').toString().trim();
+      const doPart = doNumber ? ` for delivery order ${doNumber}` : '';
+      const linkPart = viewUrl ? ` ${viewUrl}` : '';
+      const fullMessage = technicalResponse.startsWith('There has been an update')
+        ? technicalResponse
+        : `There has been an update regarding your complaint${doPart}${linkPart}: ${technicalResponse}`;
+      setReplyComposePrefill((p) => ({
+        key: (p?.key ?? 0) + 1,
+        text: fullMessage,
+      }));
+      setConversationSheetOpen(true);
+    },
+    [complaintId, complaint, publicViewLinksEnabled],
+  );
+
+  const openUpdateAndReplyInChat = useCallback(async () => {
+    if (!complaint) return;
+    await openUpdateAndReplyInChatFromText(complaint.technical_team_response ?? '');
+  }, [complaint, openUpdateAndReplyInChatFromText]);
+
   if (!isValidId) {
     return (
       <div className="text-center py-12">
@@ -89,6 +126,8 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
     );
   }
 
+  const canUseRespondChat = !!complaint.respond_inbox_url;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -117,7 +156,18 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             </p>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap items-center justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setEditTechnicalResponseValue(complaint.technical_team_response ?? '');
+              setEditTechnicalResponseOpen(true);
+            }}
+          >
+            <Edit className="size-4 mr-1" />
+            Edit technical team response
+          </Button>
           <DetailActionsMenu ariaLabel="Complaint actions">
             <DropdownMenuItem
               onClick={() =>
@@ -127,6 +177,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               <Edit className="size-4" />
               Edit
             </DropdownMenuItem>
+            {canUseRespondChat && (
+              <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
+                <MessageSquare className="size-4" />
+                Chat records
+              </DropdownMenuItem>
+            )}
             {publicViewLinksEnabled && (
               <DropdownMenuItem
                 disabled={viewLinkCopying}
@@ -164,34 +220,22 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 View in system
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem
-              disabled={updateAndReplyMutation.isPending}
-              onClick={async () => {
-                let viewUrl = '';
-                if (publicViewLinksEnabled) {
+            {canUseRespondChat && (
+              <DropdownMenuItem
+                disabled={openingReplySheet}
+                onClick={async () => {
+                  setOpeningReplySheet(true);
                   try {
-                    const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const res = await getOrCreateComplaintViewLink(complaintId, baseUrl);
-                    viewUrl = res.view_url ?? '';
-                    setReplyViewUrl(viewUrl);
-                  } catch {
-                    setReplyViewUrl('');
+                    await openUpdateAndReplyInChat();
+                  } finally {
+                    setOpeningReplySheet(false);
                   }
-                } else {
-                  setReplyViewUrl('');
-                }
-                const doNumber = (complaint.delivery_order_number ?? '').toString().trim();
-                const doPart = doNumber ? ` for delivery order ${doNumber}` : '';
-                const linkPart = viewUrl ? ` ${viewUrl}` : '';
-                const technicalResponse = (complaint.technical_team_response ?? '').trim();
-                const fullMessage = `There has been an update regarding your complaint${doPart}${linkPart}: ${technicalResponse}`;
-                setReplyMessage(fullMessage);
-                setUpdateAndReplyDialogOpen(true);
-              }}
-            >
-              <Send className="size-4" />
-              {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
-            </DropdownMenuItem>
+                }}
+              >
+                <Send className="size-4" />
+                {openingReplySheet ? 'Opening…' : 'Update & Reply'}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onClick={() => setDeleteDialogOpen(true)}
@@ -215,60 +259,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         />
       )}
 
-      <Dialog open={updateAndReplyDialogOpen} onOpenChange={setUpdateAndReplyDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Update & Reply</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="complaint-detail-reply-message">Message that will be sent to the contact</Label>
-              <Textarea
-                id="complaint-detail-reply-message"
-                value={replyMessage}
-                onChange={(e) => setReplyMessage(e.target.value)}
-                placeholder="Message to send..."
-                rows={6}
-                className="resize-none font-mono text-sm"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setUpdateAndReplyDialogOpen(false)}
-              disabled={updateAndReplyMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              disabled={updateAndReplyMutation.isPending || !replyMessage.trim()}
-              onClick={async () => {
-                try {
-                  await updateAndReplyMutation.mutateAsync({
-                    id: complaintId,
-                    data: { technical_team_response: replyMessage.trim() },
-                  });
-                  setUpdateAndReplyDialogOpen(false);
-                  setReplyMessage('');
-                  setReplyViewUrl('');
-                } catch {
-                  // toast from mutation
-                }
-              }}
-            >
-              {updateAndReplyMutation.isPending ? 'Sending…' : 'Update & Reply'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={editTechnicalResponseOpen} onOpenChange={setEditTechnicalResponseOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Edit technical team response</DialogTitle>
             <DialogDescription>
-              Update the technical team response text. This does not send a message to the contact.
+              Save updates the record only. Use Update &amp; Reply to open the chat with this text prefilled so you can send to the contact.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -282,9 +278,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               className="resize-none"
             />
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditTechnicalResponseOpen(false)}>Cancel</Button>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={() => setEditTechnicalResponseOpen(false)}>
+              Cancel
+            </Button>
             <Button
+              variant="outline"
               disabled={updateComplaintMutation.isPending}
               onClick={async () => {
                 try {
@@ -298,8 +297,32 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 }
               }}
             >
-              {updateComplaintMutation.isPending ? 'Saving…' : 'Save'}
+              {updateComplaintMutation.isPending ? 'Saving…' : 'Save only'}
             </Button>
+            {canUseRespondChat && (
+              <Button
+                variant="primary"
+                disabled={updateComplaintMutation.isPending || openingReplySheet}
+                onClick={async () => {
+                  setOpeningReplySheet(true);
+                  try {
+                    await updateComplaintMutation.mutateAsync({
+                      id: complaintId,
+                      data: { technical_team_response: editTechnicalResponseValue.trim() },
+                    });
+                    setEditTechnicalResponseOpen(false);
+                    await openUpdateAndReplyInChatFromText(editTechnicalResponseValue);
+                  } catch {
+                    // toast from mutation
+                  } finally {
+                    setOpeningReplySheet(false);
+                  }
+                }}
+              >
+                <Send className="size-4 mr-1" />
+                {openingReplySheet ? 'Opening…' : 'Update & Reply'}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -395,14 +418,26 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           {complaint.respond_inbox_url && (
             <div>
               <p className="text-sm text-muted-foreground">Respond conversation</p>
-              <a
-                href={complaint.respond_inbox_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline text-sm break-all font-medium"
-              >
-                {complaint.respond_inbox_url}
-              </a>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-0.5">
+                <a
+                  href={complaint.respond_inbox_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline text-sm break-all font-medium"
+                >
+                  {complaint.respond_inbox_url}
+                </a>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 w-fit"
+                  onClick={() => setConversationSheetOpen(true)}
+                  aria-label="Open chat records"
+                >
+                  <MessageSquare className="size-4 mr-1" />
+                  Chat
+                </Button>
+              </div>
             </div>
           )}
           <div>
@@ -463,6 +498,43 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
       />
 
       <AuditTrail entityType="complaint" entityId={complaintId} title="Audit Trail" />
+
+      {canUseRespondChat && (
+        <Sheet
+          open={conversationSheetOpen}
+          onOpenChange={(open) => {
+            setConversationSheetOpen(open);
+            if (!open) {
+              setReplyComposePrefill(null);
+            }
+          }}
+        >
+          <SheetContent side="right" className="flex flex-col w-full sm:max-w-lg overflow-y-auto">
+            <SheetHeader className="sr-only">
+              <SheetTitle>Chat Records</SheetTitle>
+            </SheetHeader>
+            <div className="flex-1 min-h-0 pt-2">
+              <ComplaintConversationPanel
+                complaintId={complaintId}
+                canReply={canUseRespondChat}
+                respondInboxUrl={complaint.respond_inbox_url}
+                showAsPopup
+                technicalTeamResponse={complaint.technical_team_response}
+                replyComposePrefill={replyComposePrefill}
+                onGetViewLink={
+                  publicViewLinksEnabled
+                    ? async () => {
+                        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+                        const res = await getOrCreateComplaintViewLink(complaintId, baseUrl);
+                        return res.view_url ?? '';
+                      }
+                    : undefined
+                }
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
     </div>
   );
 }

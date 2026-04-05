@@ -10,7 +10,7 @@ from app.schemas.inventory import (
     WarehouseCreate, WarehouseUpdate, StorageZoneCreate, StorageZoneUpdate,
     StockCreate, StockUpdate, StockBatchCreate, StockBatchUpdate
 )
-from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
 from app.services.import_log_service import ImportLogService
 
 
@@ -87,11 +87,29 @@ class WarehouseService:
     def update_warehouse(self, warehouse_id: str, warehouse_data: WarehouseUpdate):
         """Update a warehouse."""
         warehouse = self.get_warehouse(warehouse_id)
-        
+
         update_data = warehouse_data.model_dump(exclude_unset=True)
+        new_code = update_data.get("warehouse_code")
+        if new_code is not None:
+            new_code = (new_code or "").strip()
+            if not new_code:
+                raise handle_validation_error("Warehouse code cannot be empty.")
+            if new_code != (warehouse.warehouse_code or "").strip():
+                taken = (
+                    self.db.query(Warehouse)
+                    .filter(
+                        Warehouse.warehouse_code == new_code,
+                        Warehouse.id != warehouse_id,
+                    )
+                    .first()
+                )
+                if taken:
+                    raise handle_conflict("Warehouse code already exists.")
+            update_data["warehouse_code"] = new_code
+
         for key, value in update_data.items():
             setattr(warehouse, key, value)
-        
+
         self.db.commit()
         self.db.refresh(warehouse)
         return warehouse

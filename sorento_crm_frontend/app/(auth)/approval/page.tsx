@@ -84,16 +84,6 @@ function formatDateStr(value: string | null | undefined): string {
   }
 }
 
-function formatDateTimeStr(value: string | null | undefined): string {
-  if (!value) return '—';
-  try {
-    const d = new Date(value);
-    return Number.isNaN(d.getTime()) ? value : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-  } catch {
-    return value;
-  }
-}
-
 /** Single detail row for mobile-friendly stacking */
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
   if (value == null || value === '' || (typeof value === 'string' && value.trim() === '')) return null;
@@ -232,7 +222,7 @@ function ApprovalContent() {
 
   return (
     <div
-      className={`min-h-screen mx-auto px-4 py-6 sm:py-8 space-y-6 ${isPr || isSf ? 'max-w-3xl' : 'max-w-lg'}`}
+      className={`min-h-screen w-full mx-auto px-4 py-6 sm:py-8 space-y-6 ${isPr || isSf ? 'max-w-full sm:max-w-5xl xl:max-w-6xl' : 'max-w-lg'}`}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl sm:text-2xl font-semibold leading-tight">{typeLabel} – Approval</h1>
@@ -325,28 +315,30 @@ function ApprovalContent() {
             {summary?.lines && summary.lines.length > 0 && (
               <div className="pt-6 mt-2 border-t border-border">
                 <p className="text-sm font-medium mb-3">Line items</p>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-10">NO.</TableHead>
-                      <TableHead>Item Code</TableHead>
-                      <TableHead className="w-20">Qty</TableHead>
-                      <TableHead className="w-24">U/P</TableHead>
-                      <TableHead className="w-24">Total</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {summary.lines.map((line, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell>{idx + 1}</TableCell>
-                        <TableCell className="font-medium">{line.item_code ?? '—'}</TableCell>
-                        <TableCell>{line.quantity != null ? String(line.quantity) : '—'}</TableCell>
-                        <TableCell>{line.unit_price != null ? String(line.unit_price) : '—'}</TableCell>
-                        <TableCell>{line.total != null ? String(line.total) : '—'}</TableCell>
+                <div className="overflow-x-auto -mx-1 px-1">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-10">NO.</TableHead>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead className="w-20">Qty</TableHead>
+                        <TableHead className="w-24">U/P</TableHead>
+                        <TableHead className="w-24">Total</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {summary.lines.map((line, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell>{idx + 1}</TableCell>
+                          <TableCell className="font-medium">{line.item_code ?? '—'}</TableCell>
+                          <TableCell>{line.quantity != null ? String(line.quantity) : '—'}</TableCell>
+                          <TableCell>{line.unit_price != null ? String(line.unit_price) : '—'}</TableCell>
+                          <TableCell>{line.total != null ? String(line.total) : '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
                 {summary.grand_total != null && (
                   <div className="mt-4 flex justify-end">
                     <p className="text-sm font-semibold">Grand Total: {String(summary.grand_total)}</p>

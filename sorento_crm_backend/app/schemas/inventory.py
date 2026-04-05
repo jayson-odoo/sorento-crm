@@ -17,6 +17,7 @@ class WarehouseCreate(WarehouseBase):
 
 
 class WarehouseUpdate(BaseModel):
+    warehouse_code: Optional[str] = None
     warehouse_name: Optional[str] = None
     location: Optional[str] = None
     manager_id: Optional[str] = None

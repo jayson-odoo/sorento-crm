@@ -74,9 +74,14 @@ export function Header() {
         <div className="flex gap-1 lg:hidden items-center gap-2.5">
           <Link href="/" className="shrink-0">
             <img
-              src={toAbsoluteUrl('/media/app/mini-logo.svg')}
-              className="h-[25px] w-full"
-              alt="mini-logo"
+              src={toAbsoluteUrl('/media/app/sorento-logo.svg')}
+              className="h-[22px] w-auto max-w-[140px] dark:hidden"
+              alt="Sorento"
+            />
+            <img
+              src={toAbsoluteUrl('/media/app/sorento-logo-dark.svg')}
+              className="h-[22px] w-auto max-w-[140px] hidden dark:inline"
+              alt="Sorento"
             />
           </Link>
           <div className="flex items-center">

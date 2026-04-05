@@ -18,7 +18,7 @@ import {
 import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw, FolderOpen, RotateCcw, FileArchive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable, DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
@@ -89,10 +89,10 @@ export default function AttachmentBrowser() {
       setPendingResubmitIds((prev) => new Set(prev).add(id));
       try {
         await resubmitAttachmentWebhook(id);
-        toast.success('Webhook resent with a fresh signed URL');
+        toast.success('Resubmitted successfully');
         queryClient.invalidateQueries({ queryKey: ['attachments'] });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Failed to resubmit webhook');
+        toast.error(error instanceof Error ? error.message : 'Failed to resubmit');
       } finally {
         setPendingResubmitIds((prev) => {
           const next = new Set(prev);
@@ -117,7 +117,7 @@ export default function AttachmentBrowser() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-    } catch (error) {
+    } catch {
       // Error is handled by the mutation hook (toast)
     }
   };
@@ -178,10 +178,10 @@ export default function AttachmentBrowser() {
     setIsResubmittingBulk(false);
     queryClient.invalidateQueries({ queryKey: ['attachments'] });
     if (failCount === 0) {
-      toast.success(`Webhook resent with fresh signed URLs for ${successCount} attachment(s)`);
+      toast.success('Resubmitted successfully');
       setRowSelection({});
     } else if (successCount === 0) {
-      toast.error(`Failed to resubmit webhook for ${failCount} attachment(s)`);
+      toast.error(`Failed to resubmit for ${failCount} attachment(s)`);
     } else {
       toast.warning(`Resubmitted ${successCount}, failed ${failCount}`);
     }

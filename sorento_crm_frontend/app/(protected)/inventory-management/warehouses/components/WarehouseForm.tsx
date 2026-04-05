@@ -101,15 +101,9 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
                   <FormItem>
                     <FormLabel>Warehouse Code *</FormLabel>
                     <FormControl>
-                      <Input
-                        placeholder="WH-001"
-                        disabled={isEditMode}
-                        {...field}
-                      />
+                      <Input placeholder="WH-001" {...field} />
                     </FormControl>
-                    <FormDescription>
-                      Unique identifier for the warehouse. Cannot be changed after creation.
-                    </FormDescription>
+                    <FormDescription>Must be unique.</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

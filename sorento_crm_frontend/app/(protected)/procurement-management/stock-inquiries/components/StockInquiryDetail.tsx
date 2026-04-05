@@ -100,27 +100,34 @@ export default function StockInquiryDetail({
     }
   };
 
+  const openUpdateAndReplyInChatFromText = useCallback(
+    async (purchasingResponseText: string) => {
+      let viewUrl = '';
+      if (publicViewLinksEnabled) {
+        try {
+          const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
+          const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
+          viewUrl = res.view_url ?? '';
+        } catch {
+          // continue without view link
+        }
+      }
+      const body = (purchasingResponseText ?? '').trim();
+      const linkPart = viewUrl ? ` ${viewUrl}` : '';
+      const fullMessage = `There is a response to your stock inquiry${linkPart}: ${body}`;
+      setReplyComposePrefill((p) => ({
+        key: (p?.key ?? 0) + 1,
+        text: fullMessage,
+      }));
+      setConversationSheetOpen(true);
+    },
+    [inquiryId, publicViewLinksEnabled],
+  );
+
   const openUpdateAndReplyInChat = useCallback(async () => {
     if (!inquiry) return;
-    let viewUrl = '';
-    if (publicViewLinksEnabled) {
-      try {
-        const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-        const res = await getOrCreateStockInquiryViewLink(inquiryId, baseUrl);
-        viewUrl = res.view_url ?? '';
-      } catch {
-        // continue without view link
-      }
-    }
-    const purchasingResponse = (inquiry.purchasing_response ?? '').trim();
-    const linkPart = viewUrl ? ` ${viewUrl}` : '';
-    const fullMessage = `There is a response to your stock inquiry${linkPart}: ${purchasingResponse}`;
-    setReplyComposePrefill((p) => ({
-      key: (p?.key ?? 0) + 1,
-      text: fullMessage,
-    }));
-    setConversationSheetOpen(true);
-  }, [inquiry, inquiryId, publicViewLinksEnabled]);
+    await openUpdateAndReplyInChatFromText(inquiry.purchasing_response ?? '');
+  }, [inquiry, openUpdateAndReplyInChatFromText]);
 
   if (!isValidId) {
     return (
@@ -235,25 +242,19 @@ export default function StockInquiryDetail({
             </>
           )}
           {(inquiry.status === 'pending_purchasing' ||
-            inquiry.status === 'responded') &&
-            inquiry.respond_inbox_url && (
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={openingReplySheet}
-                onClick={async () => {
-                  setOpeningReplySheet(true);
-                  try {
-                    await openUpdateAndReplyInChat();
-                  } finally {
-                    setOpeningReplySheet(false);
-                  }
-                }}
-              >
-                <Send className="size-4 mr-1" />
-                {openingReplySheet ? 'Opening…' : 'Update & Reply'}
-              </Button>
-            )}
+            inquiry.status === 'responded') && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
+                setEditPurchasingResponseOpen(true);
+              }}
+            >
+              <Edit className="size-4 mr-1" />
+              Edit purchasing response
+            </Button>
+          )}
           {inquiry.status === 'pending_purchasing' && canPurchasingReject && (
             <Button
               variant="outline"
@@ -476,7 +477,7 @@ export default function StockInquiryDetail({
           <DialogHeader>
             <DialogTitle>Edit purchasing response</DialogTitle>
             <DialogDescription>
-              Update the purchasing team response text. This does not send a message to the contact.
+              Save updates the record only. Use Update &amp; Reply to open the chat with this text prefilled so you can send to the contact.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -490,9 +491,12 @@ export default function StockInquiryDetail({
               className="resize-none"
             />
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditPurchasingResponseOpen(false)}>Cancel</Button>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={() => setEditPurchasingResponseOpen(false)}>
+              Cancel
+            </Button>
             <Button
+              variant="outline"
               disabled={updateInquiryMutation.isPending}
               onClick={async () => {
                 try {
@@ -506,8 +510,33 @@ export default function StockInquiryDetail({
                 }
               }}
             >
-              {updateInquiryMutation.isPending ? 'Saving…' : 'Save'}
+              {updateInquiryMutation.isPending ? 'Saving…' : 'Save only'}
             </Button>
+            {inquiry.respond_inbox_url &&
+              (inquiry.status === 'pending_purchasing' || inquiry.status === 'responded') && (
+                <Button
+                  variant="primary"
+                  disabled={updateInquiryMutation.isPending || openingReplySheet}
+                  onClick={async () => {
+                    setOpeningReplySheet(true);
+                    try {
+                      await updateInquiryMutation.mutateAsync({
+                        id: inquiryId,
+                        data: { purchasing_response: editPurchasingResponseValue.trim() },
+                      });
+                      setEditPurchasingResponseOpen(false);
+                      await openUpdateAndReplyInChatFromText(editPurchasingResponseValue);
+                    } catch {
+                      // toast from mutation
+                    } finally {
+                      setOpeningReplySheet(false);
+                    }
+                  }}
+                >
+                  <Send className="size-4 mr-1" />
+                  {openingReplySheet ? 'Opening…' : 'Update & Reply'}
+                </Button>
+              )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

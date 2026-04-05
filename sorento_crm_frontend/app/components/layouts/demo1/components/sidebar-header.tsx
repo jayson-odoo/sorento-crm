@@ -19,29 +19,35 @@ export function SidebarHeader() {
 
   return (
     <div className="sidebar-header hidden lg:flex items-center relative justify-between px-3 lg:px-6 shrink-0">
-      <Link href="/">
+      <Link
+        href="/"
+        className={cn(
+          'min-w-0 shrink flex items-center',
+          settings.layouts.demo1.sidebarCollapse ? 'justify-center' : 'justify-start',
+        )}
+      >
         <div className="dark:hidden">
           <img
-            src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRCvRJCJ62G4a9FSbiX0OrF-x-WdQzgGhbwqA&s"
-            className="default-logo h-[22px] max-w-none"
-            alt="Logo"
+            src={toAbsoluteUrl('/media/app/sorento-logo.svg')}
+            className="default-logo h-[22px] w-auto max-w-[200px]"
+            alt="Sorento"
           />
           <img
-            src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRCvRJCJ62G4a9FSbiX0OrF-x-WdQzgGhbwqA&s"
-            className="small-logo h-[22px] max-w-none"
-            alt="Logo"
+            src={toAbsoluteUrl('/media/app/sorento-mark.svg')}
+            className="small-logo h-8 w-8 shrink-0"
+            alt="Sorento"
           />
         </div>
         <div className="hidden dark:block">
           <img
-            src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRCvRJCJ62G4a9FSbiX0OrF-x-WdQzgGhbwqA&s"
-            className="default-logo h-[22px] max-w-none"
-            alt="Logo"
+            src={toAbsoluteUrl('/media/app/sorento-logo-dark.svg')}
+            className="default-logo h-[22px] w-auto max-w-[200px]"
+            alt="Sorento"
           />
           <img
-            src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRCvRJCJ62G4a9FSbiX0OrF-x-WdQzgGhbwqA&s"
-            className="small-logo h-[22px] max-w-none"
-            alt="Logo"
+            src={toAbsoluteUrl('/media/app/sorento-mark-dark.svg')}
+            className="small-logo h-8 w-8 shrink-0"
+            alt="Sorento"
           />
         </div>
       </Link>

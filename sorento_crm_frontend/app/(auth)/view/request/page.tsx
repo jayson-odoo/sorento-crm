@@ -181,7 +181,7 @@ function ViewRequestContent() {
 
   return (
     <div
-      className={`min-h-screen mx-auto px-4 py-6 space-y-6 ${isDocLayout ? 'max-w-3xl' : 'max-w-lg'}`}
+      className={`min-h-screen w-full mx-auto px-4 py-6 space-y-6 ${isDocLayout ? 'max-w-full sm:max-w-5xl xl:max-w-6xl' : 'max-w-lg'}`}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl sm:text-2xl font-semibold leading-tight">{typeLabel}</h1>
@@ -258,26 +258,28 @@ function ViewRequestContent() {
             {summary?.lines && summary.lines.length > 0 && (
               <div className="pt-6 mt-2 border-t border-border">
                 <p className="text-sm font-medium mb-3">Line items</p>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-10">#</TableHead>
-                      <TableHead>Item Code</TableHead>
-                      <TableHead className="w-24">Qty</TableHead>
-                      <TableHead>Remark</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {summary.lines.map((line, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell>{idx + 1}</TableCell>
-                        <TableCell className="font-medium">{line.item_code ?? '—'}</TableCell>
-                        <TableCell>{line.quantity != null ? String(line.quantity) : '—'}</TableCell>
-                        <TableCell className="text-muted-foreground">{line.remark ?? '—'}</TableCell>
+                <div className="overflow-x-auto -mx-1 px-1">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-10">#</TableHead>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead className="w-24">Qty</TableHead>
+                        <TableHead>Remark</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {summary.lines.map((line, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell>{idx + 1}</TableCell>
+                          <TableCell className="font-medium">{line.item_code ?? '—'}</TableCell>
+                          <TableCell>{line.quantity != null ? String(line.quantity) : '—'}</TableCell>
+                          <TableCell className="text-muted-foreground">{line.remark ?? '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             )}
             {summary && (
@@ -351,28 +353,30 @@ function ViewRequestContent() {
             {summary?.lines && summary.lines.length > 0 && (
               <div className="pt-6 mt-2 border-t border-border">
                 <p className="text-sm font-medium mb-3">Line items</p>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-10">NO.</TableHead>
-                      <TableHead>Item Code</TableHead>
-                      <TableHead className="w-20">Qty</TableHead>
-                      <TableHead className="w-24">U/P</TableHead>
-                      <TableHead className="w-24">Total</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {summary.lines.map((line, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell>{idx + 1}</TableCell>
-                        <TableCell className="font-medium">{line.item_code ?? '—'}</TableCell>
-                        <TableCell>{line.quantity != null ? String(line.quantity) : '—'}</TableCell>
-                        <TableCell>{line.unit_price != null ? String(line.unit_price) : '—'}</TableCell>
-                        <TableCell>{line.total != null ? String(line.total) : '—'}</TableCell>
+                <div className="overflow-x-auto -mx-1 px-1">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-10">NO.</TableHead>
+                        <TableHead>Item Code</TableHead>
+                        <TableHead className="w-20">Qty</TableHead>
+                        <TableHead className="w-24">U/P</TableHead>
+                        <TableHead className="w-24">Total</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {summary.lines.map((line, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell>{idx + 1}</TableCell>
+                          <TableCell className="font-medium">{line.item_code ?? '—'}</TableCell>
+                          <TableCell>{line.quantity != null ? String(line.quantity) : '—'}</TableCell>
+                          <TableCell>{line.unit_price != null ? String(line.unit_price) : '—'}</TableCell>
+                          <TableCell>{line.total != null ? String(line.total) : '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
                 {summary.grand_total != null && (
                   <div className="mt-4 flex justify-end">
                     <p className="text-sm font-semibold">Grand Total: {String(summary.grand_total)}</p>

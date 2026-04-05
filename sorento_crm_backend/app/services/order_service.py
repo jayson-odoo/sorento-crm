@@ -1072,6 +1072,10 @@ class OrderService:
             item_code = (_find(row_data, "item code", "product code") and str(_find(row_data, "item code", "product code")).strip()) or None
             location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
 
+            # Ignore trailing / formatted "empty" rows (e.g. stray 0, F, or styled blanks) with no line identity
+            if not doc_no and not item_code and not location:
+                continue
+
             if not doc_no:
                 errors.append(f"Row {row_idx}: Missing doc no")
             if not item_code:

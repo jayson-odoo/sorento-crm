@@ -1608,6 +1608,11 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
             doc_no = (_find(row_data, "doc no", "doc number", "order number") and str(_find(row_data, "doc no", "doc number", "order number")).strip()) or None
             item_code = (_find(row_data, "item code", "product code") and str(_find(row_data, "item code", "product code")).strip()) or None
             location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
+
+            # Skip rows with no order-line identity (trailing formatted blanks, stray numeric defaults, etc.)
+            if not doc_no and not item_code and not location:
+                continue
+
             qty = _decimal_or_none(_find(row_data, "qty", "quantity"))
             unit_price = _decimal_or_none(_find(row_data, "unit price", "unit price "))
             discount = _decimal_or_none(_find(row_data, "discount"))
