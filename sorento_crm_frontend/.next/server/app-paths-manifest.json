@@ -1,5 +1,7 @@
 {
   "/api/auth/token/route": "app/api/auth/token/route.js",
+  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/api/v1/external/[...path]/route": "app/api/v1/external/[...path]/route.js",
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js"
+  "/api/v1/sla-management/[...path]/route": "app/api/v1/sla-management/[...path]/route.js",
+  "/(protected)/user-management/contact-access-agents/page": "app/(protected)/user-management/contact-access-agents/page.js"
 }

@@ -52,6 +52,191 @@ def _sla_reply_respond_user_id(current_user: dict) -> str:
     )
 
 
+def build_conversation_sla_tracking_response(
+    db: Session,
+    tracking: ConversationSLATracking,
+    *,
+    include_event_logs: bool = True,
+) -> ConversationSLATrackingResponse:
+    """Build ConversationSLATrackingResponse (shared by GET-by-id and external lookup)."""
+    contact_phone = tracking.contact.phone_number if tracking.contact else None
+    contact_name = tracking.contact.name if tracking.contact else None
+
+    assigned_user_name = tracking.assigned_user.name if tracking.assigned_user else None
+    assigned_user_email = tracking.assigned_user.email if tracking.assigned_user else None
+
+    responded_by_user_name = None
+    if tracking.responded_by:
+        responded_by_user = db.query(User).filter(
+            (User.id == tracking.responded_by)
+            | (User.respond_user_id == tracking.responded_by)
+            | (User.email == tracking.responded_by)
+        ).first()
+        responded_by_user_name = responded_by_user.name if responded_by_user else tracking.responded_by
+
+    resolved_by_user_name = None
+    if tracking.resolved_by:
+        resolved_by_user = db.query(User).filter(
+            (User.id == tracking.resolved_by)
+            | (User.respond_user_id == tracking.resolved_by)
+            | (User.email == tracking.resolved_by)
+        ).first()
+        resolved_by_user_name = resolved_by_user.name if resolved_by_user else tracking.resolved_by
+
+    event_logs_data = []
+    response_durations = []
+    resolution_durations = []
+
+    if include_event_logs and tracking.event_logs:
+        for log in tracking.event_logs:
+            log_data = {
+                "id": str(log.id),
+                "sla_tracking_id": str(log.sla_tracking_id),
+                "event_type": log.event_type,
+                "from_tier": log.from_tier,
+                "to_tier": log.to_tier,
+                "event_at": log.event_at,
+                "from_time": log.from_time,
+                "duration": log.duration,
+                "reason": log.reason,
+                "assigned_to": log.assigned_to,
+                "assigned_to_id": log.assigned_to_id,
+                "due_at": log.due_at,
+                "response_time": log.response_time,
+                "resolution_time": log.resolution_time,
+                "reminder_count": log.reminder_count,
+                "last_reminder_at": log.last_reminder_at,
+                "created_at": log.created_at,
+                "assigned_user": {
+                    "id": log.assigned_user.id,
+                    "email": log.assigned_user.email,
+                    "name": log.assigned_user.name,
+                }
+                if log.assigned_user
+                else None,
+                "assigned_user_name": log.assigned_user.name if log.assigned_user else None,
+                "assigned_user_email": log.assigned_user.email if log.assigned_user else None,
+            }
+            event_logs_data.append(log_data)
+
+            d = float(log.duration) if log.duration is not None else None
+            if log.event_type and log.event_type.lower() == "response" and d is not None and d > 0:
+                response_durations.append(d)
+            elif log.event_type and log.event_type.lower() == "resolution" and d is not None and d > 0:
+                resolution_durations.append(d)
+
+    average_response_time = None
+    average_resolution_time = None
+
+    if response_durations:
+        avg = sum(response_durations) / len(response_durations)
+        average_response_time = Decimal(str(avg)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    if resolution_durations:
+        avg = sum(resolution_durations) / len(resolution_durations)
+        average_resolution_time = Decimal(str(avg)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    tier = (
+        db.query(SLAPolicyTier)
+        .filter(
+            SLAPolicyTier.policy_id == tracking.policy_id,
+            SLAPolicyTier.tier_level == tracking.current_tier,
+        )
+        .first()
+    )
+    timings = compute_tracking_timings(tracking, tier)
+    tier_response_hours = tier.response_hours if tier else None
+    tier_resolution_hours = getattr(tier, "resolution_hours", None) if tier else None
+
+    response_dict = {
+        "id": str(tracking.id),
+        "policy_id": str(tracking.policy_id),
+        "current_tier": tracking.current_tier,
+        "assigned_to": tracking.assigned_to,
+        "assigned_to_id": tracking.assigned_to_id,
+        "initiated_at": tracking.initiated_at,
+        "current_tier_started_at": tracking.current_tier_started_at,
+        "due_at": tracking.due_at,
+        "due_at_resolution": tracking.due_at_resolution,
+        "escalated_at": tracking.escalated_at,
+        "escalation_reason": tracking.escalation_reason,
+        "is_responded": tracking.is_responded,
+        "responded_at": tracking.responded_at,
+        "responded_by": tracking.responded_by,
+        "response_time": tracking.response_time,
+        "is_resolved": tracking.is_resolved,
+        "resolved_at": tracking.resolved_at,
+        "resolved_by": tracking.resolved_by,
+        "respond_contact_id": tracking.respond_contact_id,
+        "respond_io_id": getattr(tracking.contact, "respond_io_id", None) if tracking.contact else None,
+        "created_at": tracking.created_at,
+        "updated_at": tracking.updated_at,
+        "synced_to_excel": tracking.synced_to_excel,
+        "last_synced_to_excel": tracking.last_synced_to_excel,
+        "resolution_duration": tracking.resolution_duration,
+        "policy": {
+            "id": str(tracking.policy.id),
+            "code": tracking.policy.code,
+            "name": tracking.policy.name,
+        }
+        if tracking.policy
+        else None,
+        "policy_code": tracking.policy.code if tracking.policy else None,
+        "policy_name": tracking.policy.name if tracking.policy else None,
+        "contact": {
+            "id": tracking.contact.id,
+            "phone_number": tracking.contact.phone_number,
+            "name": tracking.contact.name,
+            "respond_io_id": getattr(tracking.contact, "respond_io_id", None),
+        }
+        if tracking.contact
+        else None,
+        "assigned_user": {
+            "id": tracking.assigned_user.id,
+            "email": tracking.assigned_user.email,
+            "name": tracking.assigned_user.name,
+            "superior": {
+                "name": tracking.assigned_user.superior.name if tracking.assigned_user.superior else None,
+                "email": tracking.assigned_user.superior.email if tracking.assigned_user.superior else None,
+            }
+            if getattr(tracking.assigned_user, "superior", None)
+            else None,
+        }
+        if tracking.assigned_user
+        else None,
+        "contact_phone": contact_phone,
+        "contact_name": contact_name,
+        "assigned_user_name": assigned_user_name,
+        "assigned_user_email": assigned_user_email,
+        "assigned_user_superior_name": tracking.assigned_user.superior.name
+        if (tracking.assigned_user and getattr(tracking.assigned_user, "superior", None))
+        else None,
+        "assigned_user_superior_email": tracking.assigned_user.superior.email
+        if (tracking.assigned_user and getattr(tracking.assigned_user, "superior", None))
+        else None,
+        "responded_by_user_name": responded_by_user_name,
+        "resolved_by_user_name": resolved_by_user_name,
+        "average_response_time": average_response_time,
+        "average_resolution_time": average_resolution_time,
+        "event_logs": event_logs_data,
+        "tier_response_hours": tier_response_hours,
+        "tier_resolution_hours": tier_resolution_hours,
+        "agent_id": getattr(tracking, "agent_id", None),
+        "agent_code": tracking.agent.code if getattr(tracking, "agent", None) else None,
+        "agent": {
+            "id": str(tracking.agent.id),
+            "code": tracking.agent.code,
+            "name": tracking.agent.name,
+        }
+        if getattr(tracking, "agent", None)
+        else None,
+        "team_set_code": getattr(tracking, "team_set_code", None),
+        **timings,
+    }
+
+    return ConversationSLATrackingResponse.model_validate(response_dict)
+
+
 @router.get("/dashboard")
 async def get_sla_tracking_dashboard(
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -836,176 +1021,7 @@ async def get_sla_tracking_record(
         tracking_id = str(tracking_id)
         service = ConversationSLATrackingService(db)
         tracking = service.get_tracking(tracking_id)
-        
-        # Manually construct response to ensure policy and relationships are included
-        from app.schemas.sla import ConversationSLATrackingResponse, ConversationSLAEventLogResponse
-        
-        # Get contact info from relationship
-        contact_phone = tracking.contact.phone_number if tracking.contact else None
-        contact_name = tracking.contact.name if tracking.contact else None
-        
-        # Get user info from relationship
-        assigned_user_name = tracking.assigned_user.name if tracking.assigned_user else None
-        assigned_user_email = tracking.assigned_user.email if tracking.assigned_user else None
-        
-        # Look up user names for responded_by and resolved_by
-        from app.models.user import User
-        responded_by_user_name = None
-        if tracking.responded_by:
-            responded_by_user = db.query(User).filter(
-                (User.id == tracking.responded_by) |
-                (User.respond_user_id == tracking.responded_by) |
-                (User.email == tracking.responded_by)
-            ).first()
-            responded_by_user_name = responded_by_user.name if responded_by_user else tracking.responded_by
-        
-        resolved_by_user_name = None
-        if tracking.resolved_by:
-            resolved_by_user = db.query(User).filter(
-                (User.id == tracking.resolved_by) |
-                (User.respond_user_id == tracking.resolved_by) |
-                (User.email == tracking.resolved_by)
-            ).first()
-            resolved_by_user_name = resolved_by_user.name if resolved_by_user else tracking.resolved_by
-        
-        # Build event logs with user relationships and calculate averages
-        event_logs_data = []
-        response_durations = []
-        resolution_durations = []
-        
-        if tracking.event_logs:
-            for log in tracking.event_logs:
-                log_data = {
-                    "id": str(log.id),
-                    "sla_tracking_id": str(log.sla_tracking_id),
-                    "event_type": log.event_type,
-                    "from_tier": log.from_tier,
-                    "to_tier": log.to_tier,
-                    "event_at": log.event_at,
-                    "from_time": log.from_time,
-                    "duration": log.duration,
-                    "reason": log.reason,
-                    "assigned_to": log.assigned_to,
-                    "assigned_to_id": log.assigned_to_id,
-                    "due_at": log.due_at,
-                    "response_time": log.response_time,
-                    "resolution_time": log.resolution_time,
-                    "reminder_count": log.reminder_count,
-                    "last_reminder_at": log.last_reminder_at,
-                    "created_at": log.created_at,
-                    "assigned_user": {
-                        "id": log.assigned_user.id,
-                        "email": log.assigned_user.email,
-                        "name": log.assigned_user.name
-                    } if log.assigned_user else None,
-                    "assigned_user_name": log.assigned_user.name if log.assigned_user else None,
-                    "assigned_user_email": log.assigned_user.email if log.assigned_user else None,
-                }
-                event_logs_data.append(log_data)
-                
-                # Collect durations for average calculation (only positive, to ignore legacy negative values)
-                d = float(log.duration) if log.duration is not None else None
-                if log.event_type and log.event_type.lower() == "response" and d is not None and d > 0:
-                    response_durations.append(d)
-                elif log.event_type and log.event_type.lower() == "resolution" and d is not None and d > 0:
-                    resolution_durations.append(d)
-        
-        # Calculate averages
-        from decimal import Decimal, ROUND_HALF_UP
-        average_response_time = None
-        average_resolution_time = None
-        
-        if response_durations:
-            avg = sum(response_durations) / len(response_durations)
-            average_response_time = Decimal(str(avg)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        
-        if resolution_durations:
-            avg = sum(resolution_durations) / len(resolution_durations)
-            average_resolution_time = Decimal(str(avg)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        
-        # Time-in-tier and time-remaining (response stops when is_responded, resolution when is_resolved)
-        tier = db.query(SLAPolicyTier).filter(
-            SLAPolicyTier.policy_id == tracking.policy_id,
-            SLAPolicyTier.tier_level == tracking.current_tier,
-        ).first()
-        timings = compute_tracking_timings(tracking, tier)
-        tier_response_hours = tier.response_hours if tier else None
-        tier_resolution_hours = getattr(tier, "resolution_hours", None) if tier else None
-
-        # Construct response dict
-        response_dict = {
-            "id": str(tracking.id),
-            "policy_id": str(tracking.policy_id),
-            "current_tier": tracking.current_tier,
-            "assigned_to": tracking.assigned_to,
-            "assigned_to_id": tracking.assigned_to_id,
-            "initiated_at": tracking.initiated_at,
-            "current_tier_started_at": tracking.current_tier_started_at,
-            "due_at": tracking.due_at,
-            "due_at_resolution": tracking.due_at_resolution,
-            "escalated_at": tracking.escalated_at,
-            "escalation_reason": tracking.escalation_reason,
-            "is_responded": tracking.is_responded,
-            "responded_at": tracking.responded_at,
-            "responded_by": tracking.responded_by,
-            "response_time": tracking.response_time,
-            "is_resolved": tracking.is_resolved,
-            "resolved_at": tracking.resolved_at,
-            "resolved_by": tracking.resolved_by,
-            "respond_contact_id": tracking.respond_contact_id,
-            "respond_io_id": getattr(tracking.contact, "respond_io_id", None) if tracking.contact else None,
-            "created_at": tracking.created_at,
-            "updated_at": tracking.updated_at,
-            "synced_to_excel": tracking.synced_to_excel,
-            "last_synced_to_excel": tracking.last_synced_to_excel,
-            "resolution_duration": tracking.resolution_duration,
-            "policy": {
-                "id": str(tracking.policy.id),
-                "code": tracking.policy.code,
-                "name": tracking.policy.name
-            } if tracking.policy else None,
-            "policy_code": tracking.policy.code if tracking.policy else None,
-            "policy_name": tracking.policy.name if tracking.policy else None,
-            "contact": {
-                "id": tracking.contact.id,
-                "phone_number": tracking.contact.phone_number,
-                "name": tracking.contact.name,
-                "respond_io_id": getattr(tracking.contact, "respond_io_id", None),
-            } if tracking.contact else None,
-            "assigned_user": {
-                "id": tracking.assigned_user.id,
-                "email": tracking.assigned_user.email,
-                "name": tracking.assigned_user.name,
-                "superior": {
-                    "name": tracking.assigned_user.superior.name if tracking.assigned_user.superior else None,
-                    "email": tracking.assigned_user.superior.email if tracking.assigned_user.superior else None,
-                } if getattr(tracking.assigned_user, "superior", None) else None,
-            } if tracking.assigned_user else None,
-            "contact_phone": contact_phone,
-            "contact_name": contact_name,
-            "assigned_user_name": assigned_user_name,
-            "assigned_user_email": assigned_user_email,
-            "assigned_user_superior_name": tracking.assigned_user.superior.name if (tracking.assigned_user and getattr(tracking.assigned_user, "superior", None)) else None,
-            "assigned_user_superior_email": tracking.assigned_user.superior.email if (tracking.assigned_user and getattr(tracking.assigned_user, "superior", None)) else None,
-            "responded_by_user_name": responded_by_user_name,
-            "resolved_by_user_name": resolved_by_user_name,
-            "average_response_time": average_response_time,
-            "average_resolution_time": average_resolution_time,
-            "event_logs": event_logs_data,
-            "tier_response_hours": tier_response_hours,
-            "tier_resolution_hours": tier_resolution_hours,
-            "agent_id": getattr(tracking, "agent_id", None),
-            "agent_code": tracking.agent.code if getattr(tracking, "agent", None) else None,
-            "agent": {
-                "id": str(tracking.agent.id),
-                "code": tracking.agent.code,
-                "name": tracking.agent.name,
-            } if getattr(tracking, "agent", None) else None,
-            "team_set_code": getattr(tracking, "team_set_code", None),
-            **timings,
-        }
-        
-        return ConversationSLATrackingResponse.model_validate(response_dict)
+        return build_conversation_sla_tracking_response(db, tracking)
     except HTTPException:
         raise
     except Exception as e:

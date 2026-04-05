@@ -15,6 +15,7 @@ from app.api.v1.external import (
     next_assignee,
     work_calendar,
     conversation_assignee,
+    conversation_sla_tracking,
     presigned_url,
     respond_contacts,
     chat_history,
@@ -37,6 +38,7 @@ router.include_router(purchase_requests.router, prefix="/purchase-requests", tag
 router.include_router(next_assignee.router, prefix="/next-assignee", tags=["external"])
 router.include_router(work_calendar.router, prefix="/work-calendar", tags=["external"])
 router.include_router(conversation_assignee.router, prefix="/conversation-assignee", tags=["external"])
+router.include_router(conversation_sla_tracking.router, prefix="/conversation-sla-tracking", tags=["external"])
 router.include_router(presigned_url.router, prefix="/presigned-url", tags=["external"])
 router.include_router(respond_contacts.router, prefix="/respond-contacts", tags=["external"])
 router.include_router(chat_history.router, prefix="/chat-history", tags=["external"])

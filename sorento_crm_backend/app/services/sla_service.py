@@ -572,28 +572,36 @@ class ConversationSLATrackingService:
             "empty": total == 0
         }
     
-    def get_tracking(self, tracking_id: str):
-        """Get a tracking record by ID."""
+    def get_tracking(self, tracking_id: str, *, load_event_logs: bool = True):
+        """Get a tracking record by ID. Set load_event_logs=False for lighter reads (e.g. external summary)."""
         from sqlalchemy.orm import joinedload
         from app.models.sla import ConversationSLAEventLog
         from app.models.user import User
-        # Load tracking with all relationships, including assigned_user.superior for tooltip
-        tracking = self.db.query(ConversationSLATracking).options(
+
+        opts = [
             joinedload(ConversationSLATracking.policy),
             joinedload(ConversationSLATracking.contact),
             joinedload(ConversationSLATracking.assigned_user).joinedload(User.superior),
             joinedload(ConversationSLATracking.agent),
-            joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user)
-        ).filter(
-            ConversationSLATracking.id == tracking_id
-        ).first()
+        ]
+        if load_event_logs:
+            opts.append(
+                joinedload(ConversationSLATracking.event_logs).joinedload(
+                    ConversationSLAEventLog.assigned_user
+                )
+            )
+        tracking = (
+            self.db.query(ConversationSLATracking)
+            .options(*opts)
+            .filter(ConversationSLATracking.id == tracking_id)
+            .first()
+        )
         if not tracking:
             raise handle_not_found("SLA Tracking", tracking_id)
-        
-        # Sort event logs by event_at descending (latest first)
-        if tracking.event_logs:
+
+        if load_event_logs and tracking.event_logs:
             tracking.event_logs.sort(key=lambda x: x.event_at, reverse=True)
-        
+
         return tracking
 
     def get_tracking_by_source_entity(self, source_entity_type: str, source_entity_id: str) -> Optional[ConversationSLATracking]:
@@ -607,24 +615,14 @@ class ConversationSLATrackingService:
             .first()
         )
 
-    def get_tracking_by_contact_phone(self, phone: str) -> Optional[ConversationSLATracking]:
-        """
-        Get the conversation SLA tracking for a contact by phone number.
-        Prefers an unresolved (open) tracking; otherwise returns the most recent by created_at.
-        """
+    def get_preferred_tracking_for_contact(
+        self, contact: RespondContact
+    ) -> Optional[ConversationSLATracking]:
+        """Prefer open tracking, else most recent by created_at."""
         from sqlalchemy.orm import joinedload
         from app.models.sla import ConversationSLAEventLog
 
-        normalized = (phone or "").strip()
-        if not normalized:
-            return None
-        contact = self.db.query(RespondContact).filter(
-            RespondContact.phone_number == normalized
-        ).first()
-        if not contact:
-            return None
-        # Unresolved first, then by created_at desc
-        tracking = (
+        return (
             self.db.query(ConversationSLATracking)
             .options(
                 joinedload(ConversationSLATracking.policy),
@@ -634,12 +632,89 @@ class ConversationSLATrackingService:
             )
             .filter(ConversationSLATracking.respond_contact_id == contact.id)
             .order_by(
-                ConversationSLATracking.is_resolved.asc(),  # False first
+                ConversationSLATracking.is_resolved.asc(),
                 ConversationSLATracking.created_at.desc(),
             )
             .first()
         )
-        return tracking
+
+    def resolve_respond_contact(
+        self,
+        *,
+        phone_number: Optional[str] = None,
+        contact_id: Optional[str] = None,
+    ) -> tuple[Optional[RespondContact], Optional[str]]:
+        """
+        Resolve RespondContact from phone and/or contact_id.
+
+        contact_id matches respond_io_id first, then respond_contacts.id.
+
+        Returns (contact, conflict_error_message). conflict_error_message is set when both
+        identifiers are provided but refer to different contacts.
+        """
+        phone = (phone_number or "").strip()
+        cid = (contact_id or "").strip()
+        if not phone and not cid:
+            return None, None
+        by_phone: Optional[RespondContact] = None
+        by_cid: Optional[RespondContact] = None
+        if phone:
+            by_phone = (
+                self.db.query(RespondContact)
+                .filter(RespondContact.phone_number == phone)
+                .first()
+            )
+        if cid:
+            by_cid = (
+                self.db.query(RespondContact)
+                .filter(RespondContact.respond_io_id == cid)
+                .first()
+            )
+            if not by_cid:
+                by_cid = (
+                    self.db.query(RespondContact)
+                    .filter(RespondContact.id == cid)
+                    .first()
+                )
+        if phone and cid:
+            if by_cid and by_phone and by_cid.id != by_phone.id:
+                return None, "contact_id and phone_number refer to different contacts."
+            return (by_cid or by_phone), None
+        if cid:
+            return by_cid, None
+        return by_phone, None
+
+    def get_tracking_by_phone_or_contact_id(
+        self,
+        *,
+        phone_number: Optional[str] = None,
+        contact_id: Optional[str] = None,
+    ) -> Optional[ConversationSLATracking]:
+        """
+        Latest SLA tracking for the contact (open first, else newest).
+        Pass contact_id (Respond.io id or CRM respond_contacts.id) and/or phone_number.
+        """
+        contact, _err = self.resolve_respond_contact(
+            phone_number=phone_number, contact_id=contact_id
+        )
+        if not contact:
+            return None
+        return self.get_preferred_tracking_for_contact(contact)
+
+    def get_tracking_by_contact_phone(self, phone: str) -> Optional[ConversationSLATracking]:
+        """
+        Get the conversation SLA tracking for a contact by phone number.
+        Prefers an unresolved (open) tracking; otherwise returns the most recent by created_at.
+        """
+        normalized = (phone or "").strip()
+        if not normalized:
+            return None
+        contact = self.db.query(RespondContact).filter(
+            RespondContact.phone_number == normalized
+        ).first()
+        if not contact:
+            return None
+        return self.get_preferred_tracking_for_contact(contact)
 
     def get_tracking_by_contact_and_policy(
         self,

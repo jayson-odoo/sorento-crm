@@ -75,6 +75,11 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/v1/external/[...path]/route.js"
+    ],
+    "/api/v1/sla-management/[...path]/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/v1/sla-management/[...path]/route.js"
     ]
   }
 }
