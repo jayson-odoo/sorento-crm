@@ -197,15 +197,19 @@ export async function removePromotionProduct(promotionId: string, lineId: string
 export async function updatePromotionProductPrice(
   promotionId: string,
   lineId: string,
-  promotionPrice: number,
-  dealerDiscountPercent?: number | null,
+  args: {
+    promotionPrice: number;
+    dealerDiscountPercent: number | null;
+    listPrice: number;
+  },
 ): Promise<PromotionProduct> {
   const response = await apiFetch(`/api/v1/marketing/promotions/${promotionId}/products/${lineId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      promotion_price: promotionPrice,
-      ...(dealerDiscountPercent !== undefined ? { dealer_discount_percent: dealerDiscountPercent } : {}),
+      promotion_price: args.promotionPrice,
+      dealer_discount_percent: args.dealerDiscountPercent,
+      list_price: args.listPrice,
     }),
   });
   if (!response.ok) {

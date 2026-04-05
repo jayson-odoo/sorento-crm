@@ -313,10 +313,16 @@ async def update_promotion_product_nested(
     """Update a promotion product line (nested route). line_id is the junction row id (same SKU may appear in multiple groups)."""
     try:
         service = PromotionProductService(db)
-        update_data = PromotionProductUpdate(
-            promo_selling_price=body.get("promotion_price"),
-            dealer_discount_percent=body.get("dealer_discount_percent"),
-        )
+        patch: dict = {}
+        if "promotion_price" in body:
+            patch["promo_selling_price"] = body["promotion_price"]
+        if "dealer_discount_percent" in body:
+            patch["dealer_discount_percent"] = body["dealer_discount_percent"]
+        if "list_price" in body:
+            patch["list_price"] = body["list_price"]
+        if not patch:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update.")
+        update_data = PromotionProductUpdate(**patch)
         product = service.update_promotion_product(promotion_id, line_id, update_data)
         if hasattr(product, 'promo_selling_price'):
             product.promotion_price = product.promo_selling_price

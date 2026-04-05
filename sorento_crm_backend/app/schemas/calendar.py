@@ -89,11 +89,11 @@ class ExternalWorkCalendarSummary(BaseModel):
     )
     working_hours_start: str = Field(
         ...,
-        description="Local start of working hours (HH:MM:SS).",
+        description='Local start of working hours in 12-hour form (e.g. "09:00 A.M.").',
     )
     working_hours_end: str = Field(
         ...,
-        description="Local end of working hours (HH:MM:SS).",
+        description='Local end of working hours in 12-hour form (e.g. "05:30 P.M.").',
     )
     working_day_ranges: List[ExternalWorkingDayRange] = Field(
         default_factory=list,

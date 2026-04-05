@@ -205,6 +205,7 @@ class SystemSetting(Base):
     # n8n integration (optional; attachment URL falls back to N8N_WEBHOOK_URL env if unset)
     n8n_attachment_webhook_url = Column(Text, nullable=True)
     n8n_crm_chat_outbound_webhook_url = Column(Text, nullable=True)
+    n8n_stock_inquiry_revise_webhook_url = Column(Text, nullable=True)
 
 
 class UserQuickAccess(Base):

@@ -48,6 +48,8 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
         : 90,
     n8nAttachmentWebhookUrl: (raw.n8n_attachment_webhook_url as string | null) ?? null,
     n8nCrmChatOutboundWebhookUrl: (raw.n8n_crm_chat_outbound_webhook_url as string | null) ?? null,
+    n8nStockInquiryReviseWebhookUrl:
+      (raw.n8n_stock_inquiry_revise_webhook_url as string | null) ?? null,
     smtp: raw.smtp as SystemSetting['smtp'] ?? null,
   } as SystemSetting;
 }
@@ -80,6 +82,9 @@ function createDefaultSettings(): SystemSetting {
     currencyFormat: 'RM {value}',
     defaultProductSupplierId: null,
     defaultProductStandardLeadTimeDays: 90,
+    n8nAttachmentWebhookUrl: null,
+    n8nCrmChatOutboundWebhookUrl: null,
+    n8nStockInquiryReviseWebhookUrl: null,
     notifyStockEmail: false,
     notifyStockWeb: false,
     notifyStockThreshold: 0,

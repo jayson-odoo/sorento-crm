@@ -1,7 +1,9 @@
 """Unit tests for contiguous working weekday ranges and external work-calendar summary."""
+from datetime import time
+
 import pytest
 
-from app.services.calendar_service import weekday_ranges_from_flags
+from app.services.calendar_service import format_time_12h_ampm, weekday_ranges_from_flags
 
 
 def test_mon_fri_contiguous():
@@ -39,3 +41,23 @@ def test_no_working_days():
 def test_invalid_length():
     with pytest.raises(ValueError):
         weekday_ranges_from_flags([True] * 6)
+
+
+def test_format_time_12h_ampm_morning():
+    assert format_time_12h_ampm(time(9, 0)) == "09:00 A.M."
+
+
+def test_format_time_12h_ampm_noon():
+    assert format_time_12h_ampm(time(12, 0)) == "12:00 P.M."
+
+
+def test_format_time_12h_ampm_midnight():
+    assert format_time_12h_ampm(time(0, 0)) == "12:00 A.M."
+
+
+def test_format_time_12h_ampm_afternoon():
+    assert format_time_12h_ampm(time(17, 30)) == "05:30 P.M."
+
+
+def test_format_time_12h_ampm_with_seconds():
+    assert format_time_12h_ampm(time(8, 15, 1)) == "08:15:01 A.M."

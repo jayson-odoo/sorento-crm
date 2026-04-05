@@ -1,4 +1,4 @@
-"""Resolve n8n webhook URLs from system_settings with env fallback (attachment only)."""
+"""Resolve n8n webhook URLs from system_settings with env fallback where supported."""
 from __future__ import annotations
 
 import os
@@ -33,4 +33,11 @@ def get_n8n_crm_chat_outbound_webhook_url(db: Session) -> str:
     """CRM Chat Records reply: system_settings only (no env default)."""
     row = db.query(SystemSetting).first()
     u = (getattr(row, "n8n_crm_chat_outbound_webhook_url", None) or "").strip() if row else ""
+    return _normalize_webhook_url(u) if u else ""
+
+
+def get_n8n_stock_inquiry_revise_webhook_url(db: Session) -> str:
+    """Public stock inquiry revise requests: system_settings only (no env default)."""
+    row = db.query(SystemSetting).first()
+    u = (getattr(row, "n8n_stock_inquiry_revise_webhook_url", None) or "").strip() if row else ""
     return _normalize_webhook_url(u) if u else ""

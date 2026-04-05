@@ -15,7 +15,7 @@ from app.schemas.calendar import (
     ExternalWorkingDayCheckResponse,
     ExternalWorkingDayRange,
 )
-from app.services.calendar_service import DEFAULT_WORKING_TZ, CalendarService
+from app.services.calendar_service import DEFAULT_WORKING_TZ, CalendarService, format_time_12h_ampm
 
 router = APIRouter()
 
@@ -36,8 +36,8 @@ async def get_work_calendar_summary(
       Example: Mon–Fri with all five days on → one range Monday→Friday.
       If Wednesday is off → two ranges: Monday→Tuesday and Thursday→Friday.
 
-    - **working_hours_start** / **working_hours_end**: local wall-clock times applied on each
-      working day (same **timezone** as used elsewhere for business hours, e.g. next-assignee).
+    - **working_hours_start** / **working_hours_end**: local wall-clock times in 12-hour form
+      (e.g. 09:00 A.M.) on each working day (same **timezone** as used elsewhere).
     """
     service = CalendarService(db)
     start_t, end_t = service.get_working_hours()
@@ -45,8 +45,8 @@ async def get_work_calendar_summary(
     tz_key = getattr(DEFAULT_WORKING_TZ, "key", None) or str(DEFAULT_WORKING_TZ)
     return ExternalWorkCalendarSummary(
         timezone=tz_key,
-        working_hours_start=start_t.isoformat(),
-        working_hours_end=end_t.isoformat(),
+        working_hours_start=format_time_12h_ampm(start_t),
+        working_hours_end=format_time_12h_ampm(end_t),
         working_day_ranges=[
             ExternalWorkingDayRange(start_weekday=r["start_weekday"], end_weekday=r["end_weekday"])
             for r in ranges

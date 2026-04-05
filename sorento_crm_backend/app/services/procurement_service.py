@@ -2107,6 +2107,23 @@ class StockInquiryService:
             ],
         }
 
+    def request_inquiry_revision_by_token(self, token_value: str) -> dict[str, str]:
+        """Trigger the external revise webhook for a rejected stock inquiry public view."""
+        view_token = (
+            self.db.query(ViewToken)
+            .filter(ViewToken.token == token_value, ViewToken.entity_type == "stock_inquiry")
+            .first()
+        )
+        if not view_token or not view_token.entity_id:
+            raise handle_not_found("View link", "(invalid token)")
+
+        inquiry = self.get_inquiry(str(view_token.entity_id))
+        if getattr(inquiry, "status", None) != "rejected":
+            raise handle_conflict("Revise is only available for rejected stock inquiries.")
+
+        self._enqueue_public_revise_webhook_for_stock_inquiry(inquiry)
+        return {"message": "Revise request sent successfully"}
+
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
         """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""
         if not contact_id or not space_id:
@@ -2270,6 +2287,217 @@ class StockInquiryService:
             return None
         parts = [p for p in respond_inbox_url.rstrip("/").split("/") if p]
         return parts[-1] if parts else None
+
+    def _send_stock_inquiry_contact_message(
+        self,
+        inquiry: StockInquiry,
+        *,
+        message_text: str,
+        crm_sender_user_id: Optional[str] = None,
+        respond_user_id_fallback: Optional[str] = None,
+    ) -> None:
+        """Send a text message to the inquiry's Respond.io contact and mirror it to the outbound webhook."""
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+        from app.services.error_handler import handle_validation_error
+        from app.services.integration_service import IntegrationLogService, RespondClient
+
+        log_service = IntegrationLogService(self.db)
+        identifier = self._identifier_from_respond_inbox_url(getattr(inquiry, "respond_inbox_url", None))
+        if not identifier:
+            raise handle_validation_error(
+                "respond_inbox_url is missing or invalid; cannot send message. Set contact_id and space_id."
+            )
+
+        message_to_send = str(message_text or "").strip()
+        if not message_to_send:
+            raise handle_validation_error("message_text is required.")
+
+        response = None
+        try:
+            client = RespondClient()
+            response = client.send_message(identifier, message_to_send)
+
+            enqueue_crm_chat_outbound_webhook(
+                self.db,
+                business_table="stock_inquiries",
+                business_id=str(inquiry.id),
+                contact_respond_io_id=identifier,
+                message_text=message_to_send,
+                respond_api_response=response if isinstance(response, dict) else None,
+                space_id=getattr(inquiry, "space_id", None),
+                crm_sender_user_id=crm_sender_user_id,
+                respond_user_id_fallback=(respond_user_id_fallback or "").strip() or identifier,
+            )
+
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="stock_inquiries",
+                    business_id=str(inquiry.id),
+                    external_reference=identifier,
+                    direction="outbound",
+                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                    http_method="POST",
+                    status="success",
+                    response_payload=str(response)[:50000] if response else None,
+                    created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
+                ),
+                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
+            )
+        except Exception as e:
+            logger.exception("Respond.io send_message failed for stock_inquiry %s", getattr(inquiry, "id", None))
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="stock_inquiries",
+                    business_id=str(inquiry.id),
+                    external_reference=identifier or "",
+                    direction="outbound",
+                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                    http_method="POST",
+                    status="failed",
+                    error_message=str(e),
+                    created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
+                ),
+                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
+            )
+            raise
+
+    def _enqueue_public_revise_webhook_for_stock_inquiry(self, inquiry: StockInquiry) -> None:
+        """Send an incoming-style webhook payload for a rejected stock inquiry revise request."""
+        import threading
+        import time
+
+        from app.models.access import RespondContact
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.error_handler import handle_validation_error
+        from app.services.integration_service import IntegrationLogService
+        from app.services.n8n_webhook_settings import get_n8n_stock_inquiry_revise_webhook_url
+
+        webhook_url = get_n8n_stock_inquiry_revise_webhook_url(self.db)
+        if not webhook_url:
+            raise handle_validation_error("Stock inquiry revise webhook is not configured.")
+
+        contact_key = (
+            (getattr(inquiry, "contact_id", None) or "").strip()
+            or (self._identifier_from_respond_inbox_url(getattr(inquiry, "respond_inbox_url", None)) or "").strip()
+        )
+        if not contact_key:
+            raise handle_validation_error("This stock inquiry is not linked to a contact.")
+
+        contact = (
+            self.db.query(RespondContact)
+            .filter(
+                or_(
+                    RespondContact.respond_io_id == contact_key,
+                    RespondContact.id == contact_key,
+                )
+            )
+            .first()
+        )
+        contact_respond_io_id = (
+            (getattr(contact, "respond_io_id", None) or "").strip() or contact_key
+        )
+        contact_id_value: Any
+        try:
+            contact_id_value = int(str(contact_respond_io_id).strip())
+        except (TypeError, ValueError):
+            contact_id_value = contact_respond_io_id
+
+        first_name = ((getattr(contact, "first_name", None) or "").strip() or None)
+        last_name = ((getattr(contact, "last_name", None) or "").strip() or None)
+        if not (first_name or last_name):
+            raw_name = (getattr(contact, "name", None) or "").strip()
+            if raw_name:
+                parts = raw_name.split(None, 1)
+                first_name = parts[0] if parts else None
+                last_name = parts[1] if len(parts) > 1 else None
+
+        inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+        now_ms = int(time.time() * 1000)
+        now_s = int(time.time())
+        payload = [
+            {
+                "contact": {
+                    "id": contact_id_value,
+                    "phone": getattr(contact, "phone_number", None) if contact else None,
+                    "firstName": first_name or "",
+                    "lastName": last_name or "",
+                    "role": "user",
+                    "created_at": now_s,
+                },
+                "message": {
+                    "messageId": now_ms * 1000,
+                    "channelMessageId": None,
+                    "contactId": contact_id_value,
+                    "channelId": None,
+                    "traffic": "incoming",
+                    "timestamp": now_ms,
+                    "message": {
+                        "type": "text",
+                        "text": f"I want to edit stock inquiry for {inquiry_number}",
+                    },
+                },
+                "channel": {
+                    "id": None,
+                    "name": "Whatsapp Business",
+                    "source": "whatsapp_business",
+                    "meta": None,
+                    "created_at": now_s,
+                },
+                "sender": {
+                    "source": "contact",
+                    "userId": None,
+                    "teamId": None,
+                    "workflowId": None,
+                    "broadcastHistoryId": None,
+                },
+                "source": "Contact",
+                "crm": {
+                    "business_table": "stock_inquiries",
+                    "business_id": str(inquiry.id),
+                    "space_id": getattr(inquiry, "space_id", None),
+                },
+            }
+        ]
+
+        log_service = IntegrationLogService(self.db)
+        integration_log = log_service.create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="n8n_stock_inquiry_revise",
+                business_table="stock_inquiries",
+                business_id=str(inquiry.id),
+                external_reference=str(contact_respond_io_id),
+                direction="outbound",
+                endpoint=webhook_url,
+                http_method="POST",
+                status="pending",
+            ),
+            request_payload_dict=payload,
+        )
+
+        log_id = str(integration_log.id)
+
+        def send_async() -> None:
+            try:
+                from app.database import SessionLocal
+
+                bg_db = SessionLocal()
+                try:
+                    bg_service = IntegrationLogService(bg_db)
+                    bg_service.send_webhook_for_log(log_id)
+                finally:
+                    bg_db.close()
+            except Exception as e:
+                logger.error(
+                    "Stock inquiry revise webhook failed for log %s: %s",
+                    log_id,
+                    e,
+                    exc_info=True,
+                )
+
+        threading.Thread(target=send_async, daemon=True).start()
 
     def update_inquiry(self, inquiry_id: str, inquiry_data: StockInquiryUpdate):
         """Update a stock inquiry. Status is only changed via workflow actions (submit/approve/reject/reopen)."""
@@ -2561,7 +2789,12 @@ class StockInquiryService:
         return inquiry
 
     def project_sales_reject_inquiry(
-        self, inquiry_id: str, reason: Optional[str] = None, user_id: Optional[str] = None
+        self,
+        inquiry_id: str,
+        reason: Optional[str] = None,
+        user_id: Optional[str] = None,
+        crm_sender_user_id: Optional[str] = None,
+        respond_user_id_fallback: Optional[str] = None,
     ) -> StockInquiry:
         """Move inquiry from pending_project_sales to rejected."""
         from datetime import datetime, timezone
@@ -2569,6 +2802,18 @@ class StockInquiryService:
         if inquiry.status != "pending_project_sales":
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_project_sales.")
+        inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+        reason_text = (reason or "").strip() or "no reason provided"
+        view_url = self._build_stock_inquiry_view_url(str(inquiry.id))
+        self._send_stock_inquiry_contact_message(
+            inquiry,
+            message_text=(
+                f"Your stock inquiry {inquiry_number} has been rejected due to "
+                f"{reason_text} by project sales. Please view your submission here {view_url}"
+            ),
+            crm_sender_user_id=crm_sender_user_id or user_id,
+            respond_user_id_fallback=respond_user_id_fallback or user_id,
+        )
         inquiry.status = "rejected"
         inquiry.rejected_from = "pending_project_sales"
         inquiry.rejection_reason = reason
@@ -2579,7 +2824,12 @@ class StockInquiryService:
         return inquiry
 
     def purchasing_reject_inquiry(
-        self, inquiry_id: str, reason: Optional[str] = None, user_id: Optional[str] = None
+        self,
+        inquiry_id: str,
+        reason: Optional[str] = None,
+        user_id: Optional[str] = None,
+        crm_sender_user_id: Optional[str] = None,
+        respond_user_id_fallback: Optional[str] = None,
     ) -> StockInquiry:
         """Move inquiry from pending_purchasing to rejected."""
         from datetime import datetime, timezone
@@ -2587,6 +2837,18 @@ class StockInquiryService:
         if inquiry.status != "pending_purchasing":
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_purchasing.")
+        inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+        reason_text = (reason or "").strip() or "no reason provided"
+        view_url = self._build_stock_inquiry_view_url(str(inquiry.id))
+        self._send_stock_inquiry_contact_message(
+            inquiry,
+            message_text=(
+                f"Your stock inquiry {inquiry_number} has been rejected due to "
+                f"{reason_text} by purchasing. Please view your submission here {view_url}"
+            ),
+            crm_sender_user_id=crm_sender_user_id or user_id,
+            respond_user_id_fallback=respond_user_id_fallback or user_id,
+        )
         inquiry.status = "rejected"
         inquiry.rejected_from = "pending_purchasing"
         inquiry.rejection_reason = reason

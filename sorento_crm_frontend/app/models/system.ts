@@ -35,6 +35,8 @@ export interface SystemSetting {
   n8nAttachmentWebhookUrl?: string | null;
   /** Webhook for CRM Chat Records replies (Respond.io-shaped payload for n8n). */
   n8nCrmChatOutboundWebhookUrl?: string | null;
+  /** Webhook for public rejected stock inquiry revise requests. */
+  n8nStockInquiryReviseWebhookUrl?: string | null;
 
   socialFacebook?: string | null;
   socialTwitter?: string | null;

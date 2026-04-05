@@ -159,6 +159,10 @@ class PromotionProductUpdate(BaseModel):
     discount_amount: Optional[Decimal] = None
     discount_percent: Optional[Decimal] = None
     dealer_discount_percent: Optional[Decimal] = None
+    list_price: Optional[Decimal] = Field(
+        default=None,
+        description="Updates the linked product master list price; recomputes line discount and dealer fields.",
+    )
 
 
 def _uuid_to_str(v):

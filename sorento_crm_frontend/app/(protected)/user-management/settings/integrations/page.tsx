@@ -24,6 +24,7 @@ import { useSettings } from '../components/settings-context';
 const IntegrationsSchema = z.object({
   n8nAttachmentWebhookUrl: z.string(),
   n8nCrmChatOutboundWebhookUrl: z.string(),
+  n8nStockInquiryReviseWebhookUrl: z.string(),
 });
 
 type IntegrationsForm = z.infer<typeof IntegrationsSchema>;
@@ -37,6 +38,7 @@ export default function IntegrationsSettingsPage() {
     defaultValues: {
       n8nAttachmentWebhookUrl: settings.n8nAttachmentWebhookUrl ?? '',
       n8nCrmChatOutboundWebhookUrl: settings.n8nCrmChatOutboundWebhookUrl ?? '',
+      n8nStockInquiryReviseWebhookUrl: settings.n8nStockInquiryReviseWebhookUrl ?? '',
     },
   });
 
@@ -44,6 +46,7 @@ export default function IntegrationsSettingsPage() {
     form.reset({
       n8nAttachmentWebhookUrl: settings.n8nAttachmentWebhookUrl ?? '',
       n8nCrmChatOutboundWebhookUrl: settings.n8nCrmChatOutboundWebhookUrl ?? '',
+      n8nStockInquiryReviseWebhookUrl: settings.n8nStockInquiryReviseWebhookUrl ?? '',
     });
   }, [settings, form]);
 
@@ -56,6 +59,8 @@ export default function IntegrationsSettingsPage() {
           n8n_attachment_webhook_url: values.n8nAttachmentWebhookUrl.trim() || null,
           n8n_crm_chat_outbound_webhook_url:
             values.n8nCrmChatOutboundWebhookUrl.trim() || null,
+          n8n_stock_inquiry_revise_webhook_url:
+            values.n8nStockInquiryReviseWebhookUrl.trim() || null,
         }),
       });
       if (!response.ok) {
@@ -106,6 +111,24 @@ export default function IntegrationsSettingsPage() {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>CRM chat outbound webhook URL</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="url"
+                      placeholder="https://…"
+                      autoComplete="off"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="n8nStockInquiryReviseWebhookUrl"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Stock inquiry revise webhook URL</FormLabel>
                   <FormControl>
                     <Input
                       type="url"

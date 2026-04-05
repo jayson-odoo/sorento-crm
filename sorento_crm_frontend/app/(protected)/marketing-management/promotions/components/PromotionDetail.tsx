@@ -66,6 +66,22 @@ function formatFocTiersLabel(group: PromotionGroup): string | null {
   return tiers.map((t) => `Buy ${t.purchase_quantity} get ${t.foc_quantity} free`).join(' · ');
 }
 
+/** User enters 0–100 (% off list); API stores fraction 0–1. */
+function parseDealerDiscountPercentInput(raw: string): { ok: true; fraction: number | null } | { ok: false } {
+  const t = raw.trim();
+  if (t === '') return { ok: true, fraction: null };
+  const n = Number.parseFloat(t.replace(',', '.'));
+  if (Number.isNaN(n) || n < 0 || n > 100) return { ok: false };
+  return { ok: true, fraction: n / 100 };
+}
+
+function fractionToPercentInputString(fraction: number | null | undefined): string {
+  if (fraction == null || Number.isNaN(Number(fraction))) return '';
+  const pct = Number(fraction) * 100;
+  const rounded = Math.round(pct * 10000) / 10000;
+  return String(rounded);
+}
+
 interface PromotionDetailProps {
   promotionId: string;
 }
@@ -108,8 +124,10 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     product_id: string;
     promotion_price: number | null;
     dealer_discount_percent: number | null;
+    list_price: number | null;
   } | null>(null);
   const [dealerDiscountInput, setDealerDiscountInput] = useState('');
+  const [listPriceInput, setListPriceInput] = useState('');
   const [addProductDealerDiscount, setAddProductDealerDiscount] = useState('');
   const [productCodeSearch, setProductCodeSearch] = useState('');
 
@@ -202,18 +220,14 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
 
     const price = promotionPrice ? parseFloat(promotionPrice) : undefined;
 
-    const ddRaw = addProductDealerDiscount.trim();
-    let dealerDiscountPercent: number | null | undefined;
-    if (ddRaw === '') {
-      dealerDiscountPercent = undefined;
-    } else {
-      const parsed = parseFloat(ddRaw);
-      if (Number.isNaN(parsed)) {
-        toast.error('Invalid dealer discount (use decimal like 0.37 for 37% off list)');
-        return;
-      }
-      dealerDiscountPercent = parsed;
+    const ddRaw = addProductDealerDiscount;
+    const ddParsed = parseDealerDiscountPercentInput(ddRaw);
+    if (!ddParsed.ok) {
+      toast.error('Dealer discount must be a percentage between 0 and 100.');
+      return;
     }
+    const dealerDiscountPercent =
+      ddRaw.trim() === '' ? undefined : ddParsed.fraction;
 
     try {
       await addProductMutation.mutateAsync({
@@ -238,11 +252,15 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     product_id: string;
     promotion_price: number | null;
     dealer_discount_percent: number | null;
+    list_price: number | null;
   }) => {
     setEditingProduct(product);
     setPromotionPrice(product.promotion_price?.toString() || '');
-    setDealerDiscountInput(
-      product.dealer_discount_percent != null ? String(product.dealer_discount_percent) : '',
+    setDealerDiscountInput(fractionToPercentInputString(product.dealer_discount_percent));
+    setListPriceInput(
+      product.list_price != null && !Number.isNaN(Number(product.list_price))
+        ? String(Number(product.list_price))
+        : '',
     );
     setEditProductDialogOpen(true);
   };
@@ -251,10 +269,14 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     if (!editingProduct) return;
 
     const price = promotionPrice ? parseFloat(promotionPrice) : 0;
-    const ddRaw = dealerDiscountInput.trim();
-    const dealerDiscountPercent = ddRaw === '' ? null : parseFloat(ddRaw);
-    if (ddRaw !== '' && Number.isNaN(dealerDiscountPercent!)) {
-      toast.error('Invalid dealer discount (use decimal like 0.37 for 37% off list)');
+    const ddParsed = parseDealerDiscountPercentInput(dealerDiscountInput);
+    if (!ddParsed.ok) {
+      toast.error('Dealer discount must be a percentage between 0 and 100.');
+      return;
+    }
+    const listPrice = Number.parseFloat(listPriceInput.replace(',', '.'));
+    if (Number.isNaN(listPrice) || listPrice < 0) {
+      toast.error('Enter a valid list price (0 or greater).');
       return;
     }
 
@@ -263,12 +285,14 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
         promotionId,
         lineId: editingProduct.id,
         promotionPrice: price,
-        dealerDiscountPercent,
+        dealerDiscountPercent: ddParsed.fraction,
+        listPrice,
       });
       setEditProductDialogOpen(false);
       setEditingProduct(null);
       setPromotionPrice('');
       setDealerDiscountInput('');
+      setListPriceInput('');
     } catch (error) {
       // Error is handled by the mutation hook
     }
@@ -463,6 +487,8 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                   product_id: pp.product_id,
                   promotion_price: pp.promotion_price ?? null,
                   dealer_discount_percent: pp.dealer_discount_percent ?? null,
+                  list_price:
+                    pp.product?.list_price != null ? Number(pp.product.list_price) : null,
                 })
               }
             >
@@ -778,8 +804,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           <DialogHeader>
             <DialogTitle>Add product to promotion</DialogTitle>
             <DialogDescription>
-              Choose the group and product. Optional dealer discount is fraction off list (e.g. 0.37). The same SKU
-              can appear in multiple groups as separate lines.
+              The same SKU can appear in multiple groups as separate lines.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -834,11 +859,13 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
               />
             </div>
             <div className="space-y-2">
-              <Label>Dealer discount (off list)</Label>
+              <Label>Dealer discount (% off list)</Label>
               <Input
                 type="number"
-                step="0.01"
-                placeholder="e.g. 0.37 for 37% off list → dealer cost"
+                step="0.1"
+                min={0}
+                max={100}
+                placeholder="e.g. 37"
                 value={addProductDealerDiscount}
                 onChange={(e) => setAddProductDealerDiscount(e.target.value)}
               />
@@ -1000,17 +1027,37 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
       </Dialog>
 
       {/* Edit Product Price Dialog */}
-      <Dialog open={editProductDialogOpen} onOpenChange={setEditProductDialogOpen}>
+      <Dialog
+        open={editProductDialogOpen}
+        onOpenChange={(open) => {
+          setEditProductDialogOpen(open);
+          if (!open) {
+            setEditingProduct(null);
+            setPromotionPrice('');
+            setDealerDiscountInput('');
+            setListPriceInput('');
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Edit promotion line</DialogTitle>
-            <DialogDescription>
-              Update promo selling price and optional dealer discount (fraction off list, e.g. 0.37).
-            </DialogDescription>
+            <DialogDescription>Edit pricing for this line.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             {editingProduct && (
               <>
+                <div className="space-y-2">
+                  <Label>List price *</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min={0}
+                    placeholder="List price"
+                    value={listPriceInput}
+                    onChange={(e) => setListPriceInput(e.target.value)}
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label>Promotion price (selling) *</Label>
                   <Input
@@ -1020,25 +1067,18 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                     value={promotionPrice}
                     onChange={(e) => setPromotionPrice(e.target.value)}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    List price:{' '}
-                    {new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(
-                      Number(
-                        promotion.products?.find((p) => p.id === editingProduct.id)?.product?.list_price,
-                      ) || 0,
-                    )}
-                  </p>
                 </div>
                 <div className="space-y-2">
-                  <Label>Dealer discount (off list)</Label>
+                  <Label>Dealer discount (% off list)</Label>
                   <Input
                     type="number"
-                    step="0.01"
-                    placeholder="e.g. 0.37 for 37% off list → dealer cost"
+                    step="0.1"
+                    min={0}
+                    max={100}
+                    placeholder="e.g. 37"
                     value={dealerDiscountInput}
                     onChange={(e) => setDealerDiscountInput(e.target.value)}
                   />
-                  <p className="text-xs text-muted-foreground">Leave empty to clear dealer cost / margin.</p>
                 </div>
               </>
             )}
@@ -1049,12 +1089,17 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
               setEditingProduct(null);
               setPromotionPrice('');
               setDealerDiscountInput('');
+              setListPriceInput('');
             }}>
               Cancel
             </Button>
             <Button
               onClick={handleUpdateProductPrice}
-              disabled={!promotionPrice || updatePriceMutation.isPending}
+              disabled={
+                !promotionPrice.trim() ||
+                !listPriceInput.trim() ||
+                updatePriceMutation.isPending
+              }
             >
               {updatePriceMutation.isPending ? (
                 <>

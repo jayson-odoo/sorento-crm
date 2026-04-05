@@ -342,7 +342,18 @@ async def project_sales_reject_stock_inquiry(
         service = StockInquiryService(db)
         reason = body.reason if body else None
         user_id = (current_user or {}).get("id")
-        service.project_sales_reject_inquiry(inquiry_id, reason=reason, user_id=user_id)
+        respond_user_id = (
+            (current_user or {}).get("respond_user_id")
+            or (current_user or {}).get("respondUserId")
+            or user_id
+        )
+        service.project_sales_reject_inquiry(
+            inquiry_id,
+            reason=reason,
+            user_id=user_id,
+            crm_sender_user_id=user_id,
+            respond_user_id_fallback=str(respond_user_id or ""),
+        )
         return service.get_inquiry_for_response(inquiry_id)
     except HTTPException:
         raise
@@ -362,7 +373,18 @@ async def purchasing_reject_stock_inquiry(
         service = StockInquiryService(db)
         reason = body.reason if body else None
         user_id = (current_user or {}).get("id")
-        service.purchasing_reject_inquiry(inquiry_id, reason=reason, user_id=user_id)
+        respond_user_id = (
+            (current_user or {}).get("respond_user_id")
+            or (current_user or {}).get("respondUserId")
+            or user_id
+        )
+        service.purchasing_reject_inquiry(
+            inquiry_id,
+            reason=reason,
+            user_id=user_id,
+            crm_sender_user_id=user_id,
+            respond_user_id_fallback=str(respond_user_id or ""),
+        )
         return service.get_inquiry_for_response(inquiry_id)
     except HTTPException:
         raise

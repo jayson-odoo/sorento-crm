@@ -58,6 +58,7 @@ class SystemSettingUpdate(BaseModel):
     default_product_standard_lead_time_days: Optional[int] = Field(None, ge=0, le=10950)
     n8n_attachment_webhook_url: Optional[str] = None
     n8n_crm_chat_outbound_webhook_url: Optional[str] = None
+    n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
 
 
 class SmtpTestResult(BaseModel):
@@ -108,6 +109,11 @@ async def get_settings(
                 else None,
                 "n8n_crm_chat_outbound_webhook_url": getattr(
                     settings, "n8n_crm_chat_outbound_webhook_url", None
+                )
+                if settings
+                else None,
+                "n8n_stock_inquiry_revise_webhook_url": getattr(
+                    settings, "n8n_stock_inquiry_revise_webhook_url", None
                 )
                 if settings
                 else None,

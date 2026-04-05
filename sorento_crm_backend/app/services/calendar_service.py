@@ -46,6 +46,19 @@ def weekday_ranges_from_flags(flags: List[bool]) -> List[Tuple[str, str]]:
     return ranges
 
 
+def format_time_12h_ampm(value: time) -> str:
+    """
+    Format a clock time for human-facing APIs, e.g. 09:00 A.M., 01:30 P.M., 12:00 P.M.
+    Uses zero-padded hour and minute; includes :ss only when seconds are non-zero.
+    """
+    h, m, s = value.hour, value.minute, value.second
+    hour12 = 12 if (h % 12 == 0) else (h % 12)
+    suffix = "A.M." if h < 12 else "P.M."
+    if s:
+        return f"{hour12:02d}:{m:02d}:{s:02d} {suffix}"
+    return f"{hour12:02d}:{m:02d} {suffix}"
+
+
 class CalendarService:
     def __init__(self, db: Session):
         self.db = db

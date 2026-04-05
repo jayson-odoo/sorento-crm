@@ -24,7 +24,7 @@ from app.schemas.marketing import (
     MarketingCampaignCreate,
     MarketingCampaignUpdate,
 )
-from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error
+from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error, handle_validation_error
 from app.services.contact_access_type_service import ContactAccessTypeService
 
 
@@ -707,17 +707,37 @@ class PromotionProductService:
         product = self.db.query(Product).filter(Product.id == promotion_product.product_id).first()
         
         update_data = product_data.model_dump(exclude_unset=True)
-        
-        # Recalculate discount if promo_selling_price is being updated
-        if 'promo_selling_price' in update_data and product and product.list_price:
-            promo_price = float(update_data['promo_selling_price'])
-            list_price = float(product.list_price)
-            discount_amount, discount_percent = self._compute_discount_values(list_price, promo_price)
-            update_data['discount_amount'] = discount_amount
-            update_data['discount_percent'] = discount_percent
 
-        if 'dealer_discount_percent' in update_data and product:
-            dd = update_data.get('dealer_discount_percent')
+        list_price_new = update_data.pop('list_price', None)
+        if list_price_new is not None:
+            if product is None:
+                raise handle_not_found("Product", promotion_product.product_id)
+            lp_dec = list_price_new
+            if lp_dec < 0:
+                raise handle_validation_error("List price cannot be negative.")
+            product.list_price = lp_dec
+
+        recompute_discount = (
+            ('promo_selling_price' in update_data or list_price_new is not None)
+            and product
+            and product.list_price is not None
+        )
+        if recompute_discount:
+            promo_src = update_data.get('promo_selling_price', promotion_product.promo_selling_price)
+            if promo_src is not None:
+                promo_price = float(promo_src)
+                list_price = float(product.list_price)
+                discount_amount, discount_percent = self._compute_discount_values(list_price, promo_price)
+                update_data['discount_amount'] = discount_amount
+                update_data['discount_percent'] = discount_percent
+
+        recompute_dealer = ('dealer_discount_percent' in update_data or list_price_new is not None) and product
+        if recompute_dealer:
+            dd = (
+                update_data['dealer_discount_percent']
+                if 'dealer_discount_percent' in update_data
+                else promotion_product.dealer_discount_percent
+            )
             dd_f = float(dd) if dd is not None else None
             dc, margin = dealer_cost_and_margin_from_list(
                 float(product.list_price) if product.list_price is not None else None,
@@ -725,7 +745,7 @@ class PromotionProductService:
             )
             update_data['dealer_cost'] = dc
             update_data['list_to_dealer_margin_amount'] = margin
-        
+
         for key, value in update_data.items():
             setattr(promotion_product, key, value)
         

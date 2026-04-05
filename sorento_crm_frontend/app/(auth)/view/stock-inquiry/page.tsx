@@ -60,6 +60,9 @@ function ViewStockInquiryContent() {
   const [summary, setSummary] = useState<StockInquiryViewSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [revisePending, setRevisePending] = useState(false);
+  const [reviseSuccess, setReviseSuccess] = useState<string | null>(null);
+  const [reviseError, setReviseError] = useState<string | null>(null);
 
   const fetchSummary = useCallback(async () => {
     if (!token) {
@@ -93,6 +96,37 @@ function ViewStockInquiryContent() {
   useEffect(() => {
     fetchSummary();
   }, [fetchSummary]);
+
+  const handleRevise = useCallback(async () => {
+    if (!token) return;
+    setRevisePending(true);
+    setReviseSuccess(null);
+    setReviseError(null);
+    try {
+      const res = await fetch('/api/v1/public/view/stock-inquiry/revise', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg =
+          (typeof data.detail === 'object' && data.detail && 'message' in data.detail
+            ? (data.detail as { message?: string }).message
+            : null) ||
+          (typeof data.detail === 'string' ? data.detail : null) ||
+          data.message ||
+          'Failed to send revise request.';
+        setReviseError(msg);
+        return;
+      }
+      setReviseSuccess(data.message || 'Revise request sent successfully.');
+    } catch {
+      setReviseError('Failed to send revise request.');
+    } finally {
+      setRevisePending(false);
+    }
+  }, [token]);
 
   if (loading) {
     return (
@@ -137,14 +171,21 @@ function ViewStockInquiryContent() {
           ) : null}
           <h1 className="text-xl sm:text-2xl font-semibold leading-tight">Stock Inquiry</h1>
         </div>
-        {viewInSystemPath && (
-          <Button variant="outline" size="sm" className="shrink-0 self-start" asChild>
-            <Link href={viewInSystemPath}>
-              <ExternalLink className="h-4 w-4 mr-2" />
-              View in system
-            </Link>
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2 self-start">
+          {summary?.status === 'rejected' && (
+            <Button onClick={handleRevise} disabled={revisePending}>
+              {revisePending ? 'Sending...' : 'Revise'}
+            </Button>
+          )}
+          {viewInSystemPath && (
+            <Button variant="outline" size="sm" className="shrink-0 self-start" asChild>
+              <Link href={viewInSystemPath}>
+                <ExternalLink className="h-4 w-4 mr-2" />
+                View in system
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
       {error && (
         <Alert variant="destructive">
@@ -152,6 +193,19 @@ function ViewStockInquiryContent() {
             <AlertCircle />
           </AlertIcon>
           <AlertTitle>{error}</AlertTitle>
+        </Alert>
+      )}
+      {reviseError && (
+        <Alert variant="destructive">
+          <AlertIcon>
+            <AlertCircle />
+          </AlertIcon>
+          <AlertTitle>{reviseError}</AlertTitle>
+        </Alert>
+      )}
+      {reviseSuccess && (
+        <Alert>
+          <AlertTitle>{reviseSuccess}</AlertTitle>
         </Alert>
       )}
       <ProductInquiryFormLayout>

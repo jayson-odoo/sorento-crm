@@ -233,15 +233,23 @@ export function useUpdatePromotionProductPrice() {
       lineId,
       promotionPrice,
       dealerDiscountPercent,
+      listPrice,
     }: {
       promotionId: string;
       lineId: string;
       promotionPrice: number;
-      dealerDiscountPercent?: number | null;
-    }) => updatePromotionProductPrice(promotionId, lineId, promotionPrice, dealerDiscountPercent),
+      dealerDiscountPercent: number | null;
+      listPrice: number;
+    }) =>
+      updatePromotionProductPrice(promotionId, lineId, {
+        promotionPrice,
+        dealerDiscountPercent,
+        listPrice,
+      }),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['promotion-products', variables.promotionId] });
       queryClient.invalidateQueries({ queryKey: ['promotion', variables.promotionId] });
+      queryClient.invalidateQueries({ queryKey: ['products'] });
       toast.success('Promotion product updated successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to update promotion product price'),
