@@ -108,6 +108,9 @@ function ViewRequestContent() {
   const [summary, setSummary] = useState<ViewSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [revisePending, setRevisePending] = useState(false);
+  const [reviseSuccess, setReviseSuccess] = useState<string | null>(null);
+  const [reviseError, setReviseError] = useState<string | null>(null);
 
   const fetchSummary = useCallback(async () => {
     if (!token) {
@@ -141,6 +144,37 @@ function ViewRequestContent() {
   useEffect(() => {
     fetchSummary();
   }, [fetchSummary]);
+
+  const handleRevise = useCallback(async () => {
+    if (!token) return;
+    setRevisePending(true);
+    setReviseSuccess(null);
+    setReviseError(null);
+    try {
+      const res = await fetch('/api/v1/public/view/request/revise', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg =
+          (typeof data.detail === 'object' && data.detail && 'message' in data.detail
+            ? (data.detail as { message?: string }).message
+            : null) ||
+          (typeof data.detail === 'string' ? data.detail : null) ||
+          data.message ||
+          'Failed to send revise request.';
+        setReviseError(msg);
+        return;
+      }
+      setReviseSuccess(data.message || 'Revise request sent successfully.');
+    } catch {
+      setReviseError('Failed to send revise request.');
+    } finally {
+      setRevisePending(false);
+    }
+  }, [token]);
 
   if (loading) {
     return (
@@ -183,16 +217,23 @@ function ViewRequestContent() {
     <div
       className={`min-h-screen w-full mx-auto px-4 py-6 space-y-6 ${isDocLayout ? 'max-w-full sm:max-w-5xl xl:max-w-6xl' : 'max-w-lg'}`}
     >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <h1 className="text-xl sm:text-2xl font-semibold leading-tight">{typeLabel}</h1>
-        {viewInSystemPath && (
-          <Button variant="outline" size="sm" className="shrink-0" asChild>
-            <Link href={viewInSystemPath}>
-              <ExternalLink className="h-4 w-4 mr-2" />
-              View in system
-            </Link>
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2 self-start">
+          {summary?.approval_status === 'rejected' && (
+            <Button onClick={handleRevise} disabled={revisePending}>
+              {revisePending ? 'Sending...' : 'Revise'}
+            </Button>
+          )}
+          {viewInSystemPath && (
+            <Button variant="outline" size="sm" className="shrink-0 self-start" asChild>
+              <Link href={viewInSystemPath}>
+                <ExternalLink className="h-4 w-4 mr-2" />
+                View in system
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
       {error && (
         <Alert variant="destructive">
@@ -200,6 +241,19 @@ function ViewRequestContent() {
             <AlertCircle />
           </AlertIcon>
           <AlertTitle>{error}</AlertTitle>
+        </Alert>
+      )}
+      {reviseError && (
+        <Alert variant="destructive">
+          <AlertIcon>
+            <AlertCircle />
+          </AlertIcon>
+          <AlertTitle>{reviseError}</AlertTitle>
+        </Alert>
+      )}
+      {reviseSuccess && (
+        <Alert>
+          <AlertTitle>{reviseSuccess}</AlertTitle>
         </Alert>
       )}
       <Card className={`overflow-hidden ${isDocLayout ? 'border-2 shadow-sm' : ''}`}>

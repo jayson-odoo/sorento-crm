@@ -3,6 +3,10 @@ External API: get shareable view link for a record by entity_type and entity_id.
 
 Auth: X-API-Key header (get_external_api_user).
 Returns the same view link as the in-app "Copy view link" (no login required to open the link).
+
+For:
+- stock_inquiry: ``entity_id`` may be the UUID or ``inquiry_number``
+- purchase_request / sponsorship_form: ``entity_id`` may be the UUID or ``request_number``
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -12,6 +16,7 @@ from app.config import settings
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.modules.runtime.guards import ensure_public_view_links_allowed
+from app.models.procurement import PurchaseRequestHeader, StockInquiry
 from app.schemas.procurement import ViewLinkResponse
 from app.services.complaints_service import ComplaintService
 from app.services.procurement_service import StockInquiryService, PurchaseRequestService
@@ -36,7 +41,13 @@ class ViewLinkExternalRequest(BaseModel):
         ...,
         description="One of: complaint, stock_inquiry, purchase_request, sponsorship_form",
     )
-    entity_id: str = Field(..., description="ID of the record (e.g. UUID).")
+    entity_id: str = Field(
+        ...,
+        description=(
+            "Record identifier. For stock_inquiry this may be the UUID or inquiry_number. "
+            "For purchase_request / sponsorship_form this may be the UUID or request_number."
+        ),
+    )
     base_url: str | None = Field(
         default=None,
         description="Optional frontend base URL to build full view URL (e.g. https://fe-sorento.foundryx.my). If omitted, uses FRONTEND_BASE_URL from config or returns a relative path.",
@@ -75,6 +86,41 @@ def get_view_link(
     token_entity_type = "purchase_request" if entity_type == "sponsorship_form" else entity_type
     view_path = ENTITY_VIEW_PATH[entity_type]
 
+    def _resolve_stock_inquiry_id(raw: str) -> str:
+        row = (
+            db.query(StockInquiry.id)
+            .filter(
+                (StockInquiry.id == raw) | (StockInquiry.inquiry_number == raw)
+            )
+            .first()
+        )
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Stock inquiry not found.",
+            )
+        return str(row[0])
+
+    def _resolve_request_id(raw: str, request_type: str) -> str:
+        row = (
+            db.query(PurchaseRequestHeader.id)
+            .filter(
+                PurchaseRequestHeader.request_type == request_type,
+                (
+                    (PurchaseRequestHeader.id == raw)
+                    | (PurchaseRequestHeader.request_number == raw)
+                ),
+            )
+            .first()
+        )
+        if not row:
+            label = "Sponsorship form" if request_type == "sponsorship_form" else "Purchase request"
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"{label} not found.",
+            )
+        return str(row[0])
+
     try:
         if token_entity_type == "complaint":
             service = ComplaintService(db)
@@ -82,13 +128,16 @@ def get_view_link(
             token = service.get_or_create_view_token(entity_id)
         elif token_entity_type == "stock_inquiry":
             service = StockInquiryService(db)
-            service.get_inquiry(entity_id)  # ensure exists
-            token = service.get_or_create_view_token(entity_id)
+            resolved_id = _resolve_stock_inquiry_id(entity_id)
+            service.get_inquiry(resolved_id)  # ensure exists
+            token = service.get_or_create_view_token(resolved_id)
         else:
             # purchase_request (and sponsorship_form)
             service = PurchaseRequestService(db)
-            service.get_request(entity_id)  # ensure exists
-            token = service.get_or_create_view_token(entity_id)
+            request_type = "sponsorship_form" if entity_type == "sponsorship_form" else "purchase_request"
+            resolved_id = _resolve_request_id(entity_id, request_type)
+            service.get_request(resolved_id)  # ensure exists
+            token = service.get_or_create_view_token(resolved_id)
 
         db.commit()
     except HTTPException:

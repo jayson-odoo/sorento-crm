@@ -2122,7 +2122,7 @@ class StockInquiryService:
             raise handle_conflict("Revise is only available for rejected stock inquiries.")
 
         self._enqueue_public_revise_webhook_for_stock_inquiry(inquiry)
-        return {"message": "Revise request sent successfully"}
+        return {"message": "Revise request sent successfully. You may now open Whatsapp to revise the inquiry."}
 
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
         """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""
@@ -3010,6 +3010,290 @@ class PurchaseRequestService:
             return None
         parts = [p for p in respond_inbox_url.rstrip("/").split("/") if p]
         return parts[-1] if parts else None
+
+    def _build_request_view_url(self, header_id: str, base_url_override: Optional[str] = None) -> str:
+        """Build a shareable (no-auth) frontend link for a purchase request / sponsorship form."""
+        from app.models.user import SystemSetting
+
+        view_token = self.get_or_create_view_token(header_id)
+        base_url = (base_url_override or "").strip().rstrip("/")
+        if not base_url:
+            base_url = (settings.frontend_base_url or "").strip().rstrip("/")
+        if not base_url:
+            sys_settings = self.db.query(SystemSetting).first()
+            if sys_settings and getattr(sys_settings, "website_url", None):
+                base_url = (sys_settings.website_url or "").strip().rstrip("/")
+        return f"{base_url}/view/request?token={view_token}" if base_url else f"/view/request?token={view_token}"
+
+    def _send_purchase_request_contact_message(
+        self,
+        header: PurchaseRequestHeader,
+        *,
+        message_text: str,
+        crm_sender_user_id: Optional[str] = None,
+        respond_user_id_fallback: Optional[str] = None,
+    ) -> None:
+        """Send a text message to the request's Respond.io contact and mirror to the outbound webhook."""
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+        from app.services.error_handler import handle_validation_error
+        from app.services.integration_service import IntegrationLogService, RespondClient
+
+        log_service = IntegrationLogService(self.db)
+        identifier = self._identifier_from_respond_inbox_url(getattr(header, "respond_inbox_url", None))
+        if not identifier:
+            raise handle_validation_error(
+                "respond_inbox_url is missing or invalid; cannot send message. Set contact_id and space_id."
+            )
+
+        message_to_send = str(message_text or "").strip()
+        if not message_to_send:
+            raise handle_validation_error("message_text is required.")
+
+        response = None
+        try:
+            client = RespondClient()
+            response = client.send_message(identifier, message_to_send)
+
+            enqueue_crm_chat_outbound_webhook(
+                self.db,
+                business_table="purchase_requests",
+                business_id=str(header.id),
+                contact_respond_io_id=identifier,
+                message_text=message_to_send,
+                respond_api_response=response if isinstance(response, dict) else None,
+                space_id=getattr(header, "space_id", None),
+                crm_sender_user_id=crm_sender_user_id,
+                respond_user_id_fallback=(respond_user_id_fallback or "").strip() or identifier,
+            )
+
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="purchase_requests",
+                    business_id=str(header.id),
+                    external_reference=identifier,
+                    direction="outbound",
+                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                    http_method="POST",
+                    status="success",
+                    response_payload=str(response)[:50000] if response else None,
+                    created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
+                ),
+                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
+            )
+        except Exception as e:
+            logger.exception(
+                "Respond.io send_message failed for purchase_request %s", getattr(header, "id", None)
+            )
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="purchase_requests",
+                    business_id=str(header.id),
+                    external_reference=identifier or "",
+                    direction="outbound",
+                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                    http_method="POST",
+                    status="failed",
+                    error_message=str(e),
+                    created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
+                ),
+                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
+            )
+            raise
+
+    def _notify_contact_on_approval_rejected(self, header: PurchaseRequestHeader) -> None:
+        """Notify the linked Respond.io contact when a public approval flow rejects the request."""
+        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        reason = (getattr(header, "approval_comments", None) or "").strip() or "no reason provided"
+        approver = (getattr(header, "approved_by", None) or "").strip() or (
+            (getattr(header, "approver_email", None) or "").strip()
+        )
+        if not approver:
+            approver = "unknown"
+        view_url = self._build_request_view_url(str(header.id))
+        rt = getattr(header, "request_type", None) or ""
+        if rt == "sponsorship_form":
+            message_text = (
+                f"Your sponsorship form {request_number} has been rejected due to {reason} by {approver}. "
+                f"Please view your submission here {view_url}"
+            )
+        else:
+            message_text = (
+                f"Your purchase request {request_number} has been rejected due to {reason} by {approver}. "
+                f"Please view your submission here {view_url}"
+            )
+        self._send_purchase_request_contact_message(header, message_text=message_text)
+
+    def request_revision_by_token(self, token_value: str) -> dict[str, str]:
+        """Trigger the external revise webhook for a rejected purchase request / sponsorship form public view."""
+        view_token = (
+            self.db.query(ViewToken)
+            .filter(ViewToken.token == token_value, ViewToken.entity_type == "purchase_request")
+            .first()
+        )
+        if not view_token or not view_token.entity_id:
+            raise handle_not_found("View link", "(invalid token)")
+
+        header = self.get_request(str(view_token.entity_id))
+        if getattr(header, "approval_status", None) != "rejected":
+            raise handle_conflict("Revise is only available for rejected requests.")
+
+        self._enqueue_public_revise_webhook_for_purchase_request(header)
+        rt = getattr(header, "request_type", None) or ""
+        if rt == "sponsorship_form":
+            return {
+                "message": (
+                    "Revise request sent successfully. You can open WhatsApp to continue editing the sponsorship form."
+                )
+            }
+        return {
+            "message": (
+                "Revise request sent successfully. You can open WhatsApp to continue editing the purchase request."
+            )
+        }
+
+    def _enqueue_public_revise_webhook_for_purchase_request(self, header: PurchaseRequestHeader) -> None:
+        """Send an incoming-style webhook payload for a rejected request revise (same n8n URL as stock inquiry)."""
+        import threading
+        import time
+
+        from app.models.access import RespondContact
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.error_handler import handle_validation_error
+        from app.services.integration_service import IntegrationLogService
+        from app.services.n8n_webhook_settings import get_n8n_stock_inquiry_revise_webhook_url
+
+        webhook_url = get_n8n_stock_inquiry_revise_webhook_url(self.db)
+        if not webhook_url:
+            raise handle_validation_error("Revise webhook is not configured.")
+
+        contact_key = (
+            (getattr(header, "contact_id", None) or "").strip()
+            or (
+                self._identifier_from_respond_inbox_url(getattr(header, "respond_inbox_url", None)) or ""
+            ).strip()
+        )
+        if not contact_key:
+            raise handle_validation_error("This request is not linked to a contact.")
+
+        contact = (
+            self.db.query(RespondContact)
+            .filter(
+                or_(
+                    RespondContact.respond_io_id == contact_key,
+                    RespondContact.id == contact_key,
+                )
+            )
+            .first()
+        )
+        contact_respond_io_id = (getattr(contact, "respond_io_id", None) or "").strip() or contact_key
+        contact_id_value: Any
+        try:
+            contact_id_value = int(str(contact_respond_io_id).strip())
+        except (TypeError, ValueError):
+            contact_id_value = contact_respond_io_id
+
+        first_name = ((getattr(contact, "first_name", None) or "").strip() or None)
+        last_name = ((getattr(contact, "last_name", None) or "").strip() or None)
+        if not (first_name or last_name):
+            raw_name = (getattr(contact, "name", None) or "").strip()
+            if raw_name:
+                parts = raw_name.split(None, 1)
+                first_name = parts[0] if parts else None
+                last_name = parts[1] if len(parts) > 1 else None
+
+        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        rt = getattr(header, "request_type", None) or ""
+        if rt == "sponsorship_form":
+            revise_text = f"I want to edit sponsorship form for {request_number}"
+        else:
+            revise_text = f"I want to edit purchase request for {request_number}"
+
+        now_ms = int(time.time() * 1000)
+        now_s = int(time.time())
+        payload = [
+            {
+                "contact": {
+                    "id": contact_id_value,
+                    "phone": getattr(contact, "phone_number", None) if contact else None,
+                    "firstName": first_name or "",
+                    "lastName": last_name or "",
+                    "role": "user",
+                    "created_at": now_s,
+                },
+                "message": {
+                    "messageId": now_ms * 1000,
+                    "channelMessageId": None,
+                    "contactId": contact_id_value,
+                    "channelId": None,
+                    "traffic": "incoming",
+                    "timestamp": now_ms,
+                    "message": {
+                        "type": "text",
+                        "text": revise_text,
+                    },
+                },
+                "channel": {
+                    "id": None,
+                    "name": "Whatsapp Business",
+                    "source": "whatsapp_business",
+                    "meta": None,
+                    "created_at": now_s,
+                },
+                "sender": {
+                    "source": "contact",
+                    "userId": None,
+                    "teamId": None,
+                    "workflowId": None,
+                    "broadcastHistoryId": None,
+                },
+                "source": "Contact",
+                "crm": {
+                    "business_table": "purchase_requests",
+                    "business_id": str(header.id),
+                    "space_id": getattr(header, "space_id", None),
+                },
+            }
+        ]
+
+        log_service = IntegrationLogService(self.db)
+        integration_log = log_service.create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="n8n_purchase_request_revise",
+                business_table="purchase_requests",
+                business_id=str(header.id),
+                external_reference=str(contact_respond_io_id),
+                direction="outbound",
+                endpoint=webhook_url,
+                http_method="POST",
+                status="pending",
+            ),
+            request_payload_dict=payload,
+        )
+
+        log_id = str(integration_log.id)
+
+        def send_async() -> None:
+            try:
+                from app.database import SessionLocal
+
+                bg_db = SessionLocal()
+                try:
+                    bg_service = IntegrationLogService(bg_db)
+                    bg_service.send_webhook_for_log(log_id)
+                finally:
+                    bg_db.close()
+            except Exception as e:
+                logger.error(
+                    "Purchase request revise webhook failed for log %s: %s",
+                    log_id,
+                    e,
+                    exc_info=True,
+                )
+
+        threading.Thread(target=send_async, daemon=True).start()
 
     def _parse_date(self, value: Optional[str | date | datetime]) -> Optional[date]:
         if value is None:
@@ -4332,4 +4616,14 @@ class PurchaseRequestService:
                     self._notify_requester_on_rejected(header)
                 except Exception as e:
                     logger.warning("Failed to notify requester for rejected purchase request %s: %s", header.id, e)
+            try:
+                self._notify_contact_on_approval_rejected(header)
+                self.db.commit()
+            except Exception as e:
+                self.db.rollback()
+                logger.warning(
+                    "Failed to send Respond.io rejection message for purchase request %s: %s",
+                    header.id,
+                    e,
+                )
         return header
