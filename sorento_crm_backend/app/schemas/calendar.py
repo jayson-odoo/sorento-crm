@@ -99,3 +99,28 @@ class ExternalWorkCalendarSummary(BaseModel):
         default_factory=list,
         description="Contiguous working weekday ranges; gaps create separate entries.",
     )
+
+
+class ExternalWorkingDayCheckResponse(BaseModel):
+    """External API: whether the current (or evaluated) calendar day is a working day."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    is_working_day: bool = Field(
+        ...,
+        description="True if the local calendar date is an enabled weekday and not a public holiday.",
+    )
+    timezone: str = Field(
+        ...,
+        description="IANA timezone used to interpret “now” (default Asia/Kuala_Lumpur when omitted).",
+    )
+    local_datetime: str = Field(
+        ...,
+        description="Instant evaluated, as ISO 8601 in the requested timezone.",
+    )
+    local_date: date = Field(..., description="Calendar date in that timezone.")
+    weekday: str = Field(..., description="English weekday name (Monday–Sunday).")
+    is_public_holiday: bool = Field(
+        ...,
+        description="True if this local_date matches a row in the CRM public holiday calendar.",
+    )

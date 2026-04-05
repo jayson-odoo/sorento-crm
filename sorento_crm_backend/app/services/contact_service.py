@@ -4,14 +4,95 @@ from sqlalchemy import func, or_
 from typing import Optional
 import logging
 import json
+from fastapi import HTTPException
 from app.models.access import RespondContact
 from app.schemas.user import RespondContactCreate, RespondContactUpdate, RespondContactResponse, ContactAgentAccessCreate
-from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
 from app.services.integration_service import RespondClient, IntegrationLogService
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse, PaginationResponse
 
 logger = logging.getLogger(__name__)
+
+
+def _respond_contact_root_dict(payload: dict) -> dict:
+    """Pick the object that holds Respond contact fields (not assignee)."""
+    if not isinstance(payload, dict):
+        return {}
+    for key in ("contact", "data"):
+        inner = payload.get(key)
+        if isinstance(inner, dict) and (
+            "phone" in inner
+            or "firstName" in inner
+            or "lastName" in inner
+            or "first_name" in inner
+            or "last_name" in inner
+        ):
+            return inner
+    return payload
+
+
+def parse_respond_contact_payload(payload: dict) -> dict:
+    """
+    Extract contact fields from Respond.io GET /v2/contact/... JSON.
+    Does not use assignee (that is the agent, not the contact).
+    """
+    root = _respond_contact_root_dict(payload)
+    out: dict = {}
+
+    fn_key = "firstName" if "firstName" in root else ("first_name" if "first_name" in root else None)
+    ln_key = "lastName" if "lastName" in root else ("last_name" if "last_name" in root else None)
+
+    if fn_key:
+        raw = root.get(fn_key)
+        if raw is None:
+            out["first_name"] = None
+        elif isinstance(raw, str):
+            out["first_name"] = raw.strip() or None
+        else:
+            out["first_name"] = str(raw).strip() or None
+    if ln_key:
+        raw = root.get(ln_key)
+        if raw is None:
+            out["last_name"] = None
+        elif isinstance(raw, str):
+            out["last_name"] = raw.strip() or None
+        else:
+            out["last_name"] = str(raw).strip() or None
+
+    name = root.get("name") or root.get("displayName")
+    if isinstance(name, str):
+        name = name.strip() or None
+    if name is not None:
+        out["name"] = name
+    elif "first_name" in out or "last_name" in out:
+        fn = out.get("first_name") or ""
+        ln = out.get("last_name") or ""
+        combined = f"{fn} {ln}".strip()
+        if combined:
+            out["name"] = combined
+
+    rid = root.get("id")
+    if rid is not None:
+        s = str(rid).strip()
+        if s:
+            out["respond_io_id"] = s
+
+    custom_fields = (
+        root.get("custom_fields")
+        or root.get("customFields")
+        or payload.get("custom_fields")
+        or payload.get("customFields")
+    )
+    if isinstance(custom_fields, list):
+        for field in custom_fields:
+            field_name = str(field.get("name", "")).strip().lower()
+            if field_name == "user_type":
+                v = field.get("value")
+                out["user_type"] = str(v).strip() if v is not None else None
+                break
+
+    return out
 
 
 class ContactService:
@@ -43,10 +124,13 @@ class ContactService:
         q = self.db.query(RespondContact)
         
         if query:
+            like = f"%{query}%"
             q = q.filter(
                 or_(
-                    RespondContact.phone_number.ilike(f"%{query}%"),
-                    RespondContact.name.ilike(f"%{query}%")
+                    RespondContact.phone_number.ilike(like),
+                    RespondContact.name.ilike(like),
+                    RespondContact.first_name.ilike(like),
+                    RespondContact.last_name.ilike(like),
                 )
             )
         
@@ -56,6 +140,8 @@ class ContactService:
         sort_map = {
             "phone_number": RespondContact.phone_number,
             "name": RespondContact.name,
+            "first_name": RespondContact.first_name,
+            "last_name": RespondContact.last_name,
             "created_at": RespondContact.created_at,
             "updated_at": RespondContact.updated_at,
         }
@@ -72,18 +158,9 @@ class ContactService:
         contact_responses = []
         for contact in contacts:
             try:
-                # Convert SQLAlchemy model to dict with explicit UUID string conversion
-                contact_dict = {
-                    'id': str(contact.id),
-                    'phone_number': contact.phone_number,
-                    'name': contact.name,
-                    'user_type': contact.user_type,
-                    'access_type_code': getattr(contact, 'access_type_code', None),
-                    'created_at': contact.created_at,
-                    'updated_at': contact.updated_at,
-                    'created_by': contact.created_by,
-                }
-                contact_responses.append(RespondContactResponse.model_validate(contact_dict))
+                contact_responses.append(
+                    RespondContactResponse.model_validate(self.contact_to_response_dict(contact))
+                )
             except Exception as e:
                 logger.error(f"Error validating contact {contact.id}: {str(e)}", exc_info=True)
                 raise
@@ -202,8 +279,24 @@ class ContactService:
         self.db.commit()
         return {"deleted_count": deleted, "message": f"Deleted {deleted} contact(s)."}
 
+    @staticmethod
+    def contact_to_response_dict(contact: RespondContact) -> dict:
+        return {
+            "id": str(contact.id),
+            "phone_number": contact.phone_number,
+            "name": contact.name,
+            "first_name": getattr(contact, "first_name", None),
+            "last_name": getattr(contact, "last_name", None),
+            "user_type": contact.user_type,
+            "access_type_code": getattr(contact, "access_type_code", None),
+            "respond_io_id": getattr(contact, "respond_io_id", None),
+            "created_at": contact.created_at,
+            "updated_at": contact.updated_at,
+            "created_by": contact.created_by,
+        }
+
     def sync_contact_name(self, contact_id: str) -> RespondContact:
-        """Sync contact name from Respond.io API."""
+        """Sync contact name, first/last name, respond_io_id, and user_type from Respond.io API."""
         contact = self.get_contact(contact_id)
         log_service = IntegrationLogService(self.db)
         
@@ -218,61 +311,44 @@ class ContactService:
             client = RespondClient()
             # Use phone: prefix format
             payload = client.get_contact_by_phone(str(contact.phone_number))
-            
-            # Extract name from response - Respond.io returns firstName and lastName
-            name = None
-            user_type = None
-            
-            # Try to get name from various possible locations
-            if payload.get("name"):
-                name = payload.get("name")
-            elif payload.get("displayName"):
-                name = payload.get("displayName")
-            elif payload.get("data", {}).get("name"):
-                name = payload.get("data", {}).get("name")
-            elif payload.get("contact", {}).get("name"):
-                name = payload.get("contact", {}).get("name")
-            else:
-                # Construct name from firstName and lastName
-                first_name = payload.get("firstName") or payload.get("first_name") or ""
-                last_name = payload.get("lastName") or payload.get("last_name") or ""
-                
-                # Combine firstName and lastName with space
-                if first_name and last_name:
-                    name = f"{first_name} {last_name}".strip()
-                elif first_name:
-                    name = first_name.strip()
-                elif last_name:
-                    name = last_name.strip()
-            
-            # Extract user_type from custom_fields list
-            custom_fields = (
-                payload.get("custom_fields")
-                or payload.get("customFields")
-                or payload.get("data", {}).get("custom_fields")
-                or payload.get("data", {}).get("customFields")
-                or payload.get("contact", {}).get("custom_fields")
-                or payload.get("contact", {}).get("customFields")
+            parsed = parse_respond_contact_payload(payload)
+
+            name = parsed.get("name")
+            user_type = parsed.get("user_type")
+
+            if parsed.get("first_name") is not None:
+                contact.first_name = parsed["first_name"]
+            if parsed.get("last_name") is not None:
+                contact.last_name = parsed["last_name"]
+            if name is not None:
+                contact.name = name
+            if "user_type" in parsed:
+                contact.user_type = user_type
+                from app.services.contact_access_type_service import ContactAccessTypeService
+                access_svc = ContactAccessTypeService(self.db)
+                contact.access_type_code = access_svc.resolve_respond_value_to_code(contact.user_type)
+            if parsed.get("respond_io_id") is not None:
+                contact.respond_io_id = parsed["respond_io_id"]
+
+            updated = bool(
+                parsed.get("first_name") is not None
+                or parsed.get("last_name") is not None
+                or name is not None
+                or "user_type" in parsed
+                or parsed.get("respond_io_id") is not None
             )
-            if isinstance(custom_fields, list):
-                for field in custom_fields:
-                    field_name = str(field.get("name", "")).strip().lower()
-                    if field_name == "user_type":
-                        user_type = field.get("value")
-                        break
-            
-            if name or user_type is not None:
-                if name:
-                    setattr(contact, "name", name)
-                if user_type is not None:
-                    setattr(contact, "user_type", str(user_type).strip() if user_type is not None else None)
-                    from app.services.contact_access_type_service import ContactAccessTypeService
-                    access_svc = ContactAccessTypeService(self.db)
-                    contact.access_type_code = access_svc.resolve_respond_value_to_code(contact.user_type)
+
+            if updated:
                 self.db.commit()
                 self.db.refresh(contact)
                 logger.info(
-                    f"Synced contact {contact.phone_number}: name={name or contact.name}, user_type={contact.user_type}"
+                    "Synced contact %s: name=%s first=%s last=%s user_type=%s respond_io_id=%s",
+                    contact.phone_number,
+                    contact.name,
+                    contact.first_name,
+                    contact.last_name,
+                    contact.user_type,
+                    contact.respond_io_id,
                 )
                 
                 # Log successful sync
@@ -291,7 +367,7 @@ class ContactService:
                 )
             else:
                 error_msg = (
-                    f"Could not find name or user_type in Respond.io response for {contact.phone_number}"
+                    f"No syncable contact fields in Respond.io response for {contact.phone_number}"
                 )
                 logger.warning(error_msg)
                 
@@ -413,6 +489,30 @@ class ContactService:
                 request_payload_dict=request_payload
             )
             raise
+
+    def bulk_sync_contacts_from_respond(self, contact_ids: list[str]) -> dict:
+        """Call sync_contact_name for each id; failures are collected without aborting the batch."""
+        clean_ids = [str(i).strip() for i in contact_ids if str(i).strip()]
+        if not clean_ids:
+            return {"succeeded": 0, "failed": 0, "errors": []}
+        if len(clean_ids) > 200:
+            raise handle_validation_error("Maximum 200 contacts per bulk sync.")
+        succeeded = 0
+        errors: list[dict] = []
+        for cid in clean_ids:
+            try:
+                self.sync_contact_name(cid)
+                succeeded += 1
+            except HTTPException as e:
+                detail = e.detail
+                if isinstance(detail, dict):
+                    msg = str(detail.get("message") or detail.get("detail") or detail)
+                else:
+                    msg = str(detail)
+                errors.append({"id": cid, "message": msg})
+            except Exception as e:
+                errors.append({"id": cid, "message": str(e)})
+        return {"succeeded": succeeded, "failed": len(errors), "errors": errors}
     
     def get_or_create_contact(self, phone_number: str, name: Optional[str] = None) -> RespondContact:
         """Get existing contact or create a new one."""

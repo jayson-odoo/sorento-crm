@@ -1,5 +1,5 @@
 {
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/(protected)/system-management/scheduled-tasks/page": "app/(protected)/system-management/scheduled-tasks/page.js"
+  "/api/v1/external/[...path]/route": "app/api/v1/external/[...path]/route.js",
+  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js"
 }

@@ -161,6 +161,41 @@ class CalendarService:
             logger.warning("Work calendar unavailable for working-time check; treating as non-working.")
             return False
 
+    def is_working_day(
+        self,
+        *,
+        tz: ZoneInfo = DEFAULT_WORKING_TZ,
+        when: Optional[datetime] = None,
+    ) -> dict:
+        """
+        True if the calendar date in `tz` is a configured working weekday and not a public holiday.
+
+        Does not consider clock time (use is_within_working_time for start/end hours).
+
+        If `when` is None, uses current UTC instant converted to `tz`.
+        If `when` is naive, it is interpreted as local wall time in `tz`.
+        """
+        if when is None:
+            dt_local = datetime.now(tz)
+        elif when.tzinfo is None:
+            dt_local = when.replace(tzinfo=tz)
+        else:
+            dt_local = when.astimezone(tz)
+
+        d = dt_local.date()
+        working_weekdays = self.get_working_weekdays()
+        holidays = self.get_public_holidays_between(d, d)
+        is_day = self._is_business_day(d, working_weekdays, holidays)
+        tz_key = getattr(tz, "key", None) or str(tz)
+        return {
+            "is_working_day": is_day,
+            "timezone": tz_key,
+            "local_datetime": dt_local.isoformat(),
+            "local_date": d,
+            "weekday": WEEKDAY_LABELS[d.weekday()],
+            "is_public_holiday": d in holidays,
+        }
+
     def get_public_holidays_between(self, start_date: date, end_date: date) -> Set[date]:
         try:
             holidays = self.db.query(PublicHoliday).filter(

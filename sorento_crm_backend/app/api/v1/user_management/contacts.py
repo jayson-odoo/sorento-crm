@@ -45,71 +45,30 @@ async def get_contacts(
         raise handle_internal_error(str(e))
 
 
-@router.get("/{contact_id}", response_model=RespondContactResponse)
-async def get_contact(
-    contact_id: str,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get a single contact by ID."""
-    try:
-        service = ContactService(db)
-        contact = service.get_contact(contact_id)
-        return RespondContactResponse.model_validate(contact)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-@router.post("/", response_model=RespondContactResponse, status_code=status.HTTP_201_CREATED)
-async def create_contact(
-    contact_data: RespondContactCreate,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Create a new respond contact."""
-    try:
-        service = ContactService(db)
-        contact = service.create_contact(contact_data)
-        return RespondContactResponse.model_validate(contact)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-@router.put("/{contact_id}", response_model=RespondContactResponse)
-async def update_contact(
-    contact_id: str,
-    contact_data: RespondContactUpdate,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Update a respond contact."""
-    try:
-        service = ContactService(db)
-        contact = service.update_contact(contact_id, contact_data)
-        # Convert to dict for validation
-        contact_dict = {
-            'id': str(contact.id),
-            'phone_number': contact.phone_number,
-            'name': contact.name,
-            'user_type': contact.user_type,
-            'created_at': contact.created_at,
-            'updated_at': contact.updated_at,
-            'created_by': contact.created_by,
-        }
-        return RespondContactResponse.model_validate(contact_dict)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating contact {contact_id}: {str(e)}", exc_info=True)
-        raise handle_internal_error(str(e))
-
-
 class BulkDeleteContactsRequest(BaseModel):
     ids: list[str]
+
+
+class BulkSyncContactsRequest(BaseModel):
+    ids: list[str]
+
+
+@router.post("/bulk-sync", status_code=status.HTTP_200_OK)
+async def bulk_sync_contacts(
+    body: BulkSyncContactsRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Sync multiple contacts from Respond.io (name, first/last name, user_type, respond_io_id)."""
+    try:
+        service = ContactService(db)
+        result = service.bulk_sync_contacts_from_respond(body.ids)
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in bulk_sync_contacts: {str(e)}", exc_info=True)
+        raise handle_internal_error(str(e))
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
@@ -127,6 +86,59 @@ async def bulk_delete_contacts(
         raise
     except Exception as e:
         logger.error(f"Error in bulk_delete_contacts: {str(e)}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{contact_id}", response_model=RespondContactResponse)
+async def get_contact(
+    contact_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a single contact by ID."""
+    try:
+        service = ContactService(db)
+        contact = service.get_contact(contact_id)
+        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/", response_model=RespondContactResponse, status_code=status.HTTP_201_CREATED)
+async def create_contact(
+    contact_data: RespondContactCreate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new respond contact."""
+    try:
+        service = ContactService(db)
+        contact = service.create_contact(contact_data)
+        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{contact_id}", response_model=RespondContactResponse)
+async def update_contact(
+    contact_id: str,
+    contact_data: RespondContactUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a respond contact."""
+    try:
+        service = ContactService(db)
+        contact = service.update_contact(contact_id, contact_data)
+        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating contact {contact_id}: {str(e)}", exc_info=True)
         raise handle_internal_error(str(e))
 
 
@@ -158,17 +170,7 @@ async def sync_contact(
     try:
         service = ContactService(db)
         contact = service.sync_contact_name(contact_id)
-        # Convert to dict for validation
-        contact_dict = {
-            'id': str(contact.id),
-            'phone_number': contact.phone_number,
-            'name': contact.name,
-            'user_type': contact.user_type,
-            'created_at': contact.created_at,
-            'updated_at': contact.updated_at,
-            'created_by': contact.created_by,
-        }
-        return RespondContactResponse.model_validate(contact_dict)
+        return RespondContactResponse.model_validate(ContactService.contact_to_response_dict(contact))
     except HTTPException:
         raise
     except ValueError as e:

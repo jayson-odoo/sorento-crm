@@ -214,6 +214,18 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                 <p className="font-medium">{contact.name || <span className="text-muted-foreground">Not set</span>}</p>
               </div>
               <div>
+                <p className="text-sm text-muted-foreground">First name</p>
+                <p className="font-medium">
+                  {contact.first_name || <span className="text-muted-foreground">—</span>}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Last name</p>
+                <p className="font-medium">
+                  {contact.last_name || <span className="text-muted-foreground">—</span>}
+                </p>
+              </div>
+              <div>
                 <p className="text-sm text-muted-foreground">User Type</p>
                 <p className="font-medium">{contact.user_type || <span className="text-muted-foreground">—</span>}</p>
               </div>

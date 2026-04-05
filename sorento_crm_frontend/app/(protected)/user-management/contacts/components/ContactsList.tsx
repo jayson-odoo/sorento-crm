@@ -84,12 +84,21 @@ export default function ContactsList() {
     [pageContacts, rowSelection],
   );
 
+  async function contactSyncErrorMessage(response: Response): Promise<string> {
+    const err = await response.json().catch(() => ({} as Record<string, unknown>));
+    const d = err.detail as Record<string, unknown> | string | undefined;
+    if (d && typeof d === 'object' && d.message != null) return String(d.message);
+    if (typeof d === 'string') return d;
+    if (err.message != null) return String(err.message);
+    return `Sync failed (${response.status})`;
+  }
+
   const syncContactMutation = useMutation({
     mutationFn: async (contactId: string) => {
       const response = await apiFetch(`/api/user-management/contacts/${contactId}/sync`, {
         method: 'POST',
       });
-      if (!response.ok) throw new Error('Failed to sync contact');
+      if (!response.ok) throw new Error(await contactSyncErrorMessage(response));
       return response.json();
     },
     onSuccess: () => {
@@ -101,8 +110,36 @@ export default function ContactsList() {
     },
   });
 
+  const bulkSyncMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const response = await apiFetch('/api/user-management/contacts/bulk-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      if (!response.ok) throw new Error(await contactSyncErrorMessage(response));
+      return response.json() as Promise<{ succeeded: number; failed: number; errors: { id: string; message: string }[] }>;
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['respond-contacts'] });
+      if (result.failed > 0) {
+        toast.warning(`Synced ${result.succeeded}, ${result.failed} failed`);
+      } else {
+        toast.success(`Synced ${result.succeeded} contact(s) from Respond.io`);
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Bulk sync failed');
+    },
+  });
+
   const handleSync = (contactId: string) => {
     syncContactMutation.mutate(contactId);
+  };
+
+  const handleBulkSync = () => {
+    if (selectedContactIds.length === 0) return;
+    bulkSyncMutation.mutate(selectedContactIds);
   };
 
   const handleRowClick = (contact: RespondContact) => {
@@ -154,20 +191,36 @@ export default function ContactsList() {
                 e.stopPropagation();
                 handleSync(row.original.id);
               }}
-              disabled={syncContactMutation.isPending}
+              disabled={bulkSyncMutation.isPending || syncContactMutation.isPending}
+              title="Sync from Respond.io"
             >
-              <RefreshCw className={`size-4 ${syncContactMutation.isPending ? 'animate-spin' : ''}`} />
+              <RefreshCw
+                className={`size-4 ${
+                  syncContactMutation.isPending && syncContactMutation.variables === row.original.id
+                    ? 'animate-spin'
+                    : ''
+                }`}
+              />
             </Button>
           </div>
         ),
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
-        accessorKey: 'name',
-        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
-        size: 250,
-        cell: ({ row }) => row.original.name || <span className="text-muted-foreground">Not set</span>,
-        meta: { skeleton: <Skeleton className="h-4 w-40" /> },
+        accessorKey: 'first_name',
+        header: ({ column }) => <DataGridColumnHeader title="First name" column={column} />,
+        size: 160,
+        cell: ({ row }) =>
+          row.original.first_name || <span className="text-muted-foreground">—</span>,
+        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
+        accessorKey: 'last_name',
+        header: ({ column }) => <DataGridColumnHeader title="Last name" column={column} />,
+        size: 160,
+        cell: ({ row }) =>
+          row.original.last_name || <span className="text-muted-foreground">—</span>,
+        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'user_type',
@@ -216,7 +269,7 @@ export default function ContactsList() {
         size: 90,
       },
     ],
-    [syncContactMutation.isPending],
+    [syncContactMutation.isPending, syncContactMutation.variables, bulkSyncMutation.isPending],
   );
 
   const table = useReactTable({
@@ -275,6 +328,17 @@ export default function ContactsList() {
             />
             {selectedContactIds.length > 0 && (
               <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleBulkSync}
+                  disabled={bulkSyncMutation.isPending || syncContactMutation.isPending}
+                >
+                  <RefreshCw
+                    className={`size-4 mr-2 ${bulkSyncMutation.isPending ? 'animate-spin' : ''}`}
+                  />
+                  Sync from Respond ({selectedContactIds.length})
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
