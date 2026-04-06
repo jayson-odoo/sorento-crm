@@ -40,6 +40,17 @@ def _normalize_respond_user_id(value: Optional[str]) -> Optional[str]:
     return s if s else None
 
 
+def _rr_user_id_key(value: Optional[object]) -> str:
+    """
+    Canonical string key for round-robin user id comparisons.
+    Cursor.last_assigned_user_id is a string FK; TeamMember.user_id may come back as UUID or str
+    from the driver — mixing them breaks list.index() and stuck rotation on index 0.
+    """
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
 class UserService:
     """Service for user operations."""
     
@@ -1103,7 +1114,7 @@ class AccessAgentService:
         )
         if not members:
             return None
-        user_ids = [m.user_id for m in members]
+        user_ids = [_rr_user_id_key(m.user_id) for m in members]
         # Get or create cursor and lock it
         cursor = (
             self.db.query(AgentTeamRoundRobinCursor)
@@ -1125,8 +1136,9 @@ class AccessAgentService:
             self.db.add(cursor)
             self.db.flush()
         # Find next index: after last_assigned_user_id, wrap around
+        last_key = _rr_user_id_key(cursor.last_assigned_user_id) if cursor.last_assigned_user_id else ""
         try:
-            idx = user_ids.index(cursor.last_assigned_user_id) if cursor.last_assigned_user_id else -1
+            idx = user_ids.index(last_key) if last_key else -1
         except ValueError:
             idx = -1
         next_idx = (idx + 1) % len(user_ids)
@@ -1175,13 +1187,13 @@ class AccessAgentService:
         )
         if not members:
             return None
-        user_ids = [m.user_id for m in members]
+        user_ids = [_rr_user_id_key(m.user_id) for m in members]
         users = self.db.query(User).filter(User.id.in_(user_ids)).all()
         user_by_id = {str(u.id): u for u in users}
         # Preserve member order and get respond_user_id
         ordered_respond_ids = []
         for uid in user_ids:
-            u = user_by_id.get(str(uid))
+            u = user_by_id.get(uid)
             ordered_respond_ids.append(_normalize_respond_user_id(u.respond_user_id) if u else None)
         current_norm = _normalize_respond_user_id(str(current_respond_user_id))
         try:
@@ -1251,7 +1263,7 @@ class AccessAgentService:
         )
         if not members:
             return None, None
-        user_ids = [m.user_id for m in members]
+        user_ids = [_rr_user_id_key(m.user_id) for m in members]
         cursor = (
             self.db.query(AgentTeamRoundRobinCursor)
             .filter(
@@ -1261,8 +1273,9 @@ class AccessAgentService:
             .first()
         )
         last_id = cursor.last_assigned_user_id if cursor else None
+        last_key = _rr_user_id_key(last_id) if last_id else ""
         try:
-            idx = user_ids.index(last_id) if last_id else -1
+            idx = user_ids.index(last_key) if last_key else -1
         except ValueError:
             idx = -1
         next_idx = (idx + 1) % len(user_ids)

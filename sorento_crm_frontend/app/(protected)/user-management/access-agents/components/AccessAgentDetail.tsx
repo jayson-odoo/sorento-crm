@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
+import { Edit, Trash2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import AccessAgentFormModal from './AccessAgentFormModal';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -43,7 +43,11 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
   );
   const { data: navigationData } = useAccessAgents(navigationParams);
   const navigationItems = navigationData?.data ?? [];
-  const { data: agentTeamsData } = useAgentTeams(accessAgentId);
+  const {
+    data: agentTeamsData,
+    refetch: refetchAgentTeams,
+    isRefetching: isRefetchingAgentTeams,
+  } = useAgentTeams(accessAgentId);
   const { data: teamsList = [] } = useTeams();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -186,8 +190,23 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
 
       {/* Team Assignments */}
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
           <CardTitle>Team Assignments</CardTitle>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isRefetchingAgentTeams}
+            onClick={() => refetchAgentTeams()}
+            className="shrink-0 gap-2"
+            aria-label="Refresh team assignments"
+          >
+            <RefreshCw
+              className={`size-4 ${isRefetchingAgentTeams ? 'animate-spin' : ''}`}
+              aria-hidden
+            />
+            Refresh
+          </Button>
         </CardHeader>
         <CardContent>
           {assignments.length === 0 ? (
