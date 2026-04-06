@@ -407,6 +407,7 @@ async def escalate_sla_tracking_integration(
             target_tier,
             resolved_team_set_code,
             agent_id_override=resolved_agent_id,
+            current_assignee_respond_user_id=getattr(tracking, "assigned_to", None),
         )
 
         tracking = service.escalate_tracking(

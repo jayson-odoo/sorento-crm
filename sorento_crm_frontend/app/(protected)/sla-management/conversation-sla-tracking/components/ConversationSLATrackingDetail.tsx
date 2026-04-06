@@ -268,6 +268,12 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
 
   const respondIoId = tracking.respond_io_id ?? tracking.contact?.respond_io_id ?? null;
   const respondInboxUrl = respondIoId ? `${RESPOND_IO_INBOX_BASE_URL}/${respondIoId}` : null;
+  const messageIdText =
+    tracking.message_id != null && tracking.message_id !== undefined
+      ? String(tracking.message_id)
+      : null;
+  const respondMessageUrl =
+    respondInboxUrl && messageIdText ? `${respondInboxUrl}#${encodeURIComponent(messageIdText)}` : null;
 
   return (
     <div className="space-y-6">
@@ -759,9 +765,20 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                     <div>
                       <p className="text-sm text-muted-foreground">Message ID</p>
                       <p className="font-medium">
-                        {tracking.message_id != null && tracking.message_id !== undefined
-                          ? String(tracking.message_id)
-                          : '-'}
+                        {respondMessageUrl ? (
+                          <a
+                            href={respondMessageUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-primary hover:underline"
+                            title="Open message in Respond.io"
+                          >
+                            {messageIdText}
+                            <ExternalLink className="size-3.5" />
+                          </a>
+                        ) : (
+                          messageIdText ?? '-'
+                        )}
                       </p>
                     </div>
                   </div>

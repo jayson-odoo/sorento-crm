@@ -777,6 +777,7 @@ class ConversationSLATrackingService:
         team_set_code: Optional[str] = None,
         agent_code_override: Optional[str] = None,
         agent_id_override: Optional[str] = None,
+        current_assignee_respond_user_id: Optional[str] = None,
     ) -> dict:
         """
         Resolve the next assignee for escalation to the given tier using agent tier-team and round-robin.
@@ -822,7 +823,14 @@ class ConversationSLATrackingService:
                 f"No team assigned for agent '{agent_code}' with tier {target_tier}{suffix}. "
                 f"Add a Team Assignment with Tier = {target_tier} for this agent."
             )
-        assignee = agent_svc.get_next_assignee(agent_id, team_id)
+        # Prefer rotating after the current assignee (when that assignee is in the target team),
+        # so escalation does not immediately re-pick the same person across tiers with overlapping members.
+        assignee = None
+        current_assignee = str(current_assignee_respond_user_id or "").strip()
+        if current_assignee:
+            assignee = agent_svc.get_next_assignee_after(agent_id, team_id, current_assignee)
+        if not assignee:
+            assignee = agent_svc.get_next_assignee(agent_id, team_id)
         if not assignee:
             raise handle_validation_error(
                 f"No assignee in team for agent '{agent_code}' tier {target_tier}. Ensure the team has members."
