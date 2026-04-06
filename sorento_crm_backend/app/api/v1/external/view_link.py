@@ -6,7 +6,8 @@ Returns the same view link as the in-app "Copy view link" (no login required to 
 
 For:
 - stock_inquiry: ``entity_id`` may be the UUID or ``inquiry_number``
-- purchase_request / sponsorship_form: ``entity_id`` may be the UUID or ``request_number``
+- purchase_request: ``entity_id`` may be the UUID or ``request_number`` (matches both purchase requests and sponsorship forms in the same table)
+- sponsorship_form: same identifiers, but only rows with ``request_type`` sponsorship_form
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -45,7 +46,8 @@ class ViewLinkExternalRequest(BaseModel):
         ...,
         description=(
             "Record identifier. For stock_inquiry this may be the UUID or inquiry_number. "
-            "For purchase_request / sponsorship_form this may be the UUID or request_number."
+            "For purchase_request this may be the UUID or request_number (resolves purchase or sponsorship rows). "
+            "For sponsorship_form, UUID or request_number scoped to sponsorship_form only."
         ),
     )
     base_url: str | None = Field(
@@ -65,7 +67,8 @@ def get_view_link(
     returns view_token and view_url so the record can be viewed without logging in.
 
     Supported entity_type: complaint, stock_inquiry, purchase_request, sponsorship_form.
-    (sponsorship_form uses the same view page as purchase_request.)
+    purchase_request resolves any row in purchase_requests by id or request_number (including sponsorship_form).
+    sponsorship_form is restricted to sponsorship rows; same public ``/view/request`` path as purchase_request.
     """
     entity_type = (payload.entity_type or "").strip().lower()
     if entity_type not in VIEW_ENTITY_TYPES:
@@ -101,23 +104,24 @@ def get_view_link(
             )
         return str(row[0])
 
-    def _resolve_request_id(raw: str, request_type: str) -> str:
-        row = (
-            db.query(PurchaseRequestHeader.id)
-            .filter(
-                PurchaseRequestHeader.request_type == request_type,
-                (
-                    (PurchaseRequestHeader.id == raw)
-                    | (PurchaseRequestHeader.request_number == raw)
-                ),
-            )
-            .first()
+    def _resolve_request_id(raw: str, request_type: str | None) -> str:
+        """request_type None = match by id or request_number only (purchase or sponsorship)."""
+        q = db.query(PurchaseRequestHeader.id).filter(
+            (PurchaseRequestHeader.id == raw)
+            | (PurchaseRequestHeader.request_number == raw)
         )
+        if request_type is not None:
+            q = q.filter(PurchaseRequestHeader.request_type == request_type)
+        row = q.first()
         if not row:
-            label = "Sponsorship form" if request_type == "sponsorship_form" else "Purchase request"
+            detail = (
+                "Sponsorship form not found."
+                if request_type == "sponsorship_form"
+                else "Purchase request not found."
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"{label} not found.",
+                detail=detail,
             )
         return str(row[0])
 
@@ -132,10 +136,12 @@ def get_view_link(
             service.get_inquiry(resolved_id)  # ensure exists
             token = service.get_or_create_view_token(resolved_id)
         else:
-            # purchase_request (and sponsorship_form)
+            # purchase_request: any request_type on shared table; sponsorship_form: strict
             service = PurchaseRequestService(db)
-            request_type = "sponsorship_form" if entity_type == "sponsorship_form" else "purchase_request"
-            resolved_id = _resolve_request_id(entity_id, request_type)
+            request_type_filter: str | None = (
+                "sponsorship_form" if entity_type == "sponsorship_form" else None
+            )
+            resolved_id = _resolve_request_id(entity_id, request_type_filter)
             service.get_request(resolved_id)  # ensure exists
             token = service.get_or_create_view_token(resolved_id)
 
