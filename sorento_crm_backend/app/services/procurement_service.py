@@ -3228,6 +3228,30 @@ class PurchaseRequestService:
             )
         self._send_purchase_request_contact_message(header, message_text=message_text)
 
+    def _notify_contact_on_approval_approved(self, header: PurchaseRequestHeader) -> None:
+        """Notify the linked Respond.io contact when a public approval flow approves the request."""
+        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        approver = (getattr(header, "approved_by", None) or "").strip() or (
+            (getattr(header, "approver_email", None) or "").strip()
+        )
+        if not approver:
+            approver = "unknown"
+        note = (getattr(header, "approval_comments", None) or "").strip()
+        note_part = f" Note: {note}." if note else ""
+        view_url = self._build_request_view_url(str(header.id))
+        rt = getattr(header, "request_type", None) or ""
+        if rt == "sponsorship_form":
+            message_text = (
+                f"Your sponsorship form {request_number} has been approved by {approver}.{note_part} "
+                f"Please view your submission here {view_url}"
+            )
+        else:
+            message_text = (
+                f"Your purchase request {request_number} has been approved by {approver}.{note_part} "
+                f"Please view your submission here {view_url}"
+            )
+        self._send_purchase_request_contact_message(header, message_text=message_text)
+
     def request_revision_by_token(self, token_value: str) -> dict[str, str]:
         """Trigger the external revise webhook for a rejected purchase request / sponsorship form public view."""
         view_token = (
@@ -4718,6 +4742,16 @@ class PurchaseRequestService:
                     self._notify_requester_on_approved(header)
                 except Exception as e:
                     logger.warning("Failed to notify requester for approved purchase request %s: %s", header.id, e)
+            try:
+                self._notify_contact_on_approval_approved(header)
+                self.db.commit()
+            except Exception as e:
+                self.db.rollback()
+                logger.warning(
+                    "Failed to send Respond.io approval message for purchase request %s: %s",
+                    header.id,
+                    e,
+                )
         elif action == "rejected":
             requested_by_uid = getattr(header, "requested_approval_by_user_id", None)
             if requested_by_uid:
