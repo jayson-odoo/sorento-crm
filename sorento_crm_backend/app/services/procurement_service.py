@@ -38,6 +38,35 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+_SHIPMENT_STATUS_ALIASES = {
+    "received": "fully_received",
+}
+
+_SPO_RECEIPT_STATUS_ALIASES = {
+    "received": "fully_received",
+    "partially_received": "partial_received",
+}
+
+
+def _normalize_inbound_shipment_status(value: Optional[str]) -> Optional[str]:
+    """Normalize legacy/API aliases to DB-valid inbound shipment statuses."""
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return raw
+    return _SHIPMENT_STATUS_ALIASES.get(raw.lower(), raw)
+
+
+def _normalize_spo_receipt_status(value: Optional[str]) -> Optional[str]:
+    """Normalize legacy/API aliases to DB-valid SPO receipt statuses."""
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return raw
+    return _SPO_RECEIPT_STATUS_ALIASES.get(raw.lower(), raw)
+
 
 def _normalize_spo_number(spo_number: Optional[str]) -> str:
     """Normalize SPO number for matching (e.g. SPO-2026/01-0178 vs SPO-2026.01-0178)."""
@@ -196,7 +225,9 @@ class InboundShipmentService:
                     ~InboundShipment.shipment_lines.any(InboundShipmentLine.line_status != "received")
                 )
             else:
-                filters.append(InboundShipment.shipment_status == shipment_status)
+                filters.append(
+                    InboundShipment.shipment_status == _normalize_inbound_shipment_status(shipment_status)
+                )
         
         if query:
             filters.append(
@@ -286,8 +317,8 @@ class InboundShipmentService:
             setattr(shipment, "lines_count", total_lines)
             setattr(shipment, "spo_allocations_count", spo_counts.get(shipment_id, 0))
             if total_lines > 0 and non_received_lines == 0:
-                shipment.shipment_status = "received"
-            elif (shipment.shipment_status or "").strip().lower() == "received":
+                shipment.shipment_status = "fully_received"
+            elif (shipment.shipment_status or "").strip().lower() in ("received", "fully_received"):
                 shipment.shipment_status = "in_transit"
 
         return {
@@ -417,8 +448,8 @@ class InboundShipmentService:
         if shipment:
             all_lines_received = all((line.line_status or "").strip().lower() == "received" for line in lines)
             if all_lines_received:
-                shipment.shipment_status = "received"
-            elif (shipment.shipment_status or "").strip().lower() == "received":
+                shipment.shipment_status = "fully_received"
+            elif (shipment.shipment_status or "").strip().lower() in ("received", "fully_received"):
                 shipment.shipment_status = "in_transit"
         self.db.commit()
     
@@ -432,6 +463,9 @@ class InboundShipmentService:
         
         # Create shipment and lines in transaction
         shipment_dict = shipment_data.model_dump(exclude={"shipment_lines"})
+        shipment_dict["shipment_status"] = _normalize_inbound_shipment_status(
+            shipment_dict.get("shipment_status")
+        )
         shipment_dict["created_by"] = created_by
         shipment = InboundShipment(**shipment_dict)
         self.db.add(shipment)
@@ -462,6 +496,10 @@ class InboundShipmentService:
         shipment = self.get_shipment(shipment_id)
         
         update_data = shipment_data.model_dump(exclude_unset=True, exclude={"shipment_lines"})
+        if "shipment_status" in update_data:
+            update_data["shipment_status"] = _normalize_inbound_shipment_status(
+                update_data.get("shipment_status")
+            )
         for key, value in update_data.items():
             setattr(shipment, key, value)
         
@@ -543,7 +581,9 @@ class SPOAllocationService:
             filters.append(SPOAllocation.warehouse_id == warehouse_id)
         
         if receipt_status and receipt_status != "all":
-            filters.append(SPOAllocation.receipt_status == receipt_status)
+            filters.append(
+                SPOAllocation.receipt_status == _normalize_spo_receipt_status(receipt_status)
+            )
         
         if query:
             filters.append(
@@ -619,7 +659,9 @@ class SPOAllocationService:
         if warehouse_id and warehouse_id != "all":
             shipment_filters.append(SPOAllocation.warehouse_id == warehouse_id)
         if receipt_status and receipt_status != "all":
-            shipment_filters.append(SPOAllocation.receipt_status == receipt_status)
+            shipment_filters.append(
+                SPOAllocation.receipt_status == _normalize_spo_receipt_status(receipt_status)
+            )
         if product_code and product_code.strip():
             shipment_filters.append(
                 SPOAllocation.product.has(Product.product_code.ilike(f"%{product_code.strip()}%"))
@@ -642,7 +684,9 @@ class SPOAllocationService:
         if warehouse_id and warehouse_id != "all":
             allocation_filters.append(SPOAllocation.warehouse_id == warehouse_id)
         if receipt_status and receipt_status != "all":
-            allocation_filters.append(SPOAllocation.receipt_status == receipt_status)
+            allocation_filters.append(
+                SPOAllocation.receipt_status == _normalize_spo_receipt_status(receipt_status)
+            )
         if product_code and product_code.strip():
             allocation_filters.append(
                 SPOAllocation.product.has(Product.product_code.ilike(f"%{product_code.strip()}%"))
@@ -740,7 +784,9 @@ class SPOAllocationService:
         if warehouse_id and warehouse_id != "all":
             filters.append(SPOAllocation.warehouse_id == warehouse_id)
         if receipt_status and receipt_status != "all":
-            filters.append(SPOAllocation.receipt_status == receipt_status)
+            filters.append(
+                SPOAllocation.receipt_status == _normalize_spo_receipt_status(receipt_status)
+            )
         if product_code and product_code.strip():
             filters.append(
                 SPOAllocation.product.has(Product.product_code.ilike(f"%{product_code.strip()}%"))
@@ -890,6 +936,9 @@ class SPOAllocationService:
                 raise handle_conflict("SPO number, product and warehouse combination already exists.")
         
         allocation_dict = allocation_data.model_dump()
+        allocation_dict["receipt_status"] = _normalize_spo_receipt_status(
+            allocation_dict.get("receipt_status")
+        )
         allocation_dict["created_by"] = created_by
         allocation = SPOAllocation(**allocation_dict)
         self.db.add(allocation)
@@ -903,6 +952,10 @@ class SPOAllocationService:
         allocation = self.get_allocation(allocation_id)
         previous_shipment_id = allocation.inbound_shipment_id
         update_data = allocation_data.model_dump(exclude_unset=True)
+        if "receipt_status" in update_data:
+            update_data["receipt_status"] = _normalize_spo_receipt_status(
+                update_data.get("receipt_status")
+            )
         for key, value in update_data.items():
             setattr(allocation, key, value)
         
@@ -1572,7 +1625,7 @@ class PickingHeaderService:
             shipment_ids.add(alloc.inbound_shipment_id)
             total = self.compute_received_for_allocation(alloc_id)
             alloc.quantity_received = total
-            alloc.receipt_status = "received" if total >= alloc.allocated_quantity else "pending"
+            alloc.receipt_status = "fully_received" if total >= alloc.allocated_quantity else "pending"
         self.db.commit()
         inbound_svc = InboundShipmentService(self.db)
         for sid in shipment_ids:
@@ -1593,7 +1646,7 @@ class PickingHeaderService:
             alloc_id = str(alloc.id)
             total = self.compute_received_for_allocation(alloc_id)
             alloc.quantity_received = total
-            alloc.receipt_status = "received" if total >= alloc.allocated_quantity else "pending"
+            alloc.receipt_status = "fully_received" if total >= alloc.allocated_quantity else "pending"
             if alloc.inbound_shipment_id:
                 shipment_ids.add(alloc.inbound_shipment_id)
         self.db.commit()
