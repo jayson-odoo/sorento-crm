@@ -75,6 +75,32 @@ def _normalize_spo_number(spo_number: Optional[str]) -> str:
     return str(spo_number).strip().replace("/", ".").replace("\\", ".")
 
 
+def _resolve_contact_phone_for_webhook(contact: Any, contact_respond_io_id: str) -> Optional[str]:
+    """
+    Resolve contact phone for incoming-style revise webhooks.
+    Prefer local RespondContact.phone_number; fallback to Respond.io API lookup by contact id.
+    """
+    local_phone = (getattr(contact, "phone_number", None) or "").strip()
+    if local_phone:
+        return local_phone
+
+    identifier = (contact_respond_io_id or "").strip()
+    if not identifier:
+        return None
+
+    try:
+        from app.services.integration_service import RespondClient
+
+        payload = RespondClient().get_contact_by_identifier(identifier)
+        if isinstance(payload, dict):
+            contact_block = payload.get("contact") or {}
+            phone = (contact_block.get("phone") or "").strip() if isinstance(contact_block, dict) else ""
+            return phone or None
+    except Exception:
+        logger.debug("Could not resolve contact phone from Respond.io for id=%s", identifier, exc_info=True)
+    return None
+
+
 def _spo_match_key(spo_number: Optional[str]) -> str:
     """Alphanumeric-only key so SPO-202602-0102 matches SPO-2026/02-0102 and SPO-2026.02-0102."""
     if not spo_number or not str(spo_number).strip():
@@ -2460,6 +2486,7 @@ class StockInquiryService:
         contact_respond_io_id = (
             (getattr(contact, "respond_io_id", None) or "").strip() or contact_key
         )
+        contact_phone = _resolve_contact_phone_for_webhook(contact, contact_respond_io_id)
         contact_id_value: Any
         try:
             contact_id_value = int(str(contact_respond_io_id).strip())
@@ -2482,7 +2509,7 @@ class StockInquiryService:
             {
                 "contact": {
                     "id": contact_id_value,
-                    "phone": getattr(contact, "phone_number", None) if contact else None,
+                    "phone": contact_phone,
                     "firstName": first_name or "",
                     "lastName": last_name or "",
                     "role": "user",
@@ -3264,6 +3291,7 @@ class PurchaseRequestService:
             .first()
         )
         contact_respond_io_id = (getattr(contact, "respond_io_id", None) or "").strip() or contact_key
+        contact_phone = _resolve_contact_phone_for_webhook(contact, contact_respond_io_id)
         contact_id_value: Any
         try:
             contact_id_value = int(str(contact_respond_io_id).strip())
@@ -3292,7 +3320,7 @@ class PurchaseRequestService:
             {
                 "contact": {
                     "id": contact_id_value,
-                    "phone": getattr(contact, "phone_number", None) if contact else None,
+                    "phone": contact_phone,
                     "firstName": first_name or "",
                     "lastName": last_name or "",
                     "role": "user",
@@ -3762,9 +3790,9 @@ class PurchaseRequestService:
                 else "New purchase request created"
             )
             kind_sentence = (
-                "A purchase request has been updated via system integration and may need your review."
+                "A purchase request has been updated and may need your review."
                 if updated
-                else "A new purchase request has been created via system integration and requires your review."
+                else "A new purchase request has been created and requires your review."
             )
         elif rt == "sponsorship_form":
             title = (
@@ -3773,16 +3801,16 @@ class PurchaseRequestService:
                 else "New sponsorship form created"
             )
             kind_sentence = (
-                "A sponsorship form has been updated via system integration and may need your review."
+                "A sponsorship form has been updated and may need your review."
                 if updated
-                else "A new sponsorship form has been created via system integration and requires your review."
+                else "A new sponsorship form has been created and requires your review."
             )
         else:
             title = "Request updated (integration)" if updated else "New request created"
             kind_sentence = (
-                "A request has been updated via system integration and may need your review."
+                "A request has been updated and may need your review."
                 if updated
-                else "A new request has been created via system integration and requires your review."
+                else "A new request has been created and requires your review."
             )
         view_token = self.get_or_create_view_token(header_id)
         base_url = (base_url_override or "").strip().rstrip("/")

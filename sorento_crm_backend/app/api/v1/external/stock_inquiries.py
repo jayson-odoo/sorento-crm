@@ -41,8 +41,8 @@ async def create_stock_inquiry_external(
                     agent_code="lead_time_enquiries",
                     team_assignment_code="project_sales",
                     title="Stock Inquiry updated (integration resubmit)",
-                    intro_plain="Dear Project Sales Team,\n\nA previously rejected stock inquiry has been updated and resubmitted via system integration for your review.",
-                    intro_html="Dear Project Sales Team,<br /><br />A previously rejected stock inquiry has been updated and resubmitted via system integration for your review.",
+                    intro_plain="Dear Project Sales Team,\n\nA previously rejected stock inquiry has been updated and resubmitted for your review.",
+                    intro_html="Dear Project Sales Team,<br /><br />A previously rejected stock inquiry has been updated and resubmitted for your review.",
                     event_type="external_resubmitted",
                     sync_email=False,
                 )
@@ -52,8 +52,8 @@ async def create_stock_inquiry_external(
                     agent_code="lead_time_enquiries",
                     team_assignment_code="project_sales",
                     title="New Stock Inquiry created",
-                    intro_plain="Dear Project Sales Team,\n\nA new stock inquiry has been created via system integration and requires your review.",
-                    intro_html="Dear Project Sales Team,<br /><br />A new stock inquiry has been created via system integration and requires your review.",
+                    intro_plain="Dear Project Sales Team,\n\nA new stock inquiry has been created and requires your review.",
+                    intro_html="Dear Project Sales Team,<br /><br />A new stock inquiry has been created and requires your review.",
                     event_type="external_created",
                     sync_email=False,
                 )

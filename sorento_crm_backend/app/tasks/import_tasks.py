@@ -906,10 +906,15 @@ def validate_spo_import(file_data: bytes, filename: str) -> Dict[str, Any]:
 
 
 def _grn_import_normalize_header(value: Any) -> str:
-    """Normalize Excel header for GRN import (lowercase, strip)."""
+    """Normalize Excel header for GRN import (lowercase, trim, punctuation-insensitive)."""
     if value is None:
         return ""
-    return str(value).strip().lower() or ""
+    s = str(value).strip().lower()
+    if not s:
+        return ""
+    # Treat variants like "Doc. No.", "Doc No", "DOC-NO" as the same key.
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def _run_grn_listing_import_core(
@@ -943,7 +948,7 @@ def _run_grn_listing_import_core(
 
     def _find(row: dict, *candidates: str) -> Any:
         for c in candidates:
-            cl = c.lower().strip()
+            cl = _grn_import_normalize_header(c)
             if cl in row:
                 return row.get(cl)
         return None
@@ -1051,7 +1056,7 @@ def validate_grn_lines_import(file_data: bytes) -> Dict[str, Any]:
 
         def _find(row_d: dict, *candidates: str) -> Any:
             for c in candidates:
-                cl = c.lower().strip()
+                cl = _grn_import_normalize_header(c)
                 if cl in row_d:
                     return row_d.get(cl)
             return None
@@ -1242,7 +1247,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
 
             def _find(row_d: dict, *candidates: str) -> Any:
                 for c in candidates:
-                    cl = c.lower().strip()
+                    cl = _grn_import_normalize_header(c)
                     if cl in row_d:
                         return row_d.get(cl)
                 return None
