@@ -357,7 +357,7 @@ async def escalate_sla_tracking_integration(
     Resolves the next assignee from the target tier's team (tier_{current_tier}) under the agent
     mapped from tracking.source_entity_type (complaint, stock_inquiry, purchase_request), using
     round-robin. Updates tracking tier, timestamps, and assigns to that user. Returns the
-    assignee's Respond user ID for n8n to update Respond.io.
+    assignee's Respond user ID for n8n to update Respond.io, plus tracking message_id when set.
     """
     log_service = IntegrationLogService(db)
     try:
@@ -467,6 +467,7 @@ async def escalate_sla_tracking_integration(
             "assigned_to_id": assigned_to_id,
             "assigned_to_name": assigned_to_name,
             "assigned_to_respond_user_id": assigned_to_respond_user_id,
+            "message_id": getattr(tracking, "message_id", None),
             "due_at": _iso(tracking.due_at),
             "due_at_resolution": _iso(tracking.due_at_resolution),
             "remaining_response_hours": remaining_response_hours,
