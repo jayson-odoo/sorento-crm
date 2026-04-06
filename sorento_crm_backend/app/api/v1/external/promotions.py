@@ -1,5 +1,6 @@
 """External API for promotions."""
 import logging
+import re
 from datetime import datetime, date
 from typing import Optional
 
@@ -82,6 +83,37 @@ def _promotion_product_values(product, selling_price, discount_amount, discount_
     }
 
 
+def _product_code_candidates(raw_code: Optional[str]) -> list[str]:
+    """
+    Candidate product codes for matching.
+    Priority: exact code as provided, then split by '+' parts (trimmed).
+    """
+    code = (raw_code or "").strip()
+    if not code:
+        return []
+    out: list[str] = [code]
+    parts = [p.strip() for p in re.split(r"\s*\+\s*", code) if p and p.strip()]
+    for p in parts:
+        if p not in out:
+            out.append(p)
+    return out
+
+
+def _resolve_product_codes(raw_code: Optional[str], products_map: dict) -> list[str]:
+    """
+    Resolve payload product_code into concrete product codes:
+    - exact match first
+    - fallback to '+' split parts when exact doesn't exist
+    """
+    candidates = _product_code_candidates(raw_code)
+    if not candidates:
+        return []
+    exact = candidates[0]
+    if exact in products_map:
+        return [exact]
+    return [c for c in candidates[1:] if c in products_map]
+
+
 @router.post("/", response_model=PromotionCreateResponse)
 def create_promotion(
     payload: PromotionRequest,
@@ -107,15 +139,26 @@ def create_promotion(
         product_codes = []
         for g in payload.promotion_groups:
             for row in g.promotion_products:
-                product_codes.append(row.product_code)
+                product_codes.extend(_product_code_candidates(row.product_code))
     else:
-        product_codes = [item.product_code for item in (payload.promotion_products or [])]
+        product_codes = []
+        for item in (payload.promotion_products or []):
+            product_codes.extend(_product_code_candidates(item.product_code))
     products_map = get_products_by_code_exact(db, product_codes)
-    missing_codes = [c for c in product_codes if (c or "").strip() not in products_map]
+    if payload.promotion_groups:
+        source_codes = [row.product_code for g in payload.promotion_groups for row in g.promotion_products]
+    else:
+        source_codes = [item.product_code for item in (payload.promotion_products or [])]
+    missing_codes = [c for c in source_codes if not _resolve_product_codes(c, products_map)]
     # Missing product codes are a warning only: create the promotion and link only products that exist
     warnings = []
     if missing_codes:
-        warnings.append({"message": "Missing product codes (exact match)", "product_codes": missing_codes})
+        warnings.append(
+            {
+                "message": "Missing product codes (exact match, then '+' split fallback)",
+                "product_codes": missing_codes,
+            }
+        )
 
     existing = db.query(Promotion).filter(Promotion.promo_code == payload.promotions.promo_code).first()
     if existing:
@@ -186,38 +229,40 @@ def create_promotion(
             db.flush()
             seen_in_group: set[str] = set()
             for item in grp.promotion_products:
-                code = (item.product_code or "").strip()
-                if code not in products_map:
+                resolved_codes = _resolve_product_codes(item.product_code, products_map)
+                if not resolved_codes:
                     continue
-                if code in seen_in_group:
-                    skipped_duplicate_rows.append(
-                        {
-                            "group": pg.group_name,
-                            "product_code": code,
-                            "selling_price": item.selling_price,
-                        }
+                for code in resolved_codes:
+                    if code in seen_in_group:
+                        skipped_duplicate_rows.append(
+                            {
+                                "group": pg.group_name,
+                                "product_code": code,
+                                "source_product_code": (item.product_code or "").strip(),
+                                "selling_price": item.selling_price,
+                            }
+                        )
+                        continue
+                    seen_in_group.add(code)
+                    product = products_map[code]
+                    line_dealer_discount = (
+                        item.dealer_discount if item.dealer_discount is not None else group_dealer_discount
                     )
-                    continue
-                seen_in_group.add(code)
-                product = products_map[code]
-                line_dealer_discount = (
-                    item.dealer_discount if item.dealer_discount is not None else group_dealer_discount
-                )
-                vals = _promotion_product_values(
-                    product,
-                    item.selling_price,
-                    item.discount_amount,
-                    item.discount_percent,
-                    line_dealer_discount,
-                )
-                db.add(
-                    PromotionProduct(
-                        promotion_id=promotion.id,
-                        promotion_group_id=pg.id,
-                        product_id=product.id,
-                        **vals,
+                    vals = _promotion_product_values(
+                        product,
+                        item.selling_price,
+                        item.discount_amount,
+                        item.discount_percent,
+                        line_dealer_discount,
                     )
-                )
+                    db.add(
+                        PromotionProduct(
+                            promotion_id=promotion.id,
+                            promotion_group_id=pg.id,
+                            product_id=product.id,
+                            **vals,
+                        )
+                    )
     else:
         default_group = PromotionGroup(
             promotion_id=promotion.id,
@@ -229,34 +274,36 @@ def create_promotion(
         db.flush()
         seen_product_codes: set[str] = set()
         for item in payload.promotion_products or []:
-            code = (item.product_code or "").strip()
-            if code not in products_map:
+            resolved_codes = _resolve_product_codes(item.product_code, products_map)
+            if not resolved_codes:
                 continue
-            if code in seen_product_codes:
-                skipped_duplicate_rows.append(
-                    {
-                        "product_code": code,
-                        "selling_price": item.selling_price,
-                    }
+            for code in resolved_codes:
+                if code in seen_product_codes:
+                    skipped_duplicate_rows.append(
+                        {
+                            "product_code": code,
+                            "source_product_code": (item.product_code or "").strip(),
+                            "selling_price": item.selling_price,
+                        }
+                    )
+                    continue
+                seen_product_codes.add(code)
+                product = products_map[code]
+                vals = _promotion_product_values(
+                    product,
+                    item.selling_price,
+                    item.discount_amount,
+                    item.discount_percent,
+                    item.dealer_discount,
                 )
-                continue
-            seen_product_codes.add(code)
-            product = products_map[code]
-            vals = _promotion_product_values(
-                product,
-                item.selling_price,
-                item.discount_amount,
-                item.discount_percent,
-                item.dealer_discount,
-            )
-            db.add(
-                PromotionProduct(
-                    promotion_id=promotion.id,
-                    promotion_group_id=default_group.id,
-                    product_id=product.id,
-                    **vals,
+                db.add(
+                    PromotionProduct(
+                        promotion_id=promotion.id,
+                        promotion_group_id=default_group.id,
+                        product_id=product.id,
+                        **vals,
+                    )
                 )
-            )
 
     if skipped_duplicate_rows:
         warnings.append(
