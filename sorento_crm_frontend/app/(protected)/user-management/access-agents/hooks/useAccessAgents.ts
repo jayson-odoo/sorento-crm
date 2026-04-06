@@ -36,7 +36,6 @@ export function useCreateAccessAgent() {
       queryClient.invalidateQueries({ queryKey: ['access-agents'] });
       toast.success('Access agent created successfully');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to create access agent'),
   });
 }
 
@@ -47,9 +46,7 @@ export function useUpdateAccessAgent() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['access-agents'] });
       queryClient.invalidateQueries({ queryKey: ['access-agent'] });
-      toast.success('Access agent updated successfully');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to update access agent'),
   });
 }
 

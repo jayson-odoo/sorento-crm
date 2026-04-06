@@ -28,7 +28,7 @@ from app.schemas.user import (
     ContactAgentAccessCreate, ContactAgentAccessUpdate,
     TeamCreate, TeamUpdate,
 )
-from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
 from app.services.integration_service import RespondClient
 
 
@@ -1306,16 +1306,42 @@ class AccessAgentService:
 
     def set_agent_teams(self, agent_id: str, assignments: list[dict]) -> None:
         """Replace agent's team links with the given assignments [{code, team_id, tier?}...]."""
+        seen_keys: set[tuple[str, str | int]] = set()
+        for a in assignments or []:
+            raw_code = a.get("code")
+            code = str(raw_code).strip() if raw_code is not None else ""
+            team_id = a.get("team_id")
+            tier = a.get("tier")
+            if tier is not None and (tier < 1 or tier > 3):
+                tier = None
+            if not code or not team_id:
+                continue
+            # Matches partial unique indexes: one row per (agent, code) when tier is null;
+            # one row per (agent, code, tier) when tier is set.
+            key: tuple[str, str | int] = (code, tier if tier is not None else "__null_tier__")
+            if key in seen_keys:
+                raise handle_validation_error(
+                    f"cannot have duplicate code {code} in different groups"
+                )
+            seen_keys.add(key)
+
         self.db.query(AgentTeam).filter(AgentTeam.agent_id == agent_id).delete()
         for a in assignments or []:
-            code = a.get("code")
+            raw_code = a.get("code")
+            code = str(raw_code).strip() if raw_code is not None else ""
             team_id = a.get("team_id")
             tier = a.get("tier")
             if tier is not None and (tier < 1 or tier > 3):
                 tier = None
             if code and team_id:
                 self.db.add(AgentTeam(agent_id=agent_id, code=code, team_id=team_id, tier=tier))
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise handle_validation_error(
+                "cannot have duplicate code in different groups"
+            ) from None
 
     def get_team_id_by_code(self, agent_id: str, code: str) -> str | None:
         """Resolve team_id for agent+code. Returns None if not found."""

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Table,
   TableBody,
@@ -209,6 +209,19 @@ export default function PurchaseRequestDetail({
       ? Number(request.total_project_value).toLocaleString()
       : null);
 
+  const approvalStatusNorm = (request.approval_status ?? '').trim();
+  const isDraftLike =
+    approvalStatusNorm === '' || approvalStatusNorm === 'draft';
+  const isRejected = approvalStatusNorm === 'rejected';
+  const isPendingApproval = approvalStatusNorm === 'pending';
+  const isApprovedStatus = approvalStatusNorm === 'approved';
+  const showPrimaryChangeToPending =
+    !isApprovedStatus &&
+    !isPendingApproval &&
+    (isDraftLike || isRejected);
+  const showPrimarySendForApproval =
+    isPendingApproval && !isApprovedStatus;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -224,42 +237,43 @@ export default function PurchaseRequestDetail({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {showPrimaryChangeToPending && (
+            <Button
+              disabled={settingPending}
+              onClick={async () => {
+                if (!requestId) return;
+                setSettingPending(true);
+                try {
+                  await setPendingApproval(requestId);
+                  queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+                  queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
+                  toast.success('Status set to Pending approval');
+                } catch (e) {
+                  toast.error(e instanceof Error ? e.message : 'Failed to set pending approval');
+                } finally {
+                  setSettingPending(false);
+                }
+              }}
+            >
+              <Clock className="size-4" />
+              {settingPending ? 'Updating…' : 'Change to pending approval'}
+            </Button>
+          )}
+          {showPrimarySendForApproval && (
+            <Button
+              onClick={() => {
+                setApprovalLink(null);
+                setApprovalError(null);
+                setApproverUserId(request.approver_user_id ?? '');
+                setApproverEmail(request.approver_email ?? '');
+                setApprovalDialogOpen(true);
+              }}
+            >
+              <Send className="size-4" />
+              Send for approval
+            </Button>
+          )}
           <DetailActionsMenu ariaLabel="Request actions">
-            {request.approval_status === 'pending' ? (
-              <DropdownMenuItem
-                onClick={() => {
-                  setApprovalLink(null);
-                  setApprovalError(null);
-                  setApproverUserId(request.approver_user_id ?? '');
-                  setApproverEmail(request.approver_email ?? '');
-                  setApprovalDialogOpen(true);
-                }}
-              >
-                <Send className="size-4" />
-                Send for approval
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem
-                disabled={settingPending}
-                onClick={async () => {
-                  if (!requestId) return;
-                  setSettingPending(true);
-                  try {
-                    await setPendingApproval(requestId);
-                    queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                    queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
-                    toast.success('Status set to Pending approval');
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : 'Failed to set pending approval');
-                  } finally {
-                    setSettingPending(false);
-                  }
-                }}
-              >
-                <Clock className="size-4" />
-                {settingPending ? 'Updating…' : 'Change to pending approval'}
-              </DropdownMenuItem>
-            )}
             {publicViewLinksEnabled && (
               <DropdownMenuItem
                 disabled={viewLinkCopying}

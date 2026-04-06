@@ -27,6 +27,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useAccessAgents, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
 import { setAgentTeams } from '../services/accessAgentService';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
@@ -151,6 +152,7 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
           .filter((a) => a.code && a.team_id);
         await setAgentTeams(accessAgentId, validAssignments);
         queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
+        toast.success('Access agent updated successfully');
       } else {
         await createMutation.mutateAsync(formData);
       }
@@ -162,6 +164,8 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
       }
     } catch (error) {
       console.error('Access agent form submission error:', error);
+      const msg = error instanceof Error ? error.message : 'Something went wrong';
+      toast.error(msg);
     }
   };
 

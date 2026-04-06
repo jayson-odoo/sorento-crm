@@ -281,6 +281,10 @@ function ViewRequestContent() {
                 </p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Status</p>
+                <p className="text-sm font-medium">{approvalStatusLabel(summary?.approval_status)}</p>
+              </div>
+              <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Customer Name</p>
                 <p className="text-sm font-medium break-words">{summary?.customer_name ?? '—'}</p>
               </div>
@@ -366,6 +370,10 @@ function ViewRequestContent() {
                 <p className="text-sm font-medium">
                   {summary?.request_date ? formatDateStr(summary.request_date) : '—'}
                 </p>
+              </div>
+              <div className="sm:col-span-2 py-2 border-b border-border/60">
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Status</p>
+                <p className="text-sm font-medium">{approvalStatusLabel(summary?.approval_status)}</p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Customer Name</p>

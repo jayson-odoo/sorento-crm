@@ -1022,7 +1022,12 @@ class ConversationSLATrackingService:
         """
         Update the assignee on Conversation SLA Tracking in our system only (no Respond.io call).
         Used by external API: look up tracking by contact phone, then update assigned_to/assigned_to_id.
-        When changing assignee, sets the conversation's current_tier to the assignee's tier (users.tier).
+
+        For **unresolved** trackings, when the new user has users.tier set, also aligns current_tier
+        and restarts tier clocks (current_tier_started_at, due_at, due_at_resolution).
+
+        For **resolved** trackings, only assignee fields are updated — resolution status, timestamps,
+        and SLA tier/deadlines are left unchanged so the row stays resolved.
         assignee_respond_user_id: Respond.io user id (e.g. 1023495). Use empty string to unassign.
         """
         from app.models.user import User
@@ -1040,20 +1045,22 @@ class ConversationSLATrackingService:
             user = self.db.query(User).filter(User.respond_user_id == assignee_id).first()
 
         update_kw: dict = {"assigned_to": assignee_id if assignee_id else None}
-        if user is not None and getattr(user, "tier", None) is not None:
-            new_tier = int(user.tier)
-            now_utc = _now_utc()
-            update_kw["current_tier"] = new_tier
-            update_kw["current_tier_started_at"] = now_utc
-            tier_row = self.db.query(SLAPolicyTier).filter(
-                SLAPolicyTier.policy_id == tracking.policy_id,
-                SLAPolicyTier.tier_level == new_tier,
-            ).first()
-            if tier_row:
-                response_hours = tier_row.response_hours if tier_row.response_hours is not None else 24
-                resolution_hours = getattr(tier_row, "resolution_hours", None) or 24
-                update_kw["due_at"] = now_utc + timedelta(hours=response_hours)
-                update_kw["due_at_resolution"] = now_utc + timedelta(hours=resolution_hours)
+        # Never restart SLA tier or deadlines on a resolved conversation (assignee-only change).
+        if not getattr(tracking, "is_resolved", False):
+            if user is not None and getattr(user, "tier", None) is not None:
+                new_tier = int(user.tier)
+                now_utc = _now_utc()
+                update_kw["current_tier"] = new_tier
+                update_kw["current_tier_started_at"] = now_utc
+                tier_row = self.db.query(SLAPolicyTier).filter(
+                    SLAPolicyTier.policy_id == tracking.policy_id,
+                    SLAPolicyTier.tier_level == new_tier,
+                ).first()
+                if tier_row:
+                    response_hours = tier_row.response_hours if tier_row.response_hours is not None else 24
+                    resolution_hours = getattr(tier_row, "resolution_hours", None) or 24
+                    update_kw["due_at"] = now_utc + timedelta(hours=response_hours)
+                    update_kw["due_at_resolution"] = now_utc + timedelta(hours=resolution_hours)
         self.update_tracking(tracking_id, ConversationSLATrackingUpdate(**update_kw))
         tracking = self.get_tracking(tracking_id)
         phone = None

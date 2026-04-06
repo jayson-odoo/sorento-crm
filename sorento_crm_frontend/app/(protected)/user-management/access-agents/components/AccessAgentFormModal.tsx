@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { LoaderCircleIcon, Plus, Save, Trash2 } from 'lucide-react';
@@ -32,6 +32,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { toast } from 'sonner';
 import {
   useCreateAccessAgent,
   useUpdateAccessAgent,
@@ -146,6 +147,7 @@ export default function AccessAgentFormModal({
           .filter((a) => a.code && a.team_id);
         await setAgentTeams(accessAgentId, validAssignments);
         queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
+        toast.success('Access agent updated successfully');
       } else {
         await createMutation.mutateAsync(formData);
       }
@@ -154,6 +156,8 @@ export default function AccessAgentFormModal({
       onSuccess?.();
     } catch (error) {
       console.error('Access agent form submission error:', error);
+      const msg = error instanceof Error ? error.message : 'Something went wrong';
+      toast.error(msg);
     }
   };
 

@@ -175,6 +175,8 @@ async def set_agent_teams(
             service.set_agent_teams(agent_id, [])
         assignments_with_state = service.list_agent_teams_with_round_robin_state(agent_id)
         return {"assignments": assignments_with_state}
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
