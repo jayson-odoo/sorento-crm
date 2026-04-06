@@ -2006,7 +2006,10 @@ class ConversationSLATrackingService:
         if not text:
             raise handle_validation_error("message is required.")
         from app.services.integration_service import RespondClient
-        from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+        from app.services.crm_chat_outbound_webhook import (
+            enqueue_crm_chat_outbound_webhook,
+            resolve_assignee_respond_user_id_from_tracking,
+        )
 
         client = RespondClient()
         try:
@@ -2024,5 +2027,6 @@ class ConversationSLATrackingService:
             space_id=None,
             crm_sender_user_id=crm_sender_user_id,
             respond_user_id_fallback=respond_user_id,
+            assignee_respond_user_id=resolve_assignee_respond_user_id_from_tracking(self.db, tracking),
         )
         return response if isinstance(response, dict) else {}

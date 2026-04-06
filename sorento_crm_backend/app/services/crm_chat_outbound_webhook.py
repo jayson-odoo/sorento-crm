@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid as uuid_module
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -70,6 +71,76 @@ def _message_id_from_respond_response(resp: Optional[dict]) -> Optional[int]:
     return _int_or_none(mid)
 
 
+def _is_crm_user_uuid(value: str) -> bool:
+    """True if value looks like users.id (UUID) — must not be sent as Respond user id to n8n."""
+    s = str(value).strip()
+    if len(s) != 36:
+        return False
+    try:
+        uuid_module.UUID(s)
+        return True
+    except ValueError:
+        return False
+
+
+def resolve_assignee_respond_user_id_from_tracking(db: Session, tracking: Any) -> Optional[str]:
+    """Respond.io-style user id for CRM assignee on an SLA tracking row (numeric string)."""
+    at = (getattr(tracking, "assigned_to", None) or "").strip()
+    if at:
+        return at
+    aid = getattr(tracking, "assigned_to_id", None)
+    if aid:
+        u = db.query(User).filter(User.id == str(aid)).first()
+        if u and getattr(u, "respond_user_id", None):
+            s = str(u.respond_user_id).strip()
+            return s or None
+    return None
+
+
+def resolve_sla_assignee_respond_user_id(
+    db: Session, source_entity_type: str, source_entity_id: str
+) -> Optional[str]:
+    """Assignee Respond user id for a business row linked to conversation SLA tracking."""
+    from app.services.sla_service import ConversationSLATrackingService
+
+    t = ConversationSLATrackingService(db).get_tracking_by_source_entity(
+        source_entity_type, str(source_entity_id)
+    )
+    if not t:
+        return None
+    return resolve_assignee_respond_user_id_from_tracking(db, t)
+
+
+def _webhook_agent_respond_id(
+    assignee_respond_user_id: Optional[str],
+    sender: Optional[User],
+    respond_user_id_for_payload: str,
+) -> tuple[Optional[str], Optional[int], Any]:
+    """
+    Choose Respond / n8n agent user identifier. Priority: explicit assignee (conversation assignee),
+    then sender.respond_user_id, then payload fallback only if it is not a CRM users.id UUID.
+    Returns (chosen_str, int_if_numeric, value_for_user_id_json).
+    """
+    chosen: Optional[str] = None
+    if assignee_respond_user_id and str(assignee_respond_user_id).strip():
+        chosen = str(assignee_respond_user_id).strip()
+    elif sender and getattr(sender, "respond_user_id", None):
+        rs = str(sender.respond_user_id).strip()
+        if rs:
+            chosen = rs
+    else:
+        p = str(respond_user_id_for_payload or "").strip()
+        if p and not _is_crm_user_uuid(p):
+            chosen = p
+
+    if not chosen:
+        return None, None, None
+
+    ru_int = _int_or_none(chosen)
+    user_id_json: Any = ru_int if ru_int is not None else chosen
+    return chosen, ru_int, user_id_json
+
+
 def build_crm_chat_outbound_payload(
     *,
     contact_respond_io_id: str,
@@ -81,6 +152,7 @@ def build_crm_chat_outbound_payload(
     rc: Optional[RespondContact],
     sender: Optional[User],
     respond_user_id_for_payload: str,
+    assignee_respond_user_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """Single-element array mimicking Respond.io outbound message webhook shape."""
     now_ms = int(time.time() * 1000)
@@ -90,10 +162,9 @@ def build_crm_chat_outbound_payload(
     c_fn, c_ln = _contact_first_last(rc)
     phone = (rc.phone_number if rc else None) or None
 
-    # Agent user block: prefer Respond user id (numeric) for n8n
-    ru_int = _int_or_none(getattr(sender, "respond_user_id", None) if sender else None)
-    if ru_int is None:
-        ru_int = _int_or_none(respond_user_id_for_payload)
+    _chosen_str, ru_int, user_id_json = _webhook_agent_respond_id(
+        assignee_respond_user_id, sender, respond_user_id_for_payload
+    )
 
     s_fn, s_ln = _split_display_name(getattr(sender, "name", None) if sender else None)
     s_email = (getattr(sender, "email", None) if sender else None) or ""
@@ -110,7 +181,7 @@ def build_crm_chat_outbound_payload(
     }
 
     user_block: dict[str, Any] = {
-        "id": ru_int if ru_int is not None else respond_user_id_for_payload,
+        "id": user_id_json,
         "firstName": s_fn or "",
         "lastName": s_ln or "",
         "email": s_email,
@@ -136,7 +207,7 @@ def build_crm_chat_outbound_payload(
         "user": user_block,
         "sender": {
             "source": "user",
-            "userId": ru_int if ru_int is not None else None,
+            "userId": ru_int,
             "teamId": None,
             "workflowId": None,
             "broadcastHistoryId": None,
@@ -162,6 +233,7 @@ def enqueue_crm_chat_outbound_webhook(
     space_id: Optional[str],
     crm_sender_user_id: Optional[str],
     respond_user_id_fallback: str,
+    assignee_respond_user_id: Optional[str] = None,
 ) -> None:
     """Create integration log and POST the webhook asynchronously (daemon thread; non-blocking)."""
     url = get_n8n_crm_chat_outbound_webhook_url(db)
@@ -187,6 +259,7 @@ def enqueue_crm_chat_outbound_webhook(
         rc=rc,
         sender=sender,
         respond_user_id_for_payload=respond_user_id_fallback,
+        assignee_respond_user_id=assignee_respond_user_id,
     )
 
     log_service = IntegrationLogService(db)

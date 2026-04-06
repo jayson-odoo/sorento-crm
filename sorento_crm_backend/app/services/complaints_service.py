@@ -491,7 +491,10 @@ class ComplaintService:
             try:
                 client = RespondClient()
                 response = client.send_message(identifier, display_message)
-                from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+                from app.services.crm_chat_outbound_webhook import (
+                    enqueue_crm_chat_outbound_webhook,
+                    resolve_sla_assignee_respond_user_id,
+                )
 
                 enqueue_crm_chat_outbound_webhook(
                     self.db,
@@ -503,6 +506,9 @@ class ComplaintService:
                     space_id=getattr(complaint, "space_id", None),
                     crm_sender_user_id=crm_sender_user_id,
                     respond_user_id_fallback=respond_user_id,
+                    assignee_respond_user_id=resolve_sla_assignee_respond_user_id(
+                        self.db, "complaint", complaint_id
+                    ),
                 )
                 log_service.create_integration_log(
                     IntegrationLogCreate(

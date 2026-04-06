@@ -2298,7 +2298,10 @@ class StockInquiryService:
     ) -> None:
         """Send a text message to the inquiry's Respond.io contact and mirror it to the outbound webhook."""
         from app.schemas.integration import IntegrationLogCreate
-        from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+        from app.services.crm_chat_outbound_webhook import (
+            enqueue_crm_chat_outbound_webhook,
+            resolve_sla_assignee_respond_user_id,
+        )
         from app.services.error_handler import handle_validation_error
         from app.services.integration_service import IntegrationLogService, RespondClient
 
@@ -2312,6 +2315,10 @@ class StockInquiryService:
         message_to_send = str(message_text or "").strip()
         if not message_to_send:
             raise handle_validation_error("message_text is required.")
+
+        assignee_rid = resolve_sla_assignee_respond_user_id(
+            self.db, "stock_inquiry", str(inquiry.id)
+        )
 
         response = None
         try:
@@ -2328,6 +2335,7 @@ class StockInquiryService:
                 space_id=getattr(inquiry, "space_id", None),
                 crm_sender_user_id=crm_sender_user_id,
                 respond_user_id_fallback=(respond_user_id_fallback or "").strip() or identifier,
+                assignee_respond_user_id=assignee_rid,
             )
 
             log_service.create_integration_log(
@@ -2649,7 +2657,10 @@ class StockInquiryService:
                     delivery_failed_message or "Respond.io failed to deliver the message."
                 )
 
-            from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+            from app.services.crm_chat_outbound_webhook import (
+                enqueue_crm_chat_outbound_webhook,
+                resolve_sla_assignee_respond_user_id,
+            )
 
             enqueue_crm_chat_outbound_webhook(
                 self.db,
@@ -2661,6 +2672,9 @@ class StockInquiryService:
                 space_id=getattr(inquiry, "space_id", None),
                 crm_sender_user_id=crm_sender_user_id,
                 respond_user_id_fallback=respond_user_id,
+                assignee_respond_user_id=resolve_sla_assignee_respond_user_id(
+                    self.db, "stock_inquiry", inquiry_id
+                ),
             )
 
             log_service.create_integration_log(
@@ -3035,7 +3049,10 @@ class PurchaseRequestService:
     ) -> None:
         """Send a text message to the request's Respond.io contact and mirror to the outbound webhook."""
         from app.schemas.integration import IntegrationLogCreate
-        from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+        from app.services.crm_chat_outbound_webhook import (
+            enqueue_crm_chat_outbound_webhook,
+            resolve_sla_assignee_respond_user_id,
+        )
         from app.services.error_handler import handle_validation_error
         from app.services.integration_service import IntegrationLogService, RespondClient
 
@@ -3049,6 +3066,10 @@ class PurchaseRequestService:
         message_to_send = str(message_text or "").strip()
         if not message_to_send:
             raise handle_validation_error("message_text is required.")
+
+        assignee_rid = resolve_sla_assignee_respond_user_id(
+            self.db, "purchase_request", str(header.id)
+        )
 
         response = None
         try:
@@ -3065,6 +3086,7 @@ class PurchaseRequestService:
                 space_id=getattr(header, "space_id", None),
                 crm_sender_user_id=crm_sender_user_id,
                 respond_user_id_fallback=(respond_user_id_fallback or "").strip() or identifier,
+                assignee_respond_user_id=assignee_rid,
             )
 
             log_service.create_integration_log(
@@ -4181,7 +4203,10 @@ class PurchaseRequestService:
         try:
             client = RespondClient()
             response = client.send_message(identifier, display_message)
-            from app.services.crm_chat_outbound_webhook import enqueue_crm_chat_outbound_webhook
+            from app.services.crm_chat_outbound_webhook import (
+                enqueue_crm_chat_outbound_webhook,
+                resolve_sla_assignee_respond_user_id,
+            )
 
             enqueue_crm_chat_outbound_webhook(
                 self.db,
@@ -4193,6 +4218,9 @@ class PurchaseRequestService:
                 space_id=getattr(header, "space_id", None),
                 crm_sender_user_id=crm_sender_user_id,
                 respond_user_id_fallback=respond_user_id,
+                assignee_respond_user_id=resolve_sla_assignee_respond_user_id(
+                    self.db, "purchase_request", request_id
+                ),
             )
             log_service.create_integration_log(
                 IntegrationLogCreate(
