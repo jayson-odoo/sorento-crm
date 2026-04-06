@@ -756,6 +756,14 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                       <p className="text-sm text-muted-foreground">Team Set Code</p>
                       <p className="font-medium">{tracking.team_set_code || '-'}</p>
                     </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Message ID</p>
+                      <p className="font-medium">
+                        {tracking.message_id != null && tracking.message_id !== undefined
+                          ? String(tracking.message_id)
+                          : '-'}
+                      </p>
+                    </div>
                   </div>
                 </CardContent>
               </CollapsibleContent>

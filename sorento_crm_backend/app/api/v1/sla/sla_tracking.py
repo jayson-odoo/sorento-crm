@@ -231,6 +231,7 @@ def build_conversation_sla_tracking_response(
         if getattr(tracking, "agent", None)
         else None,
         "team_set_code": getattr(tracking, "team_set_code", None),
+        "message_id": getattr(tracking, "message_id", None),
         **timings,
     }
 

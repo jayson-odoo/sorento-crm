@@ -81,6 +81,8 @@ export interface ConversationSLATracking {
   agent_id?: string | null;   // FK UUID (internal)
   agent_code?: string | null; // Resolved from agent FK
   team_set_code?: string | null;
+  /** External message id (e.g. from n8n); cleared when the conversation is resolved */
+  message_id?: number | null;
 }
 
 export interface ConversationSLATrackingDetail extends ConversationSLATracking {

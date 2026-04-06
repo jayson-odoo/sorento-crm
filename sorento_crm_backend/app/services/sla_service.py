@@ -1,6 +1,6 @@
 """SLA service for business logic."""
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func
+from sqlalchemy import or_, func, update
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog
@@ -496,6 +496,7 @@ class ConversationSLATrackingService:
                     "name": track.agent.name,
                 } if getattr(track, "agent", None) else None,
                 "team_set_code": getattr(track, "team_set_code", None),
+                "message_id": getattr(track, "message_id", None),
                 "policy": {
                     "id": str(track.policy.id),
                     "code": track.policy.code,
@@ -1334,9 +1335,11 @@ class ConversationSLATrackingService:
             update_data["responded_by"] = None
         
         # Smart handling for is_resolved (same pattern: resolved_at, resolution_duration, resolved_by as user UUID)
+        resolved_in_this_request = False
         if is_resolved:
             if tracking.is_resolved:
                 raise handle_validation_error("Conversation is already resolved.")
+            resolved_in_this_request = True
             _res_by = update_data.get("resolved_by")
             if _res_by is None or (isinstance(_res_by, str) and not str(_res_by).strip()):
                 _rid = self._resolve_tracking_assignee_user_id(tracking)
@@ -1349,6 +1352,7 @@ class ConversationSLATrackingService:
             # Clear escalation routing FK and team code — no longer needed once resolved
             update_data["agent_id"] = None
             update_data["team_set_code"] = None
+            update_data["message_id"] = None
             # Always set resolved_at when marking resolved (UTC)
             if "resolved_at" not in update_data or update_data.get("resolved_at") is None:
                 update_data["resolved_at"] = _now_utc()
@@ -1399,7 +1403,17 @@ class ConversationSLATrackingService:
         # Apply all updates
         for key, value in update_data.items():
             setattr(tracking, key, value)
-        
+
+        # Force NULL for routing / external ids on resolve. Some session edge cases (e.g. after a prior
+        # commit in the same request) can leave ORM-only clears from not flushing; a direct UPDATE
+        # matches DB state (used by test-overrides "Mark as resolved" and all other resolve paths).
+        if resolved_in_this_request:
+            self.db.execute(
+                update(ConversationSLATracking)
+                .where(ConversationSLATracking.id == tracking.id)
+                .values(message_id=None, team_set_code=None, agent_id=None)
+            )
+
         self.db.commit()
         self.db.refresh(tracking)
         return tracking

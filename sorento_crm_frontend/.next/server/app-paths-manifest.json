@@ -1,3 +1,10 @@
 {
-  "/api/v1/external/[...path]/route": "app/api/v1/external/[...path]/route.js"
+  "/api/v1/sla-management/[...path]/route": "app/api/v1/sla-management/[...path]/route.js",
+  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
+  "/api/auth/token/route": "app/api/auth/token/route.js",
+  "/api/user-management/account/route": "app/api/user-management/account/route.js",
+  "/(auth)/signin/page": "app/(auth)/signin/page.js",
+  "/(protected)/system-management/outgoing-mails/page": "app/(protected)/system-management/outgoing-mails/page.js",
+  "/(protected)/sla-management/conversation-sla-tracking/page": "app/(protected)/sla-management/conversation-sla-tracking/page.js",
+  "/(protected)/sla-management/conversation-sla-tracking/[id]/page": "app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js"
 }

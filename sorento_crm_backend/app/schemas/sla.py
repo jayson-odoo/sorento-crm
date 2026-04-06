@@ -1,9 +1,35 @@
 """SLA management schemas."""
-from pydantic import BaseModel, field_validator, model_validator, model_serializer, ConfigDict
-from typing import Optional
+from pydantic import BaseModel, BeforeValidator, field_validator, model_validator, model_serializer, ConfigDict
+from typing import Annotated, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
 import uuid
+
+
+def _coerce_optional_message_id(v):
+    """Accept int, numeric string, or null for external message ids (e.g. n8n)."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        raise ValueError("message_id must be an integer")
+    if isinstance(v, str):
+        s = v.strip()
+        if not s or s.lower() in ("null", "undefined", "[null]", "[undefined]"):
+            return None
+        try:
+            return int(s)
+        except ValueError as e:
+            raise ValueError("message_id must be a valid integer") from e
+    if isinstance(v, float):
+        if not v.is_integer():
+            raise ValueError("message_id must be a whole number")
+        return int(v)
+    if isinstance(v, int):
+        return v
+    raise ValueError("message_id must be an integer")
+
+
+OptionalMessageId = Annotated[Optional[int], BeforeValidator(_coerce_optional_message_id)]
 
 
 class SLAPolicyTierBase(BaseModel):
@@ -84,6 +110,7 @@ class ConversationSLATrackingBase(BaseModel):
     resolution_duration: Optional[Decimal] = None
     agent_id: Optional[str] = None  # FK to access_agents.id
     team_set_code: Optional[str] = None
+    message_id: Optional[int] = None  # External message id; cleared when resolved
 
 
 class ConversationSLATrackingCreate(BaseModel):
@@ -107,6 +134,7 @@ class ConversationSLATrackingCreate(BaseModel):
     resolution_duration: Optional[Decimal] = None  # Will be reset to None
     agent_code: Optional[str] = None  # resolved → agent_id FK in service
     team_set_code: Optional[str] = None  # Team assignment set code for escalation
+    message_id: OptionalMessageId = None
     contact_phone_number: str  # Required field
 
     @field_validator('contact_phone_number')
@@ -140,6 +168,7 @@ class ConversationSLATrackingUpdate(BaseModel):
     resolution_time: Optional[Decimal] = None
     agent_code: Optional[str] = None  # resolved → agent_id FK in service
     team_set_code: Optional[str] = None
+    message_id: OptionalMessageId = None
 
     @model_validator(mode='after')
     def map_resolution_time(self):

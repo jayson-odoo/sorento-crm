@@ -1,5 +1,5 @@
 """SLA management models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, BigInteger, Numeric, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -77,6 +77,7 @@ class ConversationSLATracking(Base):
     source_entity_id = Column(String(100), nullable=True)
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="SET NULL"), nullable=True)  # FK to access_agents
     team_set_code = Column(String(100), nullable=True)  # Team assignment set code for escalation; cleared on resolve
+    message_id = Column(BigInteger, nullable=True)  # External message id (e.g. n8n); cleared on resolve
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     resolution_duration = Column(Numeric(10, 2), nullable=True)
