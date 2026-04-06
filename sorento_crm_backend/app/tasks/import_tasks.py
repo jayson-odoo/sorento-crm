@@ -917,6 +917,18 @@ def _grn_import_normalize_header(value: Any) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+# GRN listing "Transfer from" and line sheet "From Doc. No." both carry the SPO number.
+_GRN_SPO_COLUMN_CANDIDATES = (
+    "transfer from",
+    "transfer from ",
+    "spo number",
+    "from doc no",
+    "from doc number",
+    "from document no",
+    "from document number",
+)
+
+
 def _run_grn_listing_import_core(
     db,
     file_data: bytes,
@@ -973,7 +985,7 @@ def _run_grn_listing_import_core(
             if job_service and job_id_str:
                 job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, successful_rows=successful, failed_rows=failed, skipped_rows=skipped)
             continue
-        transfer_from = _find(row, "transfer from", "transfer from ", "spo number")
+        transfer_from = _find(row, *_GRN_SPO_COLUMN_CANDIDATES)
         spo_number = (transfer_from and str(transfer_from).strip()) or None
         date_val = _find(row, "date", "picking date", "picking date ")
         try:
@@ -1065,6 +1077,8 @@ def validate_grn_lines_import(file_data: bytes) -> Dict[str, Any]:
         item_code = (_find(row_data, "item code", "item code ", "product code", "product code ") and str(_find(row_data, "item code", "item code ", "product code", "product code ")).strip()) or None
         location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
         qty_raw = _find(row_data, "qty", "quantity", "qty ")
+        line_spo_raw = _find(row_data, *_GRN_SPO_COLUMN_CANDIDATES)
+        line_spo = (str(line_spo_raw).strip() if line_spo_raw is not None else "") or None
         try:
             qty = int(float(qty_raw)) if qty_raw is not None else 0
         except (TypeError, ValueError):
@@ -1075,7 +1089,7 @@ def validate_grn_lines_import(file_data: bytes) -> Dict[str, Any]:
             all_product_codes.add(item_code)
         if location:
             all_locations.add(location)
-        data_rows.append((doc_no, item_code, location, qty))
+        data_rows.append((doc_no, item_code, location, qty, line_spo))
 
     if not data_rows:
         db.close()
@@ -1094,7 +1108,7 @@ def validate_grn_lines_import(file_data: bytes) -> Dict[str, Any]:
     skipped_detail: List[dict] = []
     would_succeed = 0
     for row_idx, row_tuple in enumerate(data_rows, start=2):
-        doc_no, item_code, location, qty = row_tuple
+        doc_no, item_code, location, qty, _line_spo = row_tuple
         if not doc_no:
             skipped_detail.append({"row": row_idx, "reason": "Missing doc no"})
             continue
@@ -1197,8 +1211,9 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
 
 def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
     """Process GRN lines Excel: create/update picking lines. Idempotent.
-    Columns: doc no -> link to picking header (by picking_number), item code -> product, location -> warehouse, quantity.
-    Group by (picking_number, product, warehouse), sum quantity. Link spo_allocation_id via header spo_number + product + warehouse.
+    Columns: doc no -> GRN picking_number; item code; location -> warehouse; qty.
+    Optional SPO source (same as listing Transfer from): transfer from, spo number, from doc. no., etc.
+    Line-level SPO overrides the header’s spo_number for SPO allocation matching. Groups split by effective SPO so mixed SPOs on one GRN do not merge.
     """
     from rq import get_current_job
     import openpyxl
@@ -1232,7 +1247,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             return
 
         headers = [_grn_import_normalize_header(cell.value) for cell in sheet[1]]
-        data_rows: List[tuple] = []  # (doc_no, item_code, location, qty)
+        data_rows: List[tuple] = []  # (doc_no, item_code, location, qty, line_spo)
         all_doc_nos = set()
         all_product_codes = set()
         all_locations = set()
@@ -1256,6 +1271,8 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             item_code = (_find(row_data, "item code", "item code ", "product code", "product code ") and str(_find(row_data, "item code", "item code ", "product code", "product code ")).strip()) or None
             location = (_find(row_data, "location", "warehouse", "warehouse code") and str(_find(row_data, "location", "warehouse", "warehouse code")).strip()) or None
             qty_raw = _find(row_data, "qty", "quantity", "qty ")
+            line_spo_raw = _find(row_data, *_GRN_SPO_COLUMN_CANDIDATES)
+            line_spo = (str(line_spo_raw).strip() if line_spo_raw is not None else "") or None
             try:
                 qty = int(float(qty_raw)) if qty_raw is not None else 0
             except (TypeError, ValueError):
@@ -1266,7 +1283,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 all_product_codes.add(item_code)
             if location:
                 all_locations.add(location)
-            data_rows.append((doc_no, item_code, location, qty))
+            data_rows.append((doc_no, item_code, location, qty, line_spo))
 
         total_data_rows = len(data_rows)
         # Set total_rows immediately after reading all rows, before any processing
@@ -1304,10 +1321,10 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 headers_by_number[pn] = h
 
         # Group by (doc_no, product_id, warehouse_id) and sum quantity; track skipped with Excel row number
-        groups: Dict[tuple[str, str, str], Dict[str, Any]] = {}
+        groups: Dict[tuple[str, str, str, Optional[str]], Dict[str, Any]] = {}
         skipped_detail: List[dict] = []  # [{"row": int, "reason": str}, ...]
         for row_idx, row_tuple in enumerate(data_rows, start=2):  # Excel row 2 = first data row
-            doc_no, item_code, location, qty = row_tuple
+            doc_no, item_code, location, qty, line_spo = row_tuple
             if not doc_no:
                 skipped_detail.append({"row": row_idx, "reason": "Missing doc no"})
                 job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
@@ -1329,6 +1346,9 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 skipped_detail.append({"row": row_idx, "reason": f"GRN header not found: {doc_no}"})
                 job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
                 continue
+            _hdr_spo = getattr(header, "spo_number", None)
+            hdr_spo = str(_hdr_spo).strip() if (_hdr_spo is not None and str(_hdr_spo).strip()) else None
+            effective_spo: Optional[str] = line_spo if line_spo else hdr_spo
             product = products_by_code.get((item_code or "").strip())
             warehouse = warehouses_map.get(normalize_code(location)) if location else None
             if not product:
@@ -1339,9 +1359,8 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 skipped_detail.append({"row": row_idx, "reason": f"Warehouse not found: {location}"})
                 job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
                 continue
-            # Group by (doc_no, product_id, warehouse_id) - warehouse is still needed for the picking line
-            # but we'll match SPO FIFO by product only
-            key = (doc_no, str(product.id), str(warehouse.id))
+            # Group by (doc_no, product_id, warehouse_id, effective_spo) so line-level SPO (e.g. From Doc. No.) is not merged across SPOs.
+            key = (doc_no, str(product.id), str(warehouse.id), effective_spo)
             if key not in groups:
                 groups[key] = {"qty": 0, "warehouse_id": str(warehouse.id)}
             groups[key]["qty"] += qty
@@ -1372,25 +1391,24 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 "quantity": qty,
             })
 
-        # Group GR lines by (doc_no, product_id) for FIFO SPO matching
+        # Group GR lines by (doc_no, product_id, effective_spo) for FIFO SPO matching
         # Keep warehouse info for creating picking lines
         gr_lines_by_product: Dict[tuple, List[tuple]] = defaultdict(list)
-        for (doc_no, product_id, warehouse_id), group_data in groups.items():
+        for (doc_no, product_id, warehouse_id, effective_spo), group_data in groups.items():
             header = headers_by_number.get(doc_no)
             if not header:
                 failed += 1
                 continue
-            gr_lines_by_product[(doc_no, product_id)].append((warehouse_id, group_data["qty"], header))
+            gr_lines_by_product[(doc_no, product_id, effective_spo)].append((warehouse_id, group_data["qty"], header))
 
-        # Process each (doc_no, product) group with shared FIFO SPO pool
-        for (doc_no, product_id), gr_line_list in gr_lines_by_product.items():
+        # Process each (doc_no, product, effective_spo) group with shared FIFO SPO pool
+        for (doc_no, product_id, effective_spo), gr_line_list in gr_lines_by_product.items():
             header = headers_by_number.get(doc_no)
             if not header:
                 failed += 1
                 continue
 
-            _spo = getattr(header, "spo_number", None)
-            spo_number: Optional[str] = str(_spo).strip() if (_spo is not None and str(_spo).strip()) else None
+            spo_number: Optional[str] = effective_spo
             if not spo_number:
                 # No SPO number, create all lines without spo_allocation_id
                 for warehouse_id, qty, hdr in gr_line_list:

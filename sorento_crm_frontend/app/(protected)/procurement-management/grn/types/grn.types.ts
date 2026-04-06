@@ -71,7 +71,8 @@ export interface GRNDetail extends GRN {
 
 export interface GRNFormData {
   picking_number: string;
-  spo_number?: string;
+  /** Use null on update to clear the server value (JSON null); omit/undefined skips the field. */
+  spo_number?: string | null;
   source_entity_type?: string;
   source_entity_id?: string;
   /** Date or ISO date string (form inputs use string). */

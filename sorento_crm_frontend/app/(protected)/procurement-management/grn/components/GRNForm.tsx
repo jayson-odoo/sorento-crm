@@ -224,8 +224,10 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
         }));
 
       if (isEditMode && grnId) {
+        const spoTrimmed = (data.spo_number ?? '').trim();
         const editPayload: Partial<GRNFormData> = {
-          spo_number: data.spo_number || undefined,
+          // null serializes so the API clears spo_number; undefined is omitted and leaves DB unchanged
+          spo_number: spoTrimmed ? spoTrimmed : null,
           picking_date: data.picking_date,
           picking_status: data.picking_status,
           notes: data.notes || undefined,
