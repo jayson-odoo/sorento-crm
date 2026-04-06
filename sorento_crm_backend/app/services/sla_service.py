@@ -748,6 +748,21 @@ class ConversationSLATrackingService:
         )
         return tracking
 
+    def resolve_internal_respond_contact_id(self, respond_contact_id: str) -> Optional[str]:
+        """Map API respond_contact_id to respond_contacts.id (CRM row id, then Respond.io id)."""
+        from app.models.access import RespondContact
+
+        raw = str(respond_contact_id or "").strip()
+        if not raw:
+            return None
+        row = self.db.query(RespondContact).filter(RespondContact.id == raw).first()
+        if row:
+            return str(row.id)
+        row = self.db.query(RespondContact).filter(RespondContact.respond_io_id == raw).first()
+        if row:
+            return str(row.id)
+        return None
+
     # Map source_entity_type (on tracking) to access agent code for tier-based escalation.
     ENTITY_TYPE_TO_AGENT_CODE = {
         "complaint": "complaint",
@@ -862,6 +877,7 @@ class ConversationSLATrackingService:
         # On escalation, due_at_resolution = escalation time (now) + resolution_hours from policy
         tracking.due_at_resolution = now_utc + timedelta(hours=resolution_hours)
 
+        self.db.flush()
         self.create_event_log(
             ConversationSLAEventLogCreate(
                 sla_tracking_id=tracking.id,

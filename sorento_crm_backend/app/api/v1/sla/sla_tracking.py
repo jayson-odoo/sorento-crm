@@ -354,16 +354,22 @@ async def escalate_sla_tracking_integration(
     """
     Escalate a conversation SLA tracking by respond_contact_id and policy_id (for external systems).
 
-    Resolves the next assignee from the target tier's team (tier_{current_tier}) under the agent
+    Resolves the next assignee from the target tier's team for body.current_tier under the agent
     mapped from tracking.source_entity_type (complaint, stock_inquiry, purchase_request), using
-    round-robin. Updates tracking tier, timestamps, and assigns to that user. Returns the
+    round-robin. Updates tracking to that tier (supports multi-step jumps, e.g. 1→3). Returns the
     assignee's Respond user ID for n8n to update Respond.io, plus tracking message_id when set.
+
+    respond_contact_id may be respond_contacts.id or RespondContact.respond_io_id.
     """
     log_service = IntegrationLogService(db)
     try:
         service = ConversationSLATrackingService(db)
+        internal_contact_id = service.resolve_internal_respond_contact_id(body.respond_contact_id)
+        if not internal_contact_id:
+            raise handle_not_found("Respond contact", body.respond_contact_id)
+
         tracking = service.get_tracking_by_contact_and_policy(
-            body.respond_contact_id,
+            internal_contact_id,
             body.policy_id,
         )
         if not tracking:
@@ -377,15 +383,15 @@ async def escalate_sla_tracking_integration(
             )
 
         from_tier = int(getattr(tracking, "current_tier", 0) or 0)
-        target_tier = from_tier + 1
+        target_tier = int(body.current_tier)
         if from_tier < 1:
             raise handle_validation_error("Current SLA tier is invalid for escalation.")
-        if target_tier > 3:
-            raise handle_validation_error("Conversation is already at the highest SLA tier.")
-        if body.current_tier != target_tier:
+        if target_tier < 1 or target_tier > 3:
+            raise handle_validation_error("current_tier must be between 1 and 3.")
+        if target_tier <= from_tier:
             raise handle_validation_error(
-                f"Escalation must move from tier {from_tier} to tier {target_tier}. "
-                f"Received current_tier={body.current_tier}."
+                f"Escalation target tier must be greater than current tier {from_tier}. "
+                f"Received current_tier={target_tier}."
             )
 
         # Prefer agent_id FK / team_set_code stored on the tracking record.
@@ -404,7 +410,7 @@ async def escalate_sla_tracking_integration(
         )
 
         tracking = service.escalate_tracking(
-            respond_contact_id=body.respond_contact_id,
+            respond_contact_id=internal_contact_id,
             policy_id=body.policy_id,
             current_tier=target_tier,
             escalation_reason=body.escalation_reason,
@@ -419,7 +425,7 @@ async def escalate_sla_tracking_integration(
                 integration_channel="sla_escalation",
                 business_table="conversation_sla_tracking",
                 business_id=tracking.id,
-                external_reference=body.respond_contact_id,
+                external_reference=internal_contact_id,
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="POST",
@@ -468,6 +474,7 @@ async def escalate_sla_tracking_integration(
             "assigned_to_name": assigned_to_name,
             "assigned_to_respond_user_id": assigned_to_respond_user_id,
             "message_id": getattr(tracking, "message_id", None),
+            "current_tier": tracking.current_tier,
             "due_at": _iso(tracking.due_at),
             "due_at_resolution": _iso(tracking.due_at_resolution),
             "remaining_response_hours": remaining_response_hours,

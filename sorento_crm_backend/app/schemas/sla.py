@@ -220,7 +220,7 @@ class ConversationSLAEscalateRequest(BaseModel):
     """Request body for external escalation API (by respond_contact_id and policy_id)."""
     respond_contact_id: str
     policy_id: str
-    current_tier: int  # Escalated tier level
+    current_tier: int  # Target tier after escalation (1–3), must be greater than the row's current tier
     escalation_reason: str
     team_set_code: Optional[str] = None  # Optional team set key to resolve tier within a set
 
