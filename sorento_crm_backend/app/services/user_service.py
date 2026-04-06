@@ -1344,13 +1344,27 @@ class AccessAgentService:
             ) from None
 
     def get_team_id_by_code(self, agent_id: str, code: str) -> str | None:
-        """Resolve team_id for agent+code. Returns None if not found."""
+        """Resolve team_id for agent+code. If several tiers share this code, returns one row (undefined which). Prefer get_team_id_by_tier + list_team_ids_for_agent_code for round-robin."""
         row = (
             self.db.query(AgentTeam.team_id)
             .filter(AgentTeam.agent_id == agent_id, AgentTeam.code == code)
             .first()
         )
         return str(row[0]) if row else None
+
+    def list_team_ids_for_agent_code(self, agent_id: str, code: str) -> list[str]:
+        """All team_ids for this agent with the given assignment code (e.g. one per SLA tier)."""
+        from sqlalchemy import and_
+
+        c = str(code).strip() if code is not None else ""
+        if not c:
+            return []
+        rows = (
+            self.db.query(AgentTeam.team_id)
+            .filter(and_(AgentTeam.agent_id == agent_id, AgentTeam.code == c))
+            .all()
+        )
+        return [str(r[0]) for r in rows]
 
     def get_team_id_by_tier(
         self, agent_id: str, tier: int, team_set_code: Optional[str] = None

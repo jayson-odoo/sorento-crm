@@ -42,7 +42,8 @@ def test_working_hours_not_assigned(
     mock_cal.return_value.is_within_working_time.return_value = True
     mock_sla.return_value.get_tracking_by_contact_phone.return_value = None
     mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
-    mock_access.return_value.get_team_id_by_code.return_value = "team-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
     mock_access.return_value.get_next_assignee.return_value = ASSIGNEE
 
     r = client.post(
@@ -76,7 +77,8 @@ def test_non_working_hours_not_assigned(
     mock_cal.return_value.is_within_working_time.return_value = False
     mock_sla.return_value.get_tracking_by_contact_phone.return_value = None
     mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
-    mock_access.return_value.get_team_id_by_code.return_value = "team-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
     mock_access.return_value.get_next_assignee.return_value = ASSIGNEE
 
     r = client.post(
@@ -109,7 +111,8 @@ def test_working_hours_already_assigned(
     tr.assigned_user = None
     mock_sla.return_value.get_tracking_by_contact_phone.return_value = tr
     mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
-    mock_access.return_value.get_team_id_by_code.return_value = "team-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
     mock_access.return_value.get_next_assignee.return_value = ASSIGNEE
 
     r = client.post(
@@ -143,7 +146,8 @@ def test_non_working_hours_already_assigned(
     tr = MagicMock(assigned_to_id="x", assigned_to=None)
     mock_sla.return_value.get_tracking_by_contact_phone.return_value = tr
     mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
-    mock_access.return_value.get_team_id_by_code.return_value = "team-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
     mock_access.return_value.get_next_assignee.return_value = ASSIGNEE
 
     r = client.post(
@@ -176,7 +180,8 @@ def test_assigned_legacy_assigned_to_text_only(
     tr.assigned_user = None
     mock_sla.return_value.get_tracking_by_contact_phone.return_value = tr
     mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
-    mock_access.return_value.get_team_id_by_code.return_value = "team-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
     mock_access.return_value.get_next_assignee.return_value = ASSIGNEE
 
     r = client.post(
@@ -218,7 +223,8 @@ def test_already_assigned_includes_conversation_assignee_from_user(
     tr.assigned_user = u
     mock_sla.return_value.get_tracking_by_contact_phone.return_value = tr
     mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
-    mock_access.return_value.get_team_id_by_code.return_value = "team-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
     mock_access.return_value.get_next_assignee.return_value = ASSIGNEE
 
     r = client.post(
@@ -248,7 +254,8 @@ def test_current_assignee_branch_includes_flags(
     mock_cal.return_value.is_within_working_time.return_value = False
     mock_sla.return_value.get_tracking_by_contact_phone.return_value = None
     mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
-    mock_access.return_value.get_team_id_by_code.return_value = "team-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
     mock_access.return_value.get_next_assignee_after.return_value = ASSIGNEE
 
     r = client.post(
@@ -278,7 +285,8 @@ def test_sla_policy_tier_fields_when_requested(
     mock_cal.return_value.is_within_working_time.return_value = True
     mock_sla.return_value.get_tracking_by_contact_phone.return_value = None
     mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
-    mock_access.return_value.get_team_id_by_code.return_value = "team-1"
+    mock_access.return_value.get_team_id_by_tier.return_value = "team-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
     mock_access.return_value.get_next_assignee.return_value = ASSIGNEE
     mock_sla_resolve.return_value = {
         "policy_id": "policy-uuid-1",
@@ -311,7 +319,6 @@ def test_policy_code_without_tier_returns_400(mock_cal, mock_sla, mock_access, c
     mock_cal.return_value.is_within_working_time.return_value = True
     mock_sla.return_value.get_tracking_by_contact_phone.return_value = None
     mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
-    mock_access.return_value.get_team_id_by_code.return_value = "team-1"
 
     r = client.post(
         "/api/v1/external/next-assignee",

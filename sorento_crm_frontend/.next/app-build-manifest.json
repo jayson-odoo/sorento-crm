@@ -60,6 +60,21 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js"
+    ],
+    "/(protected)/user-management/access-agents/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/access-agents/page.js"
+    ],
+    "/(protected)/user-management/access-agents/[id]/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(protected)/user-management/access-agents/[id]/page.js"
+    ],
+    "/api/user-management/access-agents/[id]/contact-access/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/user-management/access-agents/[id]/contact-access/route.js"
     ]
   }
 }

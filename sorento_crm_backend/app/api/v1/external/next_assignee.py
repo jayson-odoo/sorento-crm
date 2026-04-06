@@ -74,6 +74,59 @@ def _format_assignee_response(result: dict) -> dict:
     }
 
 
+def _tier_level_from_body(body: dict) -> Optional[int]:
+    """Parse tier or tier_level from body; None if absent or invalid."""
+    tier_raw = body.get("tier") if "tier" in body else body.get("tier_level")
+    if tier_raw is None:
+        return None
+    try:
+        return int(tier_raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_round_robin_team_id(service: AccessAgentService, agent_id: str, body: dict) -> str:
+    """
+    Resolve team_id for round-robin. Cursors are per (agent_id, team_id); the same team_code
+    on multiple tiers must use tier (or tier_level) with team_code so we advance the correct team.
+    """
+    team_id = body.get("team_id")
+    if team_id is not None and str(team_id).strip():
+        return str(team_id).strip()
+
+    team_code = body.get("team_code") or body.get("team")
+    code = body.get("code")
+    code_eff = (str(team_code).strip() if team_code else "") or (str(code).strip() if code else "")
+    if not code_eff:
+        raise HTTPException(
+            status_code=400,
+            detail="team_id, team_code, or code is required.",
+        )
+
+    tier_level = _tier_level_from_body(body)
+    if tier_level is not None:
+        tid = service.get_team_id_by_tier(agent_id, tier_level, team_set_code=code_eff)
+        if tid:
+            return tid
+
+    ids = service.list_team_ids_for_agent_code(agent_id, code_eff)
+    if len(ids) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"team_code={code_eff!r} is linked to multiple teams for this agent (e.g. SLA tiers). "
+                "Send tier (or tier_level) together with team_code so the correct round-robin pool is used."
+            ),
+        )
+    if len(ids) == 1:
+        return ids[0]
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"No team found for agent and team_code={code_eff!r}",
+    )
+
+
 def _user_field(user: Any, name: str) -> Any:
     """Read attribute; prefer instance __dict__ so detached / test User instances work."""
     d = getattr(user, "__dict__", None)
@@ -216,12 +269,16 @@ async def post_next_assignee(
 
     Body (required): contact_phone_number or contact_phone.
     Body (agent/team): agent_id/agent_code/agent and team_id/team_code/team or code.
+    Body (optional): tier (or tier_level) with team_code when the same code is used for more than one
+      SLA tier — required in that case so round-robin matches the UI per-tier cursors.
     Body (optional): current_assignee (respond_user_id) to get the next in line after that user.
     Body (optional): policy_code (or sla_policy_code) and tier (or tier_level) together —
       response includes policy_id, tier_response_hours, tier_resolution_hours from that SLA tier.
 
     Example:
       { "contact_phone_number": "+60123456789", "agent_code": "general_enquiries", "team_code": "marketing" }
+      Tiered agent:
+      { "contact_phone_number": "+60...", "agent_code": "purchasing", "team_code": "project_sales", "tier": 2 }
     """
     contact_phone = (body.get("contact_phone_number") or body.get("contact_phone") or "").strip()
     if not contact_phone:
@@ -251,10 +308,7 @@ async def post_next_assignee(
 
     # Accept client-friendly names: agent -> agent_code, team -> team_code
     agent_id = body.get("agent_id")
-    team_id = body.get("team_id")
-    code = body.get("code")
     agent_code = body.get("agent_code") or body.get("agent")
-    team_code = body.get("team_code") or body.get("team")
 
     service = AccessAgentService(db)
 
@@ -266,17 +320,7 @@ async def post_next_assignee(
     if not agent_id:
         raise HTTPException(status_code=400, detail="agent_id or agent_code is required")
 
-    # Resolve team_id from team_code (or code) for this agent if provided
-    if team_code and not team_id:
-        team_id = service.get_team_id_by_code(agent_id, team_code)
-        if not team_id:
-            raise HTTPException(status_code=404, detail=f"No team found for agent and team_code={team_code!r}")
-    if not team_id and code:
-        team_id = service.get_team_id_by_code(agent_id, code)
-        if not team_id:
-            raise HTTPException(status_code=404, detail=f"No team found for agent and code={code!r}")
-    if not team_id:
-        raise HTTPException(status_code=400, detail="team_id, team_code, or code is required")
+    team_id = _resolve_round_robin_team_id(service, str(agent_id).strip(), body)
 
     # When current_assignee (respond_user_id) is sent, return the *next* in round-robin after them.
     # Otherwise advance round-robin and return the next assignee.
