@@ -3,8 +3,8 @@
   "/api/auth/token/route": "app/api/auth/token/route.js",
   "/api/user-management/access-agents/[id]/contact-access/route": "app/api/user-management/access-agents/[id]/contact-access/route.js",
   "/(protected)/system-management/outgoing-mails/page": "app/(protected)/system-management/outgoing-mails/page.js",
-  "/(protected)/user-management/access-agents/[id]/page": "app/(protected)/user-management/access-agents/[id]/page.js",
   "/(protected)/user-management/access-agents/page": "app/(protected)/user-management/access-agents/page.js",
-  "/(protected)/sla-management/conversation-sla-tracking/[id]/page": "app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js",
-  "/(protected)/sla-management/conversation-sla-tracking/page": "app/(protected)/sla-management/conversation-sla-tracking/page.js"
+  "/(protected)/sla-management/conversation-sla-tracking/page": "app/(protected)/sla-management/conversation-sla-tracking/page.js",
+  "/(protected)/user-management/access-agents/[id]/page": "app/(protected)/user-management/access-agents/[id]/page.js",
+  "/(protected)/sla-management/conversation-sla-tracking/[id]/page": "app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js"
 }

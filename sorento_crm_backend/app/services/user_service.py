@@ -1244,13 +1244,18 @@ class AccessAgentService:
         return [{"code": r[0], "team_id": str(r[1]), "tier": r[2]} for r in rows]
 
     def _user_info(self, user: Optional[User]) -> Optional[dict]:
-        """Return {id, name, email} for display; None if user is None."""
+        """Return {id, name, email, respond_user_id, respond_synced} for display; None if user is None."""
         if not user:
             return None
+        rid = getattr(user, "respond_user_id", None)
+        rid_s = (str(rid).strip() if rid is not None else "") or None
+        sync = (getattr(user, "respond_synced", None) or "pending").strip() or "pending"
         return {
             "id": user.id,
             "name": user.name or user.email or user.id,
             "email": user.email,
+            "respond_user_id": rid_s,
+            "respond_synced": sync,
         }
 
     def _peek_next_assignee(self, agent_id: str, team_id: str) -> tuple[Optional[str], Optional[str]]:
@@ -1302,7 +1307,16 @@ class AccessAgentService:
             member_infos = []
             for m in members:
                 u = self.db.query(User).filter(User.id == m.user_id).first()
-                member_infos.append(self._user_info(u) or {"id": m.user_id, "name": m.user_id, "email": None})
+                member_infos.append(
+                    self._user_info(u)
+                    or {
+                        "id": m.user_id,
+                        "name": m.user_id,
+                        "email": None,
+                        "respond_user_id": None,
+                        "respond_synced": None,
+                    }
+                )
             last_id, next_id = self._peek_next_assignee(agent_id, team_id_str)
             last_user = self.db.query(User).filter(User.id == last_id).first() if last_id else None
             next_user = self.db.query(User).filter(User.id == next_id).first() if next_id else None

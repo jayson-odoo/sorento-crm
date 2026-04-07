@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { Edit, Trash2, ChevronDown, ChevronRight, RefreshCw, ContactRound, Copy } from 'lucide-react';
 import AccessAgentFormModal from './AccessAgentFormModal';
 import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -17,6 +17,8 @@ import {
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { toast } from 'sonner';
 import { useAccessAgent, useAccessAgents, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
 import { formatDate } from '@/lib/helpers';
 import AccessAgentDeleteDialog from './access-agent-delete-dialog';
@@ -26,6 +28,84 @@ import type { AgentTeamMemberInfo, AgentTeamAssignment } from '../services/acces
 
 interface AccessAgentDetailProps {
   accessAgentId: string;
+}
+
+function respondSyncLabel(sync: string | null | undefined): string {
+  const s = (sync || 'pending').toLowerCase();
+  if (s === 'successful') return 'Successful';
+  if (s === 'failed') return 'Failed';
+  if (s === 'pending') return 'Pending';
+  return sync || 'Unknown';
+}
+
+function TeamMemberRespondIoButton({ member }: { member: AgentTeamMemberInfo }) {
+  const rid = member.respond_user_id?.trim() || '';
+  const syncRaw = member.respond_synced;
+  const sync = syncRaw != null && String(syncRaw).trim() ? String(syncRaw).trim().toLowerCase() : null;
+
+  const dotClass =
+    sync === 'successful'
+      ? 'bg-emerald-500'
+      : sync === 'failed'
+        ? 'bg-destructive'
+        : sync === 'pending'
+          ? 'bg-amber-500'
+          : 'bg-muted-foreground';
+
+  const copyId = async () => {
+    if (!rid) {
+      toast.error('No Respond user ID on file for this user.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(rid);
+      toast.success('Respond user ID copied');
+    } catch {
+      toast.error('Could not copy to clipboard');
+    }
+  };
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="relative size-8 shrink-0 text-muted-foreground hover:text-foreground"
+          aria-label="Respond.io user ID and sync status"
+        >
+          <ContactRound className="size-4" />
+          <span
+            className={`absolute end-0.5 top-0.5 size-2 rounded-full border-2 border-background ${dotClass}`}
+            aria-hidden
+          />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80" align="end">
+        <div className="space-y-3">
+          <div>
+            <p className="text-xs font-medium text-muted-foreground">Respond user ID</p>
+            <p className="mt-1 break-all font-mono text-sm">{rid || '—'}</p>
+          </div>
+          <div>
+            <p className="text-xs font-medium text-muted-foreground">Respond.io sync</p>
+            <p className="mt-1 flex items-center gap-2 text-sm">
+              <span
+                className={`inline-block size-2 rounded-full shrink-0 ${dotClass}`}
+                aria-hidden
+              />
+              {sync == null ? 'Unknown' : respondSyncLabel(sync)}
+            </p>
+          </div>
+          <Button type="button" variant="outline" size="sm" className="w-full gap-2" onClick={copyId} disabled={!rid}>
+            <Copy className="size-3.5" />
+            Copy Respond user ID
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailProps) {
@@ -310,16 +390,17 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                                         ${isLastAssigned ? 'bg-muted/50' : ''}
                                       `}
                                     >
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-xs text-muted-foreground w-6">
+                                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                                        <span className="text-xs text-muted-foreground w-6 shrink-0">
                                           {idx + 1}.
                                         </span>
-                                        <span className="font-medium">{displayName}</span>
+                                        <span className="font-medium truncate">{displayName}</span>
                                         {member.email && member.email !== displayName && (
-                                          <span className="text-xs text-muted-foreground">
+                                          <span className="text-xs text-muted-foreground truncate">
                                             ({member.email})
                                           </span>
                                         )}
+                                        <TeamMemberRespondIoButton member={member} />
                                       </div>
                                       <div className="flex items-center gap-2">
                                         {isLastAssigned && (

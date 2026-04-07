@@ -88,6 +88,10 @@ export interface AgentTeamMemberInfo {
   id: string;
   name: string | null;
   email: string | null;
+  /** Respond.io contact/user id when linked. */
+  respond_user_id?: string | null;
+  /** From users.respond_synced: pending | successful | failed */
+  respond_synced?: string | null;
 }
 
 export interface AgentTeamAssignment {
