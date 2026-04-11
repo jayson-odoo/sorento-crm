@@ -563,8 +563,17 @@ class PromotionProductService:
             discount_percent = 0.0
         return discount_amount, discount_percent
     
-    def list_promotion_products(self, promotion_id: Optional[str] = None, page: int = 1, limit: int = 50, sort_field: str = "created_at", sort_dir: str = "asc", query: Optional[str] = None):
-        """List products for a promotion or all promotion products."""
+    def list_promotion_products(
+        self,
+        promotion_id: Optional[str] = None,
+        promotion_ids: Optional[list[str]] = None,
+        page: int = 1,
+        limit: int = 50,
+        sort_field: str = "created_at",
+        sort_dir: str = "asc",
+        query: Optional[str] = None,
+    ):
+        """List products for a promotion, several promotions, or all promotion products."""
         from sqlalchemy.orm import joinedload
         from sqlalchemy import or_
         import logging
@@ -575,7 +584,10 @@ class PromotionProductService:
             joinedload(PromotionProduct.promotion)
         )
         
-        if promotion_id:
+        if promotion_ids:
+            q = q.filter(PromotionProduct.promotion_id.in_(promotion_ids))
+            logger.debug("Filtering by promotion_ids count=%s", len(promotion_ids))
+        elif promotion_id:
             logger.debug(f"Filtering by promotion_id: {promotion_id} (type: {type(promotion_id)})")
             # Ensure UUID comparison works correctly
             q = q.filter(PromotionProduct.promotion_id == promotion_id)

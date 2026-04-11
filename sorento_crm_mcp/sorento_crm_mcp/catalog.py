@@ -164,7 +164,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_marketing_promotion_products_list",
-        "List promotion product lines (flat). Use promotion_id (UUID or promo_code) to scope to one promotion. Parameter query searches product code/name and promo_code—not for promotion UUID.",
+        "Promotion product lines (paginated). REQUIRED PATTERN: set promotion_id to ONE promotion (UUID or promo_code). Do NOT put promotion UUIDs only inside query. Optional query = text search (SKU/name/promo code). If promotion_id is omitted: a single bare UUID or promotion_id='<uuid>' in query scopes to one promotion; comma-separated UUIDs in query scope to those promotions (combined rows).",
         "/api/v1/marketing/promotion-products",
         (),
         ("page", "limit", "sort", "dir", "query", "promotion_id"),
