@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      deploy_all:
+        description: "Build and deploy all services (ignore path filters)"
+        required: false
+        default: false
+        type: boolean
 
 env:
   IMAGE_REPO: jayson1004/sorento-crm
@@ -12,19 +19,70 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'sorento_crm_backend/**'
+            frontend:
+              - 'sorento_crm_frontend/**'
+            mcp:
+              - 'sorento_crm_mcp/**'
+            infra:
+              - 'docker-compose.yml'
+              - '.github/workflows/deploy.yml'
+
+      - name: Compute deploy targets
+        id: targets
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_DEPLOY_ALL: ${{ github.event.inputs.deploy_all }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_DEPLOY_ALL" = "true" ]; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+            echo "mcp=true" >> "$GITHUB_OUTPUT"
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BE='${{ steps.filter.outputs.backend }}'
+          FE='${{ steps.filter.outputs.frontend }}'
+          MCP='${{ steps.filter.outputs.mcp }}'
+          INFRA='${{ steps.filter.outputs.infra }}'
+          if [ "$INFRA" = "true" ]; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+            echo "mcp=true" >> "$GITHUB_OUTPUT"
+            echo "mode=full" >> "$GITHUB_OUTPUT"
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "backend=$BE" >> "$GITHUB_OUTPUT"
+          echo "frontend=$FE" >> "$GITHUB_OUTPUT"
+          echo "mcp=$MCP" >> "$GITHUB_OUTPUT"
+          echo "mode=partial" >> "$GITHUB_OUTPUT"
+          if [ "$BE" = "true" ] || [ "$FE" = "true" ] || [ "$MCP" = "true" ]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Login to Docker Hub
+        if: steps.targets.outputs.should_deploy == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # FRONTEND IMAGE
       - name: Build and Push Frontend
+        if: steps.targets.outputs.should_deploy == 'true' && steps.targets.outputs.frontend == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./sorento_crm_frontend
@@ -34,8 +92,8 @@ jobs:
             ${{ env.IMAGE_REPO }}:frontend-${{ env.RELEASE_TAG }}
             ${{ env.IMAGE_REPO }}:frontend-${{ github.sha }}
 
-      # BACKEND IMAGE
       - name: Build and Push Backend
+        if: steps.targets.outputs.should_deploy == 'true' && steps.targets.outputs.backend == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./sorento_crm_backend
@@ -45,8 +103,8 @@ jobs:
             ${{ env.IMAGE_REPO }}:backend-${{ env.RELEASE_TAG }}
             ${{ env.IMAGE_REPO }}:backend-${{ github.sha }}
 
-      # MCP IMAGE
       - name: Build and Push MCP
+        if: steps.targets.outputs.should_deploy == 'true' && steps.targets.outputs.mcp == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./sorento_crm_mcp
@@ -56,8 +114,8 @@ jobs:
             ${{ env.IMAGE_REPO }}:mcp-${{ env.RELEASE_TAG }}
             ${{ env.IMAGE_REPO }}:mcp-${{ github.sha }}
 
-      # DEPLOY USING DOCKER COMPOSE
       - name: Deploy to Server
+        if: steps.targets.outputs.should_deploy == 'true'
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -66,17 +124,41 @@ jobs:
           timeout: 2m
           command_timeout: 30m
           script: |
+            set -e
             cd /opt/sorento-crm2
-
-            # pull latest git code if compose file is in repo
             git pull || true
 
-            # pull latest images used by docker-compose.yml
-            docker pull ${{ env.IMAGE_REPO }}:frontend-${{ env.RELEASE_TAG }}
-            docker pull ${{ env.IMAGE_REPO }}:backend-${{ env.RELEASE_TAG }}
-            docker pull ${{ env.IMAGE_REPO }}:mcp-${{ env.RELEASE_TAG }}
+            IMAGE_REPO="${{ env.IMAGE_REPO }}"
+            TAG="${{ env.RELEASE_TAG }}"
+            MODE="${{ steps.targets.outputs.mode }}"
+            BE="${{ steps.targets.outputs.backend }}"
+            FE="${{ steps.targets.outputs.frontend }}"
+            MCP="${{ steps.targets.outputs.mcp }}"
 
-            # recreate/update containers with latest images
-            docker compose up -d --remove-orphans
+            if [ "$MODE" = "full" ]; then
+              docker pull "$IMAGE_REPO:frontend-$TAG"
+              docker pull "$IMAGE_REPO:backend-$TAG"
+              docker pull "$IMAGE_REPO:mcp-$TAG"
+              docker compose up -d --remove-orphans
+            else
+              if [ "$BE" = "true" ]; then
+                docker pull "$IMAGE_REPO:backend-$TAG"
+                docker compose up -d --no-deps backend
+              fi
+              if [ "$FE" = "true" ]; then
+                docker pull "$IMAGE_REPO:frontend-$TAG"
+                docker compose up -d --no-deps frontend
+              fi
+              if [ "$MCP" = "true" ]; then
+                docker pull "$IMAGE_REPO:mcp-$TAG"
+                docker compose up -d --no-deps mcp
+              fi
+            fi
 
             docker system prune -f
+
+      - name: Skip notice (no matching paths)
+        if: steps.targets.outputs.should_deploy != 'true'
+        run: |
+          echo "No deploy: push did not touch sorento_crm_backend/, sorento_crm_frontend/, sorento_crm_mcp/, docker-compose.yml, or .github/workflows/deploy.yml"
+          echo "Run workflow manually with deploy_all=true to build and deploy everything."
