@@ -1,5 +1,5 @@
 """Promotion attachments API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Path
 from sqlalchemy.orm import Session
 from typing import Any, Optional
 
@@ -25,7 +25,10 @@ async def get_promotion_attachments(
     limit: int = Query(50, ge=1, le=100),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
-    promotion_id: Optional[str] = Query(None),
+    promotion_id: Optional[str] = Query(
+        None,
+        description="Promotion UUID or promo_code.",
+    ),
     attachment_id: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -43,6 +46,8 @@ async def get_promotion_attachments(
         )
         result["data"] = [_promotion_attachment_to_response(pa) for pa in result["data"]]
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -119,7 +124,10 @@ async def delete_promotion_attachment(
 
 @router.get("/promotion/{promotion_id}")
 async def get_promotion_attachments_by_promotion(
-    promotion_id: str,
+    promotion_id: str = Path(
+        ...,
+        description="Promotion UUID or promo_code.",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -128,5 +136,7 @@ async def get_promotion_attachments_by_promotion(
         service = PromotionAttachmentService(db)
         promotion_attachments = service.get_promotion_attachments_by_promotion(promotion_id)
         return [_promotion_attachment_to_response(pa) for pa in promotion_attachments]
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))

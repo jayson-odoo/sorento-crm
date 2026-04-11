@@ -171,7 +171,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_marketing_promotion_attachments_list",
-        "List promotion–attachment links.",
+        "List promotion–attachment links. promotion_id accepts UUID or promo_code.",
         "/api/v1/marketing/promotion-attachments",
         (),
         ("page", "limit", "sort", "dir", "promotion_id", "attachment_id"),
@@ -185,7 +185,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_marketing_promotion_attachments_by_promotion",
-        "All promotion attachments for a promotion id.",
+        "All promotion attachments for a promotion. promotion_id may be UUID or promo_code (ambiguous if duplicate codes exist—use UUID).",
         "/api/v1/marketing/promotion-attachments/promotion/{promotion_id}",
         ("promotion_id",),
         (),

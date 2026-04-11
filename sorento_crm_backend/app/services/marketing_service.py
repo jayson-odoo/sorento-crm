@@ -1,6 +1,7 @@
 """Marketing service for business logic."""
 import math
 import re
+import uuid
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, exists, select, text
 from sqlalchemy.exc import IntegrityError
@@ -26,6 +27,37 @@ from app.schemas.marketing import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error, handle_validation_error
 from app.services.contact_access_type_service import ContactAccessTypeService
+
+
+def _resolve_promotion_id_for_filter(db: Session, raw: Optional[str]) -> Optional[str]:
+    """Map API promotion id/path segments to ``Promotion.id`` (UUID string).
+
+    Accepts a UUID string or ``Promotion.promo_code`` (case-insensitive exact match).
+    Returns ``None`` if *raw* is blank or no row matches the code.
+    Raises validation error if more than one promotion shares the same ``promo_code``.
+    """
+    if raw is None:
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    try:
+        return str(uuid.UUID(s))
+    except ValueError:
+        pass
+    rows = (
+        db.query(Promotion.id)
+        .filter(func.lower(Promotion.promo_code) == s.lower())
+        .limit(2)
+        .all()
+    )
+    if not rows:
+        return None
+    if len(rows) > 1:
+        raise handle_validation_error(
+            "Multiple promotions share this promo_code; pass promotion id (UUID)."
+        )
+    return str(rows[0].id)
 
 
 def _product_display_label(db: Session, product_id: str) -> str:
@@ -935,14 +967,22 @@ class PromotionAttachmentService:
         """List promotion attachments with pagination and filtering."""
         from sqlalchemy.orm import joinedload
         from sqlalchemy import or_
-        
+        from app.schemas.common import PaginationResponse
+
         q = self.db.query(PromotionAttachment).options(
             joinedload(PromotionAttachment.promotion),
             joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
         )
         
         if promotion_id:
-            q = q.filter(PromotionAttachment.promotion_id == promotion_id)
+            resolved_pid = _resolve_promotion_id_for_filter(self.db, promotion_id)
+            if resolved_pid is None:
+                return {
+                    "data": [],
+                    "pagination": PaginationResponse(total=0, page=page, limit=limit),
+                    "empty": True,
+                }
+            q = q.filter(PromotionAttachment.promotion_id == resolved_pid)
         if attachment_id:
             q = q.filter(PromotionAttachment.attachment_id == attachment_id)
         
@@ -960,9 +1000,7 @@ class PromotionAttachmentService:
         total = q.count()
         offset = (page - 1) * limit
         promotion_attachments = q.offset(offset).limit(limit).all()
-        
-        from app.schemas.common import PaginationResponse
-        
+
         return {
             "data": promotion_attachments,
             "pagination": PaginationResponse(total=total, page=page, limit=limit),
@@ -1037,10 +1075,15 @@ class PromotionAttachmentService:
     def get_promotion_attachments_by_promotion(self, promotion_id: str):
         """Get all attachments for a specific promotion."""
         from sqlalchemy.orm import joinedload
+
+        resolved_pid = _resolve_promotion_id_for_filter(self.db, promotion_id)
+        if resolved_pid is None:
+            return []
+
         promotion_attachments = self.db.query(PromotionAttachment).options(
             joinedload(PromotionAttachment.promotion),
             joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
-        ).filter(PromotionAttachment.promotion_id == promotion_id).order_by(
+        ).filter(PromotionAttachment.promotion_id == resolved_pid).order_by(
             PromotionAttachment.sort_order.asc().nulls_last(),
             PromotionAttachment.created_at.asc()
         ).all()
