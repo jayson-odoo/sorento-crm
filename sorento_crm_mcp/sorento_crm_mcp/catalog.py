@@ -143,17 +143,17 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- marketing ---
     ToolSpec(
         "crm_marketing_promotions_list",
-        "List promotions in summary form (filters: user_type/access, status, promo_type, sort). Use crm_marketing_promotions_get for full nested group/product details.",
+        "List promotions (summary: promo fields and products_count only; no product lines). For lines use crm_marketing_promotion_products_list or nested products tool.",
         "/api/v1/marketing/promotions",
         (),
         ("page", "limit", "query", "user_type", "status", "promo_type", "sort", "dir"),
     ),
     ToolSpec(
         "crm_marketing_promotions_get",
-        "Get one promotion by id (optional user_type filter). Order lines / products may be nested in response.",
+        "Get one promotion metadata and groups (FOC tiers, etc.). Does NOT include product lines by default; set include_products=true only if you need nested SKU lines.",
         "/api/v1/marketing/promotions/{promotion_id}",
         ("promotion_id",),
-        ("user_type",),
+        ("user_type", "include_products"),
     ),
     ToolSpec(
         "crm_marketing_promotion_products_nested",

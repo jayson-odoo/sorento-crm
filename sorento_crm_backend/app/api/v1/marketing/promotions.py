@@ -68,13 +68,17 @@ async def get_promotions(
 async def get_promotion(
     promotion_id: str,
     user_type: Optional[str] = Query(None),
+    include_products: bool = Query(
+        False,
+        description="When true, include promotion product lines and nested Product details. When false, groups only (no lines).",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single promotion by ID."""
     try:
         service = PromotionService(db)
-        promotion = service.get_promotion(promotion_id)
+        promotion = service.get_promotion(promotion_id, include_products=include_products)
         access_levels = getattr(promotion, "access_levels", None)
         if user_type and isinstance(access_levels, list) and user_type not in access_levels:
             from app.services.error_handler import handle_not_found
@@ -85,13 +89,14 @@ async def get_promotion(
             if hasattr(pp, "promo_selling_price"):
                 setattr(pp, "promotion_price", pp.promo_selling_price)
 
-        if hasattr(promotion, "products") and promotion.products:
-            for product in promotion.products:
-                _hydrate_promotion_price(product)
-        if hasattr(promotion, "promotion_groups") and promotion.promotion_groups:
-            for grp in promotion.promotion_groups:
-                for pp in grp.promotion_products or []:
-                    _hydrate_promotion_price(pp)
+        if include_products:
+            if hasattr(promotion, "products") and promotion.products:
+                for product in promotion.products:
+                    _hydrate_promotion_price(product)
+            if hasattr(promotion, "promotion_groups") and promotion.promotion_groups:
+                for grp in promotion.promotion_groups:
+                    for pp in grp.promotion_products or []:
+                        _hydrate_promotion_price(pp)
 
         return promotion
     except HTTPException:

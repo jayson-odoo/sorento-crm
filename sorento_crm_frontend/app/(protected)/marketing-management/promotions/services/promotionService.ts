@@ -32,7 +32,9 @@ export async function getPromotions(
 }
 
 export async function getPromotion(id: string): Promise<PromotionDetail> {
-  const response = await apiFetch(`/api/v1/marketing/promotions/${id}`);
+  const response = await apiFetch(
+    `/api/v1/marketing/promotions/${id}?include_products=true`,
+  );
   if (!response.ok) throw new Error('Failed to fetch promotion');
   return response.json();
 }

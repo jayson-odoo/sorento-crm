@@ -286,9 +286,37 @@ class PromotionService:
             "empty": total == 0
         }
     
-    def get_promotion(self, promotion_id: str):
-        """Get a promotion by ID (includes promotion_groups with nested products, and flat products list)."""
-        from sqlalchemy.orm import joinedload
+    def get_promotion(self, promotion_id: str, *, include_products: bool = True):
+        """Get a promotion by ID.
+
+        When *include_products* is False, loads groups without promotion product lines (no nested Product rows).
+        """
+        from sqlalchemy.orm import joinedload, noload
+
+        if not include_products:
+            promotion = (
+                self.db.query(Promotion)
+                .options(
+                    joinedload(Promotion.promotion_groups).options(
+                        noload(PromotionGroup.promotion_products)
+                    ),
+                )
+                .filter(Promotion.id == promotion_id)
+                .first()
+            )
+            if not promotion:
+                raise handle_not_found("Promotion", promotion_id)
+
+            groups = sorted(promotion.promotion_groups or [], key=lambda g: (g.sort_order, g.created_at))
+            promotion.products_count = (
+                self.db.query(func.count(PromotionProduct.id))
+                .filter(PromotionProduct.promotion_id == promotion_id)
+                .scalar()
+                or 0
+            )
+            promotion.products = None
+            promotion.promotion_groups = groups
+            return promotion
 
         promotion = (
             self.db.query(Promotion)
