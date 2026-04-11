@@ -140,7 +140,7 @@ async def get_stock_ledger_by_stock(
         ...,
         description="Product UUID or product_code (e.g. SKU).",
     ),
-    warehouse_id: str,
+    warehouse_id: str = Path(..., description="Warehouse id (UUID)."),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
     current_user: dict = Depends(get_current_user_or_api_key),
