@@ -248,6 +248,8 @@ nested_promotion_products_router = APIRouter()
 @nested_promotion_products_router.get("/", response_model=list[PromotionProductResponse])
 async def get_promotion_products_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(1000, ge=1, le=5000, description="Max promotion product lines per page."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -258,7 +260,7 @@ async def get_promotion_products_nested(
         logger.debug(f"Fetching products for promotion_id: {promotion_id}")
         
         service = PromotionProductService(db)
-        result = service.list_promotion_products(promotion_id, page=1, limit=1000)
+        result = service.list_promotion_products(promotion_id, page=page, limit=limit)
         products = result.get("data", [])
         logger.debug(f"Found {len(products)} products for promotion {promotion_id}")
         
