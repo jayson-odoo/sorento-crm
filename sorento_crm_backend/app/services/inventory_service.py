@@ -14,6 +14,28 @@ from app.services.error_handler import handle_not_found, handle_conflict, handle
 from app.services.import_log_service import ImportLogService
 
 
+def _resolve_stock_product_id(db: Session, product_id: Optional[str]) -> Optional[str]:
+    """Map API product filter to ``Stock.product_id`` (UUID string).
+
+    Accepts a UUID string or ``Product.product_code`` (case-insensitive exact match).
+    Returns ``None`` if *product_id* is blank, or if a non-UUID value does not match any product.
+    """
+    if product_id is None:
+        return None
+    s = product_id.strip()
+    if not s:
+        return None
+    try:
+        return str(uuid.UUID(s))
+    except ValueError:
+        row = (
+            db.query(Product.id)
+            .filter(func.lower(Product.product_code) == s.lower())
+            .first()
+        )
+        return str(row.id) if row else None
+
+
 class WarehouseService:
     """Service for warehouse operations."""
     
@@ -222,7 +244,14 @@ class StockService:
             q = q.filter(Stock.warehouse_id == warehouse_id)
 
         if product_id:
-            q = q.filter(Stock.product_id == product_id)
+            resolved_pid = _resolve_stock_product_id(self.db, product_id)
+            if resolved_pid is None:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            q = q.filter(Stock.product_id == resolved_pid)
 
         # Join Product once when needed for search, status filter, or product-related sort
         sort_key = (sort or '').replace('product.category.category_name', 'category_name').replace('product.reorder_level', 'reorder_level').replace('warehouse.warehouse_name', 'warehouse_name').replace('product.product_code', 'product_code').replace('product.product_name', 'product_name')
@@ -328,7 +357,13 @@ class StockService:
             selectinload(StockLedger.warehouse)
         )
         if product_id:
-            q = q.filter(StockLedger.product_id == product_id)
+            resolved_pid = _resolve_stock_product_id(self.db, product_id)
+            if resolved_pid is None:
+                return ListResponse(
+                    data=[],
+                    pagination={"total": 0, "page": page, "limit": limit},
+                )
+            q = q.filter(StockLedger.product_id == resolved_pid)
         if warehouse_id:
             q = q.filter(StockLedger.warehouse_id == warehouse_id)
         if transaction_type:
@@ -362,11 +397,18 @@ class StockService:
         from app.models.user import User
         from sqlalchemy.orm import selectinload
 
+        resolved_pid = _resolve_stock_product_id(self.db, product_id)
+        if resolved_pid is None:
+            return ListResponse(
+                data=[],
+                pagination={"total": 0, "page": page, "limit": limit},
+            )
+
         q = self.db.query(StockLedger).options(
             selectinload(StockLedger.product),
             selectinload(StockLedger.warehouse)
         ).filter(
-            StockLedger.product_id == product_id,
+            StockLedger.product_id == resolved_pid,
             StockLedger.warehouse_id == warehouse_id
         )
 
@@ -390,7 +432,7 @@ class StockService:
             data=response_entries,
             pagination={"total": total, "page": page, "limit": limit}
         )
-    
+
     def get_all_stock_for_export(
         self,
         warehouse_id: Optional[str] = None,
@@ -419,7 +461,10 @@ class StockService:
             q = q.filter(Stock.warehouse_id == warehouse_id)
         
         if product_id:
-            q = q.filter(Stock.product_id == product_id)
+            resolved_pid = _resolve_stock_product_id(self.db, product_id)
+            if resolved_pid is None:
+                return []
+            q = q.filter(Stock.product_id == resolved_pid)
         
         # Filter by available quantity using the quantity_available column
         if quantity_operator and quantity_value:
@@ -1050,7 +1095,14 @@ class StockBatchService:
         q = self.db.query(StockBatch)
         
         if product_id:
-            q = q.filter(StockBatch.product_id == product_id)
+            resolved_pid = _resolve_stock_product_id(self.db, product_id)
+            if resolved_pid is None:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            q = q.filter(StockBatch.product_id == resolved_pid)
         if warehouse_id:
             q = q.filter(StockBatch.warehouse_id == warehouse_id)
         

@@ -1,4 +1,4 @@
-"""Scheduler for processing integration logs and import jobs."""
+"""General background task scheduler (imports, integrations, notifications, summaries)."""
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -158,7 +158,7 @@ def process_pending_integration_logs():
     try:
         service = IntegrationLogService(db)
         result = service.process_pending_logs()
-        
+
         if result["processed"] > 0:
             logger.info(
                 f"Processed {result['processed']} integration logs: "
@@ -180,10 +180,10 @@ def process_import_jobs():
         from rq.job import Job
         from app.services.queue_service import redis_conn
         import time
-        
+
         # Get the imports queue
-        queue = get_queue('imports')
-        
+        queue = get_queue("imports")
+
         # Check if there are any job IDs in the RQ (Redis) queue.
         # Note: This is the RQ queue, not the import_jobs DB table. Old processed
         # jobs are removed below so this count stays accurate.
@@ -191,21 +191,21 @@ def process_import_jobs():
         if queue_length == 0:
             logger.debug("RQ queue is empty, no jobs to process")
             return
-        
+
         logger.debug(f"RQ queue has {queue_length} job ID(s), checking for queued jobs...")
-        
+
         # Get all job IDs from the queue
         all_job_ids = queue.get_job_ids()
         if not all_job_ids:
             logger.debug("No job IDs found in queue")
             return
-        
+
         # Filter for queued jobs only; remove stale (finished/failed) job IDs from queue
         queued_jobs = []
         for job_id in all_job_ids:
             try:
                 job = Job.fetch(job_id, connection=redis_conn)
-                if job.get_status() == 'queued':
+                if job.get_status() == "queued":
                     queued_jobs.append(job)
                 else:
                     # Already processed or failed; remove from queue so len(queue) is accurate
@@ -216,56 +216,56 @@ def process_import_jobs():
             except Exception as e:
                 logger.debug(f"Could not fetch job {job_id}: {str(e)}")
                 continue
-        
+
         if not queued_jobs:
             logger.debug("No queued jobs found (all jobs are already started/finished/failed)")
             return
-        
+
         logger.info(f"Found {len(queued_jobs)} queued job(s) to process")
-        
+
         # Process up to 2 jobs per scheduler run
         jobs_processed = 0
         max_jobs_per_run = 2
-        
+
         for job in queued_jobs[:max_jobs_per_run]:
             try:
                 logger.info(f"Processing job {job.id} (status: {job.get_status()})")
-                
+
                 # Mark job as started in RQ
-                job.set_status('started')
+                job.set_status("started")
                 job.save()
-                
+
                 # Call the job function directly with its arguments
                 # This avoids signal handling issues in background threads
                 # The job function handles its own database job status updates
                 result = job.func(*job.args, **job.kwargs)
-                
+
                 # Mark job as finished in RQ and remove from queue so queue length stays accurate
-                job.set_status('finished')
+                job.set_status("finished")
                 job.save()
                 try:
                     queue.remove(job)
                 except Exception as remove_err:
                     logger.debug(f"Could not remove job {job.id} from queue: {remove_err}")
-                
+
                 jobs_processed += 1
                 logger.info(f"Successfully processed import job {job.id} via scheduler")
             except Exception as e:
                 logger.error(f"Error processing import job {job.id}: {str(e)}", exc_info=True)
                 # Try to mark job as failed and remove from queue
                 try:
-                    job.set_status('failed')
-                    job.meta['exc_info'] = str(e)
+                    job.set_status("failed")
+                    job.meta["exc_info"] = str(e)
                     job.save()
                     queue.remove(job)
                 except Exception as save_error:
                     logger.debug(f"Could not update/remove job {job.id}: {save_error}")
-        
+
         if jobs_processed > 0:
             logger.info(f"Scheduler successfully processed {jobs_processed} import job(s) from queue")
         else:
             logger.debug("No jobs were processed in this run")
-            
+
     except Exception as e:
         logger.error(f"Error processing import jobs in scheduler: {str(e)}", exc_info=True)
 

@@ -36,13 +36,6 @@ class UnreadCountResponse(BaseModel):
     count: int
 
 
-class PushSubscribeRequest(BaseModel):
-    """Web push subscription from the browser Push API."""
-    endpoint: str
-    p256dh: str
-    auth: str
-
-
 class BulkDeleteNotificationsRequest(BaseModel):
     """Permanently delete multiple notifications owned by the current user."""
     ids: list[str] = Field(..., min_length=1, max_length=100)

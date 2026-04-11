@@ -1745,13 +1745,13 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                 )
                 qty = row_data.get("quantity") or Decimal("0")
                 if line:
-                    line.quantity = qty
-                    line.unit_price = row_data.get("unit_price")
-                    line.discount = row_data.get("discount")
-                    line.total = row_data.get("total")
-                    line.tax = row_data.get("tax")
-                    line.total_excluding_tax = row_data.get("total_excluding_tax")
-                    line.total_including_tax = row_data.get("total_including_tax")
+                    setattr(line, "quantity", qty)
+                    setattr(line, "unit_price", row_data.get("unit_price"))
+                    setattr(line, "discount", row_data.get("discount"))
+                    setattr(line, "total", row_data.get("total"))
+                    setattr(line, "tax", row_data.get("tax"))
+                    setattr(line, "total_excluding_tax", row_data.get("total_excluding_tax"))
+                    setattr(line, "total_including_tax", row_data.get("total_including_tax"))
                 else:
                     line = OrderLine(
                         order_id=order.id,

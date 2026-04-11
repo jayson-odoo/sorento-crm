@@ -98,7 +98,7 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Failed to register audit listeners: {str(e)}", exc_info=True)
     try:
-        from app.scheduler.integration_scheduler import start_scheduler
+        from app.scheduler.task_scheduler import start_scheduler
         scheduler = start_scheduler()
         logging.info("Background scheduler started successfully")
     except Exception as e:

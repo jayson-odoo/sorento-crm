@@ -76,16 +76,17 @@ def test_superadmin_bypass(db_session: Session, rbac_data: dict):
 def test_deny_without_permission(db_session: Session, rbac_data: dict):
     """User with only role1 is denied permissions they don't have (deny-by-default)."""
     svc = UserPermissionService(db_session)
+    u3_id = "u3"
     u_only_r1 = User(
-        id="u3",
+        id=u3_id,
         email="u3@test.com",
         name="User 3",
         role_id=rbac_data["role1_id"],
         status="ACTIVE",
     )
     db_session.add(u_only_r1)
-    db_session.add(UserRoleAssignment(user_id=u_only_r1.id, role_id=rbac_data["role1_id"]))
+    db_session.add(UserRoleAssignment(user_id=u3_id, role_id=rbac_data["role1_id"]))
     db_session.commit()
-    assert svc.check_user_has_permission(u_only_r1.id, "test.a.view") is True
-    assert svc.check_user_has_permission(u_only_r1.id, "test.b.view") is False
-    assert svc.check_user_has_permission(u_only_r1.id, "other.perm") is False
+    assert svc.check_user_has_permission(u3_id, "test.a.view") is True
+    assert svc.check_user_has_permission(u3_id, "test.b.view") is False
+    assert svc.check_user_has_permission(u3_id, "other.perm") is False

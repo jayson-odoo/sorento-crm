@@ -68,7 +68,7 @@ export default function ContactsList() {
     return response.json();
   };
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['respond-contacts', pagination, sorting, searchQuery],
     queryFn: fetchContacts,
     staleTime: Infinity,
@@ -294,7 +294,14 @@ export default function ContactsList() {
   const clearSelection = () => setRowSelection({});
 
   return (
-    <DataGrid table={table} tableLayout={{ columnsVisibility: true }} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid
+      table={table}
+      tableLayout={{ columnsVisibility: true }}
+      recordCount={data?.pagination.total || 0}
+      isLoading={isLoading}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">

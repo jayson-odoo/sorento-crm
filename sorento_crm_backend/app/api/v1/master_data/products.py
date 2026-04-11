@@ -137,7 +137,7 @@ async def bulk_import_products(
             user_id=current_user["id"],
             metadata={'total_rows': len(import_data.products)},
         )
-        job.total_rows = len(import_data.products)
+        setattr(job, "total_rows", len(import_data.products))
         db.commit()
 
         rq_job = enqueue_job(

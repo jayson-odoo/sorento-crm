@@ -1,5 +1,6 @@
 """App Store: list / install / enable / disable modules (per-tenant)."""
-from typing import List
+from datetime import datetime
+from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
@@ -99,12 +100,17 @@ async def create_module_bundle(
         module_keys=body.module_keys,
         sort_order=body.sort_order,
     )
-    keys = list(row.module_keys) if row.module_keys is not None else []
+    module_keys_raw = getattr(row, "module_keys", None)
+    keys = list(module_keys_raw) if isinstance(module_keys_raw, list) else []
     return BundleAdminResponse(
-        bundle_key=row.bundle_key,
-        display_name=row.display_name,
+        bundle_key=str(getattr(row, "bundle_key")),
+        display_name=str(getattr(row, "display_name")),
         module_keys=keys,
-        sort_order=row.sort_order,
+        sort_order=(
+            str(getattr(row, "sort_order"))
+            if getattr(row, "sort_order", None) is not None
+            else None
+        ),
     )
 
 
@@ -122,12 +128,17 @@ async def update_module_bundle(
         module_keys=body.module_keys,
         sort_order=body.sort_order,
     )
-    keys = list(row.module_keys) if row.module_keys is not None else []
+    module_keys_raw = getattr(row, "module_keys", None)
+    keys = list(module_keys_raw) if isinstance(module_keys_raw, list) else []
     return BundleAdminResponse(
-        bundle_key=row.bundle_key,
-        display_name=row.display_name,
+        bundle_key=str(getattr(row, "bundle_key")),
+        display_name=str(getattr(row, "display_name")),
         module_keys=keys,
-        sort_order=row.sort_order,
+        sort_order=(
+            str(getattr(row, "sort_order"))
+            if getattr(row, "sort_order", None) is not None
+            else None
+        ),
     )
 
 
@@ -152,12 +163,24 @@ async def get_module_install_events(
     items = [
         ModuleInstallEventResponse(
             id=str(r.id),
-            tenant_id=r.tenant_id,
-            module_key=r.module_key,
-            action=r.action,
-            actor_user_id=r.actor_user_id,
-            detail=r.detail,
-            created_at=r.created_at.isoformat() if r.created_at else None,
+            tenant_id=str(getattr(r, "tenant_id")),
+            module_key=str(getattr(r, "module_key")),
+            action=str(getattr(r, "action")),
+            actor_user_id=(
+                str(getattr(r, "actor_user_id"))
+                if getattr(r, "actor_user_id", None) is not None
+                else None
+            ),
+            detail=(
+                getattr(r, "detail")
+                if isinstance(getattr(r, "detail", None), dict)
+                else None
+            ),
+            created_at=(
+                created_at.isoformat()
+                if isinstance((created_at := getattr(r, "created_at", None)), datetime)
+                else None
+            ),
         )
         for r in rows
     ]

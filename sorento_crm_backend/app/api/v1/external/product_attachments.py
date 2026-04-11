@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
-from app.schemas.external import (
+from app.schemas.external.attachments import (
     ProductAttachmentLinkRequest,
     ProductAttachmentLinkRequestAny,
     ProductAttachmentBulkLinkRequest,
@@ -42,12 +42,10 @@ def _notify_product_attachment_external(
     if mode == "single" and product_id and product_code is not None:
         pc = product_code or "—"
         summary_plain = (
-            f'Your file was linked to product "{pc}" in Sorento CRM via the external integration API '
-            "(for example n8n)."
+            f'Your file was linked to product "{pc}" in Sorento CRM'
         )
         summary_html = (
-            f"<p>Your file was linked to product <strong>{html.escape(pc)}</strong> in Sorento CRM "
-            "via the external integration API (for example n8n).</p>"
+            f"<p>Your file was linked to product <strong>{html.escape(pc)}</strong> in Sorento CRM.</p>"
         )
         notify_after_external_attachment_entity(
             db,
@@ -66,12 +64,11 @@ def _notify_product_attachment_external(
         codes = linked_codes or []
         codes_str = ", ".join(codes[:30]) if codes else "—"
         summary_plain = (
-            "Your file was linked to product(s) in Sorento CRM via the external integration API "
-            f"(for example n8n). Products: {codes_str}."
+            "Your file was linked to product(s) in Sorento CRM "
+            f"Products: {codes_str}."
         )
         summary_html = (
-            "<p>Your file was linked to product(s) in Sorento CRM via the external integration API "
-            "(for example n8n).</p>"
+            "<p>Your file was linked to product(s) in Sorento CRM "
             f"<p>Products: <strong>{html.escape(codes_str)}</strong>.</p>"
         )
         notify_after_external_attachment_entity(
@@ -136,8 +133,10 @@ def create_product_attachment(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid product_code",
         )
+    product_id = str(getattr(product, "id"))
+    product_code = str(getattr(product, "product_code", "") or "")
     data = ProductAttachmentCreate(
-        product_id=product.id,
+        product_id=product_id,
         attachment_id=payload.attachment_id,
         sort_order=payload.sort_order,
         is_primary=payload.is_primary,
@@ -153,8 +152,8 @@ def create_product_attachment(
             attachment_id=payload.attachment_id,
             notify_user_id=getattr(payload, "notify_user_id", None),
             mode="single",
-            product_code=product.product_code or "",
-            product_id=str(product.id),
+            product_code=product_code,
+            product_id=product_id,
         )
     except Exception as e:
         logger.warning("External product attachment notification failed: %s", e, exc_info=True)
@@ -196,17 +195,21 @@ def _link_attachment_to_products_bulk(
             ProductAttachment.attachment_id == attachment_id,
             ProductAttachment.product_id == product.id,
         ).first()
+        product_id = str(getattr(product, "id"))
+        product_code = str(getattr(product, "product_code", "") or "")
         if existing:
-            already_linked.append(product.product_code or code)
+            already_linked.append(product_code or code)
             continue
 
         data = ProductAttachmentCreate(
-            product_id=product.id,
+            product_id=product_id,
             attachment_id=attachment_id,
             access_levels=access_levels,
         )
         service.create_product_attachment(data, created_by=created_by)
-        linked.append(ProductAttachmentBulkLinkItem(product_id=product.id, product_code=product.product_code or code))
+        linked.append(
+            ProductAttachmentBulkLinkItem(product_id=product_id, product_code=product_code or code)
+        )
 
     try:
         codes = [x.product_code for x in linked] + list(already_linked)

@@ -13,6 +13,16 @@ from app.services.error_handler import handle_conflict, handle_validation_error
 _BUNDLE_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{1,62}$")
 
 
+def _module_keys_as_list(raw: Any) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    if isinstance(raw, tuple):
+        return [str(x) for x in raw]
+    return []
+
+
 def _catalog_keys(db: Session) -> set[str]:
     return {r[0] for r in db.query(AppModuleCatalog.module_key).all()}
 
@@ -55,13 +65,13 @@ def list_bundles_from_db(db: Session) -> List[Dict[str, Any]]:
         ]
     out: List[Dict[str, Any]] = []
     for r in rows:
-        keys = list(r.module_keys) if r.module_keys is not None else []
+        keys = _module_keys_as_list(getattr(r, "module_keys", None))
         out.append(
             {
-                "bundle_key": r.bundle_key,
-                "display_name": r.display_name,
+                "bundle_key": str(getattr(r, "bundle_key", "")),
+                "display_name": str(getattr(r, "display_name", "")),
                 "module_keys": keys,
-                "sort_order": r.sort_order,
+                "sort_order": getattr(r, "sort_order", None),
             }
         )
     return out
@@ -75,7 +85,7 @@ def resolve_bundle_module_keys(db: Session, bundle_key: str) -> List[str]:
         .first()
     )
     if row is not None:
-        keys = list(row.module_keys) if row.module_keys is not None else []
+        keys = _module_keys_as_list(getattr(row, "module_keys", None))
         if not keys:
             raise handle_validation_error(
                 f"Bundle «{bundle_key}» has no modules configured. Edit the bundle or pick another."
@@ -136,12 +146,12 @@ def update_bundle(
         dn = display_name.strip()
         if not dn:
             raise handle_validation_error("display_name cannot be empty.")
-        row.display_name = dn[:255]
+        setattr(row, "display_name", dn[:255])
     if module_keys is not None:
-        row.module_keys = _validate_module_keys(db, module_keys)
+        setattr(row, "module_keys", _validate_module_keys(db, module_keys))
     if sort_order is not None:
         so = sort_order.strip()
-        row.sort_order = so[:16] if so else None
+        setattr(row, "sort_order", so[:16] if so else None)
     db.commit()
     db.refresh(row)
     return row

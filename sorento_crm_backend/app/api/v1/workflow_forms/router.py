@@ -259,7 +259,7 @@ def create_submission(
         [ln.model_dump() for ln in body.lines],
         current_user.get("id") or "",
     )
-    return _serialize_submission(svc, s.id)
+    return _serialize_submission(svc, str(getattr(s, "id", "") or ""))
 
 
 @router.get("/submissions/{submission_id}", response_model=WorkflowSubmissionOut)
@@ -289,7 +289,7 @@ def update_submission(
         lines=lines,
         user_id=current_user.get("id") or "",
     )
-    return _serialize_submission(svc, s.id)
+    return _serialize_submission(svc, str(getattr(s, "id", "") or ""))
 
 
 @router.delete("/submissions/{submission_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -325,4 +325,4 @@ def apply_transition(
         body.remark,
         current_user.get("id") or "",
     )
-    return _serialize_submission(svc, s.id)
+    return _serialize_submission(svc, str(getattr(s, "id", "") or ""))

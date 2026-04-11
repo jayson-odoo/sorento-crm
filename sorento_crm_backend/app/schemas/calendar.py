@@ -1,11 +1,11 @@
 """Calendar and working days schemas."""
-from datetime import date, datetime, time
+from datetime import date as dt_date, datetime, time
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class PublicHolidayBase(BaseModel):
-    date: date
+    date: dt_date
     name: str
     description: Optional[str] = None
 
@@ -15,7 +15,7 @@ class PublicHolidayCreate(PublicHolidayBase):
 
 
 class PublicHolidayUpdate(BaseModel):
-    date: Optional[date] = None
+    date: Optional[dt_date] = None
     name: Optional[str] = None
     description: Optional[str] = None
 
@@ -118,7 +118,7 @@ class ExternalWorkingDayCheckResponse(BaseModel):
         ...,
         description="Instant evaluated, as ISO 8601 in the requested timezone.",
     )
-    local_date: date = Field(..., description="Calendar date in that timezone.")
+    local_date: dt_date = Field(..., description="Calendar date in that timezone.")
     weekday: str = Field(..., description="English weekday name (Monday–Sunday).")
     is_public_holiday: bool = Field(
         ...,

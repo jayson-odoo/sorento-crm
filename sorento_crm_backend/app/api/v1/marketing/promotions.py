@@ -75,7 +75,8 @@ async def get_promotion(
     try:
         service = PromotionService(db)
         promotion = service.get_promotion(promotion_id)
-        if user_type and promotion.access_levels and user_type not in promotion.access_levels:
+        access_levels = getattr(promotion, "access_levels", None)
+        if user_type and isinstance(access_levels, list) and user_type not in access_levels:
             from app.services.error_handler import handle_not_found
             raise handle_not_found("Promotion", promotion_id)
         
@@ -286,16 +287,24 @@ async def create_promotion_product_nested(
     """Add a product to a promotion (nested route)."""
     try:
         service = PromotionProductService(db)
+        product_id = body.get("product_id")
+        if not isinstance(product_id, str) or not product_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="product_id is required.",
+            )
         create_data = PromotionProductCreate(
             promotion_id=promotion_id,
-            product_id=body.get("product_id"),
+            product_id=product_id,
             promo_selling_price=body.get("promotion_price"),
             promotion_group_id=body.get("promotion_group_id"),
             dealer_discount_percent=body.get("dealer_discount_percent"),
         )
         product = service.create_promotion_product(create_data)
-        if hasattr(product, 'promo_selling_price'):
-            product.promotion_price = product.promo_selling_price
+        if product is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion product not found.")
+        if hasattr(product, "promo_selling_price"):
+            setattr(product, "promotion_price", getattr(product, "promo_selling_price"))
         return product
     except HTTPException:
         raise
@@ -324,8 +333,10 @@ async def update_promotion_product_nested(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No fields to update.")
         update_data = PromotionProductUpdate(**patch)
         product = service.update_promotion_product(promotion_id, line_id, update_data)
-        if hasattr(product, 'promo_selling_price'):
-            product.promotion_price = product.promo_selling_price
+        if product is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion product not found.")
+        if hasattr(product, "promo_selling_price"):
+            setattr(product, "promotion_price", getattr(product, "promo_selling_price"))
         return product
     except HTTPException:
         raise

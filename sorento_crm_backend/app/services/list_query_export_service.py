@@ -15,6 +15,7 @@ from app.models.procurement import Supplier
 from app.models.workflow_forms import WorkflowFormDefinition, WorkflowSubmission
 from app.schemas.list_query import ListExportRequest
 from app.services.list_query_metadata_service import ListQueryMetadataService
+from app.services.list_query_registry import require_adapter
 from app.services.query.filter_compiler import compile_optional_filter
 from app.services.workflow_submission_dynamic_list_query import merge_submission_field_maps
 
@@ -101,6 +102,7 @@ class ListQueryExportService:
         self.meta = ListQueryMetadataService(db)
 
     def export_rows(self, req: ListExportRequest) -> List[Dict[str, Any]]:
+        require_adapter(req.resource)
         resource = self.meta.get_resource(req.resource)
         if not resource:
             raise ValueError(f"Unknown resource: {req.resource}")
@@ -119,17 +121,18 @@ class ListQueryExportService:
 
         clause = compile_optional_filter(req.resource, req.filter, field_by_key)
 
-        if req.resource == "orders":
-            return self._export_orders(selected, clause, req)
-        if req.resource == "products":
-            return self._export_products(selected, clause, req)
-        if req.resource == "suppliers":
-            return self._export_suppliers(selected, clause, req)
-        if req.resource == "workflow_form_definitions":
-            return self._export_workflow_form_definitions(selected, clause, req)
-        if req.resource == "workflow_form_submissions":
-            return self._export_workflow_form_submissions(selected, clause, req)
-        raise ValueError(f"Unsupported resource: {req.resource}")
+        handlers = {
+            "orders": self._export_orders,
+            "products": self._export_products,
+            "suppliers": self._export_suppliers,
+            "promotions": self._export_promotions,
+            "workflow_form_definitions": self._export_workflow_form_definitions,
+            "workflow_form_submissions": self._export_workflow_form_submissions,
+        }
+        handler = handlers.get(req.resource)
+        if not handler:
+            raise ValueError(f"Unsupported resource: {req.resource}")
+        return handler(selected, clause, req)
 
     def _export_orders(
         self,

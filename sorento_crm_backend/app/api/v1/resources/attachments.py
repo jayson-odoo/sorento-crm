@@ -291,7 +291,7 @@ async def unlink_packing_list_from_attachment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Packing list not found or not linked to this attachment.",
         )
-    shipment.attachment_id = None
+    setattr(shipment, "attachment_id", None)
     db.commit()
     return {"message": "Packing list unlinked from attachment."}
 
@@ -450,9 +450,26 @@ async def create_attachment(
         # Only skip promotion-module uploads where entity_type=promotion.
         if attachment_type is not None and not is_promotion_upload:
             try:
-                _create_and_send_webhook(db, attachment, attachment_type, access_levels_payload or attachment.access_levels, current_user["id"])
+                webhook_access_levels = access_levels_payload
+                if webhook_access_levels is None:
+                    attachment_levels = getattr(attachment, "access_levels", None)
+                    webhook_access_levels = (
+                        list(attachment_levels) if isinstance(attachment_levels, list) else None
+                    )
+                _create_and_send_webhook(
+                    db,
+                    attachment,
+                    attachment_type,
+                    webhook_access_levels,
+                    current_user["id"],
+                )
             except Exception as e:
-                logger.error("Failed to create integration log for attachment %s: %s", attachment.id, e, exc_info=True)
+                logger.error(
+                    "Failed to create integration log for attachment %s: %s",
+                    getattr(attachment, "id", None),
+                    e,
+                    exc_info=True,
+                )
         return attachment
     
     except HTTPException:
@@ -517,9 +534,9 @@ async def replace_latest_stock_list(
         )
         now = datetime.utcnow()
         for att in existing:
-            att.is_deleted = True
-            att.deleted_at = now
-            att.deleted_by = current_user["id"]
+            setattr(att, "is_deleted", True)
+            setattr(att, "deleted_at", now)
+            setattr(att, "deleted_by", current_user["id"])
         if existing:
             db.commit()
 
@@ -569,7 +586,11 @@ async def replace_latest_stock_list(
         try:
             _create_and_send_webhook(db, attachment, attachment_type, access_levels_payload, current_user["id"])
         except Exception as e:
-            logger.warning("Webhook failed for replace-latest-stock-list attachment %s: %s", attachment.id, e)
+            logger.warning(
+                "Webhook failed for replace-latest-stock-list attachment %s: %s",
+                getattr(attachment, "id", None),
+                e,
+            )
 
         data = AttachmentResponse.model_validate(attachment).model_dump()
         user_info = _enrich_uploaded_by_user(db, attachment)
@@ -695,7 +716,7 @@ async def download_attachment(
         # Return file as streaming response
         return Response(
             content=file_content,
-            media_type=attachment.mime_type or "application/octet-stream",
+            media_type=str(getattr(attachment, "mime_type", None) or "application/octet-stream"),
             headers={
                 "Content-Disposition": f'attachment; filename="{attachment.original_filename}"',
                 "Content-Length": str(attachment.file_size_bytes or len(file_content))
@@ -738,7 +759,10 @@ async def get_attachment_preview_url(
     try:
         service = AttachmentService(db)
         attachment = service.get_attachment(attachment_id)
-        preview_url = _resolve_attachment_file_path(attachment.file_path)
+        file_path = getattr(attachment, "file_path", None)
+        preview_url = _resolve_attachment_file_path(
+            str(file_path) if file_path is not None else None
+        )
         return {"attachment_id": attachment_id, "preview_url": preview_url}
     except HTTPException:
         raise
@@ -880,16 +904,18 @@ async def resubmit_attachment_webhook(
         log_id = str(integration_log.id)
         raw_log = integration_service.get_integration_log(log_id)
 
-        signed_url = build_signed_attachment_url_for_webhook(attachment.file_path)
+        attachment_file_path = str(getattr(attachment, "file_path", ""))
+        signed_url = build_signed_attachment_url_for_webhook(attachment_file_path)
         try:
-            payload_dict = json.loads(raw_log.request_payload) if raw_log.request_payload else {}
+            raw_request_payload = getattr(raw_log, "request_payload", None)
+            payload_dict = json.loads(raw_request_payload) if raw_request_payload is not None else {}
         except (json.JSONDecodeError, TypeError):
             payload_dict = {}
 
         payload_dict["integration_log_id"] = log_id
         payload_dict["attachment_url"] = signed_url
         payload_dict["s3_url"] = signed_url
-        payload_dict["file_path"] = attachment.file_path
+        payload_dict["file_path"] = attachment_file_path
         payload_dict["attachment_id"] = str(attachment.id)
         payload_dict["attachment_filename"] = attachment.original_filename
         payload_dict["attachment_mime_type"] = attachment.mime_type
@@ -897,7 +923,7 @@ async def resubmit_attachment_webhook(
         if getattr(attachment, "attachment_type", None) is not None:
             payload_dict["attachment_type"] = attachment.attachment_type.type_name
 
-        raw_log.request_payload = json.dumps(payload_dict)
+        setattr(raw_log, "request_payload", json.dumps(payload_dict))
         db.commit()
 
         # force_resend: actually POST again (even if status was sent/success) and do not hit max-retry guard

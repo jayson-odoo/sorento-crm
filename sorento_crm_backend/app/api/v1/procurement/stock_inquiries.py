@@ -73,22 +73,6 @@ async def get_stock_inquiries(
         raise handle_internal_error(str(e))
 
 
-@router.get("/neighbours")
-async def get_stock_inquiry_neighbours(
-    inquiry_id: Optional[str] = Query(None, alias="id", description="Stock inquiry ID"),
-    current_user: dict = Depends(get_current_user_or_api_key),
-    db: Session = Depends(get_db)
-):
-    """Return prev_id and next_id for navigation (order: id desc)."""
-    if not inquiry_id:
-        return {"prev_id": None, "next_id": None}
-    try:
-        service = StockInquiryService(db)
-        return service.get_neighbour_ids(inquiry_id)
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 @router.get("/{inquiry_id}", response_model=StockInquiryResponse)
 async def get_stock_inquiry(
     inquiry_id: str,
@@ -118,7 +102,10 @@ async def get_stock_inquiry_conversation(
         from app.services.integration_service import RespondClient
         service = StockInquiryService(db)
         inquiry = service.get_inquiry(inquiry_id)
-        identifier = service._identifier_from_respond_inbox_url(inquiry.respond_inbox_url)
+        respond_inbox_url = getattr(inquiry, "respond_inbox_url", None)
+        identifier = service._identifier_from_respond_inbox_url(
+            str(respond_inbox_url) if respond_inbox_url is not None else None
+        )
         if not identifier:
             return {"items": [], "pagination": {}, "error": "No Respond.io contact linked"}
         client = RespondClient()

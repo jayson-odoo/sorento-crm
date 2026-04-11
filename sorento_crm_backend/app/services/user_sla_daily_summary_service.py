@@ -61,7 +61,7 @@ def set_user_daily_summary_subscription(db: Session, user_id: str, subscribed: b
     user = db.query(User).filter(User.id == str(user_id)).first()
     if not user:
         return False
-    user.daily_sla_summary_subscribed = bool(subscribed)
+    setattr(user, "daily_sla_summary_subscribed", bool(subscribed))
     db.commit()
     return True
 

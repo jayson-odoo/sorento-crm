@@ -9,7 +9,7 @@ from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.models.forms import Form
 from app.models.resources import Attachment
-from app.schemas.external import FormCreateRequest, FormCreateResponse
+from app.schemas.external.forms import FormCreateRequest, FormCreateResponse
 from app.schemas.forms import FormCreate, FormResponse
 from app.services.forms_service import FormService
 from app.services.attachment_notification_helper import (

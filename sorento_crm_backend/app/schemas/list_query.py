@@ -39,14 +39,7 @@ FilterGroup.model_rebuild()
 
 
 class ListSearchRequest(BaseModel):
-    resource: Literal[
-        "orders",
-        "products",
-        "suppliers",
-        "promotions",
-        "workflow_form_definitions",
-        "workflow_form_submissions",
-    ]
+    resource: str = Field(..., min_length=1)
     filter: Optional[FilterGroup] = None
     page: int = Field(1, ge=1)
     limit: int = Field(50, ge=1, le=1000)
@@ -73,20 +66,21 @@ class ListSearchRequest(BaseModel):
     promotion_promo_type: Optional[str] = None
     promotion_access_level: Optional[str] = None
 
+    @field_validator("resource")
+    @classmethod
+    def normalize_resource(cls, v: str) -> str:
+        out = (v or "").strip()
+        if not out:
+            raise ValueError("resource is required")
+        return out
+
 
 class ExportFieldSelection(BaseModel):
     field_key: str = Field(..., min_length=1)
 
 
 class ListExportRequest(BaseModel):
-    resource: Literal[
-        "orders",
-        "products",
-        "suppliers",
-        "promotions",
-        "workflow_form_definitions",
-        "workflow_form_submissions",
-    ]
+    resource: str = Field(..., min_length=1)
     filter: Optional[FilterGroup] = None
     quick_search: Optional[str] = None
     fields: List[ExportFieldSelection] = Field(..., min_length=1)
@@ -108,6 +102,14 @@ class ListExportRequest(BaseModel):
     promotion_promo_type: Optional[str] = None
     promotion_access_level: Optional[str] = None
 
+    @field_validator("resource")
+    @classmethod
+    def normalize_resource(cls, v: str) -> str:
+        out = (v or "").strip()
+        if not out:
+            raise ValueError("resource is required")
+        return out
+
 
 class ListQueryFieldResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -126,6 +128,14 @@ class ListQueryFieldResponse(BaseModel):
     export_section: Optional[Literal["order", "line"]] = None
     """Nested group under line: product | warehouse (orders resource only)."""
     export_subgroup: Optional[Literal["product", "warehouse"]] = None
+    """UI control: text | number | date | select | multiselect | foreign_key."""
+    filter_ui_type: Optional[Literal["text", "number", "date", "select", "multiselect", "foreign_key"]] = None
+    """Optional source for select/fk options used by frontend filter builder."""
+    option_source: Optional[Dict[str, Any]] = None
+    relation_resource_key: Optional[str] = None
+    relation_label_field: Optional[str] = None
+    is_generated: Optional[bool] = None
+    managed_by: Optional[str] = None
 
 
 class ListQueryResourceResponse(BaseModel):

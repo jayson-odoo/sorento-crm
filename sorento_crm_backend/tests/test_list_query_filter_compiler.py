@@ -99,3 +99,12 @@ def test_rejects_disallowed_operator():
     )
     with pytest.raises(ValueError, match="not allowed"):
         compile_filter("orders", fg, meta)
+
+
+def test_rejects_unsupported_resource():
+    meta = {
+        "order_number": _field("order_number", "order.order_number", "string", ["eq"]),
+    }
+    fg = FilterGroup(op="and", children=[FilterCondition(field_key="order_number", op="eq", value="x")])
+    with pytest.raises(ValueError, match="Unsupported resource"):
+        compile_filter("unknown_resource", fg, meta)

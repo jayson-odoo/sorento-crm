@@ -141,12 +141,16 @@ async def update_integration_log_status(
 
         updated = service.update_integration_log(log_id, update_payload)
 
+        bid = str(getattr(updated, "id", "") or "")
+        ext_ref = getattr(updated, "external_reference", None)
+        ext_ref_s = str(ext_ref) if ext_ref is not None else None
+
         service.create_integration_log(
             IntegrationLogCreate(
                 integration_channel="integration_log_update",
                 business_table="integration_log",
-                business_id=updated.id,
-                external_reference=updated.external_reference,
+                business_id=bid,
+                external_reference=ext_ref_s,
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="POST",

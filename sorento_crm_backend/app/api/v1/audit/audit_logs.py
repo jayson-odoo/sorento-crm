@@ -45,12 +45,14 @@ async def get_audit_logs(
         page=page,
         limit=limit,
     )
-    user_ids = list({str(it.user_id) for it in items if it.user_id})
+    user_ids = list({str(it.user_id) for it in items if it.user_id is not None})
     user_names = _user_display_names(db, user_ids)
     data = []
     for it in items:
         payload = AuditLogResponse.model_validate(it).model_dump()
-        payload["user_display_name"] = user_names.get(str(it.user_id)) if it.user_id else "System"
+        payload["user_display_name"] = (
+            user_names.get(str(it.user_id)) if it.user_id is not None else "System"
+        )
         data.append(AuditLogResponse(**payload))
     return {
         "data": data,

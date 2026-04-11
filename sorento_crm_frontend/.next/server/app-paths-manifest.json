@@ -1,10 +1,9 @@
 {
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
   "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/api/user-management/access-agents/[id]/contact-access/route": "app/api/user-management/access-agents/[id]/contact-access/route.js",
-  "/(protected)/system-management/outgoing-mails/page": "app/(protected)/system-management/outgoing-mails/page.js",
-  "/(protected)/user-management/access-agents/page": "app/(protected)/user-management/access-agents/page.js",
-  "/(protected)/sla-management/conversation-sla-tracking/page": "app/(protected)/sla-management/conversation-sla-tracking/page.js",
-  "/(protected)/user-management/access-agents/[id]/page": "app/(protected)/user-management/access-agents/[id]/page.js",
-  "/(protected)/sla-management/conversation-sla-tracking/[id]/page": "app/(protected)/sla-management/conversation-sla-tracking/[id]/page.js"
+  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
+  "/(auth)/signin/page": "app/(auth)/signin/page.js",
+  "/(protected)/procurement-management/packing-lists/page": "app/(protected)/procurement-management/packing-lists/page.js",
+  "/(protected)/resource-management/attachment-directories/page": "app/(protected)/resource-management/attachment-directories/page.js",
+  "/(protected)/procurement-management/packing-lists/[id]/page": "app/(protected)/procurement-management/packing-lists/[id]/page.js",
+  "/(protected)/master-data-management/products/page": "app/(protected)/master-data-management/products/page.js"
 }

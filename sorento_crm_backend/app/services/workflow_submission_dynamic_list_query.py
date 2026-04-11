@@ -127,12 +127,16 @@ def get_published_schema_for_definition(db: Session, definition_id: str) -> Opti
         .filter(WorkflowFormDefinition.id == definition_id)
         .first()
     )
-    if not d or not d.published_version_id:
+    if not d:
         return None
-    v = db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == d.published_version_id).first()
-    if not v or not isinstance(v.schema, dict):
+    pvid = getattr(d, "published_version_id", None)
+    if pvid is None or str(pvid).strip() == "":
         return None
-    return v.schema
+    v = db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == pvid).first()
+    if not v:
+        return None
+    raw_schema = getattr(v, "schema", None)
+    return raw_schema if isinstance(raw_schema, dict) else None
 
 
 def merge_submission_field_maps(

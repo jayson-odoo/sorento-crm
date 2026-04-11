@@ -1,5 +1,5 @@
 """Resource management schemas."""
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Optional, List
 from datetime import datetime
 import uuid
@@ -22,19 +22,15 @@ class AttachmentDirectoryUpdate(BaseModel):
 
 
 class AttachmentDirectoryResponse(AttachmentDirectoryBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class AttachmentDirectoryTreeNode(AttachmentDirectoryResponse):
     """Directory with nested children for tree API."""
     children: List["AttachmentDirectoryTreeNode"] = []
-
-    class Config:
-        from_attributes = True
 
 
 # Allow self-reference for tree
@@ -60,6 +56,8 @@ class AttachmentTypeUpdate(BaseModel):
 
 
 class AttachmentTypeResponse(AttachmentTypeBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     created_at: datetime
     
@@ -73,10 +71,6 @@ class AttachmentTypeResponse(AttachmentTypeBase):
             return str(v)
         return str(v)
     
-    class Config:
-        from_attributes = True
-
-
 class AttachmentBase(BaseModel):
     attachment_type_id: Optional[str] = None
     original_filename: str
@@ -150,6 +144,8 @@ class UploadedByUser(BaseModel):
 
 
 class AttachmentTypeSimple(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     type_name: str
     description: Optional[str] = None
@@ -164,10 +160,6 @@ class AttachmentTypeSimple(BaseModel):
             return str(v)
         return str(v)
     
-    class Config:
-        from_attributes = True
-
-
 class LinkedEntityRef(BaseModel):
     """Reference to a linked entity (product, promotion, or form) resolved from junction/parent tables."""
     id: str
@@ -177,6 +169,8 @@ class LinkedEntityRef(BaseModel):
 
 
 class AttachmentResponse(AttachmentBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     uploaded_by: Optional[str] = None
     uploaded_by_user: Optional[UploadedByUser] = None
@@ -203,5 +197,3 @@ class AttachmentResponse(AttachmentBase):
             return v
         return str(v)
     
-    class Config:
-        from_attributes = True

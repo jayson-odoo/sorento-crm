@@ -82,7 +82,7 @@ export default function OutgoingMailsList() {
   const [query, setQuery] = useState<string>('');
   const [contentMail, setContentMail] = useState<OutgoingMail | null>(null);
 
-  const { data, isLoading } = useOutgoingMails({
+  const { data, isLoading, refetch, isFetching } = useOutgoingMails({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     status: status === '__all__' ? undefined : status,
@@ -196,6 +196,8 @@ export default function OutgoingMailsList() {
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
       tableLayout={{ columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-3">

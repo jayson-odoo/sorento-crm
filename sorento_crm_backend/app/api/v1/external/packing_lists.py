@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
-from app.schemas.external import PackingListRequest, PackingListCreateResponse
+from app.schemas.external.procurement import PackingListRequest, PackingListCreateResponse
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate, InboundShipmentResponse
 from app.services.procurement_service import InboundShipmentService
 from app.models.procurement import Supplier, InboundShipment

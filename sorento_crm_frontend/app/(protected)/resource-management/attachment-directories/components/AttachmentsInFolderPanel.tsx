@@ -35,7 +35,7 @@ import {
 } from '../../attachments/hooks/useAttachments';
 import { getAttachmentPreviewUrl, resubmitAttachmentWebhook } from '../../attachments/services/attachmentService';
 import type { Attachment } from '../../attachments/types/attachment.types';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import AttachmentUploadDialog from '../../attachments/components/AttachmentUploadDialog';
 import AttachmentBulkImportDialog from '../../attachments/components/AttachmentBulkImportDialog';
 import AttachmentDeleteDialog from '../../attachments/components/attachment-delete-dialog';
@@ -308,7 +308,7 @@ export default function AttachmentsInFolderPanel({
         id: 'uploaded_at',
         header: ({ column }) => <DataGridColumnHeader title="Upload at" column={column} />,
         accessorFn: (row) => row.uploaded_at,
-        cell: ({ row }) => formatDateTime(new Date(row.original.uploaded_at)),
+        cell: ({ row }) => formatDateTimeInMalaysia(row.original.uploaded_at),
         size: 180,
       },
       {

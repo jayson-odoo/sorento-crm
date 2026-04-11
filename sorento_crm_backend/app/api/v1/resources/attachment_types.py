@@ -25,12 +25,13 @@ async def get_attachment_types(
     """Get attachment types with pagination and filtering."""
     try:
         service = AttachmentTypeService(db)
+        sort_dir = dir or "desc"
         result = service.list_types(
             page=page,
             limit=limit,
             query=query,
             sort=sort,
-            dir=dir
+            dir=sort_dir
         )
         return result
     except Exception as e:

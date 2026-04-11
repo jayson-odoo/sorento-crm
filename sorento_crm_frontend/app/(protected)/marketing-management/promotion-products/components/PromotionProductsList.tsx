@@ -32,7 +32,7 @@ export default function PromotionProductsList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const { data, isLoading } = usePromotionProductsList({
+  const { data, isLoading, refetch, isFetching } = usePromotionProductsList({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -168,6 +168,8 @@ export default function PromotionProductsList() {
       tableLayout={{ columnsVisibility: true, 
         columnsResizable: true,
       }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">

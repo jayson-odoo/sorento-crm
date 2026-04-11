@@ -15,7 +15,7 @@ from app.schemas.complaints import (
     ComplaintAttachmentLinkRequest,
     BulkDeleteComplaintsRequest,
 )
-from app.schemas.external import ComplaintIntegrationCreate
+from app.schemas.external.complaints import ComplaintIntegrationCreate
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
 from app.schemas.procurement import ViewLinkRequest, ViewLinkResponse
@@ -261,7 +261,8 @@ async def create_complaint(
                     e,
                     exc_info=True,
                 )
-        return service.get_complaint_with_attachments(complaint.id)
+        complaint_id = str(getattr(complaint, "id"))
+        return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -270,9 +271,9 @@ async def create_complaint(
 
 @router.post("/integration", status_code=status.HTTP_200_OK)
 async def create_complaint_integration(
+    request: Request,
     body: Union[List[ComplaintIntegrationCreate], ComplaintIntegrationCreate] = Body(..., embed=False),
-    request: Request = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Create a complaint from integration and log the request.
     Accepts integration payload with date_of_complaint, defect_discovered_when, delivery_order_numbers,
@@ -302,14 +303,17 @@ async def create_complaint_integration(
             )
 
         log_service = IntegrationLogService(db)
+        complaint_id = str(getattr(complaint, "id"))
+        external_reference = getattr(complaint, "delivery_order_number", None)
+        external_reference_value = str(external_reference) if external_reference is not None else None
         log_service.create_integration_log(
             IntegrationLogCreate(
                 integration_channel="complaints_api",
                 business_table="complaints",
-                business_id=complaint.id,
-                external_reference=complaint.delivery_order_number,
+                business_id=complaint_id,
+                external_reference=external_reference_value,
                 direction="inbound",
-                endpoint=str(request.url) if request else "",
+                endpoint=str(request.url),
                 http_method="POST",
                 status="success"
             ),

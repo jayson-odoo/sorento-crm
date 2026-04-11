@@ -68,25 +68,6 @@ async def get_purchase_requests(
         raise handle_internal_error(str(e))
 
 
-@router.get("/neighbours")
-async def get_purchase_request_neighbours(
-    request_id: Optional[str] = Query(None, alias="id", description="Purchase request ID"),
-    request_type: Optional[str] = Query(None, description="purchase_request or sponsorship_form"),
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Return prev_id and next_id for navigation (order: request_date desc)."""
-    if not request_id:
-        return {"prev_id": None, "next_id": None}
-    try:
-        service = PurchaseRequestService(db)
-        return service.get_neighbour_ids(request_id, request_type=request_type)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 @router.get("/{request_id}", response_model=PurchaseRequestHeaderResponse)
 async def get_purchase_request(
     request_id: str,
@@ -364,9 +345,10 @@ async def send_approval_link(
             )
             email_sent = err is None
             email_error = err
+        expires_at = getattr(approval_token, "expires")
         return SendApprovalLinkResponse(
             approval_url=approval_url,
-            expires_at=approval_token.expires,
+            expires_at=expires_at,
             token_id=str(approval_token.id),
             email_sent=email_sent,
             email_error=email_error,

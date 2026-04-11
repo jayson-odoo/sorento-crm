@@ -28,7 +28,7 @@ from app.schemas.sla import (
 )
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse
-from app.services.error_handler import handle_internal_error, handle_validation_error, handle_not_found, AppException
+from app.services.error_handler import handle_internal_error, handle_validation_error, handle_not_found
 from app.models.sla import ConversationSLATracking, SLAPolicyTier
 from app.models.user import User
 
@@ -66,7 +66,7 @@ def build_conversation_sla_tracking_response(
     assigned_user_email = tracking.assigned_user.email if tracking.assigned_user else None
 
     responded_by_user_name = None
-    if tracking.responded_by:
+    if tracking.responded_by is not None and str(tracking.responded_by).strip():
         responded_by_user = db.query(User).filter(
             (User.id == tracking.responded_by)
             | (User.respond_user_id == tracking.responded_by)
@@ -75,7 +75,7 @@ def build_conversation_sla_tracking_response(
         responded_by_user_name = responded_by_user.name if responded_by_user else tracking.responded_by
 
     resolved_by_user_name = None
-    if tracking.resolved_by:
+    if tracking.resolved_by is not None and str(tracking.resolved_by).strip():
         resolved_by_user = db.query(User).filter(
             (User.id == tracking.resolved_by)
             | (User.respond_user_id == tracking.resolved_by)
@@ -308,12 +308,13 @@ async def create_sla_tracking(
     try:
         service = ConversationSLATrackingService(db)
         tracking = service.create_tracking(tracking_data)
+        tracking_id_str = str(getattr(tracking, "id"))
         log_service.create_integration_log(
             IntegrationLogCreate(
                 integration_channel="sla_management",
                 business_table="conversation_sla_tracking",
-                business_id=tracking.id,
-                external_reference=tracking_data.contact_phone_number.strip() if getattr(tracking_data, "contact_phone_number", None) else str(tracking.id),
+                business_id=tracking_id_str,
+                external_reference=tracking_data.contact_phone_number.strip() if getattr(tracking_data, "contact_phone_number", None) else tracking_id_str,
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="POST",
@@ -377,7 +378,7 @@ async def escalate_sla_tracking_integration(
                 "Conversation SLA tracking",
                 f"respond_contact_id={body.respond_contact_id}, policy_id={body.policy_id}",
             )
-        if tracking.is_resolved:
+        if bool(getattr(tracking, "is_resolved", False)):
             raise handle_validation_error(
                 "Cannot escalate a resolved conversation SLA tracking."
             )
@@ -416,16 +417,21 @@ async def escalate_sla_tracking_integration(
             current_tier=target_tier,
             escalation_reason=body.escalation_reason,
         )
-        tracking.assigned_to_id = assignee["id"]
-        tracking.assigned_to = str(assignee["respond_user_id"]) if assignee.get("respond_user_id") is not None else None
+        setattr(tracking, "assigned_to_id", assignee["id"])
+        setattr(
+            tracking,
+            "assigned_to",
+            str(assignee["respond_user_id"]) if assignee.get("respond_user_id") is not None else None,
+        )
         db.commit()
         db.refresh(tracking)
+        tracking_id_str = str(getattr(tracking, "id"))
 
         log_service.create_integration_log(
             IntegrationLogCreate(
                 integration_channel="sla_escalation",
                 business_table="conversation_sla_tracking",
-                business_id=tracking.id,
+                business_id=tracking_id_str,
                 external_reference=internal_contact_id,
                 direction="inbound",
                 endpoint=str(request.url),
@@ -465,12 +471,14 @@ async def escalate_sla_tracking_integration(
             if dt is None:
                 return None
             d = _to_aware_utc(dt) if getattr(dt, "tzinfo", None) is None else dt.astimezone(timezone.utc)
+            if d is None:
+                return None
             return d.isoformat()
 
         return {
             "status": "success",
             "message": "SLA tracking escalated successfully.",
-            "tracking_id": tracking.id,
+            "tracking_id": tracking_id_str,
             "assigned_to_id": assigned_to_id,
             "assigned_to_name": assigned_to_name,
             "assigned_to_respond_user_id": assigned_to_respond_user_id,
@@ -536,11 +544,17 @@ async def create_sla_tracking_integration(
         tracking = service.create_tracking(tracking_data)
 
         log_service = IntegrationLogService(db)
+        tracking_id_str = str(getattr(tracking, "id"))
+        external_reference = (
+            str(getattr(getattr(tracking, "contact", None), "phone_number"))
+            if getattr(getattr(tracking, "contact", None), "phone_number", None) is not None
+            else tracking_id_str
+        )
         log_service.create_integration_log(
             IntegrationLogCreate(
                 integration_channel="sla_tracking_creation" if not is_update else "sla_tracking_update",
                 business_table="conversation_sla_tracking",
-                business_id=tracking.id,
+                business_id=tracking_id_str,
                 external_reference=contact_phone_number,
                 direction="inbound",
                 endpoint=str(request.url),
@@ -551,7 +565,7 @@ async def create_sla_tracking_integration(
         )
 
         message = "SLA tracking updated successfully." if is_update else "SLA tracking created successfully."
-        return {"status": "success", "message": message, "tracking_id": tracking.id, "is_update": is_update}
+        return {"status": "success", "message": message, "tracking_id": tracking_id_str, "is_update": is_update}
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -570,12 +584,18 @@ async def update_sla_tracking(
     try:
         service = ConversationSLATrackingService(db)
         tracking = service.update_tracking(tracking_id_str, tracking_data)
+        tracking_id_result_str = str(getattr(tracking, "id"))
+        external_reference = (
+            str(getattr(getattr(tracking, "contact", None), "phone_number"))
+            if getattr(getattr(tracking, "contact", None), "phone_number", None) is not None
+            else tracking_id_result_str
+        )
         log_service.create_integration_log(
             IntegrationLogCreate(
                 integration_channel="sla_management",
                 business_table="conversation_sla_tracking",
-                business_id=tracking.id,
-                external_reference=(tracking.contact.phone_number if tracking.contact else None) or str(tracking.id),
+                business_id=tracking_id_result_str,
+                external_reference=external_reference,
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="PUT",
@@ -583,7 +603,7 @@ async def update_sla_tracking(
             ),
             request_payload_dict=tracking_data.model_dump(exclude_unset=True),
         )
-        return service.get_tracking(str(tracking.id))
+        return service.get_tracking(tracking_id_result_str)
     except HTTPException:
         raise
     except Exception as e:
@@ -705,56 +725,6 @@ async def delete_sla_tracking(
         raise handle_internal_error(str(e))
 
 
-@router.post("/{tracking_id}/escalate", response_model=ConversationSLAEventLogResponse, status_code=status.HTTP_201_CREATED)
-async def escalate_sla_tracking(
-    tracking_id: UUID,
-    event_data: ConversationSLAEventLogCreate,
-    request: Request,
-    db: Session = Depends(get_db)
-):
-    """Create escalation event log for SLA tracking."""
-    try:
-        tracking_id = str(tracking_id)
-        service = ConversationSLATrackingService(db)
-        # Get the tracking to access assigned_to_id
-        tracking = service.get_tracking(tracking_id)
-        payload = ConversationSLAEventLogCreate(
-            sla_tracking_id=tracking_id,
-            event_type="escalation",
-            from_tier=event_data.from_tier,
-            to_tier=event_data.to_tier,
-            event_at=event_data.event_at,
-            reason=event_data.reason,
-            assigned_to=event_data.assigned_to or tracking.assigned_to,  # Keep for backward compatibility
-            assigned_to_id=event_data.assigned_to_id or tracking.assigned_to_id,
-            due_at=event_data.due_at,
-            response_time=event_data.response_time,
-            resolution_time=event_data.resolution_time,
-        )
-        log = service.create_event_log(payload)
-
-        log_service = IntegrationLogService(db)
-        log_service.create_integration_log(
-            IntegrationLogCreate(
-                integration_channel="sla_escalation",
-                business_table="conversation_sla_event_log",
-                business_id=log.id,
-                external_reference=tracking_id,
-                direction="inbound",
-                endpoint=str(request.url),
-                http_method="POST",
-                status="success"
-            ),
-            request_payload_dict=event_data.model_dump(exclude_unset=True)
-        )
-
-        return log
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
 def _calculate_duration_hours(start_at, end_at) -> Decimal:
     """Calculate duration in hours with two-decimal precision.
     
@@ -787,9 +757,9 @@ async def update_sla_tracking_status_integration(
 ):
     """Update SLA tracking status fields from integration and log the request."""
     try:
-        tracking_id = str(tracking_id)
+        tracking_id_str = str(tracking_id)
         service = ConversationSLATrackingService(db)
-        tracking = service.get_tracking(tracking_id)
+        tracking = service.get_tracking(tracking_id_str)
 
         if update_data.is_responded and not update_data.responded_at:
             raise handle_validation_error("responded_at is required when is_responded is true.")
@@ -812,7 +782,7 @@ async def update_sla_tracking_status_integration(
                 tracking.initiated_at, update_dict["resolved_at"]
             )
 
-        tracking = service.update_tracking(tracking_id, ConversationSLATrackingUpdate(**update_dict))
+        tracking = service.update_tracking(tracking_id_str, ConversationSLATrackingUpdate(**update_dict))
 
         # Create event logs for responded/resolved when applicable
         if update_data.is_responded:
@@ -821,10 +791,15 @@ async def update_sla_tracking_status_integration(
             if isinstance(responded_at_utc, datetime) and responded_at_utc.tzinfo:
                 responded_at_utc = responded_at_utc.astimezone(timezone.utc)
 
-            alabel, aid = event_log_assignee_fields(db, tracking.responded_by)
+            responded_by_ref = (
+                str(getattr(tracking, "responded_by"))
+                if getattr(tracking, "responded_by", None) is not None
+                else None
+            )
+            alabel, aid = event_log_assignee_fields(db, responded_by_ref)
 
             service.create_event_log(ConversationSLAEventLogCreate(
-                sla_tracking_id=tracking_id,
+                sla_tracking_id=tracking_id_str,
                 event_type="response",
                 event_at=responded_at_utc,
                 response_time=update_dict.get("response_time"),
@@ -840,10 +815,15 @@ async def update_sla_tracking_status_integration(
             elif isinstance(resolved_at_utc, datetime) and not resolved_at_utc.tzinfo:
                 resolved_at_utc = resolved_at_utc.replace(tzinfo=timezone.utc)
 
-            rlabel, rid = event_log_assignee_fields(db, tracking.resolved_by)
+            resolved_by_ref = (
+                str(getattr(tracking, "resolved_by"))
+                if getattr(tracking, "resolved_by", None) is not None
+                else None
+            )
+            rlabel, rid = event_log_assignee_fields(db, resolved_by_ref)
 
             service.create_event_log(ConversationSLAEventLogCreate(
-                sla_tracking_id=tracking_id,
+                sla_tracking_id=tracking_id_str,
                 event_type="resolution",
                 event_at=resolved_at_utc,
                 resolution_time=update_dict.get("resolution_duration"),
@@ -852,12 +832,18 @@ async def update_sla_tracking_status_integration(
             ))
 
         log_service = IntegrationLogService(db)
+        tracking_id_result_str = str(getattr(tracking, "id"))
+        external_reference = (
+            str(getattr(getattr(tracking, "contact", None), "phone_number"))
+            if getattr(getattr(tracking, "contact", None), "phone_number", None) is not None
+            else tracking_id_result_str
+        )
         log_service.create_integration_log(
             IntegrationLogCreate(
                 integration_channel="sla_tracking_update",
                 business_table="conversation_sla_tracking",
-                business_id=tracking.id,
-                external_reference=(tracking.contact.phone_number if tracking.contact else None) or str(tracking.id),
+                business_id=tracking_id_result_str,
+                external_reference=external_reference,
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="PUT",
@@ -866,7 +852,7 @@ async def update_sla_tracking_status_integration(
             request_payload_dict=update_data.model_dump(exclude_unset=True)
         )
 
-        return {"status": "success", "message": "SLA tracking updated successfully.", "tracking_id": tracking.id}
+        return {"status": "success", "message": "SLA tracking updated successfully.", "tracking_id": tracking_id_result_str}
     except HTTPException:
         raise
     except Exception as e:
@@ -924,9 +910,9 @@ async def delete_event_log(
                 detail="Only administrators can delete event logs"
             )
         
-        log_id = str(log_id)
+        log_id_str = str(log_id)
         service = ConversationSLATrackingService(db)
-        result = service.delete_event_log(log_id)
+        result = service.delete_event_log(log_id_str)
         return result
     except HTTPException:
         raise
@@ -1014,8 +1000,6 @@ async def post_sla_tracking_conversation_reply(
         return {"ok": True}
     except HTTPException:
         raise
-    except AppException:
-        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -1028,9 +1012,9 @@ async def get_sla_tracking_record(
 ):
     """Get a single SLA tracking record by ID."""
     try:
-        tracking_id = str(tracking_id)
+        tracking_id_str = str(tracking_id)
         service = ConversationSLATrackingService(db)
-        tracking = service.get_tracking(tracking_id)
+        tracking = service.get_tracking(tracking_id_str)
         return build_conversation_sla_tracking_response(db, tracking)
     except HTTPException:
         raise

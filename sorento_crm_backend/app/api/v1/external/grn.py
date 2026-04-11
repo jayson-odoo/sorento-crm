@@ -7,7 +7,7 @@ from sqlalchemy import and_, or_
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
-from app.schemas.external import GRNRequest
+from app.schemas.external.procurement import GRNRequest
 from app.schemas.procurement import PickingHeaderCreate, PickingLineCreate, PickingHeaderResponse
 from app.services.procurement_service import PickingHeaderService
 from app.models.procurement import SPOAllocation

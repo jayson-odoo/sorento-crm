@@ -8,7 +8,6 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.notification_service import NotificationService
 from app.services.audit_service import log_audit
-from app.models.notification import PushSubscription
 from app.models.user import User
 from app.services.user_sla_daily_summary_service import (
     verify_unsubscribe_token,
@@ -17,7 +16,6 @@ from app.services.user_sla_daily_summary_service import (
 from app.schemas.notification import (
     NotificationResponse,
     UnreadCountResponse,
-    PushSubscribeRequest,
     BulkDeleteNotificationsRequest,
 )
 from app.schemas.common import ListResponse
@@ -117,42 +115,6 @@ async def list_notifications(
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
-    except Exception as e:
-        raise handle_internal_error(str(e))
-
-
-@router.post("/push-subscribe")
-async def push_subscribe(
-    body: PushSubscribeRequest,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Register a browser push subscription for the current user. Idempotent by endpoint."""
-    _require_notifications_enabled()
-    try:
-        existing = (
-            db.query(PushSubscription)
-            .filter(
-                PushSubscription.user_id == current_user["id"],
-                PushSubscription.endpoint == body.endpoint,
-            )
-            .first()
-        )
-        if existing:
-            # ORM instance attributes; Column-typed fields confuse static analysis on direct assignment.
-            setattr(existing, "p256dh", body.p256dh)
-            setattr(existing, "auth", body.auth)
-            db.commit()
-            return {"message": "Subscription updated"}
-        sub = PushSubscription(
-            user_id=current_user["id"],
-            endpoint=body.endpoint,
-            p256dh=body.p256dh,
-            auth=body.auth,
-        )
-        db.add(sub)
-        db.commit()
-        return {"message": "Subscription saved"}
     except Exception as e:
         raise handle_internal_error(str(e))
 

@@ -368,23 +368,23 @@ class UserService:
     def delete_user(self, user_id: str) -> None:
         """Soft-delete a user (set is_trashed=True)."""
         user = self.get_user(user_id)
-        user.is_trashed = True
+        setattr(user, "is_trashed", True)
         self.db.commit()
 
     def restore_user(self, user_id: str) -> None:
         """Restore a trashed user (set is_trashed=False)."""
         user = self.get_user(user_id)
-        user.is_trashed = False
+        setattr(user, "is_trashed", False)
         self.db.commit()
 
     def permanent_delete_user(self, user_id: str) -> None:
         """Permanently delete a user. Only allowed when user is trashed."""
         user = self.get_user(user_id)
-        if not user.is_trashed:
+        if not bool(getattr(user, "is_trashed", False)):
             raise handle_conflict("Only trashed users can be permanently deleted. Trash the user first.")
         if getattr(user, "is_protected", False):
             raise handle_conflict("Protected users cannot be permanently deleted.")
-        self._prepare_user_for_hard_delete(user.id)
+        self._prepare_user_for_hard_delete(str(getattr(user, "id")))
         self.db.delete(user)
         try:
             self.db.commit()
@@ -426,7 +426,7 @@ class UserService:
         for user in users:
             if getattr(user, "is_protected", False):
                 continue
-            self._prepare_user_for_hard_delete(user.id)
+            self._prepare_user_for_hard_delete(str(getattr(user, "id")))
             self.db.delete(user)
             count += 1
         try:
@@ -440,9 +440,11 @@ class UserService:
         """Sync user with Respond.io and update respond_synced status."""
         user = self.get_user(user_id)
         # Use provided respond_user_id or fall back to database value
-        respond_id = respond_user_id if respond_user_id else user.respond_user_id
+        respond_id = _normalize_respond_user_id(respond_user_id) or _normalize_respond_user_id(
+            getattr(user, "respond_user_id", None)
+        )
         # Check for None, empty string, or falsy values
-        if not respond_id or (isinstance(respond_id, str) and respond_id.strip() == ''):
+        if respond_id is None or respond_id.strip() == "":
             raise handle_conflict("Respond user ID is required for sync.")
         
         # If respond_user_id was provided and different from database, check uniqueness then save
@@ -450,7 +452,7 @@ class UserService:
             rid = _normalize_respond_user_id(respond_user_id)
             if rid:
                 self._check_respond_user_id_unique(rid, exclude_user_id=user_id)
-            user.respond_user_id = rid or respond_user_id
+            setattr(user, "respond_user_id", rid or respond_user_id)
             self.db.commit()
             self.db.refresh(user)
 
@@ -463,18 +465,18 @@ class UserService:
         )
 
         if not email:
-            user.respond_synced = "failed"
+            setattr(user, "respond_synced", "failed")
             self.db.commit()
             self.db.refresh(user)
             return {"status": "failed", "message": "Respond user email not found."}
 
         if email.strip().lower() == user.email.strip().lower():
-            user.respond_synced = "successful"
+            setattr(user, "respond_synced", "successful")
             self.db.commit()
             self.db.refresh(user)
             return {"status": "successful", "message": "Respond user synced successfully."}
 
-        user.respond_synced = "failed"
+        setattr(user, "respond_synced", "failed")
         self.db.commit()
         self.db.refresh(user)
         return {"status": "failed", "message": "Respond email does not match system email."}
@@ -506,8 +508,9 @@ class UserService:
         out = {uid: [] for uid in user_ids}
         for a in assignments:
             r = roles_by_id.get(a.role_id)
-            if r and a.user_id in out:
-                out[a.user_id].append(r)
+            a_user_id = str(getattr(a, "user_id"))
+            if r and a_user_id in out:
+                out[a_user_id].append(r)
         return out
 
     def set_user_roles(self, user_id: str, role_ids: list[str]) -> dict:
@@ -630,7 +633,7 @@ class UserRoleService:
         # when deleting and trigger SQLAlchemy rowcount mismatch errors.
         role = self.get_role(role_id, with_permissions=False)
 
-        if role.is_default:
+        if bool(getattr(role, "is_default", False)):
             raise handle_conflict("Default role cannot be deleted. Set another role as default first.")
 
         assigned_users = (
@@ -655,7 +658,7 @@ class UserRoleService:
         self.db.query(UserRole).filter(UserRole.is_default == True).update({"is_default": False})
         
         # Set the specified role to is_default = True
-        role.is_default = True
+        setattr(role, "is_default", True)
         self.db.commit()
         self.db.refresh(role)
         return {"message": "Role successfully set as the default"}
@@ -919,7 +922,7 @@ class AccessAgentService:
         sort_dir: str = "asc"
     ):
         """List all contact access entries with filtering."""
-        from app.schemas.common import ListResponse
+        from app.schemas.common import ListResponse, PaginationResponse
         from app.schemas.user import ContactAgentAccessResponse
         
         q = self.db.query(ContactAgentAccess).join(AccessAgent)
@@ -968,7 +971,11 @@ class AccessAgentService:
         for access in accesses:
             access_dict = {
                 'id': str(access.id),
-                'respond_contact_id': str(access.respond_contact_id) if access.respond_contact_id else None,
+                'respond_contact_id': (
+                    str(access.respond_contact_id)
+                    if access.respond_contact_id is not None
+                    else None
+                ),
                 'respond_contact_phone': access.respond_contact_phone,
                 'respond_contact_name': access.respond_contact_name,
                 'agent_id': str(access.agent_id),
@@ -987,11 +994,7 @@ class AccessAgentService:
         
         return ListResponse(
             data=result_data,
-            pagination={
-                "total": total,
-                "page": page,
-                "limit": limit
-            }
+            pagination=PaginationResponse(total=total, page=page, limit=limit),
         )
 
     def create_contact_access(self, agent_id: str, contact_data: ContactAgentAccessCreate):
@@ -1078,9 +1081,9 @@ class AccessAgentService:
         if not access:
             raise handle_not_found("Contact Agent Access", contact_id)
         # Using respond_contact_phone for lookup
-        name = self.lookup_respond_contact_name(access.respond_contact_phone)
+        name = self.lookup_respond_contact_name(str(getattr(access, "respond_contact_phone")))
         # Update respond_contact_name field
-        access.respond_contact_name = name
+        setattr(access, "respond_contact_name", name)
         self.db.commit()
         self.db.refresh(access)
         return access
@@ -1136,14 +1139,15 @@ class AccessAgentService:
             self.db.add(cursor)
             self.db.flush()
         # Find next index: after last_assigned_user_id, wrap around
-        last_key = _rr_user_id_key(cursor.last_assigned_user_id) if cursor.last_assigned_user_id else ""
+        last_assigned_user_id = getattr(cursor, "last_assigned_user_id", None)
+        last_key = _rr_user_id_key(last_assigned_user_id) if last_assigned_user_id is not None else ""
         try:
             idx = user_ids.index(last_key) if last_key else -1
         except ValueError:
             idx = -1
         next_idx = (idx + 1) % len(user_ids)
         next_user_id = user_ids[next_idx]
-        cursor.last_assigned_user_id = next_user_id
+        setattr(cursor, "last_assigned_user_id", next_user_id)
         self.db.commit()
         # Load user for response
         user = self.db.query(User).filter(User.id == next_user_id).first()
@@ -1194,7 +1198,7 @@ class AccessAgentService:
         ordered_respond_ids = []
         for uid in user_ids:
             u = user_by_id.get(uid)
-            ordered_respond_ids.append(_normalize_respond_user_id(u.respond_user_id) if u else None)
+            ordered_respond_ids.append(_normalize_respond_user_id(getattr(u, "respond_user_id", None)) if u else None)
         current_norm = _normalize_respond_user_id(str(current_respond_user_id))
         try:
             idx = ordered_respond_ids.index(current_norm)
@@ -1222,7 +1226,7 @@ class AccessAgentService:
             )
             self.db.add(cursor)
         else:
-            cursor.last_assigned_user_id = next_user_id
+            setattr(cursor, "last_assigned_user_id", next_user_id)
         self.db.commit()
         user = user_by_id.get(str(next_user_id))
         if not user:
@@ -1277,8 +1281,8 @@ class AccessAgentService:
             )
             .first()
         )
-        last_id = cursor.last_assigned_user_id if cursor else None
-        last_key = _rr_user_id_key(last_id) if last_id else ""
+        last_id = str(getattr(cursor, "last_assigned_user_id")) if cursor and getattr(cursor, "last_assigned_user_id", None) is not None else None
+        last_key = _rr_user_id_key(last_id) if last_id is not None else ""
         try:
             idx = user_ids.index(last_key) if last_key else -1
         except ValueError:

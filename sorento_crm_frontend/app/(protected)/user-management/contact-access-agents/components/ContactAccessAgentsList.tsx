@@ -31,7 +31,7 @@ export default function ContactAccessAgentsList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const { data, isLoading } = useContactAccessAgents({
+  const { data, isLoading, refetch, isFetching } = useContactAccessAgents({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -115,6 +115,8 @@ export default function ContactAccessAgentsList() {
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
       tableLayout={{ columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">

@@ -103,7 +103,7 @@ export default function PurchaseRequestsList({
   const effectiveStatusFilter =
     statusFilter && statusFilter !== 'all' ? statusFilter : undefined;
 
-  const { data, isLoading } = usePurchaseRequests({
+  const { data, isLoading, refetch, isFetching } = usePurchaseRequests({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -317,6 +317,8 @@ export default function PurchaseRequestsList({
       isLoading={isLoading}
       onRowClick={handleRowClick}
       tableLayout={{ columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">

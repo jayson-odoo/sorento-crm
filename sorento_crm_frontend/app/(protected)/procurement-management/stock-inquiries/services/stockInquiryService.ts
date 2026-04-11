@@ -34,16 +34,6 @@ export async function getStockInquiry(id: string): Promise<StockInquiryDetail> {
   return response.json();
 }
 
-export async function getStockInquiryNeighbours(
-  id: string,
-): Promise<{ prev_id: string | null; next_id: string | null }> {
-  const response = await apiFetch(
-    `/api/v1/procurement/stock-inquiries/neighbours?id=${encodeURIComponent(id)}`,
-  );
-  if (!response.ok) return { prev_id: null, next_id: null };
-  return response.json();
-}
-
 export async function createStockInquiry(
   data: StockInquiryFormData,
 ): Promise<StockInquiry> {

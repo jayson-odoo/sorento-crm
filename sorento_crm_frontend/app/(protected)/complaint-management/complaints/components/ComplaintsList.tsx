@@ -58,7 +58,7 @@ export default function ComplaintsList() {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [searchQuery, assignedToFilter, statusFilter]);
 
-  const { data, isLoading } = useComplaints({
+  const { data, isLoading, refetch, isFetching } = useComplaints({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -283,6 +283,8 @@ export default function ComplaintsList() {
       isLoading={isLoading}
       onRowClick={handleRowClick}
       tableLayout={{ columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">

@@ -35,7 +35,7 @@ export default async function IntegrationLogsPage() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Integration Management</BreadcrumbPage>
+                  <BreadcrumbPage>System Management</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>

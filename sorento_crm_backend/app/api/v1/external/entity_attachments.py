@@ -4,7 +4,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
-from app.schemas.external import EntityAttachmentLinkRequest, EntityAttachmentLinkResponse
+from app.schemas.external.attachments import (
+    EntityAttachmentLinkRequest,
+    EntityAttachmentLinkResponse,
+)
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.models.complaints import Complaint
 from app.models.procurement import StockInquiry, PurchaseRequestHeader

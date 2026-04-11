@@ -310,7 +310,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- inventory ---
     ToolSpec(
         "crm_inventory_stock_balance_list",
-        "Paged stock balances (warehouse, product, quantity filters, status).",
+        "Paged stock balances (warehouse, product, quantity filters, status). product_id accepts UUID or product_code (SKU).",
         "/api/v1/inventory/stock/balance",
         (),
         (
@@ -342,14 +342,14 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_inventory_stock_balance_export",
-        "Export all stock rows (no pagination) with optional filters; requires export permission on act-as user.",
+        "Export all stock rows (no pagination) with optional filters; requires export permission on act-as user. product_id accepts UUID or product_code (SKU).",
         "/api/v1/inventory/stock/balance/export",
         (),
         ("warehouse_id", "product_id", "quantity_operator", "quantity_value"),
     ),
     ToolSpec(
         "crm_inventory_stock_ledger_by_product_warehouse",
-        "Ledger for one product in one warehouse.",
+        "Ledger for one product in one warehouse. product_id may be UUID or product_code (SKU).",
         "/api/v1/inventory/stock/{product_id}/{warehouse_id}/ledger",
         ("product_id", "warehouse_id"),
         ("page", "limit"),
@@ -391,14 +391,14 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_inventory_stock_ledger_list",
-        "Global stock ledger list.",
+        "Global stock ledger list. product_id query accepts UUID or product_code (SKU).",
         "/api/v1/inventory/stock-ledger",
         (),
         ("page", "limit", "product_id", "warehouse_id", "transaction_type"),
     ),
     ToolSpec(
         "crm_inventory_stock_batches_list",
-        "List stock batches.",
+        "List stock batches. product_id accepts UUID or product_code (SKU).",
         "/api/v1/inventory/stock-batches",
         (),
         ("page", "limit", "product_id", "warehouse_id"),

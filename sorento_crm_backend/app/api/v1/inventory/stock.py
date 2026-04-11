@@ -1,5 +1,5 @@
 """Stock API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Body, Path
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -32,7 +32,10 @@ async def get_stock_balance(
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     warehouse_id: Optional[str] = Query(None),
-    product_id: Optional[str] = Query(None),
+    product_id: Optional[str] = Query(
+        None,
+        description="Product UUID or product_code (e.g. SKU).",
+    ),
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="Filter by status: critical, low, normal, overstock"),
@@ -90,7 +93,10 @@ async def get_stock_alerts(
 @router.get("/balance/export")
 async def export_stock_balance(
     warehouse_id: Optional[str] = Query(None),
-    product_id: Optional[str] = Query(None),
+    product_id: Optional[str] = Query(
+        None,
+        description="Product UUID or product_code (e.g. SKU).",
+    ),
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission_with_api_key("inventory.stock.export")),
@@ -130,7 +136,10 @@ async def bulk_delete_stock(
 
 @router.get("/{product_id}/{warehouse_id}/ledger", response_model=ListResponse[StockLedgerResponse])
 async def get_stock_ledger_by_stock(
-    product_id: str,
+    product_id: str = Path(
+        ...,
+        description="Product UUID or product_code (e.g. SKU).",
+    ),
     warehouse_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
@@ -189,7 +198,7 @@ async def bulk_import_stock(
             user_id=current_user["id"],
             metadata={'total_rows': len(import_data.stock)}
         )
-        job.total_rows = len(import_data.stock)
+        setattr(job, "total_rows", len(import_data.stock))
         db.commit()
         
         # Enqueue job

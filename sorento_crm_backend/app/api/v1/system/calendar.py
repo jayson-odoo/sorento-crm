@@ -55,7 +55,11 @@ async def update_work_calendar_config(
         config = service.get_or_create_work_calendar()
         for field, value in payload.model_dump(exclude_unset=True).items():
             setattr(config, field, value)
-        _validate_working_hours(config.work_day_start_time, config.work_day_end_time)
+        work_day_start_time = getattr(config, "work_day_start_time", None)
+        work_day_end_time = getattr(config, "work_day_end_time", None)
+        if not isinstance(work_day_start_time, time) or not isinstance(work_day_end_time, time):
+            raise handle_internal_error("Invalid work calendar time configuration.")
+        _validate_working_hours(work_day_start_time, work_day_end_time)
         db.commit()
         db.refresh(config)
         return config
@@ -136,13 +140,13 @@ async def update_public_holiday(
     """Update a public holiday."""
     try:
         holiday = db.query(PublicHoliday).filter(PublicHoliday.id == holiday_id).first()
-        if not holiday:
-            raise handle_not_found("Public holiday not found")
+        if holiday is None:
+            raise handle_not_found("Public holiday", holiday_id)
 
         updates = payload.model_dump(exclude_unset=True)
         if "date" in updates and updates["date"] != holiday.date:
             existing = db.query(PublicHoliday).filter(PublicHoliday.date == updates["date"]).first()
-            if existing and existing.id != holiday_id:
+            if existing is not None and str(getattr(existing, "id")) != holiday_id:
                 raise handle_conflict(f"Public holiday already exists for {updates['date']}")
 
         for field, value in updates.items():
@@ -166,8 +170,8 @@ async def delete_public_holiday(
     """Delete a public holiday."""
     try:
         holiday = db.query(PublicHoliday).filter(PublicHoliday.id == holiday_id).first()
-        if not holiday:
-            raise handle_not_found("Public holiday not found")
+        if holiday is None:
+            raise handle_not_found("Public holiday", holiday_id)
         db.delete(holiday)
         db.commit()
         return None

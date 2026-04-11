@@ -1,5 +1,5 @@
 """Dynamic list query metadata, advanced search, and export."""
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -16,14 +16,10 @@ from app.schemas.list_query import (
     UserListColumnConfigPayload,
     UserListColumnConfigResponse,
 )
-from app.schemas.marketing import PromotionResponse
-from app.schemas.order import OrderResponse
-from app.schemas.product import ProductResponse
-from app.schemas.procurement import SupplierResponse
-from app.schemas.workflow_forms import WorkflowFormDefinitionOut, WorkflowSubmissionOut
 from app.services.error_handler import handle_internal_error
 from app.services.list_query_export_service import ListQueryExportService
 from app.services.list_query_metadata_service import ListQueryMetadataService
+from app.services.list_query_registry import get_adapter, require_adapter
 from app.services.list_query_search_service import ListQuerySearchService
 from app.services.user_service import UserPermissionService
 from app.services.workflow_submission_dynamic_list_query import (
@@ -34,11 +30,15 @@ from app.services.workflow_submission_dynamic_list_query import (
 router = APIRouter()
 
 
+def _config_dict(raw: Any) -> Dict[str, Any] | None:
+    return raw if isinstance(raw, dict) else None
+
+
 def _orders_export_ui_meta(f: ListQueryField) -> tuple[str | None, str | None]:
     """Derive export dialog hierarchy for orders (order vs line → product / warehouse)."""
-    if not f.is_line_field:
+    if not bool(getattr(f, "is_line_field", False)):
         return "order", None
-    fk = (f.field_key or "").lower()
+    fk = (str(getattr(f, "field_key", "") or "")).lower()
     if fk.startswith("line_product"):
         return "line", "product"
     if fk.startswith("line_warehouse"):
@@ -46,27 +46,23 @@ def _orders_export_ui_meta(f: ListQueryField) -> tuple[str | None, str | None]:
     return "line", None
 
 
-VIEW_SLUG = {
-    "orders": "order_management.orders.view",
-    "products": "master_data.products.view",
-    "suppliers": "procurement.suppliers.view",
-    "promotions": "marketing.promotions.view",
-    "workflow_form_definitions": "workflow_forms.definitions.view",
-    "workflow_form_submissions": "workflow_forms.submissions.view",
-}
-EXPORT_SLUG = {
-    "orders": "order_management.orders.export",
-    "products": "master_data.products.export",
-    "suppliers": "procurement.suppliers.export",
-    # No dedicated export slug yet; align with list access.
-    "promotions": "marketing.promotions.view",
-    "workflow_form_definitions": "workflow_forms.definitions.export",
-    "workflow_form_submissions": "workflow_forms.submissions.export",
-}
+def _infer_filter_ui_type(f: ListQueryField) -> str:
+    ck = str(getattr(f, "compile_key", "") or "")
+    dtype = str(getattr(f, "data_type", "string") or "string").lower()
+    if ".id" in ck or dtype == "uuid":
+        return "foreign_key"
+    if dtype in ("number", "integer", "float", "decimal"):
+        return "number"
+    if dtype in ("date", "datetime"):
+        return "date"
+    if dtype in ("boolean",):
+        return "select"
+    return "text"
 
 
 def _can_view(db: Session, user_id: str, resource_key: str) -> bool:
-    slug = VIEW_SLUG.get(resource_key)
+    adapter = get_adapter(resource_key)
+    slug = adapter.view_slug if adapter else None
     if not slug:
         return False
     return UserPermissionService(db).check_user_has_permission(user_id, slug)
@@ -104,7 +100,11 @@ async def list_resources(
     svc = ListQueryMetadataService(db)
     all_r = svc.list_resources()
     uid = current_user["id"]
-    return [r for r in all_r if _can_view(db, uid, r.resource_key)]
+    return [
+        r
+        for r in all_r
+        if _can_view(db, uid, str(getattr(r, "resource_key", "") or ""))
+    ]
 
 
 @router.get("/resources/{resource_key}/fields", response_model=List[ListQueryFieldResponse])
@@ -129,7 +129,20 @@ async def list_fields(
         sec, sub = (None, None)
         if resource_key == "orders":
             sec, sub = _orders_export_ui_meta(f)
-        out.append(base.model_copy(update={"export_section": sec, "export_subgroup": sub}))
+        out.append(
+            base.model_copy(
+                update={
+                    "export_section": sec,
+                    "export_subgroup": sub,
+                    "filter_ui_type": _infer_filter_ui_type(f),
+                    "option_source": None,
+                    "relation_resource_key": None,
+                    "relation_label_field": None,
+                    "is_generated": True,
+                    "managed_by": "schema-introspection",
+                }
+            )
+        )
 
     if resource_key == "workflow_form_submissions" and definition_id:
         schema = get_published_schema_for_definition(db, definition_id.strip())
@@ -149,6 +162,12 @@ async def list_fields(
                         sort_order=m.sort_order,
                         export_section=None,
                         export_subgroup=None,
+                        filter_ui_type="text",
+                        option_source=None,
+                        relation_resource_key=None,
+                        relation_label_field=None,
+                        is_generated=True,
+                        managed_by="workflow-schema",
                     )
                 )
     return out
@@ -160,6 +179,7 @@ async def advanced_search(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    require_adapter(body.resource)
     if not _can_view(db, current_user["id"], body.resource):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
     try:
@@ -169,20 +189,8 @@ async def advanced_search(
     except Exception as e:
         raise handle_internal_error(str(e))
 
-    if body.resource == "orders":
-        data = [OrderResponse.model_validate(o) for o in result["data"]]
-    elif body.resource == "products":
-        data = [ProductResponse.model_validate(p) for p in result["data"]]
-    elif body.resource == "suppliers":
-        data = [SupplierResponse.model_validate(s) for s in result["data"]]
-    elif body.resource == "promotions":
-        data = [PromotionResponse.model_validate(p) for p in result["data"]]
-    elif body.resource == "workflow_form_definitions":
-        data = [WorkflowFormDefinitionOut.model_validate(x) for x in result["data"]]
-    elif body.resource == "workflow_form_submissions":
-        data = [WorkflowSubmissionOut.model_validate(x) for x in result["data"]]
-    else:
-        data = result["data"]
+    adapter = require_adapter(body.resource)
+    data = adapter.serializer(result["data"])
 
     return {
         "data": data,
@@ -197,7 +205,8 @@ async def export_rows(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    slug = EXPORT_SLUG.get(body.resource)
+    adapter = require_adapter(body.resource)
+    slug = adapter.export_slug
     if not slug or not UserPermissionService(db).check_user_has_permission(current_user["id"], slug):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Export permission required")
     try:
@@ -227,7 +236,8 @@ async def get_list_column_config(
         )
         .first()
     )
-    return UserListColumnConfigResponse(listing_key=listing_key, config=row.config if row else None)
+    cfg = _config_dict(getattr(row, "config", None)) if row else None
+    return UserListColumnConfigResponse(listing_key=listing_key, config=cfg)
 
 
 @router.put("/column-config/{listing_key:path}", response_model=UserListColumnConfigResponse)
@@ -252,13 +262,16 @@ async def upsert_list_column_config(
             .first()
         )
         if row:
-            row.config = data
+            setattr(row, "config", data)
         else:
             row = UserListColumnConfig(user_id=current_user["id"], listing_key=listing_key, config=data)
             db.add(row)
         db.commit()
         db.refresh(row)
-        return UserListColumnConfigResponse(listing_key=listing_key, config=row.config)
+        return UserListColumnConfigResponse(
+            listing_key=listing_key,
+            config=_config_dict(getattr(row, "config", None)),
+        )
     except Exception as e:
         db.rollback()
         raise handle_internal_error(str(e))

@@ -24,6 +24,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _verification_token_expired(token_row: VerificationToken, now_naive: datetime) -> bool:
+    exp = getattr(token_row, "expires", None)
+    if not isinstance(exp, datetime):
+        return True
+    return exp < now_naive
+
+
 @router.post("/login", response_model=LoginResponse)
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     user: User | None = (
@@ -38,14 +45,18 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
             detail="User not found. Please register first.",
         )
 
-    if not user.password:
+    pw_raw = getattr(user, "password", None)
+    if pw_raw is None or str(pw_raw).strip() == "":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials.",
         )
 
     try:
-        ok = bcrypt.checkpw(payload.password.encode("utf-8"), user.password.encode("utf-8"))
+        ok = bcrypt.checkpw(
+            payload.password.encode("utf-8"),
+            str(pw_raw).encode("utf-8"),
+        )
     except Exception:
         ok = False
 
@@ -55,30 +66,39 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
             detail="Invalid credentials.",
         )
 
-    if user.status != "ACTIVE":
+    if str(getattr(user, "status", "") or "") != "ACTIVE":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account not activated. Please verify your email.",
         )
 
     # Store naive UTC (DB columns are timezone=False)
-    user.last_sign_in_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    setattr(user, "last_sign_in_at", datetime.now(timezone.utc).replace(tzinfo=None))
     db.add(user)
     db.commit()
 
     from app.models.user import UserRoleAssignment
-    first_assignment = db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == user.id).first()
-    role_id: str | None = first_assignment.role_id if first_assignment else None
-    role: UserRole | None = db.query(UserRole).filter(UserRole.id == role_id).first() if role_id else None
-    role_name = role.name if role else None
+
+    uid = str(getattr(user, "id", "") or "")
+    first_assignment = (
+        db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == uid).first()
+    )
+    role_id: str | None = None
+    if first_assignment is not None:
+        rrid = getattr(first_assignment, "role_id", None)
+        role_id = str(rrid) if rrid is not None else None
+    role: UserRole | None = (
+        db.query(UserRole).filter(UserRole.id == role_id).first() if role_id else None
+    )
+    role_name = str(getattr(role, "name", "") or "") if role is not None else None
 
     return LoginResponse(
-        id=user.id,
-        email=user.email,
-        name=user.name,
-        avatar=user.avatar,
-        status=user.status,
-        role_id=role_id,
+        id=uid,
+        email=str(getattr(user, "email", "") or ""),
+        name=str(getattr(user, "name", "") or "") or None,
+        avatar=str(getattr(user, "avatar", "") or "") or None,
+        status=str(getattr(user, "status", "") or ""),
+        role_id=role_id if role_id is not None else "",
         role_name=role_name,
     )
 
@@ -100,7 +120,7 @@ async def signup(
             )
         
         # Get default role
-        default_role = db.query(UserRole).filter(UserRole.is_default == True).first()
+        default_role = db.query(UserRole).filter(UserRole.is_default.is_(True)).first()
         if not default_role:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -119,12 +139,18 @@ async def signup(
         )
         db.add(user)
         db.flush()
-        db.add(UserRoleAssignment(user_id=user.id, role_id=default_role.id))
+        db.add(
+            UserRoleAssignment(
+                user_id=str(getattr(user, "id", "") or ""),
+                role_id=str(getattr(default_role, "id", "") or ""),
+            )
+        )
         
         # Create verification token
-        token = hashlib.sha256(f"{user.id}{datetime.now(timezone.utc).isoformat()}".encode()).hexdigest()
+        uid = str(getattr(user, "id", "") or "")
+        token = hashlib.sha256(f"{uid}{datetime.now(timezone.utc).isoformat()}".encode()).hexdigest()
         verification_token = VerificationToken(
-            identifier=user.id,
+            identifier=uid,
             token=token,
             expires=datetime.now(timezone.utc) + timedelta(hours=1)
         )
@@ -135,10 +161,10 @@ async def signup(
         # TODO: Send verification email (can be done via integration service)
         
         return SignupResponse(
-            id=user.id,
-            email=user.email,
-            name=user.name,
-            message="User registered successfully. Please check your email to verify your account."
+            id=str(getattr(user, "id", "") or ""),
+            email=str(getattr(user, "email", "") or ""),
+            name=str(getattr(user, "name", "") or ""),
+            message="User registered successfully. Please check your email to verify your account.",
         )
     except HTTPException:
         raise
@@ -166,9 +192,9 @@ async def reset_password(
         
         # Create verification token
         verification_token = VerificationToken(
-            identifier=user.id,
+            identifier=str(getattr(user, "id", "") or ""),
             token=token,
-            expires=datetime.now(timezone.utc) + timedelta(hours=1)
+            expires=datetime.now(timezone.utc) + timedelta(hours=1),
         )
         db.add(verification_token)
         db.commit()
@@ -197,8 +223,9 @@ async def reset_password(
             from app.services.notification_email import send_notification_email, _smtp_config_from_settings
             sys_settings = db.query(SystemSetting).first()
             smtp_config = _smtp_config_from_settings(sys_settings) if sys_settings else None
+            user_email = str(getattr(user, "email", "") or "")
             err = send_notification_email(
-                to=user.email,
+                to=user_email,
                 subject=subject,
                 body_text=body_text,
                 body_html=body_html,
@@ -206,7 +233,7 @@ async def reset_password(
                 from_name="Sorento AI System",
             )
             if err:
-                logger.warning("Password reset email failed for %s: %s", user.email, err)
+                logger.warning("Password reset email failed for %s: %s", user_email, err)
         except Exception as e:
             logger.warning("Password reset email error: %s", e)
 
@@ -229,7 +256,7 @@ async def verify_reset_token(
         VerificationToken.token == payload.token
     ).first()
     now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-    if not verification_token or verification_token.expires < now_utc_naive:
+    if verification_token is None or _verification_token_expired(verification_token, now_utc_naive):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired token.",
@@ -241,7 +268,7 @@ async def verify_reset_token(
             detail="User not found.",
         )
     # Optionally return masked email for display (e.g. "j***@example.com")
-    parts = user.email.split("@")
+    parts = str(getattr(user, "email", "") or "").split("@")
     masked = f"{parts[0][:1]}***@{parts[1]}" if len(parts) == 2 and parts[0] else None
     return VerifyResetTokenResponse(valid=True, email=masked)
 
@@ -259,10 +286,12 @@ async def change_password(
         ).first()
         
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-        if not verification_token or verification_token.expires < now_utc_naive:
+        if verification_token is None or _verification_token_expired(
+            verification_token, now_utc_naive
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid or expired token."
+                detail="Invalid or expired token.",
             )
         
         # Get user
@@ -277,11 +306,11 @@ async def change_password(
         hashed_password = bcrypt.hashpw(payload.new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         
         # Update password and activate account so they can log in (invitation or password reset)
-        user.password = hashed_password
-        user.status = "ACTIVE"
+        setattr(user, "password", hashed_password)
+        setattr(user, "status", "ACTIVE")
         # Accepting invite / reset link proves they received the email, so mark verified
         # Store naive UTC (DB columns are timezone=False)
-        user.email_verified_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        setattr(user, "email_verified_at", datetime.now(timezone.utc).replace(tzinfo=None))
         db.add(user)
         
         # Delete used token
@@ -308,10 +337,12 @@ async def verify_email(
         ).first()
         
         now_utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
-        if not verification_token or verification_token.expires < now_utc_naive:
+        if verification_token is None or _verification_token_expired(
+            verification_token, now_utc_naive
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid or expired token"
+                detail="Invalid or expired token",
             )
         
         # Update user
@@ -322,9 +353,9 @@ async def verify_email(
                 detail="User not found"
             )
         
-        user.status = "ACTIVE"
+        setattr(user, "status", "ACTIVE")
         # Store naive UTC (DB columns are timezone=False)
-        user.email_verified_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        setattr(user, "email_verified_at", datetime.now(timezone.utc).replace(tzinfo=None))
         db.add(user)
         
         # Delete used token

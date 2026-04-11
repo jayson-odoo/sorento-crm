@@ -73,7 +73,7 @@ export default function ContactAccessAgentsGroupedList() {
     searchQuery: '',
   });
 
-  const { data, isLoading } = useContactAccessAgents({
+  const { data, isLoading, refetch, isFetching } = useContactAccessAgents({
     pageIndex: 0,
     pageSize: 10000, // Get all for grouping
     sorting: [],
@@ -234,7 +234,14 @@ export default function ContactAccessAgentsGroupedList() {
 
   return (
     <>
-      <DataGrid table={table} tableLayout={{ columnsVisibility: true }} recordCount={groupedData.length} isLoading={isLoading}>
+      <DataGrid
+        table={table}
+        tableLayout={{ columnsVisibility: true }}
+        recordCount={groupedData.length}
+        isLoading={isLoading}
+        onRefresh={() => void refetch()}
+        isRefreshing={isFetching && !isLoading}
+      >
         <Card>
           <CardHeader className="flex-row items-center justify-between">
             <div className="relative">

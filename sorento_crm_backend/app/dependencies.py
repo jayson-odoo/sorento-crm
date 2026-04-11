@@ -73,9 +73,12 @@ async def get_current_user(
         
         # Extract user information from token
         # NextAuth uses 'sub' for subject (user ID) or 'id' directly
-        user_id: str = payload.get("sub") or payload.get("id")
-        email: str = payload.get("email")
-        role_id: str = payload.get("roleId")
+        user_id_raw = payload.get("sub") or payload.get("id")
+        user_id: Optional[str] = str(user_id_raw) if user_id_raw is not None else None
+        email_raw = payload.get("email")
+        email: Optional[str] = str(email_raw) if email_raw is not None else None
+        role_raw = payload.get("roleId")
+        role_id: Optional[str] = str(role_raw) if role_raw is not None else None
         
         if not user_id:
             raise HTTPException(
@@ -376,7 +379,7 @@ def _user_dict_from_api_key_act_as(db: Session, request: Request) -> dict:
     from app.audit_context import set_audit_context
 
     ip = request.client.host if request.client else None
-    set_audit_context(row.id, ip)
+    set_audit_context(str(getattr(row, "id", "") or ""), ip)
     return user
 
 
@@ -471,16 +474,19 @@ async def get_current_user_or_api_key(
             algorithms=[settings.jwt_algorithm]
         )
         
-        user_id: str = payload.get("sub") or payload.get("id")
-        email: str = payload.get("email")
-        role_id: str = payload.get("roleId")
-        
+        user_id_raw = payload.get("sub") or payload.get("id")
+        user_id: Optional[str] = str(user_id_raw) if user_id_raw is not None else None
+        email_raw = payload.get("email")
+        email: Optional[str] = str(email_raw) if email_raw is not None else None
+        role_raw = payload.get("roleId")
+        role_id: Optional[str] = str(role_raw) if role_raw is not None else None
+
         if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token: missing user ID"
             )
-        
+
         user = {
             "id": user_id,
             "email": email,

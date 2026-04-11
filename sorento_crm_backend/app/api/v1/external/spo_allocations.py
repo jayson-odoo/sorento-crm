@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
-from app.schemas.external import SPOAllocationRequest
+from app.schemas.external.procurement import SPOAllocationRequest
 from app.models.procurement import SPOAllocation, InboundShipment, InboundShipmentLine
 from app.services.procurement_service import InboundShipmentService
 from app.models.inventory import Warehouse

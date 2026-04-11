@@ -2,7 +2,7 @@
 
 import { ReactNode, useMemo, useState } from 'react';
 import type { Table } from '@tanstack/react-table';
-import { Columns3, Download, Filter } from 'lucide-react';
+import { Columns3, Download, Filter, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -74,6 +74,10 @@ export type DataGridStandardToolbarProps<TData extends object> = {
     advancedFilter: ListQueryFilterGroup | null;
     onAdvancedFilterApply: (filter: ListQueryFilterGroup | null) => void;
   };
+  /** When set, shows a refresh control next to Columns (e.g. wire to React Query `refetch`). */
+  onRefresh?: () => void | Promise<void>;
+  /** Spin the refresh icon while a refetch is in flight. */
+  isRefreshing?: boolean;
 };
 
 export function DataGridStandardToolbar<TData extends object>({
@@ -88,6 +92,8 @@ export function DataGridStandardToolbar<TData extends object>({
   showAdvancedFilters = true,
   showColumnVisibility = true,
   listQueryConfig,
+  onRefresh,
+  isRefreshing = false,
 }: DataGridStandardToolbarProps<TData>) {
   const [exportOpen, setExportOpen] = useState(false);
   const [advancedFilterOpen, setAdvancedFilterOpen] = useState(false);
@@ -201,6 +207,20 @@ export function DataGridStandardToolbar<TData extends object>({
               }
             />
           )}
+          {onRefresh ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              title="Refresh list"
+              onClick={() => void onRefresh()}
+              disabled={isRefreshing}
+            >
+              <RefreshCw className={`size-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          ) : null}
           {primaryActionsSlot}
         </div>
       </div>

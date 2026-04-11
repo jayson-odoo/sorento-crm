@@ -57,7 +57,7 @@ export default function ConversationSLATrackingList() {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [searchQuery, assignedToFilter]);
 
-  const { data, isLoading } = useConversationSLATracking({
+  const { data, isLoading, refetch, isFetching } = useConversationSLATracking({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -455,7 +455,15 @@ export default function ConversationSLATrackingList() {
   };
 
   return (
-    <DataGrid table={table} tableLayout={{ columnsVisibility: true }} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
+    <DataGrid
+      table={table}
+      tableLayout={{ columnsVisibility: true }}
+      recordCount={data?.pagination.total || 0}
+      isLoading={isLoading}
+      onRowClick={handleRowClick}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
+    >
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center gap-2 py-5">
           <div className="flex items-center gap-2">

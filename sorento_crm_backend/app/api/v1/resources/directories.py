@@ -1,5 +1,7 @@
 """Files (folders) API."""
 from fastapi import APIRouter, Depends, HTTPException, Query
+from datetime import datetime
+from typing import cast
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
@@ -18,16 +20,19 @@ router = APIRouter()
 def _build_tree_node(service: AttachmentDirectoryService, dir_id: str) -> AttachmentDirectoryTreeNode:
     """Build a tree node with children from a directory ID."""
     d = service.get_directory(dir_id)
+    parent_id_raw = getattr(d, "parent_id", None)
+    sort_order_raw = getattr(d, "sort_order", None)
+    created_at = cast(datetime, getattr(d, "created_at"))
     children = [
         _build_tree_node(service, str(c.id))
         for c in service.list_flat(dir_id)
     ]
     return AttachmentDirectoryTreeNode(
         id=str(d.id),
-        name=d.name,
-        parent_id=str(d.parent_id) if d.parent_id else None,
-        sort_order=d.sort_order,
-        created_at=d.created_at,
+        name=str(getattr(d, "name", "")),
+        parent_id=str(parent_id_raw) if parent_id_raw is not None else None,
+        sort_order=(int(sort_order_raw) if sort_order_raw is not None else None),
+        created_at=created_at,
         children=children,
     )
 

@@ -339,13 +339,19 @@ def event_log_assignee_fields(db: Session, user_ref: Optional[str]) -> tuple[Opt
     )
     if not user:
         return v, None
+    name = getattr(user, "name", None)
+    email = getattr(user, "email", None)
+    respond_user_id = getattr(user, "respond_user_id", None)
     label = (
-        user.name
-        or user.email
-        or (str(user.respond_user_id) if user.respond_user_id else "")
-        or ""
-    ).strip() or None
-    return label, user.id
+        str(name).strip()
+        if name is not None and str(name).strip()
+        else str(email).strip()
+        if email is not None and str(email).strip()
+        else str(respond_user_id).strip()
+        if respond_user_id is not None and str(respond_user_id).strip()
+        else None
+    )
+    return label, str(getattr(user, "id"))
 
 
 class ConversationSLATrackingService:
@@ -356,13 +362,15 @@ class ConversationSLATrackingService:
 
     def _resolve_tracking_assignee_user_id(self, tracking: ConversationSLATracking) -> Optional[str]:
         """Current assignee as users.id before clearing assignment (FK first, then legacy assigned_to text)."""
-        if tracking.assigned_to_id:
-            return str(tracking.assigned_to_id)
-        if not tracking.assigned_to:
+        assigned_to_id = getattr(tracking, "assigned_to_id", None)
+        if assigned_to_id is not None and str(assigned_to_id).strip():
+            return str(assigned_to_id)
+        assigned_to = getattr(tracking, "assigned_to", None)
+        if assigned_to is None or not str(assigned_to).strip():
             return None
         from app.models.user import User
 
-        raw = str(tracking.assigned_to).strip()
+        raw = str(assigned_to).strip()
         user = (
             self.db.query(User)
             .filter(
@@ -370,7 +378,7 @@ class ConversationSLATrackingService:
             )
             .first()
         )
-        return user.id if user else None
+        return str(getattr(user, "id")) if user else None
     
     def list_tracking(
         self,
@@ -445,7 +453,7 @@ class ConversationSLATrackingService:
             # Look up user names for responded_by and resolved_by
             responded_by_user_name = None
             resolved_by_user_name = None
-            if track.responded_by:
+            if track.responded_by is not None and str(track.responded_by).strip():
                 from app.models.user import User
                 responded_by_user = self.db.query(User).filter(
                     (User.id == track.responded_by) |
@@ -454,7 +462,7 @@ class ConversationSLATrackingService:
                 ).first()
                 responded_by_user_name = responded_by_user.name if responded_by_user else track.responded_by
             
-            if track.resolved_by:
+            if track.resolved_by is not None and str(track.resolved_by).strip():
                 from app.models.user import User
                 resolved_by_user = self.db.query(User).filter(
                     (User.id == track.resolved_by) |
@@ -678,9 +686,15 @@ class ConversationSLATrackingService:
                     .first()
                 )
         if phone and cid:
-            if by_cid and by_phone and by_cid.id != by_phone.id:
+            if (
+                by_cid is not None
+                and by_phone is not None
+                and str(getattr(by_cid, "id")) != str(getattr(by_phone, "id"))
+            ):
                 return None, "contact_id and phone_number refer to different contacts."
-            return (by_cid or by_phone), None
+            if by_cid is not None:
+                return by_cid, None
+            return by_phone, None
         if cid:
             return by_cid, None
         return by_phone, None
@@ -857,7 +871,7 @@ class ConversationSLATrackingService:
                 "Conversation SLA tracking",
                 f"respond_contact_id={respond_contact_id}, policy_id={policy_id}",
             )
-        if tracking.is_resolved:
+        if bool(getattr(tracking, "is_resolved", False)):
             raise handle_validation_error(
                 "Cannot escalate a resolved conversation SLA tracking."
             )
@@ -873,29 +887,46 @@ class ConversationSLATrackingService:
 
         from_tier = tracking.current_tier
         now_utc = _now_utc()
-        initiated_at_utc = _to_aware_utc(tracking.initiated_at)
-        response_hours = tier.response_hours if tier.response_hours is not None else 24
-        resolution_hours = getattr(tier, "resolution_hours", None) or 24
+        initiated_at_raw = getattr(tracking, "initiated_at", None)
+        initiated_at_utc = _to_aware_utc(
+            initiated_at_raw if isinstance(initiated_at_raw, datetime) else None
+        )
+        response_hours_raw = getattr(tier, "response_hours", None)
+        response_hours = float(response_hours_raw) if response_hours_raw is not None else 24.0
+        resolution_hours_raw = getattr(tier, "resolution_hours", None)
+        resolution_hours = float(resolution_hours_raw) if resolution_hours_raw is not None else 24.0
 
-        tracking.current_tier = current_tier
-        tracking.current_tier_started_at = now_utc
-        tracking.escalated_at = now_utc
-        tracking.escalation_reason = escalation_reason
-        tracking.due_at = now_utc + timedelta(hours=response_hours)
+        setattr(tracking, "current_tier", current_tier)
+        setattr(tracking, "current_tier_started_at", now_utc)
+        setattr(tracking, "escalated_at", now_utc)
+        setattr(tracking, "escalation_reason", escalation_reason)
+        setattr(tracking, "due_at", now_utc + timedelta(hours=response_hours))
         # On escalation, due_at_resolution = escalation time (now) + resolution_hours from policy
-        tracking.due_at_resolution = now_utc + timedelta(hours=resolution_hours)
+        setattr(tracking, "due_at_resolution", now_utc + timedelta(hours=resolution_hours))
 
         self.db.flush()
         self.create_event_log(
             ConversationSLAEventLogCreate(
-                sla_tracking_id=tracking.id,
+                sla_tracking_id=str(getattr(tracking, "id")),
                 event_type="escalation",
-                from_tier=from_tier,
+                from_tier=(
+                    int(from_tier)
+                    if isinstance(from_tier, (int, str, float))
+                    else None
+                ),
                 to_tier=current_tier,
                 event_at=now_utc,
                 reason=escalation_reason,
-                assigned_to_id=tracking.assigned_to_id,
-                due_at=tracking.due_at,
+                assigned_to_id=(
+                    str(getattr(tracking, "assigned_to_id"))
+                    if getattr(tracking, "assigned_to_id", None) is not None
+                    else None
+                ),
+                due_at=(
+                    getattr(tracking, "due_at")
+                    if isinstance(getattr(tracking, "due_at", None), datetime)
+                    else None
+                ),
             )
         )
         self.db.refresh(tracking)
@@ -926,7 +957,7 @@ class ConversationSLATrackingService:
             )
             .first()
         )
-        if not tracking or not tracking.assigned_to_id:
+        if tracking is None or getattr(tracking, "assigned_to_id", None) is None:
             return None
         user = tracking.assigned_user
         if not user:
@@ -984,8 +1015,10 @@ class ConversationSLATrackingService:
         except Exception as e:
             logger.exception("Respond.io get_contact_by_phone failed for tracking %s", tracking_id)
             resp_payload = None
-            if hasattr(e, "response") and getattr(e.response, "text", None):
-                resp_payload = e.response.text[:2000] if len(e.response.text) > 2000 else e.response.text
+            response_obj = getattr(e, "response", None)
+            response_text = getattr(response_obj, "text", None)
+            if isinstance(response_text, str) and response_text:
+                resp_payload = response_text[:2000] if len(response_text) > 2000 else response_text
             log_service.create_integration_log(
                 IntegrationLogCreate(
                     integration_channel="respond_io",
@@ -1031,7 +1064,7 @@ class ConversationSLATrackingService:
                 "message": f"Sync successful. No user in CRM with respond_user_id '{assignee_respond_id}'; Assigned To unchanged. Link Respond.io user ID in User Management to sync.",
             }
 
-        if tracking.assigned_to_id == user.id:
+        if str(getattr(tracking, "assigned_to_id", "")) == str(getattr(user, "id")):
             return {"updated": False, "message": "Sync successful. Assignee already in sync."}
 
         self.update_tracking(tracking_id, ConversationSLATrackingUpdate(assigned_to=assignee_respond_id))
@@ -1199,8 +1232,10 @@ class ConversationSLATrackingService:
 
         # Calculate due_at (response) and due_at_resolution from current_tier_started_at + tier hours
         current_tier_started_at = _to_aware_utc(tracking_dict["current_tier_started_at"])
-        response_hours = tier.response_hours if tier.response_hours is not None else 24
-        resolution_hours = getattr(tier, "resolution_hours", None) or 24
+        response_hours_raw = getattr(tier, "response_hours", None)
+        response_hours = float(response_hours_raw) if response_hours_raw is not None else 24.0
+        resolution_hours_raw = getattr(tier, "resolution_hours", None)
+        resolution_hours = float(resolution_hours_raw) if resolution_hours_raw is not None else 24.0
         if current_tier_started_at:
             tracking_dict["due_at"] = current_tier_started_at + timedelta(hours=response_hours)
             tracking_dict["due_at_resolution"] = current_tier_started_at + timedelta(hours=resolution_hours)
@@ -1215,7 +1250,7 @@ class ConversationSLATrackingService:
         
         if existing:
             # Block if the existing tracking is still active — caller must resolve it first.
-            if not existing.is_resolved:
+            if not bool(getattr(existing, "is_resolved", False)):
                 from app.services.error_handler import handle_conflict
                 raise handle_conflict(
                     f"An active (unresolved) SLA tracking already exists for this contact "
@@ -1235,9 +1270,9 @@ class ConversationSLATrackingService:
         # Create new tracking record (set due_at_resolution explicitly so it is never omitted)
         tracking = ConversationSLATracking(**tracking_dict)
         if tracking_dict.get("due_at_resolution") is not None:
-            tracking.due_at_resolution = tracking_dict["due_at_resolution"]
+            setattr(tracking, "due_at_resolution", tracking_dict["due_at_resolution"])
         if tracking_dict.get("due_at") is not None:
-            tracking.due_at = tracking_dict["due_at"]
+            setattr(tracking, "due_at", tracking_dict["due_at"])
         self.db.add(tracking)
         self.db.commit()
         self.db.refresh(tracking)
@@ -1246,6 +1281,7 @@ class ConversationSLATrackingService:
     def update_tracking(self, tracking_id: str, tracking_data: ConversationSLATrackingUpdate):
         """Update a tracking record."""
         from datetime import datetime, timezone
+        from decimal import Decimal, ROUND_HALF_UP
         from app.models.user import User
         
         tracking = self.get_tracking(tracking_id)
@@ -1274,7 +1310,9 @@ class ConversationSLATrackingService:
             update_data["assigned_to_id"] = None
 
         # Resolve assigned_to to assigned_to_id when it's a non-empty string
-        if "assigned_to_id" not in update_data and update_data.get("assigned_to"):
+        if "assigned_to_id" not in update_data and (
+            update_data.get("assigned_to") is not None and str(update_data.get("assigned_to")).strip()
+        ):
             assigned_to_value = str(update_data["assigned_to"]).strip()
             user = self.db.query(User).filter(
                 (User.respond_user_id == assigned_to_value) |
@@ -1298,7 +1336,7 @@ class ConversationSLATrackingService:
 
         # Smart handling for is_responded (same as responded_at / responded_by)
         if is_responded:
-            if tracking.is_responded:
+            if bool(getattr(tracking, "is_responded", False)):
                 raise handle_validation_error("Conversation is already responded.")
             _resp_by = update_data.get("responded_by")
             if _resp_by is None or (isinstance(_resp_by, str) and not str(_resp_by).strip()):
@@ -1316,12 +1354,17 @@ class ConversationSLATrackingService:
                 if isinstance(responded_at, str):
                     responded_at = datetime.fromisoformat(responded_at.replace('Z', '+00:00'))
                 responded_at_utc = _to_aware_utc(responded_at)
-                initiated_at = tracking.initiated_at
-                if initiated_at and responded_at_utc:
+                initiated_at = getattr(tracking, "initiated_at", None)
+                if isinstance(initiated_at, datetime) and responded_at_utc:
                     initiated_at_utc_val = _to_aware_utc(initiated_at)
-                    from decimal import Decimal, ROUND_HALF_UP
-                    duration = (responded_at_utc - initiated_at_utc_val).total_seconds() / 3600
-                    update_data["response_time"] = Decimal(str(max(0, duration))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    duration = (
+                        (responded_at_utc - initiated_at_utc_val).total_seconds() / 3600
+                        if initiated_at_utc_val is not None
+                        else 0.0
+                    )
+                    update_data["response_time"] = Decimal(str(max(0, duration))).quantize(
+                        Decimal("0.01"), rounding=ROUND_HALF_UP
+                    )
             
             # Resolve responded_by to user UUID (users.id); accept respond_user_id, email, or id
             if "responded_by" in update_data and update_data.get("responded_by"):
@@ -1345,7 +1388,7 @@ class ConversationSLATrackingService:
         # Smart handling for is_resolved (same pattern: resolved_at, resolution_duration, resolved_by as user UUID)
         resolved_in_this_request = False
         if is_resolved:
-            if tracking.is_resolved:
+            if bool(getattr(tracking, "is_resolved", False)):
                 raise handle_validation_error("Conversation is already resolved.")
             resolved_in_this_request = True
             _res_by = update_data.get("resolved_by")
@@ -1371,12 +1414,17 @@ class ConversationSLATrackingService:
                 if isinstance(resolved_at, str):
                     resolved_at = datetime.fromisoformat(resolved_at.replace('Z', '+00:00'))
                 resolved_at_utc = _to_aware_utc(resolved_at)
-                initiated_at = tracking.initiated_at
-                if initiated_at and resolved_at_utc:
+                initiated_at = getattr(tracking, "initiated_at", None)
+                if isinstance(initiated_at, datetime) and resolved_at_utc:
                     initiated_at_utc_val = _to_aware_utc(initiated_at)
-                    from decimal import Decimal, ROUND_HALF_UP
-                    duration = (resolved_at_utc - initiated_at_utc_val).total_seconds() / 3600
-                    update_data["resolution_duration"] = Decimal(str(max(0, duration))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                    duration = (
+                        (resolved_at_utc - initiated_at_utc_val).total_seconds() / 3600
+                        if initiated_at_utc_val is not None
+                        else 0.0
+                    )
+                    update_data["resolution_duration"] = Decimal(str(max(0, duration))).quantize(
+                        Decimal("0.01"), rounding=ROUND_HALF_UP
+                    )
             
             # Resolve resolved_by to user UUID (users.id); accept respond_user_id (e.g. 971724), email, or id
             if "resolved_by" in update_data and update_data.get("resolved_by") is not None:
@@ -1450,8 +1498,8 @@ class ConversationSLATrackingService:
         if "assigned_to_id" in updates:
             aid = updates["assigned_to_id"]
             if aid is None or (isinstance(aid, str) and not str(aid).strip()):
-                tracking.assigned_to_id = None
-                tracking.assigned_to = None
+                setattr(tracking, "assigned_to_id", None)
+                setattr(tracking, "assigned_to", None)
                 assign_changed = (
                     old_assigned_to_id is not None or old_assigned_to is not None
                 )
@@ -1459,9 +1507,11 @@ class ConversationSLATrackingService:
                 user = self.db.query(User).filter(User.id == str(aid).strip()).first()
                 if not user:
                     raise handle_validation_error("User not found for assigned_to_id.")
-                tracking.assigned_to_id = user.id
-                tracking.assigned_to = (
-                    str(user.respond_user_id) if user.respond_user_id is not None else None
+                setattr(tracking, "assigned_to_id", str(getattr(user, "id")))
+                setattr(
+                    tracking,
+                    "assigned_to",
+                    str(user.respond_user_id) if user.respond_user_id is not None else None,
                 )
                 assign_changed = str(old_assigned_to_id or "") != str(user.id)
 
@@ -1472,7 +1522,9 @@ class ConversationSLATrackingService:
             if not isinstance(raw, datetime):
                 raise handle_validation_error("current_tier_started_at must be a datetime.")
             started = _to_aware_utc(raw)
-            tracking.current_tier_started_at = started
+            if started is None:
+                raise handle_validation_error("current_tier_started_at must be a valid datetime.")
+            setattr(tracking, "current_tier_started_at", started)
 
             tier = self.db.query(SLAPolicyTier).filter(
                 SLAPolicyTier.policy_id == tracking.policy_id,
@@ -1482,12 +1534,19 @@ class ConversationSLATrackingService:
                 raise handle_validation_error(
                     f"No tier {tracking.current_tier} for this policy."
                 )
-            response_hours = tier.response_hours if tier.response_hours is not None else 24
-            resolution_hours = getattr(tier, "resolution_hours", None) or 24
-            tracking.due_at = started + timedelta(hours=response_hours)
-            tracking.due_at_resolution = started + timedelta(hours=resolution_hours)
+            response_hours_raw = getattr(tier, "response_hours", None)
+            response_hours = float(response_hours_raw) if response_hours_raw is not None else 24.0
+            resolution_hours_raw = getattr(tier, "resolution_hours", None)
+            resolution_hours = float(resolution_hours_raw) if resolution_hours_raw is not None else 24.0
+            setattr(tracking, "due_at", started + timedelta(hours=response_hours))
+            setattr(tracking, "due_at_resolution", started + timedelta(hours=resolution_hours))
             current_tier_started_changed = (
-                _to_aware_utc(old_current_tier_started_at) != started
+                _to_aware_utc(
+                    old_current_tier_started_at
+                    if isinstance(old_current_tier_started_at, datetime)
+                    else None
+                )
+                != started
             )
 
         if "initiated_at" in updates:
@@ -1497,8 +1556,13 @@ class ConversationSLATrackingService:
             if not isinstance(raw, datetime):
                 raise handle_validation_error("initiated_at must be a datetime.")
             initiated = _to_aware_utc(raw)
-            tracking.initiated_at = initiated
-            initiated_at_changed = _to_aware_utc(old_initiated_at) != initiated
+            if initiated is None:
+                raise handle_validation_error("initiated_at must be a valid datetime.")
+            setattr(tracking, "initiated_at", initiated)
+            initiated_at_changed = (
+                _to_aware_utc(old_initiated_at if isinstance(old_initiated_at, datetime) else None)
+                != initiated
+            )
 
         # Delegate is_responded / is_resolved to the smart update logic (handles auto-calc, validation).
         status_updates = {}
@@ -1523,45 +1587,81 @@ class ConversationSLATrackingService:
             )
             self.create_event_log(
                 ConversationSLAEventLogCreate(
-                    sla_tracking_id=tracking.id,
+                    sla_tracking_id=str(getattr(tracking, "id")),
                     event_type="assign",
-                    from_tier=tracking.current_tier,
-                    to_tier=tracking.current_tier,
+                    from_tier=int(getattr(tracking, "current_tier", 0)),
+                    to_tier=int(getattr(tracking, "current_tier", 0)),
                     event_at=now_utc,
                     reason=reason,
-                    assigned_to=tracking.assigned_to,
-                    assigned_to_id=tracking.assigned_to_id,
-                    due_at=tracking.due_at,
+                    assigned_to=(
+                        str(getattr(tracking, "assigned_to"))
+                        if getattr(tracking, "assigned_to", None) is not None
+                        else None
+                    ),
+                    assigned_to_id=(
+                        str(getattr(tracking, "assigned_to_id"))
+                        if getattr(tracking, "assigned_to_id", None) is not None
+                        else None
+                    ),
+                    due_at=(
+                        getattr(tracking, "due_at")
+                        if isinstance(getattr(tracking, "due_at", None), datetime)
+                        else None
+                    ),
                 )
             )
 
         if current_tier_started_changed:
             self.create_event_log(
                 ConversationSLAEventLogCreate(
-                    sla_tracking_id=tracking.id,
+                    sla_tracking_id=str(getattr(tracking, "id")),
                     event_type="adjust",
-                    from_tier=tracking.current_tier,
-                    to_tier=tracking.current_tier,
+                    from_tier=int(getattr(tracking, "current_tier", 0)),
+                    to_tier=int(getattr(tracking, "current_tier", 0)),
                     event_at=now_utc,
                     reason="Adjusted current tier started at for testing.",
-                    assigned_to=tracking.assigned_to,
-                    assigned_to_id=tracking.assigned_to_id,
-                    due_at=tracking.due_at,
+                    assigned_to=(
+                        str(getattr(tracking, "assigned_to"))
+                        if getattr(tracking, "assigned_to", None) is not None
+                        else None
+                    ),
+                    assigned_to_id=(
+                        str(getattr(tracking, "assigned_to_id"))
+                        if getattr(tracking, "assigned_to_id", None) is not None
+                        else None
+                    ),
+                    due_at=(
+                        getattr(tracking, "due_at")
+                        if isinstance(getattr(tracking, "due_at", None), datetime)
+                        else None
+                    ),
                 )
             )
 
         if initiated_at_changed:
             self.create_event_log(
                 ConversationSLAEventLogCreate(
-                    sla_tracking_id=tracking.id,
+                    sla_tracking_id=str(getattr(tracking, "id")),
                     event_type="adjust",
-                    from_tier=tracking.current_tier,
-                    to_tier=tracking.current_tier,
+                    from_tier=int(getattr(tracking, "current_tier", 0)),
+                    to_tier=int(getattr(tracking, "current_tier", 0)),
                     event_at=now_utc,
                     reason="Adjusted initiated at for testing.",
-                    assigned_to=tracking.assigned_to,
-                    assigned_to_id=tracking.assigned_to_id,
-                    due_at=tracking.due_at,
+                    assigned_to=(
+                        str(getattr(tracking, "assigned_to"))
+                        if getattr(tracking, "assigned_to", None) is not None
+                        else None
+                    ),
+                    assigned_to_id=(
+                        str(getattr(tracking, "assigned_to_id"))
+                        if getattr(tracking, "assigned_to_id", None) is not None
+                        else None
+                    ),
+                    due_at=(
+                        getattr(tracking, "due_at")
+                        if isinstance(getattr(tracking, "due_at", None), datetime)
+                        else None
+                    ),
                 )
             )
 
@@ -1572,14 +1672,19 @@ class ConversationSLATrackingService:
 
             if status_updates.get("is_responded") is True:
                 alabel, aid = event_log_assignee_fields(
-                    self.db, updated_tracking.responded_by
+                    self.db,
+                    (
+                        str(getattr(updated_tracking, "responded_by"))
+                        if getattr(updated_tracking, "responded_by", None) is not None
+                        else None
+                    ),
                 )
                 self.create_event_log(
                     ConversationSLAEventLogCreate(
                         sla_tracking_id=tracking_id,
                         event_type="response",
-                        from_tier=updated_tracking.current_tier,
-                        to_tier=updated_tracking.current_tier,
+                        from_tier=int(getattr(updated_tracking, "current_tier", 0)),
+                        to_tier=int(getattr(updated_tracking, "current_tier", 0)),
                         assigned_to=alabel,
                         assigned_to_id=aid,
                         reason="Responded",
@@ -1588,14 +1693,19 @@ class ConversationSLATrackingService:
 
             if status_updates.get("is_resolved") is True:
                 alabel, aid = event_log_assignee_fields(
-                    self.db, updated_tracking.resolved_by
+                    self.db,
+                    (
+                        str(getattr(updated_tracking, "resolved_by"))
+                        if getattr(updated_tracking, "resolved_by", None) is not None
+                        else None
+                    ),
                 )
                 self.create_event_log(
                     ConversationSLAEventLogCreate(
                         sla_tracking_id=tracking_id,
                         event_type="resolution",
-                        from_tier=updated_tracking.current_tier,
-                        to_tier=updated_tracking.current_tier,
+                        from_tier=int(getattr(updated_tracking, "current_tier", 0)),
+                        to_tier=int(getattr(updated_tracking, "current_tier", 0)),
                         assigned_to=alabel,
                         assigned_to_id=aid,
                         reason="Resolved",
@@ -1680,18 +1790,18 @@ class ConversationSLATrackingService:
                 ConversationSLATracking.id == log_dict["sla_tracking_id"]
             ).first()
             
-            if tracking and tracking.initiated_at:
+            if tracking is not None and isinstance(getattr(tracking, "initiated_at", None), datetime):
                 # Set from_time to initiated_at (UTC)
-                initiated_at = tracking.initiated_at
+                initiated_at = getattr(tracking, "initiated_at", None)
                 if isinstance(initiated_at, str):
-                    initiated_at = datetime.fromisoformat(initiated_at.replace('Z', '+00:00'))
+                    initiated_at = datetime.fromisoformat(initiated_at.replace("Z", "+00:00"))
                 log_dict["from_time"] = _to_aware_utc(initiated_at) if isinstance(initiated_at, datetime) else initiated_at
                 
                 # Calculate duration from initiated_at to event_at (UTC)
                 event_at = log_dict["event_at"]
                 if isinstance(event_at, str):
-                    event_at = datetime.fromisoformat(event_at.replace('Z', '+00:00'))
-                initiated_at_utc = _to_aware_utc(initiated_at)
+                    event_at = datetime.fromisoformat(str(event_at).replace("Z", "+00:00"))
+                initiated_at_utc = _to_aware_utc(initiated_at if isinstance(initiated_at, datetime) else None)
                 event_at_utc = _to_aware_utc(event_at)
                 if initiated_at_utc and event_at_utc:
                     duration_seconds = (event_at_utc - initiated_at_utc).total_seconds()
@@ -1705,7 +1815,7 @@ class ConversationSLATrackingService:
                     if event_type == "response"
                     else tracking.resolved_by
                 )
-                if uid_ref:
+                if uid_ref is not None and str(uid_ref).strip():
                     label, uid = event_log_assignee_fields(self.db, str(uid_ref))
                     if uid:
                         log_dict["assigned_to_id"] = uid
@@ -1734,7 +1844,7 @@ class ConversationSLATrackingService:
         """List SLA event logs with filtering. date_from/date_to filter on event_at (inclusive, UTC)."""
         from datetime import datetime, timezone
         from sqlalchemy.orm import joinedload
-        from app.schemas.common import ListResponse
+        from app.schemas.common import ListResponse, PaginationResponse
         from app.schemas.sla import ConversationSLAEventLogResponse
 
         q = self.db.query(ConversationSLAEventLog).options(
@@ -1822,11 +1932,7 @@ class ConversationSLATrackingService:
 
         return ListResponse(
             data=data,
-            pagination={
-                "total": total,
-                "page": page,
-                "limit": limit
-            }
+            pagination=PaginationResponse(total=total, page=page, limit=limit),
         )
     
     def get_dashboard_metrics(self):
@@ -1837,12 +1943,15 @@ class ConversationSLATrackingService:
         def _safe_log_hours(log: ConversationSLAEventLog, kind: str) -> Optional[float]:
             try:
                 # Prefer duration; fallback to explicit fields for older data.
-                if log.duration is not None:
-                    return float(log.duration) if isinstance(log.duration, Decimal) else float(log.duration)
-                if kind == "response" and log.response_time is not None:
-                    return float(log.response_time) if isinstance(log.response_time, Decimal) else float(log.response_time)
-                if kind == "resolution" and log.resolution_time is not None:
-                    return float(log.resolution_time) if isinstance(log.resolution_time, Decimal) else float(log.resolution_time)
+                duration = getattr(log, "duration", None)
+                response_time = getattr(log, "response_time", None)
+                resolution_time = getattr(log, "resolution_time", None)
+                if isinstance(duration, (Decimal, int, float, str)):
+                    return float(duration)
+                if kind == "response" and isinstance(response_time, (Decimal, int, float, str)):
+                    return float(response_time)
+                if kind == "resolution" and isinstance(resolution_time, (Decimal, int, float, str)):
+                    return float(resolution_time)
             except (TypeError, ValueError):
                 return None
             return None
@@ -1857,10 +1966,14 @@ class ConversationSLATrackingService:
         resolution_logs = [l for l in all_logs if (l.event_type or "").lower() == "resolution"]
 
         total_trackings = len(all_trackings)
-        responded_count = sum(1 for t in all_trackings if t.is_responded)
-        resolved_count = sum(1 for t in all_trackings if t.is_resolved)
+        responded_count = sum(1 for t in all_trackings if bool(getattr(t, "is_responded", False)))
+        resolved_count = sum(1 for t in all_trackings if bool(getattr(t, "is_resolved", False)))
         pending_count = total_trackings - responded_count  # not yet responded
-        responded_not_resolved_count = sum(1 for t in all_trackings if t.is_responded and not t.is_resolved)
+        responded_not_resolved_count = sum(
+            1
+            for t in all_trackings
+            if bool(getattr(t, "is_responded", False)) and not bool(getattr(t, "is_resolved", False))
+        )
         escalated_count = sum(1 for t in all_trackings if t.escalated_at is not None)
 
         # Overdue: not responded and due_at passed; not resolved and due_at_resolution passed
@@ -1868,15 +1981,17 @@ class ConversationSLATrackingService:
         overdue_at_resolution_count = 0
         overdue_at_resolution_responded_count = 0
         for t in all_trackings:
-            if not t.is_responded and t.due_at:
-                due_at_utc = _to_aware_utc(t.due_at)
+            if not bool(getattr(t, "is_responded", False)) and getattr(t, "due_at", None) is not None:
+                due_at_raw = getattr(t, "due_at", None)
+                due_at_utc = _to_aware_utc(due_at_raw if isinstance(due_at_raw, datetime) else None)
                 if due_at_utc and due_at_utc < now_utc:
                     overdue_at_response_count += 1
-            if not t.is_resolved and getattr(t, "due_at_resolution", None):
-                due_res_utc = _to_aware_utc(t.due_at_resolution)
+            if not bool(getattr(t, "is_resolved", False)) and getattr(t, "due_at_resolution", None) is not None:
+                due_res_raw = getattr(t, "due_at_resolution", None)
+                due_res_utc = _to_aware_utc(due_res_raw if isinstance(due_res_raw, datetime) else None)
                 if due_res_utc and due_res_utc < now_utc:
                     overdue_at_resolution_count += 1
-                    if t.is_responded:
+                    if bool(getattr(t, "is_responded", False)):
                         overdue_at_resolution_responded_count += 1
 
         # Average durations (hours) from event logs
@@ -1899,12 +2014,14 @@ class ConversationSLATrackingService:
 
             day_response_logs = []
             for log in response_logs:
-                event_at = _to_aware_utc(log.event_at)
+                event_at_raw = getattr(log, "event_at", None)
+                event_at = _to_aware_utc(event_at_raw if isinstance(event_at_raw, datetime) else None)
                 if event_at and event_at >= thirty_days_ago and event_at.date().isoformat() == date_str:
                     day_response_logs.append(log)
             day_resolution_logs = []
             for log in resolution_logs:
-                event_at = _to_aware_utc(log.event_at)
+                event_at_raw = getattr(log, "event_at", None)
+                event_at = _to_aware_utc(event_at_raw if isinstance(event_at_raw, datetime) else None)
                 if event_at and event_at >= thirty_days_ago and event_at.date().isoformat() == date_str:
                     day_resolution_logs.append(log)
 
@@ -1922,9 +2039,13 @@ class ConversationSLATrackingService:
         # Escalation rates by tier
         escalation_by_tier = {}
         for t in all_trackings:
-            if t.escalated_at and t.current_tier is not None:
+            if getattr(t, "escalated_at", None) is not None and getattr(t, "current_tier", None) is not None:
                 try:
-                    tier_level = int(t.current_tier) if isinstance(t.current_tier, (int, str)) else int(float(t.current_tier))
+                    tier_value = getattr(t, "current_tier", None)
+                    if isinstance(tier_value, (int, str, float)):
+                        tier_level = int(tier_value)
+                    else:
+                        tier_level = 0
                 except (TypeError, ValueError):
                     tier_level = 0
                 escalation_by_tier[tier_level] = escalation_by_tier.get(tier_level, 0) + 1

@@ -81,26 +81,6 @@ export async function deletePurchaseRequestAttachment(linkId: string): Promise<v
   }
 }
 
-export interface PurchaseRequestNeighbours {
-  prev_id: string | null;
-  next_id: string | null;
-  total_count?: number;
-  current_index?: number;
-}
-
-export async function getPurchaseRequestNeighbours(
-  requestId: string,
-  requestType?: string | null,
-): Promise<PurchaseRequestNeighbours> {
-  const params = new URLSearchParams({ id: requestId });
-  if (requestType) params.set('request_type', requestType);
-  const response = await apiFetch(
-    `/api/v1/procurement/purchase-requests/neighbours?${params.toString()}`,
-  );
-  if (!response.ok) return { prev_id: null, next_id: null, total_count: 0, current_index: 0 };
-  return response.json();
-}
-
 function toRequestBody(data: PurchaseRequestFormData) {
   const products = (data.products ?? []).map((p) => ({
     item_code: p.item_code ?? null,

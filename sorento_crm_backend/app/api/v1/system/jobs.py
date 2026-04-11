@@ -16,7 +16,7 @@ router = APIRouter()
 @router.get("/jobs", response_model=ListResponse[ImportJobResponse])
 async def list_jobs(
     job_type: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     current_user: dict = Depends(get_current_user),
@@ -28,13 +28,13 @@ async def list_jobs(
         
         job_service = JobService(db)
         job_status = None
-        if status:
+        if status_filter:
             try:
-                job_status = JobStatus(status)
+                job_status = JobStatus(status_filter)
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid status: {status}"
+                    detail=f"Invalid status: {status_filter}"
                 )
         
         offset = (page - 1) * limit
@@ -48,7 +48,7 @@ async def list_jobs(
         
         # Sync status from RQ
         for job in jobs:
-            job_service.sync_job_status(job.job_id)
+            job_service.sync_job_status(str(getattr(job, "job_id")))
         
         # Get actual total count
         count_query = job_service.db.query(ImportJob).filter(ImportJob.user_id == current_user["id"])
@@ -123,7 +123,7 @@ async def get_job(
             )
         
         # Sync status from RQ (use job.job_id, the RQ id)
-        job_service.sync_job_status(job.job_id)
+        job_service.sync_job_status(str(getattr(job, "job_id")))
         
         # Refresh job from DB
         db.refresh(job)
@@ -180,18 +180,23 @@ async def get_job_status(
             )
         
         # Sync status from RQ (use job.job_id, the RQ id)
-        job_service.sync_job_status(job.job_id)
+        job_service.sync_job_status(str(getattr(job, "job_id")))
         db.refresh(job)
         
         progress = None
-        if job.total_rows > 0:
+        total_rows = getattr(job, "total_rows", 0)
+        processed_rows = getattr(job, "processed_rows", 0)
+        successful_rows = getattr(job, "successful_rows", 0)
+        failed_rows = getattr(job, "failed_rows", 0)
+        skipped_rows = getattr(job, "skipped_rows", 0)
+        if isinstance(total_rows, int) and total_rows > 0:
             progress = {
-                'total': job.total_rows,
-                'processed': job.processed_rows,
-                'successful': job.successful_rows,
-                'failed': job.failed_rows,
-                'skipped': job.skipped_rows,
-                'percentage': int((job.processed_rows / job.total_rows) * 100) if job.total_rows > 0 else 0
+                'total': total_rows,
+                'processed': processed_rows,
+                'successful': successful_rows,
+                'failed': failed_rows,
+                'skipped': skipped_rows,
+                'percentage': int((processed_rows / total_rows) * 100) if total_rows > 0 else 0
             }
         
         return {

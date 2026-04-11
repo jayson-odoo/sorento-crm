@@ -90,7 +90,7 @@ async def get_packing_list(
             product_key = str(allocation.product_id)
             normalized_spo = (
                 str(allocation.spo_number).strip().replace("/", ".").replace("\\", ".")
-                if allocation.spo_number
+                if allocation.spo_number is not None
                 else None
             )
             related_spo_by_product.setdefault(product_key, []).append(

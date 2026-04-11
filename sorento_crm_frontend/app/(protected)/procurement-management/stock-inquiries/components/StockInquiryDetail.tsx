@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -26,7 +26,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useStockInquiry,
-  useStockInquiryNeighbours,
+  useStockInquiries,
   useUpdateStockInquiry,
   useSubmitStockInquiryForProjectSales,
   useProjectSalesApproveStockInquiry,
@@ -60,7 +60,17 @@ export default function StockInquiryDetail({
   const { data: inquiry, isLoading } = useStockInquiry(
     isValidId ? inquiryId : null,
   );
-  const { data: neighbours } = useStockInquiryNeighbours(isValidId ? inquiryId : null);
+  const navParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 50,
+      sorting: [{ id: 'created_at', desc: true }],
+      searchQuery: '',
+    }),
+    [],
+  );
+  const { data: inquiryListData } = useStockInquiries(navParams);
+  const inquiryListItems = inquiryListData?.data ?? [];
   const updateInquiryMutation = useUpdateStockInquiry();
   const submitForProjectSalesMutation = useSubmitStockInquiryForProjectSales();
   const projectSalesApproveMutation = useProjectSalesApproveStockInquiry();
@@ -375,8 +385,8 @@ export default function StockInquiryDetail({
           </DetailActionsMenu>
           <RecordNavigation
             basePath="/procurement-management/stock-inquiries"
-            prevId={neighbours?.prev_id ?? null}
-            nextId={neighbours?.next_id ?? null}
+            currentId={inquiryId}
+            items={inquiryListItems}
             ariaLabel="stock inquiry"
           />
         </div>

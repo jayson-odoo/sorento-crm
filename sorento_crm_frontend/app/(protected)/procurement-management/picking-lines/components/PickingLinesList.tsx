@@ -53,7 +53,7 @@ export default function PickingLinesList() {
     [pagination.pageIndex, pagination.pageSize, sortField, sortDir, searchQuery],
   );
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['picking-lines', params],
     queryFn: () => getPickingLines(params),
   });
@@ -150,6 +150,8 @@ export default function PickingLinesList() {
       isLoading={isLoading}
     
       tableLayout={{ columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">

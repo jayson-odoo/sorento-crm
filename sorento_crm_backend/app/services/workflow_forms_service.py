@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 CODE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,98}$", re.I)
 
+
+def _as_schema_dict(raw: Any) -> Dict[str, Any]:
+    return raw if isinstance(raw, dict) else {}
+
 ALLOWED_FIELD_TYPES = frozenset(
     {
         "text",
@@ -200,10 +204,16 @@ def validate_schema(schema: Dict[str, Any]) -> List[str]:
     return errors
 
 
-def _state_id_to_code(schema: Dict[str, Any], state_id: str) -> Optional[str]:
+def _state_id_to_code(schema: Dict[str, Any], state_id: Optional[str]) -> Optional[str]:
+    if state_id is None:
+        return None
+    sid = str(state_id).strip()
+    if not sid:
+        return None
     for s in schema.get("states") or []:
-        if isinstance(s, dict) and s.get("id") == state_id:
-            return s.get("code")
+        if isinstance(s, dict) and s.get("id") == sid:
+            out = s.get("code")
+            return str(out) if out is not None else None
     return None
 
 
@@ -283,10 +293,13 @@ def _validate_data_against_fields(fields: List[Dict[str, Any]], data: Dict[str, 
 
         # light type checks
         if val is not None and val != "" and ft == "number":
-            try:
-                float(val)
-            except (TypeError, ValueError):
+            if isinstance(val, (dict, list)):
                 errs.append(f"{path}: '{fid}' must be a number.")
+            else:
+                try:
+                    float(val)
+                except (TypeError, ValueError):
+                    errs.append(f"{path}: '{fid}' must be a number.")
         if val is not None and val != "" and ft == "email" and isinstance(val, str) and "@" not in val:
             errs.append(f"{path}: '{fid}' must look like an email.")
 
@@ -434,15 +447,16 @@ class WorkflowFormsService:
 
     def _def_out(self, d: WorkflowFormDefinition) -> Dict[str, Any]:
         pub_ver = None
-        if d.published_version_id:
-            pub_ver = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == d.published_version_id).first()
+        pvid = getattr(d, "published_version_id", None)
+        if pvid is not None and str(pvid).strip() != "":
+            pub_ver = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == pvid).first()
         return {
             "id": d.id,
             "code": d.code,
             "name": d.name,
             "description": d.description,
             "is_active": d.is_active,
-            "draft_schema": d.draft_schema or {},
+            "draft_schema": _as_schema_dict(getattr(d, "draft_schema", None)),
             "published_version_id": d.published_version_id,
             "published_version_number": pub_ver.version_number if pub_ver else None,
             "created_at": d.created_at,
@@ -488,24 +502,24 @@ class WorkflowFormsService:
     ) -> WorkflowFormDefinition:
         d = self.get_definition(definition_id)
         if name is not None:
-            d.name = name.strip()
+            setattr(d, "name", name.strip())
         if description is not None:
-            d.description = description
+            setattr(d, "description", description)
         if is_active is not None:
-            d.is_active = is_active
+            setattr(d, "is_active", is_active)
         if draft_schema is not None:
             errs = validate_schema(draft_schema)
             if errs:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": errs})
-            d.draft_schema = draft_schema
-        d.updated_at = datetime.utcnow()
+            setattr(d, "draft_schema", draft_schema)
+        setattr(d, "updated_at", datetime.utcnow())
         self.db.commit()
         self.db.refresh(d)
         return d
 
     def publish_definition(self, definition_id: str, user_id: str) -> WorkflowFormVersion:
         d = self.get_definition(definition_id)
-        schema = d.draft_schema or {}
+        schema = _as_schema_dict(getattr(d, "draft_schema", None))
         errs = validate_schema(schema)
         if errs:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": errs})
@@ -517,15 +531,15 @@ class WorkflowFormsService:
         next_ver = (max_ver or 0) + 1
         v = WorkflowFormVersion(
             id=str(uuid.uuid4()),
-            definition_id=d.id,
+            definition_id=str(getattr(d, "id", "") or ""),
             version_number=next_ver,
             schema=schema,
             created_by_user_id=user_id,
         )
         self.db.add(v)
         self.db.flush()
-        d.published_version_id = v.id
-        d.updated_at = datetime.utcnow()
+        setattr(d, "published_version_id", getattr(v, "id", None))
+        setattr(d, "updated_at", datetime.utcnow())
         self.db.commit()
         self.db.refresh(v)
         return v
@@ -533,13 +547,14 @@ class WorkflowFormsService:
     def preview(self, definition_id: str, source: str = "draft") -> Tuple[Dict[str, Any], str]:
         d = self.get_definition(definition_id)
         if source == "published":
-            if not d.published_version_id:
+            pvid = getattr(d, "published_version_id", None)
+            if pvid is None or str(pvid).strip() == "":
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No published version.")
-            v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == d.published_version_id).first()
+            v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == pvid).first()
             if not v:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Published version missing.")
-            return v.schema, "published"
-        return d.draft_schema or {}, "draft"
+            return _as_schema_dict(getattr(v, "schema", None)), "published"
+        return _as_schema_dict(getattr(d, "draft_schema", None)), "draft"
 
     def delete_definition(self, definition_id: str) -> None:
         d = self.get_definition(definition_id)
@@ -647,8 +662,9 @@ class WorkflowFormsService:
         def_name: Optional[str] = None
         def_code: Optional[str] = None
         if getattr(s, "definition", None) is not None:
-            def_name = s.definition.name
-            def_code = s.definition.code
+            defn = s.definition
+            def_name = str(getattr(defn, "name", "") or "") or None
+            def_code = str(getattr(defn, "code", "") or "") or None
         else:
             d = (
                 self.db.query(WorkflowFormDefinition)
@@ -656,16 +672,17 @@ class WorkflowFormsService:
                 .first()
             )
             if d:
-                def_name = d.name
-                def_code = d.code
+                def_name = str(getattr(d, "name", "") or "") or None
+                def_code = str(getattr(d, "code", "") or "") or None
 
         form_schema: Optional[Dict[str, Any]] = None
         form_version_number: Optional[int] = None
         if include_form_schema:
             v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == s.version_id).first()
             if v:
-                form_schema = v.schema if isinstance(v.schema, dict) else {}
-                form_version_number = v.version_number
+                form_schema = _as_schema_dict(getattr(v, "schema", None))
+                vn = getattr(v, "version_number", None)
+                form_version_number = int(vn) if isinstance(vn, (int, float)) else None
 
         return {
             "id": s.id,
@@ -702,12 +719,13 @@ class WorkflowFormsService:
         user_id: str,
     ) -> WorkflowSubmission:
         d = self.get_definition(definition_id)
-        if not d.published_version_id:
+        pvid = getattr(d, "published_version_id", None)
+        if pvid is None or str(pvid).strip() == "":
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Form has no published version.")
-        v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == d.published_version_id).first()
+        v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == pvid).first()
         if not v:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Published version missing.")
-        schema = v.schema or {}
+        schema = _as_schema_dict(getattr(v, "schema", None))
         lines_payload = [{"line_group_id": x["line_group_id"], "row_data": x.get("row_data") or {}} for x in lines]
         errs = validate_submission_payload(schema, header_data, lines_payload)
         if errs:
@@ -751,14 +769,15 @@ class WorkflowFormsService:
         v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == s.version_id).first()
         if not v:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Version missing.")
-        schema = v.schema or {}
-        st = _state_by_code(schema, s.current_state_code)
+        schema = _as_schema_dict(getattr(v, "schema", None))
+        cur_code = str(getattr(s, "current_state_code", "") or "")
+        st = _state_by_code(schema, cur_code)
         if st and st.get("is_terminal"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot edit a terminal state.")
         roles = user_role_ids(self.db, user_id)
-        if not _can_edit_state(schema, s.current_state_code, roles):
+        if not _can_edit_state(schema, cur_code, roles):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot edit in this state.")
-        new_header = s.header_data or {}
+        new_header: Dict[str, Any] = _as_schema_dict(getattr(s, "header_data", None))
         if header_data is not None:
             new_header = header_data
         new_lines_payload: List[Dict[str, Any]] = []
@@ -790,9 +809,9 @@ class WorkflowFormsService:
         errs = validate_submission_payload(schema, new_header, new_lines_payload)
         if errs:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": errs})
-        s.header_data = new_header
-        s.updated_by_user_id = user_id
-        s.updated_at = datetime.utcnow()
+        setattr(s, "header_data", new_header)
+        setattr(s, "updated_by_user_id", user_id)
+        setattr(s, "updated_at", datetime.utcnow())
         self.db.commit()
         self.db.refresh(s)
         return s
@@ -813,23 +832,25 @@ class WorkflowFormsService:
         v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == s.version_id).first()
         if not v:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Version missing.")
-        schema = v.schema or {}
-        trans = _find_transition(schema, transition_id, s.current_state_code)
+        schema = _as_schema_dict(getattr(v, "schema", None))
+        cur_code = str(getattr(s, "current_state_code", "") or "")
+        trans = _find_transition(schema, transition_id, cur_code)
         if not trans:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid transition for current state.")
         roles = user_role_ids(self.db, user_id)
         if not _can_use_transition(trans, roles):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to use this transition.")
-        to_code = _state_id_to_code(schema, trans.get("to_state_id"))
+        to_sid = trans.get("to_state_id")
+        to_code = _state_id_to_code(schema, str(to_sid) if to_sid is not None else None)
         if not to_code:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Broken schema.")
-        from_code = s.current_state_code
-        s.current_state_code = to_code
-        s.updated_by_user_id = user_id
-        s.updated_at = datetime.utcnow()
+        from_code = cur_code
+        setattr(s, "current_state_code", to_code)
+        setattr(s, "updated_by_user_id", user_id)
+        setattr(s, "updated_at", datetime.utcnow())
         log = WorkflowSubmissionTransitionLog(
             id=str(uuid.uuid4()),
-            submission_id=s.id,
+            submission_id=str(getattr(s, "id", "") or ""),
             from_state_code=from_code,
             to_state_code=to_code,
             transition_id=transition_id,
@@ -838,7 +859,8 @@ class WorkflowFormsService:
         )
         self.db.add(log)
         self.db.flush()
-        self._fire_notifications(schema, s, trans, log.id, user_id)
+        log_id_str = str(getattr(log, "id", "") or "")
+        self._fire_notifications(schema, s, trans, log_id_str, user_id)
         self.db.commit()
         self.db.refresh(s)
         return s
@@ -856,10 +878,14 @@ class WorkflowFormsService:
             .filter(WorkflowFormDefinition.id == submission.definition_id)
             .first()
         )
-        title = f"Workflow: {definition.name if definition else 'Form'} — {transition.get('label') or 'Updated'}"
-        body = f"Submission {submission.id[:8]}… moved to {submission.current_state_code}."
+        sub_id = str(getattr(submission, "id", "") or "")
+        def_def_id = str(getattr(submission, "definition_id", "") or "")
+        sub_state = str(getattr(submission, "current_state_code", "") or "")
+        def_title = str(getattr(definition, "name", "") or "") if definition is not None else ""
+        title = f"Workflow: {def_title or 'Form'} — {transition.get('label') or 'Updated'}"
+        body = f"Submission {sub_id[:8]}… moved to {sub_state}."
         submitter_body = (
-            f'Your submission {submission.id[:8]}… is now in state "{submission.current_state_code}".'
+            f'Your submission {sub_id[:8]}… is now in state "{sub_state}".'
         )
         svc = NotificationService(self.db)
         # event_type must fit notifications.event_type (VARCHAR); log_id is unique per transition log
@@ -867,17 +893,18 @@ class WorkflowFormsService:
         submitter_event_type = f"{event_type}.submitter"
 
         # Always notify the original submitter when the workflow state changes (even if no builder rules).
-        submitter_id = submission.created_by_user_id
-        if submitter_id:
+        submitter_raw = getattr(submission, "created_by_user_id", None)
+        submitter_id = str(submitter_raw) if submitter_raw is not None else ""
+        if submitter_id.strip() != "":
             try:
                 svc.create(
-                    user_id=str(submitter_id),
+                    user_id=submitter_id,
                     type="workflow_forms.transition",
                     title=title,
                     body=submitter_body,
-                    data={"submission_id": submission.id, "definition_id": submission.definition_id},
+                    data={"submission_id": sub_id, "definition_id": def_def_id},
                     source_entity_type="workflow_submission",
-                    source_entity_id=str(submission.id),
+                    source_entity_id=sub_id,
                     event_type=submitter_event_type,
                 )
             except Exception as e:
@@ -906,7 +933,7 @@ class WorkflowFormsService:
             if str(uid) == str(actor_user_id):
                 continue
             # Submitter already received workflow_forms.tr.{log_id}.submitter
-            if submitter_id and str(uid) == str(submitter_id):
+            if submitter_id.strip() != "" and str(uid) == submitter_id:
                 continue
             try:
                 want_email = "email" in channels
@@ -917,9 +944,9 @@ class WorkflowFormsService:
                         type="workflow_forms.transition",
                         title=title,
                         body=body,
-                        data={"submission_id": submission.id, "definition_id": submission.definition_id},
+                        data={"submission_id": sub_id, "definition_id": def_def_id},
                         source_entity_type="workflow_submission",
-                        source_entity_id=str(submission.id),
+                        source_entity_id=sub_id,
                         event_type=event_type,
                     )
                 elif want_in_app:
@@ -929,7 +956,7 @@ class WorkflowFormsService:
                         title=title,
                         body=body,
                         source_entity_type="workflow_submission",
-                        source_entity_id=str(submission.id),
+                        source_entity_id=sub_id,
                         event_type=event_type,
                     )
                 elif want_email:
@@ -938,9 +965,9 @@ class WorkflowFormsService:
                         type="workflow_forms.transition",
                         title=title,
                         body=body,
-                        data={"submission_id": submission.id},
+                        data={"submission_id": sub_id},
                         source_entity_type="workflow_submission",
-                        source_entity_id=str(submission.id),
+                        source_entity_id=sub_id,
                         event_type=event_type,
                     )
             except Exception as e:
@@ -951,11 +978,12 @@ class WorkflowFormsService:
         v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == s.version_id).first()
         if not v:
             return []
-        schema = v.schema or {}
+        schema = _as_schema_dict(getattr(v, "schema", None))
         roles = user_role_ids(self.db, user_id)
+        cur_sc = str(getattr(s, "current_state_code", "") or "")
         from_id = None
         for st in schema.get("states") or []:
-            if isinstance(st, dict) and st.get("code") == s.current_state_code:
+            if isinstance(st, dict) and st.get("code") == cur_sc:
                 from_id = st.get("id")
                 break
         if not from_id:
@@ -967,7 +995,8 @@ class WorkflowFormsService:
             if t.get("from_state_id") != from_id:
                 continue
             if _can_use_transition(t, roles):
-                to_code = _state_id_to_code(schema, t.get("to_state_id"))
+                tid = t.get("to_state_id")
+                to_code = _state_id_to_code(schema, str(tid) if tid is not None else None)
                 out.append(
                     {
                         "id": t.get("id"),

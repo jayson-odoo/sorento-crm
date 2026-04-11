@@ -32,7 +32,7 @@ export default function PublicHolidaysList() {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [selectedHoliday, setSelectedHoliday] = useState<PublicHoliday | null>(null);
 
-  const { data, isLoading } = usePublicHolidays({
+  const { data, isLoading, refetch, isFetching } = usePublicHolidays({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -117,6 +117,8 @@ export default function PublicHolidaysList() {
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
       tableLayout={{ columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
       >
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">

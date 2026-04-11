@@ -1,5 +1,12 @@
 """
 Unit tests for ContactAccessTypeService: catalog validation, mapping resolution, default access levels.
+
+Allowed access type codes are whatever is active in the contact access type catalog (admin UI + Respond
+mappings sync)—not fixed to any two values. Tests use ``dealer`` / ``end_user`` as example rows unless
+stated otherwise.
+
+The only special case in code is ``_FALLBACK_DEFAULT_CODES`` when the catalog table has no active rows yet
+(bootstrap / pre-migration). That fallback is asserted in ``test_list_active_codes_returns_fallback_when_empty``.
 Run with: pytest tests/test_contact_access_type_service.py -v
 """
 import pytest
@@ -10,7 +17,7 @@ from app.services.error_handler import AppException
 
 
 def test_list_active_codes_returns_fallback_when_empty():
-    """When no rows in DB, list_active_codes returns fallback dealer/end_user."""
+    """When no active catalog rows, service uses bootstrap fallback (see contact_access_type_service._FALLBACK_DEFAULT_CODES)."""
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
     service = ContactAccessTypeService(mock_db)
@@ -19,15 +26,16 @@ def test_list_active_codes_returns_fallback_when_empty():
 
 
 def test_list_active_codes_returns_codes_from_catalog():
-    """list_active_codes returns codes from active catalog rows ordered by sort_order, code."""
+    """list_active_codes returns whatever codes are in the active catalog (ordered by sort_order, code)—not a fixed pair."""
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
         ("end_user",),
+        ("manager",),
         ("dealer",),
     ]
     service = ContactAccessTypeService(mock_db)
     codes = service.list_active_codes()
-    assert codes == ["end_user", "dealer"]
+    assert codes == ["end_user", "manager", "dealer"]
 
 
 def test_get_default_access_levels_same_as_active_codes():
@@ -53,7 +61,13 @@ def test_validate_access_levels_empty_raises():
     with pytest.raises(AppException) as exc_info:
         service.validate_access_levels([])
     assert exc_info.value.status_code == 400
-    assert "at least one" in (exc_info.value.detail or {}).get("message", "").lower()
+    raw_detail = exc_info.value.detail
+    msg = (
+        str(raw_detail.get("message", "") or "")
+        if isinstance(raw_detail, dict)
+        else str(raw_detail or "")
+    )
+    assert "at least one" in msg.lower()
 
 
 def test_validate_access_levels_invalid_code_raises():
@@ -71,7 +85,7 @@ def test_validate_access_levels_invalid_code_raises():
 
 
 def test_validate_access_levels_valid_returns_normalized():
-    """validate_access_levels returns deduplicated, stripped list when all codes are valid."""
+    """validate_access_levels returns deduplicated, stripped list when all codes are in the active catalog."""
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
         ("dealer",),
@@ -80,6 +94,17 @@ def test_validate_access_levels_valid_returns_normalized():
     service = ContactAccessTypeService(mock_db)
     result = service.validate_access_levels(["  dealer  ", "end_user", "dealer"])
     assert result == ["dealer", "end_user"]
+
+
+def test_validate_access_levels_accepts_any_catalog_code():
+    """Validation allows any code present in the catalog (e.g. manager)—not only legacy example codes."""
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
+        ("manager",),
+        ("dealer",),
+    ]
+    service = ContactAccessTypeService(mock_db)
+    assert service.validate_access_levels(["manager", "dealer"]) == ["manager", "dealer"]
 
 
 def test_resolve_respond_value_to_code_returns_none_for_empty():

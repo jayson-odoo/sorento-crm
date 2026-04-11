@@ -76,7 +76,7 @@ export default function PromotionsList() {
 
   const hasActiveFilters = filterStatus !== 'all' || filterAccessLevel !== 'all' || filterPromoType !== 'all';
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: [
       'promotions',
       pagination.pageIndex,
@@ -287,7 +287,15 @@ export default function PromotionsList() {
   });
 
   return (
-    <DataGrid table={table} tableLayout={{ columnsVisibility: true }} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}>
+    <DataGrid
+      table={table}
+      tableLayout={{ columnsVisibility: true }}
+      recordCount={data?.pagination.total || 0}
+      isLoading={isLoading}
+      onRowClick={handleRowClick}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="flex items-center gap-2">

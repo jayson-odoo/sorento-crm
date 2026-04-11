@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
-from app.schemas.external import (
+from app.schemas.external.attachments import (
     StockInquiryAttachmentLinkRequest,
     StockInquiryAttachmentLinkResponse,
 )

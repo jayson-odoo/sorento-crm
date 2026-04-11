@@ -34,7 +34,7 @@ export default function AccessAgentsList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [formModalOpen, setFormModalOpen] = useState(false);
 
-  const { data, isLoading } = useAccessAgents({
+  const { data, isLoading, refetch, isFetching } = useAccessAgents({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -115,6 +115,8 @@ export default function AccessAgentsList() {
       isLoading={isLoading}
       onRowClick={handleRowClick}
       tableLayout={{ columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <ListPageToolbar

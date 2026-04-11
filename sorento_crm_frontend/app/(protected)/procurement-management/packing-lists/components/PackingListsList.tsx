@@ -26,7 +26,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { usePackingLists } from '../hooks/usePackingLists';
 import type { PackingList } from '../types/packingList.types';
-import { formatDate } from '@/lib/helpers';
+import { formatDate, formatDateTime, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { formatStatusLabel, getStatusBadgeVariant } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 import PackingListBulkDeleteDialog from './PackingListBulkDeleteDialog';
@@ -46,7 +46,7 @@ export default function PackingListsList() {
   const [selectedPackingListIds, setSelectedPackingListIds] = useState<Set<string>>(new Set());
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
-  const { data, isLoading, refetch } = usePackingLists({
+  const { data, isLoading, refetch, isFetching } = usePackingLists({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -180,6 +180,15 @@ export default function PackingListsList() {
         meta: { skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
+        accessorKey: 'created_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Created At" column={column} />
+        ),
+        cell: ({ row }) => formatDateTimeInMalaysia(new Date(row.original.created_at)),
+        size: 120,
+        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+      },
+      {
         accessorKey: 'actions',
         header: '',
         cell: ({ row }) => (
@@ -229,6 +238,8 @@ export default function PackingListsList() {
       isLoading={isLoading}
       onRowClick={handleRowClick}
       tableLayout={{ columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">

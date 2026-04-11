@@ -37,7 +37,7 @@ export default function FormsList() {
   const [selectedFormIds, setSelectedFormIds] = useState<Set<string>>(new Set());
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
-  const { data, isLoading } = useForms({
+  const { data, isLoading, refetch, isFetching } = useForms({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -197,6 +197,8 @@ export default function FormsList() {
       tableLayout={{ columnsVisibility: true, 
         columnsResizable: true,
       }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">

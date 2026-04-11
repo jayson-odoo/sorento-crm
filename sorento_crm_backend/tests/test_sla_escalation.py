@@ -9,6 +9,13 @@ from unittest.mock import MagicMock, patch
 from app.services.sla_service import ConversationSLATrackingService
 
 
+def _http_exception_message(exc: HTTPException) -> str:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        return str(detail.get("message") or "")
+    return str(detail or "")
+
+
 def test_entity_type_to_agent_code_mapping():
     """Verify source_entity_type maps to expected agent codes."""
     assert ConversationSLATrackingService.ENTITY_TYPE_TO_AGENT_CODE.get("complaint") == "complaint"
@@ -69,7 +76,7 @@ def test_get_escalation_assignee_for_tier_unknown_agent_raises():
         with pytest.raises(HTTPException) as exc_info:
             service.get_escalation_assignee_for_tier("stock_inquiry", 2)
         assert exc_info.value.status_code == 400
-        msg = (exc_info.value.detail or {}).get("message") if isinstance(exc_info.value.detail, dict) else str(exc_info.value.detail or "")
+        msg = _http_exception_message(exc_info.value)
         assert "lead_time_enquiries" in msg
 
 
@@ -86,7 +93,7 @@ def test_get_escalation_assignee_for_tier_missing_tier_team_raises():
         with pytest.raises(HTTPException) as exc_info:
             service.get_escalation_assignee_for_tier("complaint", 3)
         assert exc_info.value.status_code == 400
-        msg = (exc_info.value.detail or {}).get("message") if isinstance(exc_info.value.detail, dict) else str(exc_info.value.detail or "")
+        msg = _http_exception_message(exc_info.value)
         assert "tier 3" in msg or "3" in msg
 
 
@@ -104,5 +111,5 @@ def test_get_escalation_assignee_for_tier_empty_team_raises():
         with pytest.raises(HTTPException) as exc_info:
             service.get_escalation_assignee_for_tier("purchase_request", 2)
         assert exc_info.value.status_code == 400
-        msg = (exc_info.value.detail or {}).get("message") if isinstance(exc_info.value.detail, dict) else str(exc_info.value.detail or "")
+        msg = _http_exception_message(exc_info.value)
         assert "No assignee" in msg

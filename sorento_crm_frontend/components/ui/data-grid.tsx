@@ -101,6 +101,9 @@ export interface DataGridProps<TData extends object> {
    */
   standardToolbar?: boolean;
   standardToolbarProps?: Omit<DataGridStandardToolbarProps<TData>, 'table'>;
+  /** Shorthand: passed into the standard toolbar as `onRefresh` / `isRefreshing` (merged with `standardToolbarProps`). */
+  onRefresh?: () => void | Promise<void>;
+  isRefreshing?: boolean;
 }
 
 const DataGridContext = createContext<
@@ -216,7 +219,12 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
     >
       {mergedProps.standardToolbar !== false && (
         <div className="mb-3">
-          <DataGridStandardToolbar table={table} {...(mergedProps.standardToolbarProps || {})} />
+          <DataGridStandardToolbar
+            table={table}
+            {...(mergedProps.standardToolbarProps || {})}
+            onRefresh={mergedProps.onRefresh ?? mergedProps.standardToolbarProps?.onRefresh}
+            isRefreshing={mergedProps.isRefreshing ?? mergedProps.standardToolbarProps?.isRefreshing}
+          />
         </div>
       )}
       {children}

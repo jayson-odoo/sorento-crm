@@ -32,7 +32,7 @@ export default function OrderStatusesList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'sequence', desc: false }]);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const { data, isLoading } = useOrderStatuses({
+  const { data, isLoading, refetch, isFetching } = useOrderStatuses({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -103,6 +103,8 @@ export default function OrderStatusesList() {
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading} onRowClick={handleRowClick}
       tableLayout={{ columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">

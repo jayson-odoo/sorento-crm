@@ -35,7 +35,7 @@ export default function UOMList() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [uomToDelete, setUomToDelete] = useState<UnitOfMeasure | null>(null);
 
-  const { data, isLoading } = useUOMs({
+  const { data, isLoading, refetch, isFetching } = useUOMs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -134,6 +134,8 @@ export default function UOMList() {
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
       tableLayout={{ columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">

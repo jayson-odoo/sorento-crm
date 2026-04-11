@@ -4,7 +4,6 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   getStockInquiries,
   getStockInquiry,
-  getStockInquiryNeighbours,
   createStockInquiry,
   updateStockInquiry,
   updateStockInquiryAndReply,
@@ -47,18 +46,6 @@ export function useStockInquiry(id: string | null) {
     },
     enabled: !!id,
     retry: 1,
-  });
-}
-
-export function useStockInquiryNeighbours(id: string | null) {
-  return useQuery({
-    queryKey: ['stock-inquiry-neighbours', id],
-    queryFn: () => {
-      if (!id) return { prev_id: null, next_id: null };
-      return getStockInquiryNeighbours(id);
-    },
-    enabled: !!id,
-    staleTime: 60 * 1000,
   });
 }
 

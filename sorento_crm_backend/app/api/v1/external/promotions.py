@@ -10,7 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
-from app.schemas.external import PromotionGroupItem, PromotionRequest, PromotionCreateResponse
+from app.schemas.external.marketing import (
+    PromotionGroupItem,
+    PromotionRequest,
+    PromotionCreateResponse,
+)
 from app.schemas.marketing import PromotionResponse
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, PromotionAttachment
 from app.models.resources import Attachment

@@ -21,7 +21,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
-from app.schemas.external import PurchaseRequestExternalCreate, PurchaseRequestExternalResponse, PurchaseRequestExternalLine
+from app.schemas.external.procurement import (
+    PurchaseRequestExternalCreate,
+    PurchaseRequestExternalResponse,
+    PurchaseRequestExternalLine,
+)
 from app.services.procurement_service import PurchaseRequestService
 
 router = APIRouter()

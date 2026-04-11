@@ -46,7 +46,7 @@ export default function StockInquiriesList() {
   const [selectedInquiryIds, setSelectedInquiryIds] = useState<Set<string>>(new Set());
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
-  const { data, isLoading } = useStockInquiries({
+  const { data, isLoading, refetch, isFetching } = useStockInquiries({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -265,8 +265,9 @@ export default function StockInquiriesList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
-    
       tableLayout={{ columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">

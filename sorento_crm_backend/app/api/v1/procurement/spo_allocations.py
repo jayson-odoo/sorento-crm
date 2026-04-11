@@ -197,8 +197,13 @@ async def get_spo_allocation(
         service = SPOAllocationService(db)
         allocation = service.get_allocation(allocation_id)
         computed_received = service.compute_received_for_allocation(allocation_id)
-        receipt_status = "received" if computed_received >= (allocation.allocated_quantity or 0) else "pending"
-        linked = service.get_linked_grns_for_spo(allocation.spo_number)
+        allocated_quantity = getattr(allocation, "allocated_quantity", 0)
+        allocated_quantity_value = allocated_quantity if allocated_quantity is not None else 0
+        receipt_status = "received" if computed_received >= allocated_quantity_value else "pending"
+        spo_number = getattr(allocation, "spo_number", None)
+        linked = service.get_linked_grns_for_spo(
+            str(spo_number) if spo_number is not None else None
+        )
         linked_grns_list = []
         for g in linked:
             try:

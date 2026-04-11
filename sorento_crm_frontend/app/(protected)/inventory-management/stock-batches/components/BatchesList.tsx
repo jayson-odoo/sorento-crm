@@ -34,7 +34,7 @@ export default function BatchesList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const { data, isLoading } = useStockBatches({
+  const { data, isLoading, refetch, isFetching } = useStockBatches({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -132,7 +132,14 @@ export default function BatchesList() {
   });
 
   return (
-    <DataGrid table={table} tableLayout={{ columnsVisibility: true }} recordCount={data?.pagination.total || 0} isLoading={isLoading}>
+    <DataGrid
+      table={table}
+      tableLayout={{ columnsVisibility: true }}
+      recordCount={data?.pagination.total || 0}
+      isLoading={isLoading}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
+    >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
           <div className="relative">

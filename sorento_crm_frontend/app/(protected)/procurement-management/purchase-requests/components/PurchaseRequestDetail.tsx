@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -40,7 +40,7 @@ import {
 } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { usePurchaseRequest, usePurchaseRequestNeighbours } from '../hooks/usePurchaseRequests';
+import { usePurchaseRequest, usePurchaseRequests } from '../hooks/usePurchaseRequests';
 import { formatDate } from '@/lib/helpers';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -86,10 +86,19 @@ export default function PurchaseRequestDetail({
   const requestTypeForNav = basePath.includes('sponsorship-forms')
     ? 'sponsorship_form'
     : 'purchase_request';
-  const { data: neighbours } = usePurchaseRequestNeighbours(
-    isValidId ? requestId : null,
-    requestTypeForNav,
+  const navParams = useMemo(
+    () => ({
+      pageIndex: 0,
+      pageSize: 50,
+      sorting: [{ id: 'request_date', desc: true }],
+      searchQuery: '',
+      requestType: requestTypeForNav,
+      approvalStatus: undefined,
+    }),
+    [requestTypeForNav],
   );
+  const { data: requestListData } = usePurchaseRequests(navParams);
+  const requestListItems = requestListData?.data ?? [];
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
   const [approverUserId, setApproverUserId] = useState<string>('');
@@ -350,10 +359,8 @@ export default function PurchaseRequestDetail({
           </DetailActionsMenu>
           <RecordNavigation
             basePath={basePath}
-            prevId={neighbours?.prev_id ?? null}
-            nextId={neighbours?.next_id ?? null}
-            currentIndex={(neighbours?.current_index ?? 1) - 1}
-            totalCount={neighbours?.total_count ?? undefined}
+            currentId={requestId}
+            items={requestListItems}
             ariaLabel="purchase request"
           />
           <Button

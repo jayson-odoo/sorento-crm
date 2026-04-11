@@ -129,8 +129,8 @@ def install_modules(
             .first()
         )
         if row:
-            if not row.enabled:
-                row.enabled = True
+            if not bool(getattr(row, "enabled", False)):
+                setattr(row, "enabled", True)
                 log_event(db, tenant_id, key, "enable", actor_user_id, {"via": action})
             installed.append(key)
         else:
@@ -189,7 +189,7 @@ def disable_module(
         .first()
     )
     if row:
-        row.enabled = False
+        setattr(row, "enabled", False)
         log_event(db, tenant_id, module_key, "disable", actor_user_id)
         db.commit()
     return {"module_key": module_key, "enabled": False}
@@ -296,10 +296,10 @@ def list_catalog_with_state(db: Session, tenant_id: str) -> List[Dict[str, Any]]
         elif isinstance(raw_deps, list):
             deps_list = [str(d) for d in raw_deps]
         else:
-            deps_list = list(raw_deps)
+            deps_list = [str(d) for d in raw_deps] if isinstance(raw_deps, (tuple, set)) else []
         tm = tenant_rows.get(row.module_key)
         installed = tm is not None
-        is_on = bool(tm and tm.enabled)
+        is_on = tm is not None and bool(getattr(tm, "enabled", False))
         out.append(
             {
                 "module_key": row.module_key,

@@ -107,7 +107,7 @@ export default function OrdersList() {
     setAdvancedFilter(nav.advancedFilter ?? null);
   }, [listNavSearchKey]);
 
-  const { data, isLoading, isError, error } = useOrders({
+  const { data, isLoading, isError, error, refetch, isFetching } = useOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -334,6 +334,8 @@ export default function OrdersList() {
       isLoading={isLoading}
       onRowClick={handleRowClick}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

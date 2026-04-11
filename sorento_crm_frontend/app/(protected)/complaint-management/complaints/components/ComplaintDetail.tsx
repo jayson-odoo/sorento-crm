@@ -23,7 +23,7 @@ import { useComplaint, useUpdateComplaint } from '../hooks/useComplaints';
 import { getOrCreateComplaintViewLink } from '../services/complaintService';
 import { toast } from 'sonner';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
-import ComplaintDeleteDialog from './complaint-delete-dialog';
+import ComplaintDeleteDialog from './ComplaintDeleteDialog';
 import ComplaintNavigation from './ComplaintNavigation';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
 import ComplaintConversationPanel from './ComplaintConversationPanel';

@@ -53,7 +53,7 @@ export default function ImportJobsList() {
   const [cancelingJobId, setCancelingJobId] = useState<string | null>(null);
   const [refreshingJobId, setRefreshingJobId] = useState<string | null>(null);
 
-  const { data, isLoading } = useImportJobs({
+  const { data, isLoading, refetch, isFetching } = useImportJobs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     job_type: jobType || undefined,
@@ -286,6 +286,8 @@ export default function ImportJobsList() {
       isLoading={isLoading}
       onRowClick={(row) => handleRowClick(row.job_id)}
       tableLayout={{ columnsVisibility: true,  width: 'fixed', columnsResizable: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-3">

@@ -10,7 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
-from app.schemas.external import RespondContactSyncRequest, RespondContactSyncResponse
+from app.schemas.external.contacts import (
+    RespondContactSyncRequest,
+    RespondContactSyncResponse,
+)
 from app.services.contact_service import ContactService
 from app.schemas.user import RespondContactCreate, RespondContactUpdate
 from sqlalchemy.orm import Session

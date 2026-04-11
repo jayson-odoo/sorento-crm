@@ -16,6 +16,27 @@ TaskHandler = Callable[[Session, ScheduledTask], dict[str, Any]]
 TASK_HANDLERS: dict[str, TaskHandler] = {}
 
 
+def _task_schedule_args(task: ScheduledTask) -> tuple[str, int, str, Optional[datetime]]:
+    interval_unit = str(getattr(task, "interval_unit"))
+    interval_value = int(getattr(task, "interval_value"))
+    timezone_value = str(getattr(task, "timezone"))
+    start_at_raw = getattr(task, "start_at", None)
+    start_at_value = start_at_raw if isinstance(start_at_raw, datetime) else None
+    return interval_unit, interval_value, timezone_value, start_at_value
+
+
+def _task_id(task: ScheduledTask) -> str:
+    return str(getattr(task, "id"))
+
+
+def _task_key(task: ScheduledTask) -> str:
+    return str(getattr(task, "key"))
+
+
+def _run_id(run: ScheduledTaskRun) -> str:
+    return str(getattr(run, "id"))
+
+
 def register_handler(key: str, handler: TaskHandler) -> None:
     """Register a handler for a scheduled task key."""
     TASK_HANDLERS[key] = handler
@@ -103,38 +124,50 @@ def update_task(
     if not task:
         return None
     if name is not None:
-        task.name = name
+        setattr(task, "name", name)
     if description is not None:
-        task.description = description
+        setattr(task, "description", description)
     if enabled is not None:
-        task.enabled = enabled
+        setattr(task, "enabled", enabled)
     if interval_unit is not None:
-        task.interval_unit = interval_unit
+        setattr(task, "interval_unit", interval_unit)
     if interval_value is not None:
-        task.interval_value = interval_value
+        setattr(task, "interval_value", interval_value)
     if timezone is not None:
-        task.timezone = timezone
+        setattr(task, "timezone", timezone)
     if start_at is not None:
-        task.start_at = start_at
+        setattr(task, "start_at", start_at)
     if metadata is not None:
-        base = dict(task.metadata_ or {})
+        task_metadata = getattr(task, "metadata_", None)
+        metadata_map: Dict[str, Any] = (
+            dict(task_metadata) if isinstance(task_metadata, dict) else {}
+        )
         for k, v in metadata.items():
             if v is None:
-                base.pop(k, None)
+                metadata_map.pop(k, None)
             else:
-                base[k] = v
-        task.metadata_ = base or None
+                metadata_map[k] = v
+        setattr(task, "metadata_", metadata_map or None)
     # Recompute next_run_at from current schedule
     now = datetime.utcnow()
-    base = task.last_run_at or task.start_at or now
-    task.next_run_at = compute_next_run(
-        task.interval_unit,
-        task.interval_value,
-        task.timezone,
-        task.start_at,
-        base,
+    last_run_at = getattr(task, "last_run_at", None)
+    start_at_value = getattr(task, "start_at", None)
+    base_time = (
+        last_run_at
+        if isinstance(last_run_at, datetime)
+        else start_at_value
+        if isinstance(start_at_value, datetime)
+        else now
     )
-    task.updated_at = now
+    interval_unit_value, interval_value_value, timezone_value, task_start_at = _task_schedule_args(task)
+    setattr(task, "next_run_at", compute_next_run(
+        interval_unit_value,
+        interval_value_value,
+        timezone_value,
+        task_start_at,
+        base_time,
+    ))
+    setattr(task, "updated_at", now)
     db.commit()
     db.refresh(task)
     return task
@@ -150,56 +183,47 @@ def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] 
     run = None
     start = datetime.utcnow()
     try:
-        run = create_run(db, task.id, status="started")
-        handler = TASK_HANDLERS.get(task.key)
+        run = create_run(db, _task_id(task), status="started")
+        handler = TASK_HANDLERS.get(_task_key(task))
         if not handler:
             finish_run(
                 db,
-                run.id,
+                _run_id(run),
                 status="skipped",
                 duration_ms=int((datetime.utcnow() - start).total_seconds() * 1000),
                 summary={"reason": "no handler registered"},
             )
             next_run = compute_next_run(
-                task.interval_unit,
-                task.interval_value,
-                task.timezone,
-                task.start_at,
+                *_task_schedule_args(task),
                 datetime.utcnow(),
             )
             update_task_after_run(
-                db, task.id, "skipped", None, {"reason": "no handler registered"}, next_run
+                db, _task_id(task), "skipped", None, {"reason": "no handler registered"}, next_run
             )
-            return {"run_id": run.id, "status": "skipped", "summary": {"reason": "no handler registered"}}
+            return {"run_id": _run_id(run), "status": "skipped", "summary": {"reason": "no handler registered"}}
         # For manual ad-hoc runs, handlers may use this context to run in safe test mode.
         if requested_by_user_id:
             setattr(task, "_manual_run_requested_by_user_id", str(requested_by_user_id))
         summary = handler(db, task)
         duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
-        finish_run(db, run.id, status="success", duration_ms=duration_ms, summary=summary or {})
+        finish_run(db, _run_id(run), status="success", duration_ms=duration_ms, summary=summary or {})
         next_run = compute_next_run(
-            task.interval_unit,
-            task.interval_value,
-            task.timezone,
-            task.start_at,
+            *_task_schedule_args(task),
             datetime.utcnow(),
         )
-        update_task_after_run(db, task.id, "success", None, summary, next_run)
-        return {"run_id": run.id, "status": "success", "summary": summary or {}}
+        update_task_after_run(db, _task_id(task), "success", None, summary, next_run)
+        return {"run_id": _run_id(run), "status": "success", "summary": summary or {}}
     except Exception as e:
         duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
         err_msg = str(e)
         if run:
-            finish_run(db, run.id, status="failed", duration_ms=duration_ms, error=err_msg)
+            finish_run(db, _run_id(run), status="failed", duration_ms=duration_ms, error=err_msg)
         next_run = compute_next_run(
-            task.interval_unit,
-            task.interval_value,
-            task.timezone,
-            task.start_at,
+            *_task_schedule_args(task),
             datetime.utcnow(),
         )
-        update_task_after_run(db, task.id, "failed", err_msg, None, next_run)
-        return {"run_id": run.id if run else None, "status": "failed", "error": err_msg}
+        update_task_after_run(db, _task_id(task), "failed", err_msg, None, next_run)
+        return {"run_id": _run_id(run) if run else None, "status": "failed", "error": err_msg}
 
 
 def create_run(db: Session, task_id: str, status: str = "started") -> ScheduledTaskRun:
@@ -223,11 +247,11 @@ def finish_run(
     run = db.query(ScheduledTaskRun).filter(ScheduledTaskRun.id == run_id).first()
     if not run:
         return
-    run.finished_at = datetime.utcnow()
-    run.status = status
-    run.duration_ms = duration_ms
-    run.summary = summary
-    run.error = error
+    setattr(run, "finished_at", datetime.utcnow())
+    setattr(run, "status", status)
+    setattr(run, "duration_ms", duration_ms)
+    setattr(run, "summary", summary)
+    setattr(run, "error", error)
     db.commit()
 
 
@@ -243,11 +267,11 @@ def update_task_after_run(
     task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
     if not task:
         return
-    task.last_run_at = datetime.utcnow()
-    task.last_status = last_status
-    task.last_error = last_error
-    task.next_run_at = next_run_at
-    task.updated_at = datetime.utcnow()
+    setattr(task, "last_run_at", datetime.utcnow())
+    setattr(task, "last_status", last_status)
+    setattr(task, "last_error", last_error)
+    setattr(task, "next_run_at", next_run_at)
+    setattr(task, "updated_at", datetime.utcnow())
     db.commit()
 
 
@@ -263,65 +287,56 @@ def run_due_tasks(db: Session) -> None:
         run = None
         start = datetime.utcnow()
         try:
-            run = create_run(db, task.id, status="started")
-            handler = TASK_HANDLERS.get(task.key)
+            run = create_run(db, _task_id(task), status="started")
+            handler = TASK_HANDLERS.get(_task_key(task))
             if not handler:
                 finish_run(
                     db,
-                    run.id,
+                    _run_id(run),
                     status="skipped",
                     duration_ms=int((datetime.utcnow() - start).total_seconds() * 1000),
                     summary={"reason": "no handler registered"},
                 )
                 update_task_after_run(
                     db,
-                    task.id,
+                    _task_id(task),
                     last_status="skipped",
                     last_error=None,
                     summary={"reason": "no handler registered"},
                     next_run_at=compute_next_run(
-                        task.interval_unit,
-                        task.interval_value,
-                        task.timezone,
-                        task.start_at,
+                        *_task_schedule_args(task),
                         start,
                     ),
                 )
-                logger.warning("Scheduled task %s has no registered handler", task.key)
+                logger.warning("Scheduled task %s has no registered handler", _task_key(task))
                 continue
             summary = handler(db, task)
             duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
-            finish_run(db, run.id, status="success", duration_ms=duration_ms, summary=summary or {})
+            finish_run(db, _run_id(run), status="success", duration_ms=duration_ms, summary=summary or {})
             next_run = compute_next_run(
-                task.interval_unit,
-                task.interval_value,
-                task.timezone,
-                task.start_at,
+                *_task_schedule_args(task),
                 datetime.utcnow(),
             )
             update_task_after_run(
-                db, task.id, last_status="success", last_error=None, summary=summary, next_run_at=next_run
+                db, _task_id(task), last_status="success", last_error=None, summary=summary, next_run_at=next_run
             )
-            logger.info("Scheduled task %s completed: %s", task.key, summary)
+            logger.info("Scheduled task %s completed: %s", _task_key(task), summary)
         except Exception as e:
             duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
             err_msg = str(e)
             if run:
                 finish_run(
                     db,
-                    run.id,
+                    _run_id(run),
                     status="failed",
                     duration_ms=duration_ms,
                     error=err_msg,
                 )
             next_run = compute_next_run(
-                task.interval_unit,
-                task.interval_value,
-                task.timezone,
-                task.start_at,
+                *_task_schedule_args(task),
                 datetime.utcnow(),
             )
             update_task_after_run(
-                db, task.id, last_status="failed", last_error=err_msg, summary=None, next_run_at=next_run
+                db, _task_id(task), last_status="failed", last_error=err_msg, summary=None, next_run_at=next_run
             )
-            logger.exception("Scheduled task %s failed: %s", task.key, err_msg)
+            logger.exception("Scheduled task %s failed: %s", _task_key(task), err_msg)

@@ -587,17 +587,6 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
-    title: 'Integration Management',
-    icon: Plug,
-    moduleKey: 'base',
-    children: [
-      {
-        title: 'Integration Logs',
-        path: '/integration-management/integration-logs',
-      },
-    ],
-  },
-  {
     title: 'System Management',
     icon: Settings,
     moduleKey: 'base',
@@ -619,6 +608,10 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Import Logs',
         path: '/system-management/import-logs',
+      },
+      {
+        title: 'Integration Logs',
+        path: '/integration-management/integration-logs',
       },
       {
         title: 'Scheduled Tasks',
@@ -1295,13 +1288,48 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     ],
   },
   {
-    title: 'Integration Management',
-    icon: Plug,
+    title: 'System Management',
+    icon: Settings,
     moduleKey: 'base',
     children: [
       {
+        title: 'App Store',
+        path: '/system-management/app-store',
+        permission: 'system.modules.manage',
+      },
+      {
+        title: 'Module bundles',
+        path: '/system-management/app-store/bundles',
+        permission: 'system.modules.manage',
+      },
+      {
+        title: 'Import Jobs',
+        path: '/system-management/import-jobs',
+      },
+      {
+        title: 'Import Logs',
+        path: '/system-management/import-logs',
+      },
+      {
         title: 'Integration Logs',
         path: '/integration-management/integration-logs',
+      },
+      {
+        title: 'Scheduled Tasks',
+        path: '/system-management/scheduled-tasks',
+      },
+      {
+        title: 'Outgoing Mails',
+        path: '/system-management/outgoing-mails',
+        permission: 'system.outgoing_mails.view',
+      },
+      {
+        title: 'Work Calendar',
+        path: '/system-management/work-calendar',
+      },
+      {
+        title: 'Running Numbers',
+        path: '/system-management/numbering-rules',
       },
     ],
   },

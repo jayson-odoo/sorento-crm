@@ -40,7 +40,7 @@ export default function ScheduledTasksList() {
   const router = useRouter();
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
 
-  const { data, isLoading } = useScheduledTasks();
+  const { data, isLoading, refetch, isFetching } = useScheduledTasks();
   const tasks = data?.data ?? [];
   const total = data?.pagination?.total ?? 0;
 
@@ -161,6 +161,8 @@ export default function ScheduledTasksList() {
       isLoading={isLoading}
       onRowClick={(task) => task?.id && router.push(`/system-management/scheduled-tasks/${task.id}`)}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      onRefresh={() => void refetch()}
+      isRefreshing={isFetching && !isLoading}
     >
       <Card>
         <CardHeader className="flex items-center justify-end">
