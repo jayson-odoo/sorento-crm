@@ -3,6 +3,9 @@ import { z } from 'zod';
 /** Select value when no explicit default supplier is chosen (backend: null → oldest supplier). */
 export const NO_DEFAULT_SUPPLIER_VALUE = '__none__';
 
+/** Select value when no default approver is configured. */
+export const NO_DEFAULT_APPROVER_VALUE = '__none__';
+
 export const GeneralSettingsSchema = z.object({
   name: z.string().min(1, 'Company name is required'),
   logoFile: z
@@ -29,6 +32,8 @@ export const GeneralSettingsSchema = z.object({
   currencyFormat: z.string(),
   defaultProductSupplierId: z.string(),
   defaultProductStandardLeadTimeDays: z.coerce.number().int().min(0).max(10950),
+  purchaseRequestDefaultApproverUserId: z.string(),
+  sponsorshipFormDefaultApproverUserId: z.string(),
 });
 
 export type GeneralSettingsSchemaType = z.infer<typeof GeneralSettingsSchema>;

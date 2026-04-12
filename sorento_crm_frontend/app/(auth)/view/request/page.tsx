@@ -271,7 +271,7 @@ function ViewRequestContent() {
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
               <div className="py-2 border-b border-border/60">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sales Order no.</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Purchase request number</p>
                 <p className="text-sm font-medium">{summary?.request_number ?? '—'}</p>
               </div>
               <div className="py-2 border-b border-border/60">
@@ -362,7 +362,7 @@ function ViewRequestContent() {
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
               <div className="py-2 border-b border-border/60">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sales Order no.</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sponsorship form number</p>
                 <p className="text-sm font-medium">{summary?.request_number ?? '—'}</p>
               </div>
               <div className="py-2 border-b border-border/60">

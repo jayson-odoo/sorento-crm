@@ -35,7 +35,7 @@ export const useOrderStatusSelectQuery = () => {
         });
         if (response.status !== 401) {
           toast.error(
-            'Something went wrong while loading order statuses. Please try again.',
+            'Something went wrong while loading delivery order statuses. Please try again.',
             {
               position: 'top-center',
             },
@@ -55,7 +55,7 @@ export const useOrderStatusSelectQuery = () => {
     } catch (err) {
       console.error('[order-status-select] Request failed:', err);
       toast.error(
-        'Something went wrong while loading order statuses. Please try again.',
+        'Something went wrong while loading delivery order statuses. Please try again.',
         { position: 'top-center' },
       );
       return [];

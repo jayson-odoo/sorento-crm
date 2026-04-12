@@ -553,7 +553,10 @@ class StockInquiryAttachmentResponse(BaseModel):
 
 
 class StockInquiryRejectReopenRequest(BaseModel):
-    reason: Optional[str] = None
+    reason: Optional[str] = Field(
+        default=None,
+        description="Required (non-empty) for project-sales-reject and purchasing-reject; optional for reopen.",
+    )
 
 
 class StockInquiryResponse(StockInquiryBase):
@@ -813,4 +816,7 @@ class PublicApprovalSubmitRequest(BaseModel):
     action: str  # approved | rejected
     approved_by: Optional[str] = None
     approval_signature_ref: Optional[str] = None
-    approval_comments: Optional[str] = None
+    approval_comments: Optional[str] = Field(
+        default=None,
+        description="Notes for approval; must be non-empty when action is rejected.",
+    )

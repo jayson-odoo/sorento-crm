@@ -145,7 +145,7 @@ export function OrderLinesImportDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Import delivery order detail (order lines)</DialogTitle>
+          <DialogTitle>Import delivery order lines</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           {!file ? (

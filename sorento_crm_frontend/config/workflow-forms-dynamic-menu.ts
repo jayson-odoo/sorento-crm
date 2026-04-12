@@ -1,5 +1,12 @@
 import type { MenuConfig, MenuItem } from './types';
 
+/** Must match backend `GET .../definitions/published-for-submission` (require_any_permission). */
+export const WORKFLOW_PUBLISHED_FOR_SUBMISSION_PERMISSIONS = [
+  'workflow_forms.submissions.add',
+  'workflow_forms.submissions.view',
+  'workflow_forms.definitions.view',
+] as const;
+
 /**
  * Append one link per published workflow form (name = form title).
  * Each link goes to the submissions list for that form (with New submission on that page).

@@ -19,7 +19,7 @@ export function useOrderStatus(id: string | null) {
   return useQuery({
     queryKey: ['order-status', id],
     queryFn: () => {
-      if (!id) throw new Error('Order status ID is required');
+      if (!id) throw new Error('Delivery order status ID is required');
       return getOrderStatus(id);
     },
     enabled: !!id,
@@ -33,9 +33,9 @@ export function useCreateOrderStatus() {
     mutationFn: (data: OrderStatusFormData) => createOrderStatus(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['order-statuses'] });
-      toast.success('Order status created successfully');
+      toast.success('Delivery order status created successfully');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to create order status'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to create delivery order status'),
   });
 }
 
@@ -46,9 +46,9 @@ export function useUpdateOrderStatus() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['order-statuses'] });
       queryClient.invalidateQueries({ queryKey: ['order-status'] });
-      toast.success('Order status updated successfully');
+      toast.success('Delivery order status updated successfully');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to update order status'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to update delivery order status'),
   });
 }
 
@@ -58,8 +58,8 @@ export function useDeleteOrderStatus() {
     mutationFn: (id: string) => deleteOrderStatus(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['order-statuses'] });
-      toast.success('Order status deleted successfully');
+      toast.success('Delivery order status deleted successfully');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete order status'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to delete delivery order status'),
   });
 }

@@ -41,10 +41,10 @@ export default function OrderBulkDeleteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Delete orders</DialogTitle>
+          <DialogTitle>Delete delivery orders</DialogTitle>
         </DialogHeader>
         <DialogDescription>
-          Permanently delete {orderIds.length} order
+          Permanently delete {orderIds.length} delivery order
           {orderIds.length !== 1 ? 's' : ''}? This action cannot be undone.
         </DialogDescription>
         <DialogFooter>
@@ -59,7 +59,7 @@ export default function OrderBulkDeleteDialog({
             {bulkDeleteMutation.isPending && (
               <LoaderCircleIcon className="animate-spin mr-2" />
             )}
-            Delete {orderIds.length} order
+            Delete {orderIds.length} delivery order
             {orderIds.length !== 1 ? 's' : ''}
           </Button>
         </DialogFooter>

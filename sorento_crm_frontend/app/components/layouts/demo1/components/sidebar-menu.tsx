@@ -8,7 +8,8 @@ import { injectPublishedWorkflowForms } from '@/config/workflow-forms-dynamic-me
 import { MenuConfig, MenuItem } from '@/config/types';
 import { usePublishedWorkflowDefinitionsForSubmissionQuery } from '@/app/(protected)/workflow-forms-management/hooks/useWorkflowForms';
 import { cn } from '@/lib/utils';
-import { usePermissions } from '@/hooks/usePermissions';
+import { usePermissions, useHasAnyPermission } from '@/hooks/usePermissions';
+import { WORKFLOW_PUBLISHED_FOR_SUBMISSION_PERMISSIONS } from '@/config/workflow-forms-dynamic-menu';
 import { useTenantModules } from '@/hooks/useTenantModules';
 import {
   AccordionMenu,
@@ -72,8 +73,12 @@ export function SidebarMenu() {
   const { permissionSet, isLoading } = usePermissions();
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
   const wfModuleEnabled = enabledModuleKeys?.has('workflow_forms') ?? false;
+  /** Avoid calling published-for-submission without RBAC — global QueryCache onError would toast 403 on every page. */
+  const canFetchPublishedWorkflowForms = useHasAnyPermission(
+    [...WORKFLOW_PUBLISHED_FOR_SUBMISSION_PERMISSIONS],
+  );
   const { data: publishedFormsRes } = usePublishedWorkflowDefinitionsForSubmissionQuery({
-    enabled: wfModuleEnabled && !modulesLoading,
+    enabled: wfModuleEnabled && !modulesLoading && canFetchPublishedWorkflowForms,
   });
 
   const menuWithPublishedForms = useMemo(

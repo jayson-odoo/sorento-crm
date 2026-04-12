@@ -95,7 +95,7 @@ export default function StockInquiriesList() {
       {
         accessorKey: 'inquiry_number',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Inquiry no." column={column} />
+          <DataGridColumnHeader title="Stock inquiry number" column={column} />
         ),
         size: 130,
         cell: ({ row }) => row.original.inquiry_number || '—',

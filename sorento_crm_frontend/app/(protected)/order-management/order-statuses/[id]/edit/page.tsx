@@ -26,7 +26,7 @@ export default function EditOrderStatusPage({ params }: { params: Promise<{ id: 
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Edit Order Status</ToolbarTitle>
+            <ToolbarTitle>Edit Delivery Order Status</ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -34,15 +34,15 @@ export default function EditOrderStatusPage({ params }: { params: Promise<{ id: 
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Order Management</BreadcrumbPage>
+                  <BreadcrumbPage>Delivery Order Management</BreadcrumbPage>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href="/order-management/order-statuses">Order Statuses</BreadcrumbLink>
+                  <BreadcrumbLink href="/order-management/order-statuses">Delivery Order Statuses</BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href={`/order-management/order-statuses/${id}`}>Order Status</BreadcrumbLink>
+                  <BreadcrumbLink href={`/order-management/order-statuses/${id}`}>Delivery Order Status</BreadcrumbLink>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -50,7 +50,7 @@ export default function EditOrderStatusPage({ params }: { params: Promise<{ id: 
           <ToolbarActions>
             <Button asChild variant="outline">
               <Link href={`/order-management/order-statuses/${id}`}>
-                <MoveLeft /> Back to order status
+                <MoveLeft /> Back to delivery order status
               </Link>
             </Button>
           </ToolbarActions>

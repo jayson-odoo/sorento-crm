@@ -96,28 +96,28 @@ const permissions = [
 	},
 	{
 		slug: 'order.view',
-		name: 'View Orders',
-		description: 'Permission to view all orders in the system.',
+		name: 'View Delivery Orders',
+		description: 'Permission to view all delivery orders in the system.',
 	},
 	{
 		slug: 'order.add',
-		name: 'Add Order',
-		description: 'Permission to manually create new orders.',
+		name: 'Add Delivery Order',
+		description: 'Permission to manually create new delivery orders.',
 	},
 	{
 		slug: 'order.edit',
-		name: 'Edit Order',
-		description: 'Permission to edit existing orders.',
+		name: 'Edit Delivery Order',
+		description: 'Permission to edit existing delivery orders.',
 	},
 	{
 		slug: 'order.delete',
-		name: 'Delete Order',
-		description: 'Permission to delete orders from the system.',
+		name: 'Delete Delivery Order',
+		description: 'Permission to delete delivery orders from the system.',
 	},
 	{
 		slug: 'order.process',
-		name: 'Process Order',
-		description: 'Permission to update the status of orders.',
+		name: 'Process Delivery Order',
+		description: 'Permission to update the status of delivery orders.',
 	},
 	{
 		slug: 'report.view',

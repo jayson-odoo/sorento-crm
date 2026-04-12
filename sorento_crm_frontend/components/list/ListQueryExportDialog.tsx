@@ -100,7 +100,7 @@ function OrdersExportColumnsTree({
       className="w-full space-y-2"
     >
       <AccordionItem value="export-order" className="rounded-lg border border-border px-3">
-        <AccordionTrigger className={accordionTriggerClass}>Order columns</AccordionTrigger>
+        <AccordionTrigger className={accordionTriggerClass}>Delivery order columns</AccordionTrigger>
         <AccordionContent>
           <div className="space-y-1 border-s-2 border-primary/25 ps-3 pb-1">
             {groups.order.map((f) => (

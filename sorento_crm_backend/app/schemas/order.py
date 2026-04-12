@@ -267,6 +267,7 @@ class WarehouseSimpleRef(BaseModel):
 class OrderLineResponse(OrderLineBase):
     id: str
     order_id: str
+    line_sequence: int
     created_at: datetime
     updated_at: datetime
     product: Optional[ProductSimpleRef] = None

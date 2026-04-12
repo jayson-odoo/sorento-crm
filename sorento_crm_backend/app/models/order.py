@@ -1,5 +1,5 @@
 """Order management models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Index, Integer
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Index, Integer, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -98,7 +98,12 @@ class Order(Base):
     
     customer = relationship("Customer", back_populates="orders")
     order_status = relationship("OrderStatus", back_populates="orders")
-    lines = relationship("OrderLine", back_populates="order", cascade="all, delete-orphan")
+    lines = relationship(
+        "OrderLine",
+        back_populates="order",
+        cascade="all, delete-orphan",
+        order_by="OrderLine.line_sequence",
+    )
 
     __table_args__ = (
         Index("ix_orders_customer_id", "customer_id"),
@@ -118,6 +123,7 @@ class OrderLine(Base):
     __tablename__ = "order_lines"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    line_sequence = Column(Integer, nullable=False, default=1)
     order_id = Column(
         UUID(as_uuid=False),
         ForeignKey("orders.id", ondelete="CASCADE"),
@@ -151,5 +157,12 @@ class OrderLine(Base):
         Index("ix_order_lines_order_id", "order_id"),
         Index("ix_order_lines_product_id", "product_id"),
         Index("ix_order_lines_warehouse_id", "warehouse_id"),
-        Index("ix_order_lines_order_product_warehouse", "order_id", "product_id", "warehouse_id", unique=True),
+        Index(
+            "ix_order_lines_order_product_warehouse",
+            "order_id",
+            "product_id",
+            "warehouse_id",
+            unique=False,
+        ),
+        UniqueConstraint("order_id", "line_sequence", name="uq_order_lines_order_id_line_sequence"),
     )

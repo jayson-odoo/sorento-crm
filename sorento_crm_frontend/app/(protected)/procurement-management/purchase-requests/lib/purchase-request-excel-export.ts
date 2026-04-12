@@ -52,7 +52,7 @@ function str(value: unknown): string {
 
 /**
  * Export a purchase request to Excel in the Purchase Request form format:
- * Sales Order no., Date, Customer, Project, Purpose, Expected dates,
+ * Purchase request number, Date, Customer, Project, Purpose, Expected dates,
  * line items table (#, Item Code, Qty, Remark), Requested by, Approved by.
  */
 export async function exportPurchaseRequestToExcel(request: PurchaseRequest): Promise<void> {
@@ -70,7 +70,7 @@ export async function exportPurchaseRequestToExcel(request: PurchaseRequest): Pr
 
   const aoa: (string | number)[][] = [
     ['Purchase Request'],
-    ['Sales Order no.:', str(request.request_number), 'Date:', requestDate],
+    ['Purchase request number:', str(request.request_number), 'Date:', requestDate],
     [],
     ['Customer Name:', str(request.customer_name)],
     ['Project Title:', str(request.project_title)],
@@ -113,7 +113,7 @@ const SORENTO_HEADER = [
 
 /**
  * Export a sponsorship form to Excel in the Project Sales Sponsorship Form format:
- * Company header, Sales Order no., Date, Customer, Delivery Address, Project Title,
+ * Company header, Sponsorship form number, Date, Customer, Delivery Address, Project Title,
  * Total Project Value, Sponsor Subject, Date of Delivery, line items (NO., Item Code, Qty, U/P, Total), Grand Total, Requested/Approved by.
  */
 export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Promise<void> {
@@ -136,7 +136,7 @@ export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Pr
     [],
     ['Project Sales Sponsorship Form'],
     [],
-    ['Sales Order no.:', str(request.request_number), 'Date:', requestDate],
+    ['Sponsorship form number:', str(request.request_number), 'Date:', requestDate],
     [],
     ['Customer Name:', str(request.customer_name)],
     ['Delivery Address:', str(request.delivery_address)],

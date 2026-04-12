@@ -24,7 +24,7 @@ export default function NewOrderStatusPage() {
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Create Order Status</ToolbarTitle>
+            <ToolbarTitle>Create Delivery Order Status</ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -32,11 +32,11 @@ export default function NewOrderStatusPage() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Order Management</BreadcrumbPage>
+                  <BreadcrumbPage>Delivery Order Management</BreadcrumbPage>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href="/order-management/order-statuses">Order Statuses</BreadcrumbLink>
+                  <BreadcrumbLink href="/order-management/order-statuses">Delivery Order Statuses</BreadcrumbLink>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -44,7 +44,7 @@ export default function NewOrderStatusPage() {
           <ToolbarActions>
             <Button asChild variant="outline">
               <Link href="/order-management/order-statuses">
-                <MoveLeft /> Back to order statuses
+                <MoveLeft /> Back to delivery order statuses
               </Link>
             </Button>
           </ToolbarActions>

@@ -22,13 +22,13 @@ export async function getOrders(
     ...(has_order_lines && has_order_lines !== 'all' ? { has_order_lines } : {}),
   });
   const response = await apiFetch(`/api/v1/order-management/orders?${queryParams.toString()}`);
-  if (!response.ok) throw new Error('Failed to fetch orders');
+  if (!response.ok) throw new Error('Failed to fetch delivery orders');
   return response.json();
 }
 
 export async function getOrder(id: string): Promise<OrderDetail> {
   const response = await apiFetch(`/api/v1/order-management/orders/${id}`);
-  if (!response.ok) throw new Error('Failed to fetch order');
+  if (!response.ok) throw new Error('Failed to fetch delivery order');
   return response.json();
 }
 
@@ -39,7 +39,7 @@ export async function createOrder(data: OrderFormData): Promise<Order> {
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to create order' }));
+    const error = await response.json().catch(() => ({ message: 'Failed to create delivery order' }));
     throw new Error(error.message);
   }
   return response.json();
@@ -52,7 +52,7 @@ export async function updateOrder(id: string, data: Partial<OrderFormData>): Pro
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update order' }));
+    const error = await response.json().catch(() => ({ message: 'Failed to update delivery order' }));
     throw new Error(error.message);
   }
   return response.json();
@@ -61,7 +61,7 @@ export async function updateOrder(id: string, data: Partial<OrderFormData>): Pro
 export async function deleteOrder(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/order-management/orders/${id}`, { method: 'DELETE' });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to delete order' }));
+    const error = await response.json().catch(() => ({ message: 'Failed to delete delivery order' }));
     throw new Error(error.message);
   }
 }
@@ -73,7 +73,7 @@ export async function bulkDeleteOrders(ids: string[]): Promise<{ message: string
     body: JSON.stringify({ ids }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to bulk delete orders' }));
+    const error = await response.json().catch(() => ({ message: 'Failed to bulk delete delivery orders' }));
     throw new Error(error.message);
   }
   return response.json();
@@ -105,7 +105,7 @@ export async function exportOrders(params?: {
 
     const response = await apiFetch(`/api/v1/order-management/orders?${queryParams.toString()}`);
     if (!response.ok) {
-      throw new Error('Failed to fetch orders for export');
+      throw new Error('Failed to fetch delivery orders for export');
     }
 
     const result = await response.json();
@@ -132,8 +132,8 @@ export async function bulkImportOrders(data: any[]): Promise<{ created: number; 
     body: JSON.stringify({ orders: data }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to import orders' }));
-    throw new Error(error.message || 'Failed to import orders');
+    const error = await response.json().catch(() => ({ message: 'Failed to import delivery orders' }));
+    throw new Error(error.message || 'Failed to import delivery orders');
   }
   return response.json();
 }
@@ -194,7 +194,7 @@ export async function createOrderLine(orderId: string, data: OrderLineFormData):
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || error.message || 'Failed to add order line');
+    throw new Error(error.detail || error.message || 'Failed to add delivery order line');
   }
   return response.json();
 }
@@ -207,7 +207,7 @@ export async function updateOrderLine(orderId: string, lineId: string, data: Par
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || error.message || 'Failed to update order line');
+    throw new Error(error.detail || error.message || 'Failed to update delivery order line');
   }
   return response.json();
 }
@@ -216,7 +216,7 @@ export async function deleteOrderLine(orderId: string, lineId: string): Promise<
   const response = await apiFetch(`/api/v1/order-management/orders/${orderId}/lines/${lineId}`, { method: 'DELETE' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(error.detail || error.message || 'Failed to delete order line');
+    throw new Error(error.detail || error.message || 'Failed to delete delivery order line');
   }
 }
 

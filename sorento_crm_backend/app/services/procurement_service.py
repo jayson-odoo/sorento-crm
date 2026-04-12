@@ -2897,7 +2897,11 @@ class StockInquiryService:
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_project_sales.")
         inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
-        reason_text = (reason or "").strip() or "no reason provided"
+        reason_text = (reason or "").strip()
+        if not reason_text:
+            from app.services.error_handler import handle_validation_error
+
+            raise handle_validation_error("Rejection reason is required.")
         view_url = self._build_stock_inquiry_view_url(str(inquiry.id))
         self._send_stock_inquiry_contact_message(
             inquiry,
@@ -2910,7 +2914,7 @@ class StockInquiryService:
         )
         inquiry.status = "rejected"
         inquiry.rejected_from = "pending_project_sales"
-        inquiry.rejection_reason = reason
+        inquiry.rejection_reason = reason_text
         inquiry.rejected_at = datetime.now(timezone.utc).replace(tzinfo=None)
         inquiry.rejected_by = user_id
         self.db.commit()
@@ -2932,7 +2936,11 @@ class StockInquiryService:
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_purchasing.")
         inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
-        reason_text = (reason or "").strip() or "no reason provided"
+        reason_text = (reason or "").strip()
+        if not reason_text:
+            from app.services.error_handler import handle_validation_error
+
+            raise handle_validation_error("Rejection reason is required.")
         view_url = self._build_stock_inquiry_view_url(str(inquiry.id))
         self._send_stock_inquiry_contact_message(
             inquiry,
@@ -2945,7 +2953,7 @@ class StockInquiryService:
         )
         inquiry.status = "rejected"
         inquiry.rejected_from = "pending_purchasing"
-        inquiry.rejection_reason = reason
+        inquiry.rejection_reason = reason_text
         inquiry.rejected_at = datetime.now(timezone.utc).replace(tzinfo=None)
         inquiry.rejected_by = user_id
         self.db.commit()
@@ -4725,6 +4733,14 @@ class PurchaseRequestService:
             raise handle_conflict("This approval link has expired.")
         if action not in ("approved", "rejected"):
             raise handle_conflict("action must be 'approved' or 'rejected'.")
+
+        if action == "rejected":
+            from app.services.error_handler import handle_validation_error
+
+            rejection_notes = (approval_comments or "").strip()
+            if not rejection_notes:
+                raise handle_validation_error("Rejection reason is required.")
+            approval_comments = rejection_notes
 
         header = self.get_request(approval_token.entity_id)
         approval_token.used_at = datetime.utcnow()

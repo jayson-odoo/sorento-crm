@@ -52,7 +52,7 @@ const OrderDeleteDialog = ({
         <AlertDialogHeader>
           <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete the order{' '}
+            Are you sure you want to delete the delivery order{' '}
             <strong className="text-foreground">{order.order_number}</strong>? This action cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>

@@ -142,6 +142,8 @@ export function usePublishedWorkflowDefinitionsForSubmissionQuery(options?: { en
     queryFn: () => fetchPublishedWorkflowDefinitionsForSubmission(),
     enabled: options?.enabled !== false,
     staleTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
   });
 }
 

@@ -34,7 +34,7 @@ export default function EditCustomerPage({ params }: { params: Promise<{ id: str
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Order Management</BreadcrumbPage>
+                  <BreadcrumbPage>Delivery Order Management</BreadcrumbPage>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>

@@ -310,41 +310,49 @@ async def send_approval_link(
         )
         email_sent = None
         email_error = None
-        if data.send_email and data.approver_email and data.approver_email.strip():
-            from app.models.user import SystemSetting
-            from app.services.notification_email import send_notification_email, _smtp_config_from_settings
-            sys_settings = db.query(SystemSetting).first()
-            smtp_config = _smtp_config_from_settings(sys_settings) if sys_settings else None
-            header = service.get_request(request_id)
-            type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
-            subject = f"{type_label} – Approval link"
-            full_url = approval_url if approval_url.startswith("http") else f"{base_url.rstrip('/')}{approval_url if approval_url.startswith('/') else '/' + approval_url}"
-            body_text = (
-                f"You have been sent a one-time approval link for a {type_label.lower()}.\n\n"
-                f"Form number: {getattr(header, 'request_number', None) or 'N/A'}\n"
-                f"Project: {getattr(header, 'project_title', None) or 'N/A'}\n\n"
-                f"Open this link to approve or reject (link expires after use or after the expiry time):\n{full_url}\n"
-            )
-            form_num = html.escape(str(getattr(header, "request_number", None) or "N/A"))
-            project = html.escape(str(getattr(header, "project_title", None) or "N/A"))
-            url_escaped = html.escape(full_url, quote=True)
-            body_html = (
-                f"<p>You have been sent a one-time approval link for a {html.escape(type_label.lower())}.</p>"
-                f"<p><strong>Form number:</strong> {form_num}<br>"
-                f"<strong>Project:</strong> {project}</p>"
-                f"<p>Open the link below to approve or reject (link expires after use or after the expiry time):</p>"
-                f'<p><a href="{url_escaped}" style="color: #2563eb; text-decoration: underline;">{url_escaped}</a></p>'
-                f"<p>Or copy and paste into your browser if the link does not work.</p>"
-            )
-            err = send_notification_email(
-                to=data.approver_email.strip(),
-                subject=subject,
-                body_text=body_text,
-                body_html=body_html,
-                smtp_config=smtp_config,
-            )
-            email_sent = err is None
-            email_error = err
+        if data.send_email:
+            header_for_email = service.get_request(request_id)
+            to_email = (data.approver_email or "").strip() or (
+                getattr(header_for_email, "approver_email", None) or ""
+            ).strip()
+            if not to_email:
+                email_sent = False
+                email_error = "No approver email available to send to."
+            else:
+                from app.models.user import SystemSetting
+                from app.services.notification_email import send_notification_email, _smtp_config_from_settings
+                sys_settings = db.query(SystemSetting).first()
+                smtp_config = _smtp_config_from_settings(sys_settings) if sys_settings else None
+                header = service.get_request(request_id)
+                type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
+                subject = f"{type_label} – Approval link"
+                full_url = approval_url if approval_url.startswith("http") else f"{base_url.rstrip('/')}{approval_url if approval_url.startswith('/') else '/' + approval_url}"
+                body_text = (
+                    f"You have been sent a one-time approval link for a {type_label.lower()}.\n\n"
+                    f"Form number: {getattr(header, 'request_number', None) or 'N/A'}\n"
+                    f"Project: {getattr(header, 'project_title', None) or 'N/A'}\n\n"
+                    f"Open this link to approve or reject (link expires after use or after the expiry time):\n{full_url}\n"
+                )
+                form_num = html.escape(str(getattr(header, "request_number", None) or "N/A"))
+                project = html.escape(str(getattr(header, "project_title", None) or "N/A"))
+                url_escaped = html.escape(full_url, quote=True)
+                body_html = (
+                    f"<p>You have been sent a one-time approval link for a {html.escape(type_label.lower())}.</p>"
+                    f"<p><strong>Form number:</strong> {form_num}<br>"
+                    f"<strong>Project:</strong> {project}</p>"
+                    f"<p>Open the link below to approve or reject (link expires after use or after the expiry time):</p>"
+                    f'<p><a href="{url_escaped}" style="color: #2563eb; text-decoration: underline;">{url_escaped}</a></p>'
+                    f"<p>Or copy and paste into your browser if the link does not work.</p>"
+                )
+                err = send_notification_email(
+                    to=to_email,
+                    subject=subject,
+                    body_text=body_text,
+                    body_html=body_html,
+                    smtp_config=smtp_config,
+                )
+                email_sent = err is None
+                email_error = err
         expires_at = getattr(approval_token, "expires")
         return SendApprovalLinkResponse(
             approval_url=approval_url,

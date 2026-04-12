@@ -226,7 +226,7 @@ export default function StockInquiryForm({
             <p className="text-sm font-medium tabular-nums py-1">{inquiryDateStr}</p>
           </InquiryFormTableRow>
 
-          <InquiryFormTableRow label="Inquiry no.">
+          <InquiryFormTableRow label="Stock inquiry number">
             <p className="text-sm font-medium tabular-nums py-1">
               {isEditMode && inquiry?.inquiry_number ? (
                 inquiry.inquiry_number

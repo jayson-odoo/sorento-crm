@@ -28,7 +28,7 @@ function buildFormRows(inquiry: StockInquiryDetail | StockInquiry): (string | nu
     ['PRODUCT INQUIRY FORM'],
     [],
     ['DATE:', dateStr],
-    ['INQUIRY NO.:', inquiry.inquiry_number ?? ''],
+    ['STOCK INQUIRY NUMBER:', inquiry.inquiry_number ?? ''],
     ['SALES PERSON:', inquiry.salesperson ?? ''],
     ['PRODUCT CODE:', inquiry.product_code ?? ''],
     ['ITEM DESCRIPTION:', inquiry.item_description ?? ''],

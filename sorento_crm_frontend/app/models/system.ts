@@ -31,6 +31,14 @@ export interface SystemSetting {
   defaultProductSupplierId?: string | null;
   defaultProductStandardLeadTimeDays?: number;
 
+  /** System default approver for procurement "Send for approval" (skips chooser when set). */
+  purchaseRequestDefaultApproverUserId?: string | null;
+  purchaseRequestDefaultApproverName?: string | null;
+  purchaseRequestDefaultApproverEmail?: string | null;
+  sponsorshipFormDefaultApproverUserId?: string | null;
+  sponsorshipFormDefaultApproverName?: string | null;
+  sponsorshipFormDefaultApproverEmail?: string | null;
+
   /** When set, used for attachment upload webhooks; otherwise backend may use N8N_WEBHOOK_URL env. */
   n8nAttachmentWebhookUrl?: string | null;
   /** Webhook for CRM Chat Records replies (Respond.io-shaped payload for n8n). */

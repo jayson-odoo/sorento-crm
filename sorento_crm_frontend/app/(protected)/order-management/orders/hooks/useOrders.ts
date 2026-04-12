@@ -72,7 +72,7 @@ export function useOrder(id: string | null) {
   return useQuery({
     queryKey: ['order', id],
     queryFn: () => {
-      if (!id) throw new Error('Order ID is required');
+      if (!id) throw new Error('Delivery order ID is required');
       return getOrder(id);
     },
     enabled: !!id,
@@ -86,9 +86,9 @@ export function useCreateOrder() {
     mutationFn: (data: OrderFormData) => createOrder(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast.success('Order created successfully');
+      toast.success('Delivery order created successfully');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to create order'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to create delivery order'),
   });
 }
 
@@ -99,9 +99,9 @@ export function useUpdateOrder() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       queryClient.invalidateQueries({ queryKey: ['order'] });
-      toast.success('Order updated successfully');
+      toast.success('Delivery order updated successfully');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to update order'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to update delivery order'),
   });
 }
 
@@ -111,9 +111,9 @@ export function useDeleteOrder() {
     mutationFn: (id: string) => deleteOrder(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast.success('Order deleted successfully');
+      toast.success('Delivery order deleted successfully');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete order'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to delete delivery order'),
   });
 }
 
@@ -123,9 +123,9 @@ export function useBulkDeleteOrders() {
     mutationFn: (ids: string[]) => bulkDeleteOrders(ids),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
-      toast.success(result?.message ?? `${result?.deleted_count ?? 0} order(s) deleted`);
+      toast.success(result?.message ?? `${result?.deleted_count ?? 0} delivery order(s) deleted`);
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to bulk delete orders'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to bulk delete delivery orders'),
   });
 }
 
@@ -136,9 +136,9 @@ export function useCreateOrderLine() {
     onSuccess: (_, { orderId }) => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       queryClient.invalidateQueries({ queryKey: ['order', orderId] });
-      toast.success('Order line added');
+      toast.success('Delivery order line added');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to add line'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to add delivery order line'),
   });
 }
 
@@ -150,9 +150,9 @@ export function useUpdateOrderLine() {
     onSuccess: (_, { orderId }) => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       queryClient.invalidateQueries({ queryKey: ['order', orderId] });
-      toast.success('Order line updated');
+      toast.success('Delivery order line updated');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to update line'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to update delivery order line'),
   });
 }
 
@@ -163,8 +163,8 @@ export function useDeleteOrderLine() {
     onSuccess: (_, { orderId }) => {
       queryClient.invalidateQueries({ queryKey: ['orders'] });
       queryClient.invalidateQueries({ queryKey: ['order', orderId] });
-      toast.success('Order line removed');
+      toast.success('Delivery order line removed');
     },
-    onError: (error: Error) => toast.error(error.message || 'Failed to remove line'),
+    onError: (error: Error) => toast.error(error.message || 'Failed to remove delivery order line'),
   });
 }

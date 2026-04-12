@@ -117,7 +117,7 @@ export default function OrderStatusForm({ orderStatusId, onSuccess }: OrderStatu
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
         <Card>
           <CardHeader>
-            <CardTitle>{isEditMode ? 'Edit Order Status' : 'Create Order Status'}</CardTitle>
+            <CardTitle>{isEditMode ? 'Edit Delivery Order Status' : 'Create Delivery Order Status'}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -191,7 +191,7 @@ export default function OrderStatusForm({ orderStatusId, onSuccess }: OrderStatu
                       />
                     </FormControl>
                     <FormDescription>
-                      Order in which statuses should appear (lower numbers first)
+                      Sequence in the list (lower numbers appear first)
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -243,7 +243,7 @@ export default function OrderStatusForm({ orderStatusId, onSuccess }: OrderStatu
                 ) : (
                   <>
                     <Save className="size-4" />
-                    {isEditMode ? 'Update Order Status' : 'Create Order Status'}
+                    {isEditMode ? 'Update Delivery Order Status' : 'Create Delivery Order Status'}
                   </>
                 )}
               </Button>

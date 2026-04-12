@@ -57,7 +57,7 @@ const CustomerDeleteDialog = ({
             {customer.customer_code})? This action cannot be undone.
             {customer.orders_count && customer.orders_count > 0 && (
               <span className="block mt-2 text-destructive">
-                Warning: This customer has {customer.orders_count} order(s).
+                Warning: This customer has {customer.orders_count} delivery order(s).
               </span>
             )}
           </AlertDialogDescription>

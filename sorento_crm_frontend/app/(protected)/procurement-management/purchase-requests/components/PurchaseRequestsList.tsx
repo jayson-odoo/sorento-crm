@@ -44,6 +44,7 @@ import type { PurchaseRequest } from '../types/purchaseRequest.types';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
+import { purchaseRequestNumberFieldLabel } from '../lib/purchase-request-field-labels';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
@@ -149,6 +150,8 @@ export default function PurchaseRequestsList({
         ? 'Sponsorship Form'
         : 'record';
 
+  const requestNumberColumnTitle = purchaseRequestNumberFieldLabel(requestType);
+
   const columns = useMemo<ColumnDef<PurchaseRequest>[]>(
     () => [
       {
@@ -195,7 +198,7 @@ export default function PurchaseRequestsList({
       {
         accessorKey: 'request_number',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Sales order no." column={column} />
+          <DataGridColumnHeader title={requestNumberColumnTitle} column={column} />
         ),
         cell: ({ row }) => (
           <span className="font-medium tabular-nums">
@@ -291,7 +294,7 @@ export default function PurchaseRequestsList({
         size: 40,
       },
     ],
-    [requestType, selectedIds, isAllSelected],
+    [requestType, requestNumberColumnTitle, selectedIds, isAllSelected],
   );
 
   const table = useReactTable({

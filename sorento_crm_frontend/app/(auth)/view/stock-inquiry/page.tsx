@@ -162,7 +162,7 @@ function ViewStockInquiryContent() {
           {summary?.inquiry_number ? (
             <div className="space-y-1">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Inquiry no.
+                Stock inquiry number
               </p>
               <p className="text-2xl sm:text-3xl font-bold tabular-nums tracking-tight break-all">
                 {summary.inquiry_number}

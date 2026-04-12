@@ -30,9 +30,9 @@ export type ListQueryFieldMeta = {
   export_column_name?: string | null;
   is_line_field: boolean;
   sort_order: number;
-  /** Orders export UI: top-level section */
+  /** Delivery orders export UI: top-level section */
   export_section?: 'order' | 'line' | null;
-  /** Orders export UI: nested under line */
+  /** Delivery orders export UI: nested under line */
   export_subgroup?: 'product' | 'warehouse' | null;
 };
 

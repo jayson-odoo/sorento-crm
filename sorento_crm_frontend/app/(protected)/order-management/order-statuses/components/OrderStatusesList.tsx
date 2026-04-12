@@ -111,7 +111,7 @@ export default function OrderStatusesList() {
           <div className="relative">
             <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
             <Input
-              placeholder="Search order statuses..."
+              placeholder="Search delivery order statuses..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="ps-9 w-64"
@@ -139,7 +139,7 @@ export default function OrderStatusesList() {
             />
             <Button onClick={() => router.push('/order-management/order-statuses/new')}>
               <Plus />
-              Create Order Status
+              Create Delivery Order Status
             </Button>
           </div>
         </CardHeader>

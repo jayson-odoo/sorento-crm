@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2, ScrollText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -57,6 +58,7 @@ import PurchaseRequestConversationPanel from './PurchaseRequestConversationPanel
 import { PurchaseRequestSignoffFooter } from './PurchaseRequestSignoffFooter';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
+import { purchaseRequestNumberReplyPhrase } from '../lib/purchase-request-field-labels';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
@@ -118,7 +120,18 @@ export default function PurchaseRequestDetail({
     text: string;
   } | null>(null);
   const [openingReplySheet, setOpeningReplySheet] = useState(false);
+  const [autoSendingApproval, setAutoSendingApproval] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
+
+  const { data: systemSettingsPayload } = useQuery({
+    queryKey: ['system-settings'],
+    queryFn: async () => {
+      const r = await apiFetch('/api/user-management/settings');
+      if (!r.ok) throw new Error('Failed to load settings');
+      return r.json() as Promise<{ settings?: Record<string, unknown> }>;
+    },
+    staleTime: 60_000,
+  });
 
   const openUpdateAndReplyInChat = useCallback(async () => {
     if (!request || !requestId || !isValidId) return;
@@ -133,7 +146,10 @@ export default function PurchaseRequestDetail({
       }
     }
     const typeLabelVal = REQUEST_TYPE_LABELS[request.request_type] ?? request.request_type;
-    const idPhrase = `sales order no. ${request.request_number ?? ''}`;
+    const idPhrase = purchaseRequestNumberReplyPhrase(
+      request.request_type,
+      request.request_number,
+    );
     let fullMessage = `This is the ${idPhrase} for ${typeLabelVal} for project title ${request.project_title ?? ''}.`;
     if (viewUrl) {
       fullMessage += `\n\nView full details: ${viewUrl}`;
@@ -150,6 +166,28 @@ export default function PurchaseRequestDetail({
     queryFn: getUsersForApproverSelect,
     enabled: approvalDialogOpen,
   });
+
+  const configuredDefaultApproverUserId = useMemo(() => {
+    const s = systemSettingsPayload?.settings;
+    if (!s || !request?.request_type) return null;
+    if (request.request_type === 'purchase_request') {
+      const id = s.purchase_request_default_approver_user_id;
+      return typeof id === 'string' && id.length > 0 ? id : null;
+    }
+    const id = s.sponsorship_form_default_approver_user_id;
+    return typeof id === 'string' && id.length > 0 ? id : null;
+  }, [systemSettingsPayload?.settings, request?.request_type]);
+
+  const configuredDefaultApproverEmail = useMemo(() => {
+    const s = systemSettingsPayload?.settings;
+    if (!s || !request?.request_type) return null;
+    if (request.request_type === 'purchase_request') {
+      const e = s.purchase_request_default_approver_email;
+      return typeof e === 'string' && e.length > 0 ? e : null;
+    }
+    const e = s.sponsorship_form_default_approver_email;
+    return typeof e === 'string' && e.length > 0 ? e : null;
+  }, [systemSettingsPayload?.settings, request?.request_type]);
 
   const listLabel =
     basePath.includes('sponsorship-forms') ? 'Sponsorship Forms' : 'Purchase Requests';
@@ -270,16 +308,50 @@ export default function PurchaseRequestDetail({
           )}
           {showPrimarySendForApproval && (
             <Button
-              onClick={() => {
+              disabled={autoSendingApproval}
+              onClick={async () => {
                 setApprovalLink(null);
                 setApprovalError(null);
+                if (configuredDefaultApproverUserId) {
+                  setAutoSendingApproval(true);
+                  try {
+                    const baseUrl =
+                      typeof window !== 'undefined' ? window.location.origin : undefined;
+                    const res = await sendApprovalLink(requestId, {
+                      approver_email: configuredDefaultApproverEmail ?? undefined,
+                      approver_user_id: configuredDefaultApproverUserId,
+                      expires_hours: 24,
+                      send_email: true,
+                      base_url: baseUrl,
+                    });
+                    void queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+                    if (res.email_sent) {
+                      toast.success(
+                        `Approval link sent to ${configuredDefaultApproverEmail ?? 'approver'}`,
+                      );
+                    } else if (res.email_error) {
+                      toast.warning(
+                        `Link created but email could not be sent: ${res.email_error}`,
+                      );
+                    } else {
+                      toast.success('Approval link created.');
+                    }
+                  } catch (e) {
+                    toast.error(
+                      e instanceof Error ? e.message : 'Failed to send approval link',
+                    );
+                  } finally {
+                    setAutoSendingApproval(false);
+                  }
+                  return;
+                }
                 setApproverUserId(request.approver_user_id ?? '');
                 setApproverEmail(request.approver_email ?? '');
                 setApprovalDialogOpen(true);
               }}
             >
               <Send className="size-4" />
-              Send for approval
+              {autoSendingApproval ? 'Sending…' : 'Send for approval'}
             </Button>
           )}
           <DetailActionsMenu ariaLabel="Request actions">
@@ -614,7 +686,7 @@ export default function PurchaseRequestDetail({
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
                   <div>
-                    <p className="text-sm text-muted-foreground">Sales Order no.</p>
+                    <p className="text-sm text-muted-foreground">Purchase request number</p>
                     <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
                   </div>
                   <div>
@@ -751,7 +823,7 @@ export default function PurchaseRequestDetail({
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
                   <div>
-                    <p className="text-sm text-muted-foreground">Sales Order no.</p>
+                    <p className="text-sm text-muted-foreground">Sponsorship form number</p>
                     <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
                   </div>
                   <div>

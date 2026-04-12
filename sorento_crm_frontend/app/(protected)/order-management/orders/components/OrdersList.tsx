@@ -134,6 +134,7 @@ export default function OrdersList() {
     const result = await importOrderTracking(file);
     // Job is queued, will be processed in background
     queryClient.invalidateQueries({ queryKey: ['orders'] });
+    queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
     return result;
   };
 
@@ -196,7 +197,7 @@ export default function OrdersList() {
       },
       {
         accessorKey: 'order_number',
-        header: ({ column }) => <DataGridColumnHeader title="Order Number" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Delivery Order Number" column={column} />,
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
@@ -209,7 +210,7 @@ export default function OrdersList() {
       },
       {
         accessorKey: 'order_date',
-        header: ({ column }) => <DataGridColumnHeader title="Order Date" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Delivery Order Date" column={column} />,
         cell: ({ row }) => row.original.order_date ? formatDate(new Date(row.original.order_date)) : '-',
         size: 120,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
@@ -343,7 +344,7 @@ export default function OrdersList() {
             <div className="relative">
               <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
               <Input
-                placeholder="Search orders..."
+                placeholder="Search delivery orders..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="ps-9 w-64 max-w-full"
@@ -366,7 +367,7 @@ export default function OrdersList() {
                   variant="outline"
                   size="icon"
                   className="relative shrink-0"
-                  title="Quick filters — status & order lines"
+                  title="Quick filters — status & delivery order lines"
                   aria-label="Quick filters"
                 >
                   <SlidersHorizontal className="size-4" />
@@ -409,7 +410,7 @@ export default function OrdersList() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="orders-quick-lines" className="text-xs">
-                      Order lines
+                      Delivery order lines
                     </Label>
                     <Select
                       value={linesFilter}
@@ -419,12 +420,12 @@ export default function OrdersList() {
                       }}
                     >
                       <SelectTrigger id="orders-quick-lines" className="w-full">
-                        <SelectValue placeholder="Order lines" />
+                        <SelectValue placeholder="Delivery order lines" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All orders</SelectItem>
-                        <SelectItem value="yes">With order lines</SelectItem>
-                        <SelectItem value="no">Without order lines</SelectItem>
+                        <SelectItem value="all">All delivery orders</SelectItem>
+                        <SelectItem value="yes">With delivery order lines</SelectItem>
+                        <SelectItem value="no">Without delivery order lines</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -463,7 +464,7 @@ export default function OrdersList() {
                   Import tracking
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setOrderLinesImportOpen(true)}>
-                  Import order lines
+                  Import delivery order lines
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -491,18 +492,18 @@ export default function OrdersList() {
             />
             <Button onClick={() => router.push('/order-management/orders/new')}>
               <Plus />
-              Create Order
+              Create Delivery Order
             </Button>
           </div>
         </CardHeader>
         {isError ? (
           <div className="px-5 pb-2 text-sm text-destructive">
-            {error instanceof Error ? error.message : 'Failed to load orders'}
+            {error instanceof Error ? error.message : 'Failed to load delivery orders'}
           </div>
         ) : null}
         <div className="mx-5 mb-2 flex flex-wrap gap-4">
           <LatestImportStatusPanel jobType="order_tracking_import" title="Latest tracking import" />
-          <LatestImportStatusPanel jobType="delivery_order_detail_import" title="Latest order lines import" />
+          <LatestImportStatusPanel jobType="delivery_order_detail_import" title="Latest delivery order lines import" />
         </div>
         <CardTable>
           <ScrollArea>
@@ -528,7 +529,7 @@ export default function OrdersList() {
         resourceKey="orders"
         open={exportDialogOpen}
         onOpenChange={setExportDialogOpen}
-        filename="orders_export.xlsx"
+        filename="delivery_orders_export.xlsx"
         selectedRecordIds={
           selectedOrderIds.size > 0 ? Array.from(selectedOrderIds) : undefined
         }
@@ -554,7 +555,10 @@ export default function OrdersList() {
         open={orderLinesImportOpen}
         onOpenChange={setOrderLinesImportOpen}
         onTest={validateDeliveryOrderDetail}
-        onSuccess={() => queryClient.invalidateQueries({ queryKey: ['orders'] })}
+        onSuccess={() => {
+          queryClient.invalidateQueries({ queryKey: ['orders'] });
+          queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
+        }}
       />
       <OrderBulkDeleteDialog
         open={bulkDeleteDialogOpen}

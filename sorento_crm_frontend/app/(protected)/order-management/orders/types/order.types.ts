@@ -56,6 +56,7 @@ export interface Order {
 export interface OrderLine {
   id: string;
   order_id: string;
+  line_sequence?: number;
   product_id: string;
   warehouse_id: string;
   quantity?: number | string | null;

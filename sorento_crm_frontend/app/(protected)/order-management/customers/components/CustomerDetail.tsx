@@ -128,7 +128,7 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
             </div>
             {customer.orders_count !== undefined && (
               <div>
-                <p className="text-sm text-muted-foreground">Total Orders</p>
+                <p className="text-sm text-muted-foreground">Total Delivery Orders</p>
                 <p className="font-medium">{customer.orders_count}</p>
               </div>
             )}

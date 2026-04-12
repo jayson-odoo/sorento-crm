@@ -33,7 +33,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Order</ToolbarTitle>
+            <ToolbarTitle>Delivery Order</ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -41,11 +41,11 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Order Management</BreadcrumbPage>
+                  <BreadcrumbPage>Delivery Order Management</BreadcrumbPage>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href={ordersListHref}>Orders</BreadcrumbLink>
+                  <BreadcrumbLink href={ordersListHref}>Delivery Orders</BreadcrumbLink>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -53,7 +53,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
           <ToolbarActions>
             <Button asChild variant="outline">
               <Link href={ordersListHref}>
-                <MoveLeft /> Back to orders
+                <MoveLeft /> Back to delivery orders
               </Link>
             </Button>
           </ToolbarActions>

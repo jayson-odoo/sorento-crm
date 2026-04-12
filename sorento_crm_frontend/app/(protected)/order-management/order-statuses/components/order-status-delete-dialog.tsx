@@ -52,12 +52,12 @@ const OrderStatusDeleteDialog = ({
         <AlertDialogHeader>
           <AlertDialogTitle>Confirm Delete</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete the order status{' '}
+            Are you sure you want to delete the delivery order status{' '}
             <strong className="text-foreground">{orderStatus.status_name}</strong> (
             {orderStatus.status_code})? This action cannot be undone.
             {orderStatus.orders_count && orderStatus.orders_count > 0 && (
               <span className="block mt-2 text-destructive">
-                Warning: This status is currently used by {orderStatus.orders_count} order(s).
+                Warning: This status is currently used by {orderStatus.orders_count} delivery order(s).
               </span>
             )}
           </AlertDialogDescription>

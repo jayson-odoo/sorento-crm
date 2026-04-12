@@ -393,14 +393,23 @@ export default function StockInquiryDetail({
       </div>
 
       {/* Reject dialog */}
-      <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+      <Dialog
+        open={rejectDialogOpen}
+        onOpenChange={(open) => {
+          setRejectDialogOpen(open);
+          if (!open) {
+            setRejectReason('');
+            setRejectAction(null);
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Reject stock inquiry</DialogTitle>
-            <DialogDescription>Optionally provide a reason for the rejection.</DialogDescription>
+            <DialogDescription>Enter a reason for the rejection. This is required.</DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="reject-reason">Reason (optional)</Label>
+            <Label htmlFor="reject-reason">Rejection reason</Label>
             <Textarea
               id="reject-reason"
               value={rejectReason}
@@ -408,6 +417,8 @@ export default function StockInquiryDetail({
               placeholder="Reason for rejection..."
               rows={3}
               className="resize-none"
+              required
+              aria-required
             />
           </div>
           <DialogFooter>
@@ -415,14 +426,17 @@ export default function StockInquiryDetail({
             <Button
               variant="destructive"
               disabled={
+                !rejectReason.trim() ||
                 (rejectAction === 'project_sales' && projectSalesRejectMutation.isPending) ||
                 (rejectAction === 'purchasing' && purchasingRejectMutation.isPending)
               }
               onClick={async () => {
+                const reason = rejectReason.trim();
+                if (!reason) return;
                 if (rejectAction === 'project_sales') {
-                  await projectSalesRejectMutation.mutateAsync({ id: inquiryId, reason: rejectReason.trim() || undefined });
+                  await projectSalesRejectMutation.mutateAsync({ id: inquiryId, reason });
                 } else if (rejectAction === 'purchasing') {
-                  await purchasingRejectMutation.mutateAsync({ id: inquiryId, reason: rejectReason.trim() || undefined });
+                  await purchasingRejectMutation.mutateAsync({ id: inquiryId, reason });
                 }
                 setRejectDialogOpen(false);
                 setRejectAction(null);
@@ -559,7 +573,7 @@ export default function StockInquiryDetail({
               : ''}
           </InquiryReadValue>
         </InquiryFormTableRow>
-        <InquiryFormTableRow label="Inquiry no.">
+        <InquiryFormTableRow label="Stock inquiry number">
           <InquiryReadValue>{inquiry.inquiry_number}</InquiryReadValue>
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Sales person">

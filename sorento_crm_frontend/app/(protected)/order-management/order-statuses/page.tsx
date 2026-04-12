@@ -17,8 +17,8 @@ import {
 import OrderStatusesList from './components/OrderStatusesList';
 
 export const metadata: Metadata = {
-  title: 'Order Statuses',
-  description: 'Manage order statuses.',
+  title: 'Delivery Order Statuses',
+  description: 'Manage delivery order statuses.',
 };
 
 export default async function OrderStatusesPage() {
@@ -27,7 +27,7 @@ export default async function OrderStatusesPage() {
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Order Statuses</ToolbarTitle>
+            <ToolbarTitle>Delivery Order Statuses</ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -35,7 +35,7 @@ export default async function OrderStatusesPage() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Order Management</BreadcrumbPage>
+                  <BreadcrumbPage>Delivery Order Management</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>

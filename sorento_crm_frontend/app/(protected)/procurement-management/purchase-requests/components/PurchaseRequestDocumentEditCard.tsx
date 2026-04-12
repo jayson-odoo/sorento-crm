@@ -33,6 +33,7 @@ import {
 import type { PurchaseRequestSchemaType } from '../forms/purchase-request-schema';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
 import { PurchaseRequestSignoffFooter } from './PurchaseRequestSignoffFooter';
+import { purchaseRequestNumberFieldLabel } from '../lib/purchase-request-field-labels';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
@@ -170,7 +171,7 @@ export function PurchaseRequestDocumentEditCard({
               </DocField>
             )}
 
-            <DocField label="Sales Order no.">
+            <DocField label={purchaseRequestNumberFieldLabel(request.request_type)}>
               <FormField
                 control={control}
                 name="request_number"

@@ -286,7 +286,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
           <div className="flex justify-end items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button type="button" variant="outline" size="icon" aria-label="Order status">
+                <Button type="button" variant="outline" size="icon" aria-label="Delivery order status">
                   <Settings className="size-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -337,7 +337,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                   name="order_number"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Order Number *</FormLabel>
+                      <FormLabel>Delivery Order Number *</FormLabel>
                       <FormControl>
                         <Input
                           placeholder="ORD-001"
@@ -346,7 +346,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                         />
                       </FormControl>
                       <FormDescription>
-                        Unique order identifier
+                        Unique delivery order number
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -359,7 +359,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                     name="order_date"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Order Date *</FormLabel>
+                        <FormLabel>Delivery Order Date *</FormLabel>
                         <FormControl>
                           <Input
                             type="date"
@@ -423,11 +423,11 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                     name="order_status_id"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Order Status *</FormLabel>
+                        <FormLabel>Delivery Order Status *</FormLabel>
                         <Select onValueChange={field.onChange} value={field.value || ''}>
                           <FormControl>
                             <SelectTrigger>
-                              <SelectValue placeholder="Select order status" />
+                              <SelectValue placeholder="Select delivery order status" />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
@@ -438,7 +438,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                             ))}
                             {(!orderStatuses || orderStatuses.length === 0) && (
                               <SelectItem value="__no_statuses__" disabled>
-                                No order statuses available
+                                No delivery order statuses available
                               </SelectItem>
                             )}
                           </SelectContent>
@@ -453,7 +453,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                     name="order_type"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Order Type</FormLabel>
+                        <FormLabel>Delivery Order Type</FormLabel>
                         <FormControl>
                           <Input placeholder="e.g. BEYOND, CG" {...field} value={field.value ?? ''} />
                         </FormControl>
@@ -889,7 +889,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
             ) : (
               <>
                 <Save className="mr-2 size-4" />
-                {isEditMode ? 'Update Order' : 'Create Order'}
+                {isEditMode ? 'Update Delivery Order' : 'Create Delivery Order'}
               </>
             )}
           </Button>

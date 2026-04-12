@@ -24,7 +24,7 @@ export default function NewOrderPage() {
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Create Order</ToolbarTitle>
+            <ToolbarTitle>Create Delivery Order</ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -32,11 +32,11 @@ export default function NewOrderPage() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Order Management</BreadcrumbPage>
+                  <BreadcrumbPage>Delivery Order Management</BreadcrumbPage>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href="/order-management/orders">Orders</BreadcrumbLink>
+                  <BreadcrumbLink href="/order-management/orders">Delivery Orders</BreadcrumbLink>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -44,7 +44,7 @@ export default function NewOrderPage() {
           <ToolbarActions>
             <Button asChild variant="outline">
               <Link href="/order-management/orders">
-                <MoveLeft /> Back to orders
+                <MoveLeft /> Back to delivery orders
               </Link>
             </Button>
           </ToolbarActions>

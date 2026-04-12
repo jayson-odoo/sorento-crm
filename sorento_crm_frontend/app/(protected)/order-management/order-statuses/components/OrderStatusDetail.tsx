@@ -32,9 +32,9 @@ export default function OrderStatusDetail({ orderStatusId }: OrderStatusDetailPr
   if (!orderStatus) {
     return (
       <div className="text-center py-12">
-        <p className="text-muted-foreground">Order status not found</p>
+        <p className="text-muted-foreground">Delivery order status not found</p>
         <Button variant="outline" onClick={() => router.push('/order-management/order-statuses')} className="mt-4">
-          Back to Order Statuses
+          Back to delivery order statuses
         </Button>
       </div>
     );
@@ -67,10 +67,10 @@ export default function OrderStatusDetail({ orderStatusId }: OrderStatusDetailPr
         </div>
       </div>
 
-      {/* Order Status Information */}
+      {/* Delivery order status information */}
       <Card>
         <CardHeader>
-          <CardTitle>Order Status Information</CardTitle>
+          <CardTitle>Delivery Order Status Information</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -106,7 +106,7 @@ export default function OrderStatusDetail({ orderStatusId }: OrderStatusDetailPr
             </div>
             {orderStatus.orders_count !== undefined && (
               <div>
-                <p className="text-sm text-muted-foreground">Orders Using This Status</p>
+                <p className="text-sm text-muted-foreground">Delivery Orders Using This Status</p>
                 <p className="font-medium">{orderStatus.orders_count}</p>
               </div>
             )}

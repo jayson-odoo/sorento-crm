@@ -13,6 +13,8 @@ from decimal import Decimal
 from io import BytesIO
 from typing import Optional, List, Any, Dict, cast
 
+from sqlalchemy import func
+
 from app.database import SessionLocal
 from app.services.inventory_service import StockService
 from app.services.order_service import OrderService
@@ -35,7 +37,7 @@ from app.api.v1.external.utils import (
 )
 from app.models.job import JobStatus
 from app.models.procurement import SPOAllocation
-from app.models.order import OrderLine
+from app.models.order import Order, OrderLine
 from app.schemas.resources import AttachmentCreate
 from app.schemas.procurement import SPOAllocationCreate
 
@@ -1571,9 +1573,10 @@ def _decimal_or_none(value: Any) -> Optional[Decimal]:
 
 
 def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
-    """Process delivery order detail Excel: upsert order lines by (doc no, item code, location).
+    """Process delivery order detail Excel: one new order line per spreadsheet row.
     Columns: doc no -> order (order_number), item code -> product, location -> warehouse,
     qty, unit price, discount, total, tax, total excluding tax, total including tax.
+    Duplicate product+warehouse on the same order produce separate lines (sequenced).
     """
     from rq import get_current_job
     import openpyxl
@@ -1679,84 +1682,83 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
             db.close()
             return
 
-        order_service = OrderService(db)
+        doc_strips = {(d or "").strip() for d in all_doc_nos if d}
         orders_by_number: Dict[str, Any] = {}
-        for doc_no in all_doc_nos:
-            order = order_service.get_order_by_order_number(doc_no)
-            if order:
-                orders_by_number[doc_no] = order
+        if doc_strips:
+            batch_orders = (
+                db.query(Order)
+                .filter(Order.deleted_at.is_(None), Order.order_number.in_(list(doc_strips)))
+                .all()
+            )
+            by_order_number = {(o.order_number or "").strip(): o for o in batch_orders}
+            for doc_no in all_doc_nos:
+                o = by_order_number.get((doc_no or "").strip())
+                if o:
+                    orders_by_number[doc_no] = o
 
         products_by_code = get_products_by_code_exact(db, all_product_codes)
         warehouses_map = get_warehouses_by_code_or_name(db, all_locations)
+
+        # Next line_sequence per order (append after existing lines)
+        seq_next: Dict[str, int] = {o.id: 0 for o in orders_by_number.values()}
+        if seq_next:
+            oids = list(seq_next.keys())
+            for oid, mx in (
+                db.query(OrderLine.order_id, func.max(OrderLine.line_sequence))
+                .filter(OrderLine.order_id.in_(oids))
+                .group_by(OrderLine.order_id)
+                .all()
+            ):
+                seq_next[oid] = int(mx or 0)
 
         successful = 0
         failed = 0
         skipped = 0
         errors: List[Dict[str, Any]] = []
+        progress_every = max(100, min(500, total_data_rows // 50 or 100))
 
         for row_idx, row_data in enumerate(data_rows, start=2):
-            doc_no = row_data.get("doc_no")
-            item_code = row_data.get("item_code")
-            location = row_data.get("location")
-            if not doc_no:
-                skipped += 1
-                errors.append({"row": row_idx, "error": "Missing doc no"})
-                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
-                continue
-            if not item_code:
-                skipped += 1
-                errors.append({"row": row_idx, "error": "Missing item code"})
-                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
-                continue
-            if not location:
-                skipped += 1
-                errors.append({"row": row_idx, "error": "Missing location"})
-                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
-                continue
-
-            order = orders_by_number.get(doc_no)
-            product = products_by_code.get((item_code or "").strip())
-            warehouse = warehouses_map.get(normalize_code(location)) if location else None
-            if not order:
-                skipped += 1
-                errors.append({"row": row_idx, "error": f"Order not found: {doc_no}"})
-                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
-                continue
-            if not product:
-                skipped += 1
-                errors.append({"row": row_idx, "error": f"Product not found: {item_code}"})
-                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
-                continue
-            if not warehouse:
-                skipped += 1
-                errors.append({"row": row_idx, "error": f"Warehouse not found: {location}"})
-                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, failed_rows=len(errors), skipped_rows=skipped)
-                continue
-
             try:
-                line = (
-                    db.query(OrderLine)
-                    .filter(
-                        OrderLine.order_id == order.id,
-                        OrderLine.product_id == product.id,
-                        OrderLine.warehouse_id == warehouse.id,
-                    )
-                    .first()
-                )
-                qty = row_data.get("quantity") or Decimal("0")
-                if line:
-                    setattr(line, "quantity", qty)
-                    setattr(line, "unit_price", row_data.get("unit_price"))
-                    setattr(line, "discount", row_data.get("discount"))
-                    setattr(line, "total", row_data.get("total"))
-                    setattr(line, "tax", row_data.get("tax"))
-                    setattr(line, "total_excluding_tax", row_data.get("total_excluding_tax"))
-                    setattr(line, "total_including_tax", row_data.get("total_including_tax"))
-                else:
+                doc_no = row_data.get("doc_no")
+                item_code = row_data.get("item_code")
+                location = row_data.get("location")
+                if not doc_no:
+                    skipped += 1
+                    errors.append({"row": row_idx, "error": "Missing doc no"})
+                    continue
+                if not item_code:
+                    skipped += 1
+                    errors.append({"row": row_idx, "error": "Missing item code"})
+                    continue
+                if not location:
+                    skipped += 1
+                    errors.append({"row": row_idx, "error": "Missing location"})
+                    continue
+
+                order = orders_by_number.get(doc_no)
+                product = products_by_code.get((item_code or "").strip())
+                warehouse = warehouses_map.get(normalize_code(location)) if location else None
+                if not order:
+                    skipped += 1
+                    errors.append({"row": row_idx, "error": f"Order not found: {doc_no}"})
+                    continue
+                if not product:
+                    skipped += 1
+                    errors.append({"row": row_idx, "error": f"Product not found: {item_code}"})
+                    continue
+                if not warehouse:
+                    skipped += 1
+                    errors.append({"row": row_idx, "error": f"Warehouse not found: {location}"})
+                    continue
+
+                try:
+                    qty = row_data.get("quantity") or Decimal("0")
+                    seq_next[order.id] += 1
                     line = OrderLine(
                         order_id=order.id,
                         product_id=product.id,
                         warehouse_id=warehouse.id,
+                        line_sequence=seq_next[order.id],
                         quantity=qty,
                         unit_price=row_data.get("unit_price"),
                         discount=row_data.get("discount"),
@@ -1766,17 +1768,20 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                         total_including_tax=row_data.get("total_including_tax"),
                     )
                     db.add(line)
-                successful += 1
-            except Exception as e:
-                failed += 1
-                errors.append({"row": row_idx, "error": str(e)})
-            job_service.update_job_progress(
-                job_id_str,
-                processed_rows=row_idx - 1,
-                successful_rows=successful,
-                failed_rows=failed,
-                skipped_rows=skipped,
-            )
+                    successful += 1
+                except Exception as e:
+                    failed += 1
+                    errors.append({"row": row_idx, "error": str(e)})
+            finally:
+                cur = row_idx - 1
+                if cur % progress_every == 0 or cur == total_data_rows:
+                    job_service.update_job_progress(
+                        job_id_str,
+                        processed_rows=cur,
+                        successful_rows=successful,
+                        failed_rows=failed,
+                        skipped_rows=skipped,
+                    )
 
         db.commit()
         job_service.complete_job(

@@ -308,20 +308,15 @@ class OrderService:
         return order
 
     def create_order_line(self, order_id: str, data: OrderLineCreate):
-        """Add a line to an order. Enforces unique (order_id, product_id, warehouse_id)."""
+        """Add a line to an order. Lines are ordered by line_sequence (multiple lines may share product+warehouse)."""
         self.get_order(order_id)  # ensure order exists
-        existing = (
-            self.db.query(OrderLine)
-            .filter(
-                OrderLine.order_id == order_id,
-                OrderLine.product_id == data.product_id,
-                OrderLine.warehouse_id == data.warehouse_id,
-            )
-            .first()
+        next_seq = (
+            self.db.query(func.coalesce(func.max(OrderLine.line_sequence), 0))
+            .filter(OrderLine.order_id == order_id)
+            .scalar()
         )
-        if existing:
-            raise handle_conflict("A line with this product and warehouse already exists for this order.")
-        line = OrderLine(order_id=order_id, **data.model_dump())
+        next_seq = int(next_seq or 0) + 1
+        line = OrderLine(order_id=order_id, line_sequence=next_seq, **data.model_dump())
         self.db.add(line)
         self.db.commit()
         self.db.refresh(line)

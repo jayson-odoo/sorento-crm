@@ -6,7 +6,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models.user import SystemSetting, UserRole
+from app.models.user import SystemSetting, User, UserRole
 from app.services.error_handler import handle_internal_error
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,8 @@ class SystemSettingUpdate(BaseModel):
     n8n_attachment_webhook_url: Optional[str] = None
     n8n_crm_chat_outbound_webhook_url: Optional[str] = None
     n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
+    purchase_request_default_approver_user_id: Optional[str] = None
+    sponsorship_form_default_approver_user_id: Optional[str] = None
 
 
 class SmtpTestResult(BaseModel):
@@ -86,6 +88,10 @@ async def get_settings(
                 "smtp_from": settings.smtp_from,
                 "smtp_password": None,  # never return raw password
             }
+        pr_uid = getattr(settings, "purchase_request_default_approver_user_id", None) if settings else None
+        sf_uid = getattr(settings, "sponsorship_form_default_approver_user_id", None) if settings else None
+        user_pr = db.query(User).filter(User.id == pr_uid).first() if pr_uid else None
+        user_sf = db.query(User).filter(User.id == sf_uid).first() if sf_uid else None
         return {
             "settings": {
                 "id": settings.id if settings else None,
@@ -104,6 +110,12 @@ async def get_settings(
                 "default_product_standard_lead_time_days": (
                     settings.default_product_standard_lead_time_days if settings else None
                 ),
+                "purchase_request_default_approver_user_id": pr_uid,
+                "purchase_request_default_approver_name": user_pr.name if user_pr else None,
+                "purchase_request_default_approver_email": user_pr.email if user_pr else None,
+                "sponsorship_form_default_approver_user_id": sf_uid,
+                "sponsorship_form_default_approver_name": user_sf.name if user_sf else None,
+                "sponsorship_form_default_approver_email": user_sf.email if user_sf else None,
                 "n8n_attachment_webhook_url": getattr(settings, "n8n_attachment_webhook_url", None)
                 if settings
                 else None,
@@ -144,6 +156,20 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             update_data["default_product_supplier_id"] = sid_clean
         else:
             update_data["default_product_supplier_id"] = None
+
+    for col in (
+        "purchase_request_default_approver_user_id",
+        "sponsorship_form_default_approver_user_id",
+    ):
+        if col in update_data:
+            uid = update_data[col]
+            if uid is not None and str(uid).strip():
+                uid_clean = str(uid).strip()
+                if db.query(User.id).filter(User.id == uid_clean).first() is None:
+                    raise HTTPException(status_code=400, detail="Default approver user not found")
+                update_data[col] = uid_clean
+            else:
+                update_data[col] = None
 
     for key, value in update_data.items():
         setattr(settings, key, value)

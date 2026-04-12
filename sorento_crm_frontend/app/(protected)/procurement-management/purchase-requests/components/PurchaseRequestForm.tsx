@@ -57,6 +57,7 @@ import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
 import { PurchaseRequestDocumentEditCard } from './PurchaseRequestDocumentEditCard';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
+import { purchaseRequestNumberFieldLabel, purchaseRequestNumberReplyPhrase } from '../lib/purchase-request-field-labels';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { cn } from '@/lib/utils';
 
@@ -324,7 +325,7 @@ export default function PurchaseRequestForm({
                   name="request_number"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Sales Order no.</FormLabel>
+                      <FormLabel>{purchaseRequestNumberFieldLabel(requestType)}</FormLabel>
                       <FormControl>
                         <Input
                           placeholder="e.g. PR26-0303"
@@ -840,7 +841,10 @@ export default function PurchaseRequestForm({
                 const values = form.getValues();
                 const typeLabel =
                   REQUEST_TYPE_LABELS[values.request_type ?? ''] ?? values.request_type ?? 'Request';
-                const idPhrase = `sales order no. ${values.request_number ?? ''}`;
+                const idPhrase = purchaseRequestNumberReplyPhrase(
+                  values.request_type,
+                  values.request_number,
+                );
                 let defaultReply = `This is the ${idPhrase} for ${typeLabel} for project title ${values.project_title ?? ''}.`;
                 if (publicViewLinksEnabled) {
                   try {

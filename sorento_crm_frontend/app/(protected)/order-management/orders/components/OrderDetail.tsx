@@ -78,13 +78,13 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
   if (!order) {
     return (
       <div className="text-center py-12">
-        <p className="text-muted-foreground">Order not found</p>
+        <p className="text-muted-foreground">Delivery order not found</p>
         <Button
           variant="outline"
           onClick={() => router.push(`/order-management/orders${buildOrderDetailSearch(listNav)}`)}
           className="mt-4"
         >
-          Back to Orders
+          Back to delivery orders
         </Button>
       </div>
     );
@@ -104,7 +104,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
             )}
           </div>
           <p className="text-sm text-muted-foreground">
-            {order.debtor_name || order.debtor_code || '—'} • Order Date: {order.order_date ? formatDate(new Date(order.order_date)) : '-'}
+            {order.debtor_name || order.debtor_code || '—'} • Delivery order date: {order.order_date ? formatDate(new Date(order.order_date)) : '-'}
           </p>
         </div>
         <div className="flex gap-2">
@@ -120,7 +120,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
           />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button type="button" variant="outline" size="icon" aria-label="Change order status">
+              <Button type="button" variant="outline" size="icon" aria-label="Change delivery order status">
                 <Settings className="size-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -168,7 +168,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
 
       <Tabs defaultValue="information" className="w-full">
         <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
-          <TabsTrigger value="information">Order information</TabsTrigger>
+          <TabsTrigger value="information">Delivery order information</TabsTrigger>
           <TabsTrigger value="financial">Financial summary</TabsTrigger>
           <TabsTrigger value="delivery">Delivery &amp; tracking</TabsTrigger>
         </TabsList>
@@ -176,16 +176,16 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
         <TabsContent value="information" className="mt-0 space-y-6 focus-visible:outline-none">
           <Card>
             <CardHeader>
-              <CardTitle>Order information</CardTitle>
+              <CardTitle>Delivery order information</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm text-muted-foreground">Order Number</p>
+                  <p className="text-sm text-muted-foreground">Delivery Order Number</p>
                   <p className="font-medium">{order.order_number}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Order Date</p>
+                  <p className="text-sm text-muted-foreground">Delivery Order Date</p>
                   <p className="font-medium">{order.order_date ? formatDate(new Date(order.order_date)) : '-'}</p>
                 </div>
                 <div>
@@ -201,7 +201,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
                   <p className="font-medium">{order.agent || '-'}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Order Type</p>
+                  <p className="text-sm text-muted-foreground">Delivery Order Type</p>
                   <p className="font-medium">{order.order_type || '-'}</p>
                 </div>
                 <div>
@@ -213,7 +213,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
                   <p className="font-medium">{order.remarks_cs || '-'}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Order Status</p>
+                  <p className="text-sm text-muted-foreground">Delivery Order Status</p>
                   <p className="font-medium">
                     {order.order_status ? (
                       <Badge variant={getStatusBadgeVariant(order.order_status.status_name)}>{order.order_status.status_name}</Badge>
@@ -314,7 +314,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
                   <p className="font-medium">{order.agent || '-'}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Order Type</p>
+                  <p className="text-sm text-muted-foreground">Delivery Order Type</p>
                   <p className="font-medium">{order.order_type || '-'}</p>
                 </div>
                 <div>

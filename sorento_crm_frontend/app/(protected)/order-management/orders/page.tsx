@@ -17,8 +17,8 @@ import {
 import OrdersList from './components/OrdersList';
 
 export const metadata: Metadata = {
-  title: 'Orders',
-  description: 'Manage orders.',
+  title: 'Delivery Orders',
+  description: 'Manage delivery orders.',
 };
 
 export default async function OrdersPage() {
@@ -27,7 +27,7 @@ export default async function OrdersPage() {
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Orders</ToolbarTitle>
+            <ToolbarTitle>Delivery Orders</ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -35,7 +35,7 @@ export default async function OrdersPage() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Order Management</BreadcrumbPage>
+                  <BreadcrumbPage>Delivery Order Management</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>

@@ -46,6 +46,18 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
       typeof raw.default_product_standard_lead_time_days === 'number'
         ? raw.default_product_standard_lead_time_days
         : 90,
+    purchaseRequestDefaultApproverUserId:
+      (raw.purchase_request_default_approver_user_id as string | null) ?? null,
+    purchaseRequestDefaultApproverName:
+      (raw.purchase_request_default_approver_name as string | null) ?? null,
+    purchaseRequestDefaultApproverEmail:
+      (raw.purchase_request_default_approver_email as string | null) ?? null,
+    sponsorshipFormDefaultApproverUserId:
+      (raw.sponsorship_form_default_approver_user_id as string | null) ?? null,
+    sponsorshipFormDefaultApproverName:
+      (raw.sponsorship_form_default_approver_name as string | null) ?? null,
+    sponsorshipFormDefaultApproverEmail:
+      (raw.sponsorship_form_default_approver_email as string | null) ?? null,
     n8nAttachmentWebhookUrl: (raw.n8n_attachment_webhook_url as string | null) ?? null,
     n8nCrmChatOutboundWebhookUrl: (raw.n8n_crm_chat_outbound_webhook_url as string | null) ?? null,
     n8nStockInquiryReviseWebhookUrl:
@@ -82,6 +94,12 @@ function createDefaultSettings(): SystemSetting {
     currencyFormat: 'RM {value}',
     defaultProductSupplierId: null,
     defaultProductStandardLeadTimeDays: 90,
+    purchaseRequestDefaultApproverUserId: null,
+    purchaseRequestDefaultApproverName: null,
+    purchaseRequestDefaultApproverEmail: null,
+    sponsorshipFormDefaultApproverUserId: null,
+    sponsorshipFormDefaultApproverName: null,
+    sponsorshipFormDefaultApproverEmail: null,
     n8nAttachmentWebhookUrl: null,
     n8nCrmChatOutboundWebhookUrl: null,
     n8nStockInquiryReviseWebhookUrl: null,

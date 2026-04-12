@@ -30,7 +30,7 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Edit Order</ToolbarTitle>
+            <ToolbarTitle>Edit Delivery Order</ToolbarTitle>
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem>
@@ -38,15 +38,15 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Order Management</BreadcrumbPage>
+                  <BreadcrumbPage>Delivery Order Management</BreadcrumbPage>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href={ordersListHref}>Orders</BreadcrumbLink>
+                  <BreadcrumbLink href={ordersListHref}>Delivery Orders</BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbLink href={detailHref}>Order</BreadcrumbLink>
+                  <BreadcrumbLink href={detailHref}>Delivery Order</BreadcrumbLink>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -54,7 +54,7 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
           <ToolbarActions>
             <Button asChild variant="outline">
               <Link href={detailHref}>
-                <MoveLeft /> Back to order
+                <MoveLeft /> Back to delivery order
               </Link>
             </Button>
           </ToolbarActions>

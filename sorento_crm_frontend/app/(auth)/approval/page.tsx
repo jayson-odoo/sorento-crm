@@ -21,6 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { toast } from 'sonner';
 
 interface ApprovalLineSummary {
   item_code?: string | null;
@@ -136,6 +137,11 @@ function ApprovalContent() {
 
   const handleSubmit = async (action: 'approved' | 'rejected') => {
     if (!token) return;
+    const trimmedComments = comments.trim();
+    if (action === 'rejected' && !trimmedComments) {
+      toast.error('Please enter a reason for rejection.');
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch(
@@ -146,7 +152,8 @@ function ApprovalContent() {
           body: JSON.stringify({
             action,
             approved_by: approvedBy || undefined,
-            approval_comments: comments || undefined,
+            approval_comments:
+              action === 'rejected' ? trimmedComments : trimmedComments || undefined,
           }),
         },
       );
@@ -258,7 +265,7 @@ function ApprovalContent() {
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
               <div className="py-2 border-b border-border/60">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sales Order no.</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Sponsorship form number</p>
                 <p className="text-sm font-medium">{summary?.request_number ?? '—'}</p>
               </div>
               <div className="py-2 border-b border-border/60">
@@ -352,16 +359,18 @@ function ApprovalContent() {
             <CardHeader className="pb-2">
               <CardTitle className="text-base sm:text-lg">
                 {isPr && summary?.request_number
-                  ? `Sales order no. ${summary.request_number}`
-                  : summary?.request_number
-                    ? `Form #${summary.request_number}`
-                    : 'Details'}
+                  ? `Purchase request number ${summary.request_number}`
+                  : isSf && summary?.request_number
+                    ? `Sponsorship form number ${summary.request_number}`
+                    : summary?.request_number
+                      ? `Form #${summary.request_number}`
+                      : 'Details'}
               </CardTitle>
             </CardHeader>
             <CardContent className="px-4 sm:px-6 -mt-2 space-y-0">
               <DetailRow label="Type" value={typeLabel} />
               <DetailRow
-                label={isPr ? 'Sales order no.' : 'Form number'}
+                label={isPr ? 'Purchase request number' : isSf ? 'Sponsorship form number' : 'Form number'}
                 value={summary?.request_number ?? undefined}
               />
               <DetailRow label="Status" value={approvalStatusLabel(summary?.approval_status)} />
@@ -430,14 +439,20 @@ function ApprovalContent() {
             />
           </div>
           <div>
-            <Label htmlFor="comments" className="text-sm">Comments (optional)</Label>
+            <Label htmlFor="comments" className="text-sm">
+              Comments
+            </Label>
+            <p id="comments-hint" className="text-xs text-muted-foreground mt-1">
+              Optional when approving. Required when rejecting.
+            </p>
             <Textarea
               id="comments"
               value={comments}
               onChange={(e) => setComments(e.target.value)}
-              placeholder="Add any comments"
+              placeholder="Add notes, or your reason if rejecting"
               className="mt-1.5 resize-none"
               rows={3}
+              aria-describedby="comments-hint"
             />
           </div>
           <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:gap-3">
@@ -452,7 +467,7 @@ function ApprovalContent() {
             <Button
               variant="destructive"
               onClick={() => handleSubmit('rejected')}
-              disabled={submitting}
+              disabled={submitting || !comments.trim()}
               className="flex-1 sm:flex-none"
             >
               Reject

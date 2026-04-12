@@ -207,6 +207,18 @@ class SystemSetting(Base):
     n8n_crm_chat_outbound_webhook_url = Column(Text, nullable=True)
     n8n_stock_inquiry_revise_webhook_url = Column(Text, nullable=True)
 
+    # Procurement: when set, "Send for approval" can skip the approver dialog and email the default user.
+    purchase_request_default_approver_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    sponsorship_form_default_approver_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
 
 class UserQuickAccess(Base):
     """Per-user quick access (pinned menu items and attachment folders) for sidebar."""

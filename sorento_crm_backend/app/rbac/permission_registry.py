@@ -42,12 +42,12 @@ PERMISSION_REGISTRY.extend([
     {"slug": "user_management.account.view", "name": "View Account", "description": "Permission to view own account."},
 ])
 
-# Order Management
-PERMISSION_REGISTRY.extend(_crud("order_management", "orders", "Orders"))
-PERMISSION_REGISTRY.append({"slug": "order_management.orders.import", "name": "Import Orders", "description": "Permission to bulk import orders."})
-PERMISSION_REGISTRY.append({"slug": "order_management.orders.export", "name": "Export Orders", "description": "Permission to export orders with dynamic fields."})
-PERMISSION_REGISTRY.append({"slug": "order_management.orders.bulk_delete", "name": "Bulk Delete Orders", "description": "Permission to bulk delete orders."})
-PERMISSION_REGISTRY.extend(_crud("order_management", "order_statuses", "Order Statuses"))
+# Delivery Order Management
+PERMISSION_REGISTRY.extend(_crud("order_management", "orders", "Delivery Orders"))
+PERMISSION_REGISTRY.append({"slug": "order_management.orders.import", "name": "Import Delivery Orders", "description": "Permission to bulk import delivery orders."})
+PERMISSION_REGISTRY.append({"slug": "order_management.orders.export", "name": "Export Delivery Orders", "description": "Permission to export delivery orders with dynamic fields."})
+PERMISSION_REGISTRY.append({"slug": "order_management.orders.bulk_delete", "name": "Bulk Delete Delivery Orders", "description": "Permission to bulk delete delivery orders."})
+PERMISSION_REGISTRY.extend(_crud("order_management", "order_statuses", "Delivery Order Statuses"))
 PERMISSION_REGISTRY.extend(_crud("order_management", "customers", "Customers"))
 
 # Complaint Management

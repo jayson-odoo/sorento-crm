@@ -13,13 +13,13 @@ export async function getOrderStatuses(params: DataGridApiFetchParams): Promise<
     ...(searchQuery ? { query: searchQuery } : {}),
   });
   const response = await apiFetch(`/api/v1/order-management/order-statuses?${queryParams.toString()}`);
-  if (!response.ok) throw new Error('Failed to fetch order statuses');
+  if (!response.ok) throw new Error('Failed to fetch delivery order statuses');
   return response.json();
 }
 
 export async function getOrderStatus(id: string): Promise<OrderStatusDetail> {
   const response = await apiFetch(`/api/v1/order-management/order-statuses/${id}`);
-  if (!response.ok) throw new Error('Failed to fetch order status');
+  if (!response.ok) throw new Error('Failed to fetch delivery order status');
   return response.json();
 }
 
@@ -30,7 +30,7 @@ export async function createOrderStatus(data: OrderStatusFormData): Promise<Orde
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to create order status' }));
+    const error = await response.json().catch(() => ({ message: 'Failed to create delivery order status' }));
     throw new Error(error.message);
   }
   return response.json();
@@ -43,7 +43,7 @@ export async function updateOrderStatus(id: string, data: Partial<OrderStatusFor
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update order status' }));
+    const error = await response.json().catch(() => ({ message: 'Failed to update delivery order status' }));
     throw new Error(error.message);
   }
   return response.json();
@@ -52,7 +52,7 @@ export async function updateOrderStatus(id: string, data: Partial<OrderStatusFor
 export async function deleteOrderStatus(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/order-management/order-statuses/${id}`, { method: 'DELETE' });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to delete order status' }));
+    const error = await response.json().catch(() => ({ message: 'Failed to delete delivery order status' }));
     throw new Error(error.message);
   }
 }

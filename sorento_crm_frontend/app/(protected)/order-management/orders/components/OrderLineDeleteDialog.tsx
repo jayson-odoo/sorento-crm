@@ -54,7 +54,7 @@ export default function OrderLineDeleteDialog({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Remove order line</AlertDialogTitle>
+          <AlertDialogTitle>Remove delivery order line</AlertDialogTitle>
           <AlertDialogDescription>
             Remove line <strong className="text-foreground">{displayLabel}</strong>? This cannot be undone.
           </AlertDialogDescription>

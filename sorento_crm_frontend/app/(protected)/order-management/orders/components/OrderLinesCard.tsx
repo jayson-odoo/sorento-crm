@@ -126,7 +126,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
     <>
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">
-          <CardTitle>Order Lines (Delivery order detail)</CardTitle>
+          <CardTitle>Delivery Order Lines</CardTitle>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => setImportDialogOpen(true)}>
               <Upload className="size-4 mr-1" />
@@ -140,7 +140,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
         </CardHeader>
         <CardContent className="space-y-4">
           {lines.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4">No order lines. Import from Excel or add manually.</p>
+            <p className="text-sm text-muted-foreground py-4">No delivery order lines. Import from Excel or add manually.</p>
           ) : (
             <div className="overflow-x-auto rounded-md border">
               <Table>
@@ -209,7 +209,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Add order line</DialogTitle>
+            <DialogTitle>Add delivery order line</DialogTitle>
             <DialogDescription>Product ID and Warehouse ID are required (UUIDs from Products and Warehouses).</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -266,7 +266,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Import order lines</DialogTitle>
+            <DialogTitle>Import delivery order lines</DialogTitle>
             <DialogDescription>Upload Excel with columns: Doc No, Item Code, Location, Qty, Unit Price, Discount, Total, Tax, Total Excluding Tax, Total Including Tax.</DialogDescription>
           </DialogHeader>
           <div className="py-4">

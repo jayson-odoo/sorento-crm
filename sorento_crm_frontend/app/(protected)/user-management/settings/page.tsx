@@ -37,14 +37,36 @@ import TimezoneSelect from './components/timezone-select';
 import {
   GeneralSettingsSchema,
   GeneralSettingsSchemaType,
+  NO_DEFAULT_APPROVER_VALUE,
   NO_DEFAULT_SUPPLIER_VALUE,
 } from './forms/general-settings-schema';
+import {
+  getUsersForApproverSelect,
+  type UserForSelect,
+} from '@/app/(protected)/procurement-management/purchase-requests/services/purchaseRequestService';
 
 type SupplierSelectRow = {
   id: string;
   supplier_code: string;
   supplier_name: string;
 };
+
+function mergeApproverOptions(
+  options: UserForSelect[],
+  savedId: string | null | undefined,
+  savedName: string | null | undefined,
+  savedEmail: string | null | undefined,
+): UserForSelect[] {
+  const byId = new Map(options.map((u) => [u.id, u]));
+  if (savedId && !byId.has(savedId)) {
+    byId.set(savedId, {
+      id: savedId,
+      name: savedName ?? 'Saved user',
+      email: savedEmail ?? '—',
+    });
+  }
+  return Array.from(byId.values());
+}
 
 const languages = [
   {
@@ -97,6 +119,12 @@ export default function Page() {
     staleTime: 5 * 60 * 1000,
   });
 
+  const { data: approverUserOptions = [] } = useQuery({
+    queryKey: ['users-select-for-settings-approvers'],
+    queryFn: () => getUsersForApproverSelect(),
+    staleTime: 5 * 60 * 1000,
+  });
+
   const savedSupplierId = settings?.defaultProductSupplierId ?? null;
   const savedSupplierMissingFromList =
     !!savedSupplierId &&
@@ -113,6 +141,38 @@ export default function Page() {
       },
       staleTime: 5 * 60 * 1000,
     });
+
+  const approversForPurchaseRequest = useMemo(
+    () =>
+      mergeApproverOptions(
+        approverUserOptions,
+        settings?.purchaseRequestDefaultApproverUserId,
+        settings?.purchaseRequestDefaultApproverName,
+        settings?.purchaseRequestDefaultApproverEmail,
+      ),
+    [
+      approverUserOptions,
+      settings?.purchaseRequestDefaultApproverUserId,
+      settings?.purchaseRequestDefaultApproverName,
+      settings?.purchaseRequestDefaultApproverEmail,
+    ],
+  );
+
+  const approversForSponsorshipForm = useMemo(
+    () =>
+      mergeApproverOptions(
+        approverUserOptions,
+        settings?.sponsorshipFormDefaultApproverUserId,
+        settings?.sponsorshipFormDefaultApproverName,
+        settings?.sponsorshipFormDefaultApproverEmail,
+      ),
+    [
+      approverUserOptions,
+      settings?.sponsorshipFormDefaultApproverUserId,
+      settings?.sponsorshipFormDefaultApproverName,
+      settings?.sponsorshipFormDefaultApproverEmail,
+    ],
+  );
 
   const suppliersForSelect = useMemo((): SupplierSelectRow[] => {
     const byId = new Map(supplierOptions.map((s) => [s.id, s]));
@@ -169,6 +229,16 @@ export default function Page() {
         ? settings.defaultProductSupplierId
         : NO_DEFAULT_SUPPLIER_VALUE,
     defaultProductStandardLeadTimeDays: settings?.defaultProductStandardLeadTimeDays ?? 90,
+    purchaseRequestDefaultApproverUserId:
+      settings?.purchaseRequestDefaultApproverUserId &&
+      settings.purchaseRequestDefaultApproverUserId.length > 0
+        ? settings.purchaseRequestDefaultApproverUserId
+        : NO_DEFAULT_APPROVER_VALUE,
+    sponsorshipFormDefaultApproverUserId:
+      settings?.sponsorshipFormDefaultApproverUserId &&
+      settings.sponsorshipFormDefaultApproverUserId.length > 0
+        ? settings.sponsorshipFormDefaultApproverUserId
+        : NO_DEFAULT_APPROVER_VALUE,
   };
 
   useEffect(() => {
@@ -207,6 +277,16 @@ export default function Page() {
           ? settings.defaultProductSupplierId
           : NO_DEFAULT_SUPPLIER_VALUE,
       defaultProductStandardLeadTimeDays: settings.defaultProductStandardLeadTimeDays ?? 90,
+      purchaseRequestDefaultApproverUserId:
+        settings.purchaseRequestDefaultApproverUserId &&
+        settings.purchaseRequestDefaultApproverUserId.length > 0
+          ? settings.purchaseRequestDefaultApproverUserId
+          : NO_DEFAULT_APPROVER_VALUE,
+      sponsorshipFormDefaultApproverUserId:
+        settings.sponsorshipFormDefaultApproverUserId &&
+        settings.sponsorshipFormDefaultApproverUserId.length > 0
+          ? settings.sponsorshipFormDefaultApproverUserId
+          : NO_DEFAULT_APPROVER_VALUE,
     });
   }, [settings, form]);
 
@@ -229,6 +309,14 @@ export default function Page() {
             ? null
             : values.defaultProductSupplierId,
         default_product_standard_lead_time_days: values.defaultProductStandardLeadTimeDays,
+        purchase_request_default_approver_user_id:
+          values.purchaseRequestDefaultApproverUserId === NO_DEFAULT_APPROVER_VALUE
+            ? null
+            : values.purchaseRequestDefaultApproverUserId,
+        sponsorship_form_default_approver_user_id:
+          values.sponsorshipFormDefaultApproverUserId === NO_DEFAULT_APPROVER_VALUE
+            ? null
+            : values.sponsorshipFormDefaultApproverUserId,
       };
 
       const response = await apiFetch('/api/user-management/settings/general', {
@@ -759,6 +847,70 @@ export default function Page() {
                         if (!Number.isNaN(n)) field.onChange(n);
                       }}
                     />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="purchaseRequestDefaultApproverUserId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Default approver (purchase requests)</FormLabel>
+                  <FormControl>
+                    <Select
+                      key={`def-pr-appr-${field.value}-${approversForPurchaseRequest.length}`}
+                      onValueChange={field.onChange}
+                      value={field.value}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="None" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value={NO_DEFAULT_APPROVER_VALUE}>None</SelectItem>
+                          {approversForPurchaseRequest.map((u) => (
+                            <SelectItem key={u.id} value={u.id}>
+                              {(u.name?.trim() || u.email) + ` (${u.email})`}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="sponsorshipFormDefaultApproverUserId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Default approver (sponsorship forms)</FormLabel>
+                  <FormControl>
+                    <Select
+                      key={`def-sf-appr-${field.value}-${approversForSponsorshipForm.length}`}
+                      onValueChange={field.onChange}
+                      value={field.value}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="None" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value={NO_DEFAULT_APPROVER_VALUE}>None</SelectItem>
+                          {approversForSponsorshipForm.map((u) => (
+                            <SelectItem key={u.id} value={u.id}>
+                              {(u.name?.trim() || u.email) + ` (${u.email})`}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
                   </FormControl>
                   <FormMessage />
                 </FormItem>

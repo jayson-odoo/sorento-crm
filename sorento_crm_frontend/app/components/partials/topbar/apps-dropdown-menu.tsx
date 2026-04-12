@@ -28,7 +28,7 @@ interface QuickLinkItem {
 
 const quickLinks: QuickLinkItem[] = [
   { href: '/', label: 'Dashboard', description: 'Overview', icon: BarChart3 },
-  { href: '/order-management/orders', label: 'Orders', description: 'Order management', icon: ShoppingCart },
+  { href: '/order-management/orders', label: 'Delivery Orders', description: 'Delivery order management', icon: ShoppingCart },
   { href: '/master-data-management/products', label: 'Products', description: 'Product catalog', icon: Package },
   { href: '/user-management/contacts', label: 'Internal Users', description: 'Respond contacts', icon: Users },
   { href: '/user-management/access-agents', label: 'AI Agents', description: 'Access agents', icon: Bot },

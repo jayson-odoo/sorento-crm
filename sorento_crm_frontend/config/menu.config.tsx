@@ -344,17 +344,17 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
-    title: 'Order Management',
+    title: 'Delivery Order Management',
     icon: ShoppingCart,
     moduleKey: 'order',
     children: [
       {
-        title: 'Orders',
+        title: 'Delivery Orders',
         path: '/order-management/orders',
         permission: 'order_management.orders.view',
       },
       {
-        title: 'Order Status',
+        title: 'Delivery Order Status',
         path: '/order-management/order-statuses',
         permission: 'order_management.order_statuses.view',
       },
@@ -1048,16 +1048,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     ],
   },
   {
-    title: 'Order Management',
+    title: 'Delivery Order Management',
     icon: ShoppingCart,
     moduleKey: 'order',
     children: [
       {
-        title: 'Orders',
+        title: 'Delivery Orders',
         path: '/order-management/orders',
       },
       {
-        title: 'Order Status',
+        title: 'Delivery Order Status',
         path: '/order-management/order-statuses',
       },
       {
