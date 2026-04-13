@@ -220,6 +220,22 @@ export async function deleteOrderLine(orderId: string, lineId: string): Promise<
   }
 }
 
+export async function bulkDeleteOrderLines(
+  orderId: string,
+  ids: string[],
+): Promise<{ message: string; deleted_count: number }> {
+  const response = await apiFetch(`/api/v1/order-management/orders/${orderId}/lines/bulk-delete`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || error.message || 'Failed to bulk delete delivery order lines');
+  }
+  return response.json();
+}
+
 export async function importDeliveryOrderDetail(file: File): Promise<{ job_id: string; status: string; message: string }> {
   const formData = new FormData();
   formData.append('file', file);

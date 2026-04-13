@@ -24,6 +24,7 @@ from app.services.marketing_service import (
     dealer_cost_and_margin_from_list,
     raise_promotion_product_unique_violation,
 )
+from app.services.numbering_service import NumberingService
 from app.services.attachment_notification_helper import notify_after_external_promotion_created
 
 router = APIRouter()
@@ -129,6 +130,9 @@ def create_promotion(
     - `promotion_products` (flat list), or
     - `promotion_groups` (bundle / FOC groups with nested products; same SKU may appear in multiple groups).
 
+    **promo_code** is not accepted in the body; each request gets a unique server-generated code
+    (document numbering rule `external_promotion`, e.g. `PROMO2026_0001`, yearly sequence by promotion start date).
+
     Products are matched by exact product_code (trim only, no case change).
     Optional `dealer_discount` per line (0.37 = 37% off list) stores dealer_cost and list-to-dealer margin.
     Per group you may set `dealer_discount` as default for all lines; line `dealer_discount` overrides.
@@ -164,31 +168,6 @@ def create_promotion(
             }
         )
 
-    existing = db.query(Promotion).filter(Promotion.promo_code == payload.promotions.promo_code).first()
-    if existing:
-        db.refresh(existing)
-        # Still notify uploaders (and optional notify_user_id) when the API is called with attachment_id(s),
-        # e.g. n8n retries / resubmit with the same promo code — same as successful create path.
-        try:
-            notify_after_external_promotion_created(
-                db,
-                existing,
-                _attachment_ids_from_promotion_payload(payload),
-                payload.notify_user_id,
-            )
-        except Exception as e:
-            logger.warning(
-                "External promotion already_existed branch: notification failed: %s",
-                e,
-                exc_info=True,
-            )
-        return PromotionCreateResponse(
-            promotion=PromotionResponse.model_validate(existing),
-            already_existed=True,
-            message="Promo code already exists.",
-            warnings=warnings,
-        )
-
     try:
         start_date = _date_to_datetime(payload.promotions.start_date)
         end_date = _date_to_datetime(payload.promotions.end_date)
@@ -196,14 +175,31 @@ def create_promotion(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     today = datetime.utcnow().date()
 
+    ref_date = start_date.date()
+    numbering = NumberingService(db)
+    generated_promo_code = numbering.get_next_number(
+        "external_promotion",
+        ref_date,
+        commit_rule=False,
+    )
+    if not generated_promo_code:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "External promotion numbering is not configured. "
+                "Ensure document_numbering_rules includes doc_type 'external_promotion' "
+                "(e.g. prefix PROMO{year}_, yearly reset)."
+            ),
+        )
+
     is_active = payload.promotions.is_active
     if is_active is None:
         is_active = start_date.date() <= today <= end_date.date()
 
     created_by = None if current_user.get("id") == "system" else current_user["id"]
     promotion_kw: dict = {
-        "promo_code": payload.promotions.promo_code,
-        "name": payload.promotions.name or payload.promotions.promo_code,
+        "promo_code": generated_promo_code,
+        "name": payload.promotions.name or generated_promo_code,
         "promo_type": payload.promotions.promo_type,
         "description": payload.promotions.description,
         "start_date": start_date,

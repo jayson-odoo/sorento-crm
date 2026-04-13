@@ -6,7 +6,10 @@ import pytest
 from fastapi import HTTPException
 from unittest.mock import MagicMock, patch
 
-from app.services.sla_service import ConversationSLATrackingService
+from app.services.sla_service import (
+    ConversationSLATrackingService,
+    _respond_contact_phone_lookup_candidates,
+)
 
 
 def _http_exception_message(exc: HTTPException) -> str:
@@ -41,7 +44,7 @@ def test_get_escalation_assignee_for_tier_returns_assignee_when_configured():
 
         assert assignee == expected
         svc.get_agent_id_by_code.assert_called_once_with("complaint")
-        svc.get_team_id_by_tier.assert_called_once_with("agent1", 2)
+        svc.get_team_id_by_tier.assert_called_once_with("agent1", 2, team_set_code=None)
         svc.get_next_assignee.assert_called_once_with("agent1", "team1")
 
 
@@ -61,7 +64,7 @@ def test_get_escalation_assignee_for_tier_defaults_none_to_complaint():
 
         assert assignee == expected
         svc.get_agent_id_by_code.assert_called_once_with("complaint")
-        svc.get_team_id_by_tier.assert_called_once_with("agent1", 2)
+        svc.get_team_id_by_tier.assert_called_once_with("agent1", 2, team_set_code=None)
 
 
 def test_get_escalation_assignee_for_tier_unknown_agent_raises():
@@ -95,6 +98,88 @@ def test_get_escalation_assignee_for_tier_missing_tier_team_raises():
         assert exc_info.value.status_code == 400
         msg = _http_exception_message(exc_info.value)
         assert "tier 3" in msg or "3" in msg
+
+
+def test_create_tracking_agent_code_with_explicit_assignee_skips_round_robin():
+    """agent_code + assigned_to_id must not call get_escalation_assignee_for_tier (no double RR)."""
+    from app.schemas.sla import ConversationSLATrackingCreate
+
+    contact = MagicMock()
+    contact.id = "contact-1"
+    agent = MagicMock()
+    agent.id = "agent-uuid-1"
+    user = MagicMock()
+    user.id = "user-explicit-uuid"
+    user.respond_user_id = "273808"
+    policy = MagicMock()
+    tier = MagicMock()
+    tier.response_hours = 24.0
+    tier.resolution_hours = 24.0
+    existing = MagicMock()
+    existing.is_resolved = True
+    existing.id = "tracking-existing"
+
+    returns = iter([contact, agent, user, policy, tier, existing])
+
+    def query_side_effect(_model):
+        qm = MagicMock()
+        qm.filter.return_value = qm
+        qm.first.return_value = next(returns)
+        return qm
+
+    mock_db = MagicMock()
+    mock_db.query.side_effect = query_side_effect
+
+    service = ConversationSLATrackingService(mock_db)
+    with patch.object(
+        service,
+        "get_escalation_assignee_for_tier",
+        side_effect=AssertionError("round-robin should not run when assignee is explicit"),
+    ):
+        payload = ConversationSLATrackingCreate(
+            contact_phone_number="+60166753328",
+            policy_id="policy-1",
+            current_tier=1,
+            agent_code="general_enquiries",
+            assigned_to_id=str(user.id),
+            team_set_code="purchasing_c",
+        )
+        service.create_tracking(payload)
+
+    assert existing.assigned_to_id == user.id
+    assert existing.assigned_to == "273808"
+    assert existing.agent_id == str(agent.id)
+    mock_db.commit.assert_called()
+
+
+def test_respond_contact_phone_lookup_candidates_e164_and_local():
+    c1 = _respond_contact_phone_lookup_candidates("+60166753328")
+    assert "+60166753328" in c1
+    assert "60166753328" in c1
+    c2 = _respond_contact_phone_lookup_candidates("0166753328")
+    assert "+60166753328" in c2
+    c3 = _respond_contact_phone_lookup_candidates("+60 16-6753328")
+    assert "+60166753328" in c3
+
+
+def test_resolve_internal_respond_contact_id_falls_back_to_phone():
+    mock_db = MagicMock()
+    service = ConversationSLATrackingService(mock_db)
+    contact = MagicMock()
+    contact.id = "crm-contact-1"
+
+    q_miss = MagicMock()
+    q_miss.filter.return_value = q_miss
+    q_miss.first.return_value = None
+
+    q_phone = MagicMock()
+    q_phone.filter.return_value = q_phone
+    q_phone.first.return_value = contact
+
+    mock_db.query.side_effect = [q_miss, q_miss, q_phone]
+
+    assert service.resolve_internal_respond_contact_id("+60166753328") == "crm-contact-1"
+    assert mock_db.query.call_count == 3
 
 
 def test_get_escalation_assignee_for_tier_empty_team_raises():

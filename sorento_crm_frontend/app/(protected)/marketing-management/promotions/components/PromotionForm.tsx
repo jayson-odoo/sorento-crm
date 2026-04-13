@@ -35,12 +35,33 @@ import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
-/** Safe date to YYYY-MM-DD for <input type="date">; avoids Invalid time value when date is invalid. */
+function parseDateOnly(value: Date | string | null | undefined): Date | null {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+  const s = String(value).trim();
+  if (!s) return null;
+  const datePart = s.includes('T') ? s.split('T')[0] : s;
+  const parts = datePart.split('-').map((p) => Number(p));
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) {
+    const fallback = new Date(s);
+    if (Number.isNaN(fallback.getTime())) return null;
+    return new Date(fallback.getFullYear(), fallback.getMonth(), fallback.getDate());
+  }
+  const [year, month, day] = parts;
+  return new Date(year, month - 1, day);
+}
+
+/** Safe local date to YYYY-MM-DD for <input type="date">. */
 function toDateInputValue(value: Date | string | null | undefined): string {
-  if (value == null) return '';
-  const d = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toISOString().split('T')[0];
+  const d = parseDateOnly(value);
+  if (!d) return '';
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 interface PromotionFormProps {
@@ -92,15 +113,15 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
       // Use setTimeout to ensure SelectContent items are rendered before form reset
       // This is especially important when navigating from list view
       const timeoutId = setTimeout(() => {
-        const startDate = new Date(promotion.start_date);
-        const endDate = new Date(promotion.end_date);
+        const startDate = parseDateOnly(promotion.start_date);
+        const endDate = parseDateOnly(promotion.end_date);
         form.reset({
           promo_code: promotion.promo_code,
           name: promotion.name,
           promo_type: promotion.promo_type,
           description: promotion.description || '',
-          start_date: Number.isNaN(startDate.getTime()) ? new Date() : startDate,
-          end_date: Number.isNaN(endDate.getTime()) ? new Date() : endDate,
+          start_date: startDate ?? new Date(),
+          end_date: endDate ?? new Date(),
           is_active: promotion.is_active,
           access_levels:
             promotion.access_levels && promotion.access_levels.length > 0
@@ -314,8 +335,8 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                         {...field}
                         value={toDateInputValue(field.value)}
                         onChange={(e) => {
-                          const d = e.target.value ? new Date(e.target.value) : undefined;
-                          field.onChange(d && !Number.isNaN(d.getTime()) ? d : field.value);
+                          const d = parseDateOnly(e.target.value);
+                          field.onChange(d ?? field.value);
                         }}
                       />
                     </FormControl>
@@ -336,8 +357,8 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                         {...field}
                         value={toDateInputValue(field.value)}
                         onChange={(e) => {
-                          const d = e.target.value ? new Date(e.target.value) : undefined;
-                          field.onChange(d && !Number.isNaN(d.getTime()) ? d : field.value);
+                          const d = parseDateOnly(e.target.value);
+                          field.onChange(d ?? field.value);
                         }}
                       />
                     </FormControl>

@@ -219,6 +219,11 @@ class BulkDeleteOrdersRequest(BaseModel):
     ids: list[str]
 
 
+class BulkDeleteOrderLinesRequest(BaseModel):
+    """Request body for bulk line delete: { ids: list[str] }."""
+    ids: list[str]
+
+
 # Order lines (delivery order detail)
 class OrderLineBase(BaseModel):
     product_id: str

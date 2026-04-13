@@ -11,11 +11,18 @@ class NumberingService:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_next_number(self, doc_type: str, reference_date: Optional[date] = None) -> Optional[str]:
+    def get_next_number(
+        self,
+        doc_type: str,
+        reference_date: Optional[date] = None,
+        *,
+        commit_rule: bool = True,
+    ) -> Optional[str]:
         """
         Generate the next running number for the given doc_type.
         Uses row-level lock (FOR UPDATE) for safe concurrent generation.
         reference_date is used for reset policy (yearly/monthly); defaults to today.
+        When commit_rule is False, only flush() so the caller's transaction can commit/rollback atomically.
         """
         if reference_date is None:
             reference_date = date.today()
@@ -57,7 +64,10 @@ class NumberingService:
         result = f"{prefix}{number_part}"
 
         rule.next_value += 1
-        self.db.commit()
+        if commit_rule:
+            self.db.commit()
+        else:
+            self.db.flush()
         return result
 
     def list_rules(self):

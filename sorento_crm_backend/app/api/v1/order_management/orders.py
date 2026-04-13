@@ -19,6 +19,7 @@ from app.schemas.order import (
     BulkImportRequest,
     BulkImportResponse,
     BulkDeleteOrdersRequest,
+    BulkDeleteOrderLinesRequest,
 )
 from app.schemas.common import ListResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
@@ -237,6 +238,23 @@ async def delete_order_line(
     try:
         service = OrderService(db)
         return service.delete_order_line(order_id, line_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/{order_id}/lines/bulk-delete", status_code=status.HTTP_200_OK)
+async def bulk_delete_order_lines(
+    order_id: str,
+    body: BulkDeleteOrderLinesRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete multiple order lines from one order."""
+    try:
+        service = OrderService(db)
+        return service.bulk_delete_order_lines(order_id, body.ids)
     except HTTPException:
         raise
     except Exception as e:

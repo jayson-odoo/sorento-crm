@@ -1699,7 +1699,7 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
         products_by_code = get_products_by_code_exact(db, all_product_codes)
         warehouses_map = get_warehouses_by_code_or_name(db, all_locations)
 
-        # Next line_sequence per order (append after existing lines)
+        # Next line_sequence per order (append after existing lines if key does not exist yet)
         seq_next: Dict[str, int] = {o.id: 0 for o in orders_by_number.values()}
         if seq_next:
             oids = list(seq_next.keys())
@@ -1710,6 +1710,27 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                 .all()
             ):
                 seq_next[oid] = int(mx or 0)
+
+        def _line_key(
+            order_id: str,
+            product_id: str,
+            warehouse_id: str,
+            unit_price: Optional[Decimal],
+            discount: Optional[Decimal],
+        ) -> tuple[str, str, str, Optional[Decimal], Optional[Decimal]]:
+            return (order_id, product_id, warehouse_id, unit_price, discount)
+
+        def _sum_or_none(current: Optional[Decimal], incoming: Optional[Decimal]) -> Optional[Decimal]:
+            if current is None and incoming is None:
+                return None
+            return (current or Decimal("0")) + (incoming or Decimal("0"))
+
+        # Aggregate import rows by dedupe key:
+        # (order, product, warehouse, unit_price, discount)
+        grouped_rows: Dict[
+            tuple[str, str, str, Optional[Decimal], Optional[Decimal]],
+            Dict[str, Optional[Decimal]],
+        ] = {}
 
         successful = 0
         failed = 0
@@ -1752,23 +1773,38 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                     continue
 
                 try:
-                    qty = row_data.get("quantity") or Decimal("0")
-                    seq_next[order.id] += 1
-                    line = OrderLine(
-                        order_id=order.id,
-                        product_id=product.id,
-                        warehouse_id=warehouse.id,
-                        line_sequence=seq_next[order.id],
-                        quantity=qty,
-                        unit_price=row_data.get("unit_price"),
-                        discount=row_data.get("discount"),
-                        total=row_data.get("total"),
-                        tax=row_data.get("tax"),
-                        total_excluding_tax=row_data.get("total_excluding_tax"),
-                        total_including_tax=row_data.get("total_including_tax"),
+                    key = _line_key(
+                        order.id,
+                        str(product.id),
+                        str(warehouse.id),
+                        row_data.get("unit_price"),
+                        row_data.get("discount"),
                     )
-                    db.add(line)
-                    successful += 1
+                    bucket = grouped_rows.get(key)
+                    if bucket is None:
+                        bucket = {
+                            "quantity": Decimal("0"),
+                            "unit_price": row_data.get("unit_price"),
+                            "discount": row_data.get("discount"),
+                            "total": None,
+                            "tax": None,
+                            "total_excluding_tax": None,
+                            "total_including_tax": None,
+                        }
+                        grouped_rows[key] = bucket
+                    bucket["quantity"] = (bucket["quantity"] or Decimal("0")) + (
+                        row_data.get("quantity") or Decimal("0")
+                    )
+                    bucket["total"] = _sum_or_none(bucket.get("total"), row_data.get("total"))
+                    bucket["tax"] = _sum_or_none(bucket.get("tax"), row_data.get("tax"))
+                    bucket["total_excluding_tax"] = _sum_or_none(
+                        bucket.get("total_excluding_tax"),
+                        row_data.get("total_excluding_tax"),
+                    )
+                    bucket["total_including_tax"] = _sum_or_none(
+                        bucket.get("total_including_tax"),
+                        row_data.get("total_including_tax"),
+                    )
                 except Exception as e:
                     failed += 1
                     errors.append({"row": row_idx, "error": str(e)})
@@ -1782,6 +1818,66 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                         failed_rows=failed,
                         skipped_rows=skipped,
                     )
+
+        # Load existing lines for relevant orders and group by the same dedupe key.
+        order_ids = list({k[0] for k in grouped_rows.keys()})
+        existing_by_key: Dict[
+            tuple[str, str, str, Optional[Decimal], Optional[Decimal]],
+            List[OrderLine],
+        ] = {}
+        if order_ids:
+            existing_lines = (
+                db.query(OrderLine)
+                .filter(OrderLine.order_id.in_(order_ids))
+                .all()
+            )
+            for line in existing_lines:
+                ex_key = _line_key(
+                    str(line.order_id),
+                    str(line.product_id),
+                    str(line.warehouse_id),
+                    cast(Optional[Decimal], getattr(line, "unit_price", None)),
+                    cast(Optional[Decimal], getattr(line, "discount", None)),
+                )
+                existing_by_key.setdefault(ex_key, []).append(line)
+
+        # Upsert grouped rows:
+        # - if key exists, update first line and delete duplicates
+        # - else create a new line
+        for key, payload in grouped_rows.items():
+            try:
+                order_id, product_id, warehouse_id, unit_price, discount = key
+                matches = existing_by_key.get(key, [])
+                target_line: Optional[OrderLine] = None
+                if matches:
+                    matches_sorted = sorted(
+                        matches,
+                        key=lambda l: (int(getattr(l, "line_sequence", 0) or 0), str(l.id)),
+                    )
+                    target_line = matches_sorted[0]
+                    for dup in matches_sorted[1:]:
+                        db.delete(dup)
+                if target_line is None:
+                    seq_next[order_id] += 1
+                    target_line = OrderLine(
+                        order_id=order_id,
+                        product_id=product_id,
+                        warehouse_id=warehouse_id,
+                        line_sequence=seq_next[order_id],
+                    )
+                    db.add(target_line)
+
+                setattr(target_line, "quantity", payload.get("quantity") or Decimal("0"))
+                setattr(target_line, "unit_price", unit_price)
+                setattr(target_line, "discount", discount)
+                setattr(target_line, "total", payload.get("total"))
+                setattr(target_line, "tax", payload.get("tax"))
+                setattr(target_line, "total_excluding_tax", payload.get("total_excluding_tax"))
+                setattr(target_line, "total_including_tax", payload.get("total_including_tax"))
+                successful += 1
+            except Exception as e:
+                failed += 1
+                errors.append({"row": None, "error": str(e)})
 
         db.commit()
         job_service.complete_job(

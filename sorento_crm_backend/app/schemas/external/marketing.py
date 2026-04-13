@@ -11,7 +11,10 @@ from app.schemas.marketing import PromotionResponse
 
 
 class PromotionHeader(BaseModel):
-    promo_code: str
+    promo_code: Optional[str] = Field(
+        default=None,
+        description="Do not send. A unique code is generated per request (e.g. PROMO2026_0001).",
+    )
     name: Optional[str] = None
     description: Optional[str] = None
     start_date: str | date
@@ -19,6 +22,17 @@ class PromotionHeader(BaseModel):
     promo_type: str
     is_active: Optional[bool] = None
     attachment_id: Optional[List[str]] = None
+
+    @field_validator("promo_code")
+    @classmethod
+    def reject_client_promo_code(cls, v: Any) -> None:
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        raise ValueError(
+            "promo_code must not be sent; omit the field. The API assigns a unique running number per request."
+        )
 
     @field_validator("is_active", mode="before")
     @classmethod

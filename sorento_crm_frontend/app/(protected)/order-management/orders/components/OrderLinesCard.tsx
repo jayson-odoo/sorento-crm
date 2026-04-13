@@ -24,7 +24,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Trash2, Plus, Upload } from 'lucide-react';
-import { useCreateOrderLine, useDeleteOrderLine } from '../hooks/useOrders';
+import { Checkbox } from '@/components/ui/checkbox';
+import { useBulkDeleteOrderLines, useCreateOrderLine } from '../hooks/useOrders';
 import { importDeliveryOrderDetail } from '../services/orderService';
 import type { OrderLine } from '../types/order.types';
 import { toast } from 'sonner';
@@ -42,7 +43,10 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [deleteLine, setDeleteLine] = useState<OrderLine | null>(null);
+  const [selectedLineIds, setSelectedLineIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const createLineMutation = useCreateOrderLine();
+  const bulkDeleteLinesMutation = useBulkDeleteOrderLines();
 
   const [formProductId, setFormProductId] = useState('');
   const [formWarehouseId, setFormWarehouseId] = useState('');
@@ -122,12 +126,40 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
     return line.product_id;
   };
 
+  const allSelected = lines.length > 0 && selectedLineIds.size === lines.length;
+
+  const toggleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedLineIds(new Set(lines.map((l) => l.id)));
+    } else {
+      setSelectedLineIds(new Set());
+    }
+  };
+
+  const toggleSelectOne = (lineId: string, checked: boolean) => {
+    setSelectedLineIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(lineId);
+      else next.delete(lineId);
+      return next;
+    });
+  };
+
   return (
     <>
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">
           <CardTitle>Delivery Order Lines</CardTitle>
           <div className="flex gap-2">
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={selectedLineIds.size === 0 || bulkDeleteLinesMutation.isPending}
+              onClick={() => setBulkDeleteDialogOpen(true)}
+            >
+              <Trash2 className="size-4 mr-1" />
+              Delete selected ({selectedLineIds.size})
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setImportDialogOpen(true)}>
               <Upload className="size-4 mr-1" />
               Import
@@ -146,6 +178,13 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={allSelected}
+                        onCheckedChange={(v) => toggleSelectAll(v === true)}
+                        aria-label="Select all lines"
+                      />
+                    </TableHead>
                     <TableHead>Product</TableHead>
                     <TableHead>Warehouse</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
@@ -163,6 +202,13 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
                     const productId = line.product?.id ?? line.product_id;
                     return (
                     <TableRow key={line.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedLineIds.has(line.id)}
+                          onCheckedChange={(v) => toggleSelectOne(line.id, v === true)}
+                          aria-label={`Select line ${line.id}`}
+                        />
+                      </TableCell>
                       <TableCell>
                         {productId ? (
                           <Link
@@ -292,6 +338,40 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
           onSuccess={() => setDeleteLine(null)}
         />
       )}
+
+      <Dialog open={bulkDeleteDialogOpen} onOpenChange={setBulkDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete selected delivery order lines?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete {selectedLineIds.size} selected line(s).
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDeleteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={selectedLineIds.size === 0 || bulkDeleteLinesMutation.isPending}
+              onClick={async () => {
+                try {
+                  await bulkDeleteLinesMutation.mutateAsync({
+                    orderId,
+                    ids: Array.from(selectedLineIds),
+                  });
+                  setSelectedLineIds(new Set());
+                  setBulkDeleteDialogOpen(false);
+                } catch {
+                  // toast from mutation
+                }
+              }}
+            >
+              {bulkDeleteLinesMutation.isPending ? 'Deleting…' : 'Delete selected'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

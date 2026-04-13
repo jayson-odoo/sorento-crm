@@ -1,4 +1,5 @@
 """SLA service for business logic."""
+import re
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, update
 from typing import Optional
@@ -32,6 +33,37 @@ def _utc_now_from_remote() -> Optional[datetime]:
     except Exception:
         pass
     return None
+
+
+def _respond_contact_phone_lookup_candidates(raw: str) -> list[str]:
+    """
+    Build possible respond_contacts.phone_number values for integration lookups.
+    Tries exact/stripped input, compact form, with/without leading +, MY local 0-prefix → +60.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return []
+    compact = re.sub(r"[\s\-\(\)]", "", s)
+    out: list[str] = []
+    for c in (s, compact):
+        if c and c not in out:
+            out.append(c)
+    if not compact:
+        return out
+    if compact.startswith("+"):
+        no_plus = compact[1:]
+        if no_plus.isdigit() and no_plus not in out:
+            out.append(no_plus)
+    elif compact.isdigit():
+        if compact.startswith("0") and len(compact) >= 9:
+            my = "+60" + compact[1:]
+            if my not in out:
+                out.append(my)
+        else:
+            with_plus = f"+{compact}"
+            if with_plus not in out:
+                out.append(with_plus)
+    return out
 
 
 def now_malaysia() -> datetime:
@@ -763,7 +795,7 @@ class ConversationSLATrackingService:
         return tracking
 
     def resolve_internal_respond_contact_id(self, respond_contact_id: str) -> Optional[str]:
-        """Map API respond_contact_id to respond_contacts.id (CRM row id, then Respond.io id)."""
+        """Map API respond_contact_id to respond_contacts.id (CRM id, Respond.io id, or phone / E.164)."""
         from app.models.access import RespondContact
 
         raw = str(respond_contact_id or "").strip()
@@ -775,6 +807,15 @@ class ConversationSLATrackingService:
         row = self.db.query(RespondContact).filter(RespondContact.respond_io_id == raw).first()
         if row:
             return str(row.id)
+        candidates = _respond_contact_phone_lookup_candidates(raw)
+        if candidates:
+            row = (
+                self.db.query(RespondContact)
+                .filter(RespondContact.phone_number.in_(candidates))
+                .first()
+            )
+            if row:
+                return str(row.id)
         return None
 
     # Map source_entity_type (on tracking) to access agent code for tier-based escalation.
@@ -791,10 +832,10 @@ class ConversationSLATrackingService:
         team_set_code: Optional[str] = None,
         agent_code_override: Optional[str] = None,
         agent_id_override: Optional[str] = None,
-        current_assignee_respond_user_id: Optional[str] = None,
     ) -> dict:
         """
         Resolve the next assignee for escalation to the given tier using agent tier-team and round-robin.
+        Uses only that tier's round-robin cursor (no dependency on the previous tier's assignee).
         Priority: agent_id_override (UUID FK) > agent_code_override > source_entity_type mapping.
         Returns dict with id, email, name, respond_user_id. Raises if agent or tier team not configured.
         """
@@ -837,14 +878,7 @@ class ConversationSLATrackingService:
                 f"No team assigned for agent '{agent_code}' with tier {target_tier}{suffix}. "
                 f"Add a Team Assignment with Tier = {target_tier} for this agent."
             )
-        # Prefer rotating after the current assignee (when that assignee is in the target team),
-        # so escalation does not immediately re-pick the same person across tiers with overlapping members.
-        assignee = None
-        current_assignee = str(current_assignee_respond_user_id or "").strip()
-        if current_assignee:
-            assignee = agent_svc.get_next_assignee_after(agent_id, team_id, current_assignee)
-        if not assignee:
-            assignee = agent_svc.get_next_assignee(agent_id, team_id)
+        assignee = agent_svc.get_next_assignee(agent_id, team_id)
         if not assignee:
             raise handle_validation_error(
                 f"No assignee in team for agent '{agent_code}' tier {target_tier}. Ensure the team has members."
@@ -1148,13 +1182,20 @@ class ConversationSLATrackingService:
             )
         tracking_dict["respond_contact_id"] = contact.id
 
-        # Resolve agent_code → agent_id (FK) and auto-assign via round-robin when agent_code is provided.
-        # Looks up the next-in-line user from the agent's tier team (honoring team_set_code).
-        # This mirrors the escalation API behaviour and takes priority over any explicitly
-        # passed assigned_to / assigned_to_id so the round-robin pointer is always advanced.
+        # Resolve agent_code → agent_id (FK). When no assignee is passed, pick via round-robin
+        # for current_tier (same as escalation). When assigned_to / assigned_to_id is passed
+        # (e.g. after external next-assignee), use it and do not advance the tier cursor again.
         raw_agent_code = tracking_dict.pop("agent_code", None)
+        aid_raw = tracking_dict.get("assigned_to_id")
+        ato_raw = tracking_dict.get("assigned_to")
+        has_explicit_assignee = (
+            (aid_raw is not None and str(aid_raw).strip() != "")
+            or (ato_raw is not None and str(ato_raw).strip() != "")
+        )
         if raw_agent_code:
             from app.models.access import AccessAgent as _AccessAgent
+            from app.models.user import User as _User
+
             _agent = self.db.query(_AccessAgent).filter(
                 _AccessAgent.code == raw_agent_code.strip()
             ).first()
@@ -1164,18 +1205,49 @@ class ConversationSLATrackingService:
                     "Create the Access Agent first."
                 )
             tracking_dict["agent_id"] = str(_agent.id)
-            assignee = self.get_escalation_assignee_for_tier(
-                source_entity_type=None,
-                target_tier=tracking_dict["current_tier"],
-                team_set_code=tracking_dict.get("team_set_code") or None,
-                agent_id_override=str(_agent.id),
-            )
-            tracking_dict["assigned_to_id"] = assignee["id"]
-            tracking_dict["assigned_to"] = (
-                str(assignee["respond_user_id"])
-                if assignee.get("respond_user_id") is not None
-                else None
-            )
+            if has_explicit_assignee:
+                if aid_raw is not None and str(aid_raw).strip():
+                    user = self.db.query(_User).filter(_User.id == str(aid_raw).strip()).first()
+                    if not user:
+                        raise handle_validation_error(
+                            f"User not found for assigned_to_id: {aid_raw}"
+                        )
+                    tracking_dict["assigned_to_id"] = user.id
+                    rid = getattr(user, "respond_user_id", None)
+                    tracking_dict["assigned_to"] = (
+                        str(rid).strip() if rid is not None and str(rid).strip() else None
+                    )
+                else:
+                    assigned_to_value = str(ato_raw).strip()
+                    user = self.db.query(_User).filter(
+                        (_User.respond_user_id == assigned_to_value)
+                        | (_User.id == assigned_to_value)
+                        | (_User.email == assigned_to_value)
+                    ).first()
+                    if not user:
+                        raise handle_validation_error(
+                            f"User not found for respond_user_id: {assigned_to_value}"
+                        )
+                    tracking_dict["assigned_to_id"] = user.id
+                    rid = getattr(user, "respond_user_id", None)
+                    tracking_dict["assigned_to"] = (
+                        str(rid).strip()
+                        if rid is not None and str(rid).strip()
+                        else assigned_to_value
+                    )
+            else:
+                assignee = self.get_escalation_assignee_for_tier(
+                    source_entity_type=None,
+                    target_tier=tracking_dict["current_tier"],
+                    team_set_code=tracking_dict.get("team_set_code") or None,
+                    agent_id_override=str(_agent.id),
+                )
+                tracking_dict["assigned_to_id"] = assignee["id"]
+                tracking_dict["assigned_to"] = (
+                    str(assignee["respond_user_id"])
+                    if assignee.get("respond_user_id") is not None
+                    else None
+                )
         elif not tracking_dict.get("assigned_to_id") and tracking_dict.get("assigned_to"):
             # Fallback: resolve explicit assigned_to (respond_user_id / user id / email) to assigned_to_id
             from app.models.user import User

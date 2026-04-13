@@ -254,8 +254,8 @@ async def post_next_assignee(
 ):
     """
     Return the next eligible assignee for the given agent and team (round-robin).
-    contact_phone_number is required. Each call advances the round-robin and returns
-    the next assignee unless current_assignee is used (see below).
+    contact_phone_number is required. Each call advances this team's round-robin cursor only
+    (independent of other tiers and of who is on the conversation).
 
     Response always includes assignee fields plus:
     - is_working_hours: True if now is within configured working calendar in Asia/Kuala_Lumpur
@@ -271,7 +271,8 @@ async def post_next_assignee(
     Body (agent/team): agent_id/agent_code/agent and team_id/team_code/team or code.
     Body (optional): tier (or tier_level) with team_code when the same code is used for more than one
       SLA tier — required in that case so round-robin matches the UI per-tier cursors.
-    Body (optional): current_assignee (respond_user_id) to get the next in line after that user.
+    Body (ignored): current_assignee — backward compatibility only; does not affect rotation.
+      Tiers are independent; use conversation_assignee_* in the response for CRM state only.
     Body (optional): policy_code (or sla_policy_code) and tier (or tier_level) together —
       response includes policy_id, tier_response_hours, tier_resolution_hours from that SLA tier.
 
@@ -321,23 +322,6 @@ async def post_next_assignee(
         raise HTTPException(status_code=400, detail="agent_id or agent_code is required")
 
     team_id = _resolve_round_robin_team_id(service, str(agent_id).strip(), body)
-
-    # When current_assignee (respond_user_id) is sent, return the *next* in round-robin after them.
-    # Otherwise advance round-robin and return the next assignee.
-    current_assignee_raw = body.get("current_assignee")
-    if current_assignee_raw is not None and str(current_assignee_raw).strip():
-        result = service.get_next_assignee_after(
-            agent_id, team_id, str(current_assignee_raw).strip()
-        )
-        if result is not None:
-            return _enrich_n8n_response(
-                _format_assignee_response(result),
-                is_working_hours=is_working_hours,
-                is_already_assigned=is_already_assigned,
-                conversation_assignee=conversation_assignee,
-                sla_policy_tier=sla_policy_tier,
-            )
-        # current_assignee not in team or other failure: fall through to normal round-robin
 
     result = service.get_next_assignee(agent_id, team_id)
     if result is None:

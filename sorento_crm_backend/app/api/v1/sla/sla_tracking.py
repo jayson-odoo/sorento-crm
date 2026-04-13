@@ -357,10 +357,12 @@ async def escalate_sla_tracking_integration(
 
     Resolves the next assignee from the target tier's team for body.current_tier under the agent
     mapped from tracking.source_entity_type (complaint, stock_inquiry, purchase_request), using
-    round-robin. Updates tracking to that tier (supports multi-step jumps, e.g. 1→3). Returns the
+    that tier's round-robin cursor only (not the previous tier's assignee). Updates tracking to
+    that tier (supports multi-step jumps, e.g. 1→3). Returns the
     assignee's Respond user ID for n8n to update Respond.io, plus tracking message_id when set.
 
-    respond_contact_id may be respond_contacts.id or RespondContact.respond_io_id.
+    respond_contact_id may be respond_contacts.id, RespondContact.respond_io_id, or contact
+    phone (E.164 such as +60166753328, optional spacing; MY local 0-prefix also resolved).
     """
     log_service = IntegrationLogService(db)
     try:
@@ -408,7 +410,6 @@ async def escalate_sla_tracking_integration(
             target_tier,
             resolved_team_set_code,
             agent_id_override=resolved_agent_id,
-            current_assignee_respond_user_id=getattr(tracking, "assigned_to", None),
         )
 
         tracking = service.escalate_tracking(

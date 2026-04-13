@@ -217,7 +217,10 @@ class ConversationSLATrackingStatusUpdate(BaseModel):
 
 
 class ConversationSLAEscalateRequest(BaseModel):
-    """Request body for external escalation API (by respond_contact_id and policy_id)."""
+    """Request body for external escalation API (by respond_contact_id and policy_id).
+
+    respond_contact_id: CRM respond_contacts.id, Respond.io id, or phone (E.164 / variants).
+    """
     respond_contact_id: str
     policy_id: str
     current_tier: int  # Target tier after escalation (1–3), must be greater than the row's current tier

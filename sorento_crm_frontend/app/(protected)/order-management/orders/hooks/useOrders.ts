@@ -11,6 +11,7 @@ import {
   createOrderLine,
   updateOrderLine,
   deleteOrderLine,
+  bulkDeleteOrderLines,
 } from '../services/orderService';
 import type { Order, OrderFormData, OrderLineFormData } from '../types/order.types';
 import { postListQuerySearch } from '@/lib/list-query/listQueryService';
@@ -166,5 +167,22 @@ export function useDeleteOrderLine() {
       toast.success('Delivery order line removed');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to remove delivery order line'),
+  });
+}
+
+export function useBulkDeleteOrderLines() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ orderId, ids }: { orderId: string; ids: string[] }) =>
+      bulkDeleteOrderLines(orderId, ids),
+    onSuccess: (result, { orderId }) => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['order', orderId] });
+      toast.success(
+        result?.message ?? `${result?.deleted_count ?? 0} delivery order line(s) deleted`,
+      );
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to bulk delete delivery order lines'),
   });
 }
