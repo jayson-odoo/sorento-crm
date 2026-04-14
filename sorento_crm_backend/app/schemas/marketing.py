@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_serializer, field_validator
 from typing import Optional
-from datetime import datetime
+from datetime import date, datetime
 
 from app.schemas.promotion_dates import (
-    naive_utc_stored_instant_to_malaysia_iso_date,
     normalize_promotion_start_end,
     normalize_promotion_start_end_optional,
+    promotion_date_to_api_iso,
 )
 from decimal import Decimal
 import uuid
@@ -19,8 +19,8 @@ class PromotionBase(BaseModel):
     name: str
     promo_type: str
     description: Optional[str] = None
-    start_date: datetime
-    end_date: datetime
+    start_date: date
+    end_date: date
     is_active: bool = True
     access_levels: Optional[list[str]] = None
 
@@ -37,8 +37,8 @@ class PromotionUpdate(BaseModel):
     name: Optional[str] = None
     promo_type: Optional[str] = None
     description: Optional[str] = None
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
     is_active: Optional[bool] = None
     access_levels: Optional[list[str]] = None
 
@@ -121,8 +121,8 @@ class PromotionResponse(PromotionBase):
     promotion_groups: Optional[list["PromotionGroupResponse"]] = None
 
     @field_serializer("start_date", "end_date")
-    def _serialize_promotion_boundary_dates(self, v: datetime) -> str:
-        return naive_utc_stored_instant_to_malaysia_iso_date(v)
+    def _serialize_promotion_boundary_dates(self, v: date) -> str:
+        return promotion_date_to_api_iso(v)
 
     @field_validator('id', 'created_by', mode='before')
     @classmethod
@@ -146,8 +146,8 @@ class PromotionListItemResponse(PromotionBase):
     products_count: Optional[int] = 0
 
     @field_serializer("start_date", "end_date")
-    def _serialize_promotion_boundary_dates(self, v: datetime) -> str:
-        return naive_utc_stored_instant_to_malaysia_iso_date(v)
+    def _serialize_promotion_boundary_dates_list(self, v: date) -> str:
+        return promotion_date_to_api_iso(v)
 
     @field_validator('id', 'created_by', mode='before')
     @classmethod

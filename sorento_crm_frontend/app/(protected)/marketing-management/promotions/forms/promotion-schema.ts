@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+const ymd = z
+  .string({ required_error: 'Date is required.' })
+  .min(1, { message: 'Date is required.' })
+  .regex(/^\d{4}-\d{2}-\d{2}$/, { message: 'Use a valid date.' });
+
 export const PromotionSchema = z.object({
   promo_code: z
     .string()
@@ -16,8 +21,8 @@ export const PromotionSchema = z.object({
     errorMap: () => ({ message: 'Please select a valid promotion type.' }),
   }),
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
-  start_date: z.date({ required_error: 'Start date is required.' }),
-  end_date: z.date({ required_error: 'End date is required.' }),
+  start_date: ymd,
+  end_date: ymd,
   is_active: z.boolean(),
   access_levels: z.array(z.string()).min(1, {
     message: 'Select at least one access level.',

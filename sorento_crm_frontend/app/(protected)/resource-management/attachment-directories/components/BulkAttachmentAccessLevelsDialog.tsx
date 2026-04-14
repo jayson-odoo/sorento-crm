@@ -13,7 +13,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import {
   applyBulkAccessLevels,
@@ -205,7 +204,7 @@ export default function BulkAttachmentAccessLevelsDialog({
                     Propagate the same access levels to linked records listed below.
                   </span>
                 </label>
-                <ScrollArea className="max-h-40 pr-2">
+                <div className="max-h-[min(16rem,45vh)] overflow-y-auto overscroll-contain rounded-sm border border-border/50 bg-background/80 py-2 pl-2 pr-1 [scrollbar-gutter:stable]">
                   <ul className="space-y-1.5 text-sm">
                     {targets.map((t) => (
                       <li key={`${t.kind}-${t.entity_id}`}>
@@ -215,7 +214,7 @@ export default function BulkAttachmentAccessLevelsDialog({
                       </li>
                     ))}
                   </ul>
-                </ScrollArea>
+                </div>
               </div>
             )}
           </div>

@@ -1,6 +1,6 @@
 """Marketing management models."""
 import enum
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Integer, Index
+from sqlalchemy import Column, String, Boolean, Date, DateTime, ForeignKey, Text, Numeric, Integer, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -28,8 +28,8 @@ class Promotion(Base):
     name = Column(String(255), nullable=False)
     promo_type = Column(String(50), nullable=False)
     description = Column(Text, nullable=True)
-    start_date = Column(DateTime(timezone=False), nullable=False)
-    end_date = Column(DateTime(timezone=False), nullable=False)
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
     created_by = Column(String, nullable=True)

@@ -23,8 +23,9 @@ export interface PromotionFormData {
   name: string;
   promo_type: PromotionType;
   description?: string;
-  start_date: Date;
-  end_date: Date;
+  /** Malaysia civil YYYY-MM-DD (matches API / backend promotion_dates). */
+  start_date: string;
+  end_date: string;
   is_active: boolean;
   access_levels?: string[] | null;
   // Type-specific fields

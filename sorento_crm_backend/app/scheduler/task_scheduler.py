@@ -11,6 +11,7 @@ from app.services.scheduled_task_service import (
 )
 from app.services.respond_sync_handler import run_respond_contacts_sync
 from app.services.user_sla_daily_summary_service import run_user_sla_daily_summary
+from app.services.marketing_service import PromotionService
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,11 @@ def _handler_notification_delivery_processor(db, task):
 def _handler_user_sla_daily_summary(db, task):
     """Daily in-app/email summary of SLA performance and outstanding assignments per user."""
     return run_user_sla_daily_summary(db, task)
+
+
+def _handler_promotion_active_window(db, task):
+    """Set promotion is_active from Malaysia today vs inclusive [start_date, end_date]."""
+    return PromotionService(db).sync_promotion_active_by_calendar_window()
 
 
 def _run_notification_delivery_jobs_impl():
@@ -291,6 +297,7 @@ def start_scheduler():
     register_handler("import_job_processor", _handler_import_job_processor)
     register_handler("notification_delivery_processor", _handler_notification_delivery_processor)
     register_handler("user_sla_daily_summary", _handler_user_sla_daily_summary)
+    register_handler("promotion_active_window", _handler_promotion_active_window)
     register_handler("respond_contacts_sync", run_respond_contacts_sync)
 
     scheduler = BackgroundScheduler()

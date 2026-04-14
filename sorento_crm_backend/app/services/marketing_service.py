@@ -1,7 +1,17 @@
 """Marketing service for business logic."""
+# ORM models declare Column[T] on the class; at runtime instance attributes are Python values.
+# Pyright reports false positives here until models use SQLAlchemy 2.0 Mapped[] typing.
+# pyright: reportAttributeAccessIssue=false
+# pyright: reportGeneralTypeIssues=false
+# pyright: reportArgumentType=false
+# pyright: reportCallIssue=false
+# pyright: reportReturnType=false
+# pyright: reportOptionalMemberAccess=false
 import math
 import re
 import uuid
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, exists, select, text
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +37,18 @@ from app.schemas.marketing import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error, handle_validation_error
 from app.services.contact_access_type_service import ContactAccessTypeService
+
+_MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
+
+
+def _promotion_stored_boundary_date(dt: datetime | date) -> date:
+    """Calendar day for a promotion boundary (DATE column, or legacy datetime)."""
+    if isinstance(dt, date) and not isinstance(dt, datetime):
+        return dt
+    if isinstance(dt, datetime):
+        aware = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+        return aware.astimezone(_MY_TZ).date()
+    raise TypeError(f"Expected date or datetime, got {type(dt)}")
 
 
 def _resolve_promotion_id_for_filter(db: Session, raw: Optional[str]) -> Optional[str]:
@@ -451,6 +473,37 @@ class PromotionService:
         )
         self.db.commit()
         return {"message": f"Access levels set for {updated} promotion(s).", "updated_count": updated}
+
+    def sync_promotion_active_by_calendar_window(self) -> dict[str, Any]:
+        """
+        Align ``is_active`` with Malaysia calendar today vs inclusive [start_date, end_date]:
+        activate when in range, deactivate when before start or after end.
+        """
+        now = datetime.now(timezone.utc)
+        today_my = now.astimezone(_MY_TZ).date()
+        rows = self.db.query(Promotion).all()
+        activated = 0
+        deactivated = 0
+        for p in rows:
+            start_my = _promotion_stored_boundary_date(p.start_date)
+            end_my = _promotion_stored_boundary_date(p.end_date)
+            in_window = start_my <= today_my <= end_my
+            if in_window:
+                if not p.is_active:
+                    p.is_active = True
+                    activated += 1
+            else:
+                if p.is_active:
+                    p.is_active = False
+                    deactivated += 1
+        if activated or deactivated:
+            self.db.commit()
+        return {
+            "scanned": len(rows),
+            "activated": activated,
+            "deactivated": deactivated,
+            "today_malaysia": today_my.isoformat(),
+        }
 
     def create_promotion_group(self, promotion_id: str, data: PromotionGroupCreate) -> PromotionGroup:
         """Add a bundle / FOC group to a promotion."""

@@ -285,14 +285,12 @@ export function formatDateInMalaysia(input: Date | string | number): string {
 }
 
 /**
- * Calendar day in Malaysia (same instant semantics as {@link formatDateInMalaysia}) as a local
- * `Date` at midnight. Use when populating `<input type="date">` from API datetimes so
- * view → edit → save without changes does not shift the day (splitting `YYYY-MM-DD` from ISO
- * strings alone is wrong when the time is a UTC offset of the intended business date).
+ * Malaysia civil calendar YYYY-MM-DD for a promotion boundary from the API (no `Date` — avoids
+ * local-timezone drift on save when paired with `<input type="date">`).
  */
-export function malaysiaCalendarDateFromApi(
+export function malaysiaCivilYyyyMmDdFromApi(
   input: Date | string | number | null | undefined,
-): Date | null {
+): string | null {
   if (input == null) return null;
   const date = promotionBoundaryUtcInstantFromApi(input as Date | string | number);
   if (Number.isNaN(date.getTime())) return null;
@@ -302,11 +300,30 @@ export function malaysiaCalendarDateFromApi(
     month: '2-digit',
     day: '2-digit',
   }).formatToParts(date);
-  const y = Number(parts.find((p) => p.type === 'year')?.value);
-  const m = Number(parts.find((p) => p.type === 'month')?.value);
-  const day = Number(parts.find((p) => p.type === 'day')?.value);
-  if (!y || !m || !day) return null;
-  return new Date(y, m - 1, day);
+  const y = parts.find((p) => p.type === 'year')?.value;
+  const m = parts.find((p) => p.type === 'month')?.value;
+  const d = parts.find((p) => p.type === 'day')?.value;
+  if (!y || !m || !d) return null;
+  return `${y}-${m}-${d}`;
+}
+
+/** Today's date in Malaysia as YYYY-MM-DD (for form defaults). */
+export function todayMalaysiaYyyyMmDd(): string {
+  return malaysiaCivilYyyyMmDdFromApi(Date.now()) ?? '';
+}
+
+/**
+ * Calendar day in Malaysia as a local `Date` at midnight (legacy). Prefer
+ * {@link malaysiaCivilYyyyMmDdFromApi} for forms that submit YYYY-MM-DD strings.
+ */
+export function malaysiaCalendarDateFromApi(
+  input: Date | string | number | null | undefined,
+): Date | null {
+  const s = malaysiaCivilYyyyMmDdFromApi(input);
+  if (!s) return null;
+  const [y, mo, d] = s.split('-').map((x) => Number(x));
+  if (!y || !mo || !d) return null;
+  return new Date(y, mo - 1, d);
 }
 
 /**
@@ -326,15 +343,13 @@ export function formatLocalDateToYyyyMmDd(d: Date): string {
  */
 export function promotionFormDateToApiYyyyMmDd(value: Date | string | undefined): string | undefined {
   if (value === undefined) return undefined;
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return formatLocalDateToYyyyMmDd(value);
-  }
   if (typeof value === 'string') {
     const t = value.trim();
     if (PROMOTION_CIVIL_YMD.test(t)) return t;
-    const cal = malaysiaCalendarDateFromApi(t);
-    if (!cal || Number.isNaN(cal.getTime())) return t;
-    return formatLocalDateToYyyyMmDd(cal);
+    return malaysiaCivilYyyyMmDdFromApi(t) ?? t;
+  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return malaysiaCivilYyyyMmDdFromApi(value) ?? formatLocalDateToYyyyMmDd(value);
   }
   return undefined;
 }

@@ -34,36 +34,7 @@ import type { PromotionFormData } from '../types/promotion.types';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
-import { malaysiaCalendarDateFromApi } from '@/lib/helpers';
-
-function parseDateOnly(value: Date | string | null | undefined): Date | null {
-  if (value == null) return null;
-  if (value instanceof Date) {
-    if (Number.isNaN(value.getTime())) return null;
-    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
-  }
-  const s = String(value).trim();
-  if (!s) return null;
-  const datePart = s.includes('T') ? s.split('T')[0] : s;
-  const parts = datePart.split('-').map((p) => Number(p));
-  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) {
-    const fallback = new Date(s);
-    if (Number.isNaN(fallback.getTime())) return null;
-    return new Date(fallback.getFullYear(), fallback.getMonth(), fallback.getDate());
-  }
-  const [year, month, day] = parts;
-  return new Date(year, month - 1, day);
-}
-
-/** Safe local date to YYYY-MM-DD for <input type="date">. */
-function toDateInputValue(value: Date | string | null | undefined): string {
-  const d = parseDateOnly(value);
-  if (!d) return '';
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
+import { malaysiaCivilYyyyMmDdFromApi, todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 
 interface PromotionFormProps {
   promotionId?: string;
@@ -90,6 +61,8 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
 
+  const todayYmd = useMemo(() => todayMalaysiaYyyyMmDd(), []);
+
   const form = useForm<PromotionSchemaType>({
     resolver: zodResolver(PromotionSchema),
     defaultValues: {
@@ -97,8 +70,8 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
       name: '',
       promo_type: 'discount_percent',
       description: '',
-      start_date: new Date(),
-      end_date: new Date(),
+      start_date: todayYmd,
+      end_date: todayYmd,
       is_active: true,
       access_levels: defaultAccessLevels,
     },
@@ -114,15 +87,15 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
       // Use setTimeout to ensure SelectContent items are rendered before form reset
       // This is especially important when navigating from list view
       const timeoutId = setTimeout(() => {
-        const startDate = malaysiaCalendarDateFromApi(promotion.start_date);
-        const endDate = malaysiaCalendarDateFromApi(promotion.end_date);
+        const startYmd = malaysiaCivilYyyyMmDdFromApi(promotion.start_date) ?? todayYmd;
+        const endYmd = malaysiaCivilYyyyMmDdFromApi(promotion.end_date) ?? todayYmd;
         form.reset({
           promo_code: promotion.promo_code,
           name: promotion.name,
           promo_type: promotion.promo_type,
           description: promotion.description || '',
-          start_date: startDate ?? new Date(),
-          end_date: endDate ?? new Date(),
+          start_date: startYmd,
+          end_date: endYmd,
           is_active: promotion.is_active,
           access_levels:
             promotion.access_levels && promotion.access_levels.length > 0
@@ -134,7 +107,7 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
 
       return () => clearTimeout(timeoutId);
     }
-  }, [promotion, isEditMode, form, formInitialized]);
+  }, [promotion, isEditMode, form, formInitialized, todayYmd]);
 
   // Reset formInitialized when promotionId changes
   useEffect(() => {
@@ -333,12 +306,11 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                     <FormControl>
                       <Input
                         type="date"
-                        {...field}
-                        value={toDateInputValue(field.value)}
-                        onChange={(e) => {
-                          const d = parseDateOnly(e.target.value);
-                          field.onChange(d ?? field.value);
-                        }}
+                        name={field.name}
+                        ref={field.ref}
+                        onBlur={field.onBlur}
+                        value={field.value}
+                        onChange={(e) => field.onChange(e.target.value)}
                       />
                     </FormControl>
                     <FormMessage />
@@ -355,12 +327,11 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                     <FormControl>
                       <Input
                         type="date"
-                        {...field}
-                        value={toDateInputValue(field.value)}
-                        onChange={(e) => {
-                          const d = parseDateOnly(e.target.value);
-                          field.onChange(d ?? field.value);
-                        }}
+                        name={field.name}
+                        ref={field.ref}
+                        onBlur={field.onBlur}
+                        value={field.value}
+                        onChange={(e) => field.onChange(e.target.value)}
                       />
                     </FormControl>
                     <FormMessage />

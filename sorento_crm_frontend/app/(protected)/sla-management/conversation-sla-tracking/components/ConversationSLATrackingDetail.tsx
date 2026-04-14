@@ -763,21 +763,21 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                       <p className="font-medium">{tracking.team_set_code || '-'}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Message ID</p>
+                      <p className="text-sm text-muted-foreground">Message</p>
                       <p className="font-medium">
                         {respondMessageUrl ? (
                           <a
                             href={respondMessageUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-primary hover:underline"
+                            className="inline-flex text-primary hover:opacity-80"
                             title="Open message in Respond.io"
+                            aria-label="Open message in Respond.io"
                           >
-                            {messageIdText}
-                            <ExternalLink className="size-3.5" />
+                            <ExternalLink className="size-4" />
                           </a>
                         ) : (
-                          messageIdText ?? '-'
+                          '—'
                         )}
                       </p>
                     </div>

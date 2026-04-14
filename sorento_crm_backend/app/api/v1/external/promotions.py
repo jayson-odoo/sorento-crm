@@ -39,13 +39,6 @@ def _attachment_ids_from_promotion_payload(payload: PromotionRequest) -> list[st
     return ids
 
 
-def _date_to_datetime(value: str | date) -> datetime:
-    parsed = parse_date_value(value)
-    if not parsed:
-        raise ValueError("Invalid date")
-    return datetime.combine(parsed, datetime.min.time())
-
-
 def _foc_tiers_from_external_group(grp: PromotionGroupItem) -> Optional[list]:
     """
     Build promotion_groups.foc_tiers JSON.
@@ -168,14 +161,13 @@ def create_promotion(
             }
         )
 
-    try:
-        start_date = _date_to_datetime(payload.promotions.start_date)
-        end_date = _date_to_datetime(payload.promotions.end_date)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    start_date = parse_date_value(payload.promotions.start_date)
+    end_date = parse_date_value(payload.promotions.end_date)
+    if not start_date or not end_date:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid start or end date")
     today = datetime.utcnow().date()
 
-    ref_date = start_date.date()
+    ref_date = start_date
     numbering = NumberingService(db)
     generated_promo_code = numbering.get_next_number(
         "external_promotion",
@@ -194,7 +186,7 @@ def create_promotion(
 
     is_active = payload.promotions.is_active
     if is_active is None:
-        is_active = start_date.date() <= today <= end_date.date()
+        is_active = start_date <= today <= end_date
 
     created_by = None if current_user.get("id") == "system" else current_user["id"]
     promotion_kw: dict = {
