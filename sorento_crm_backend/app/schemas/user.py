@@ -154,6 +154,7 @@ class UserCreate(UserBase):
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
+    email: Optional[str] = None
     status: Optional[str] = None
     contact_number: Optional[str] = None
     country: Optional[str] = None
@@ -163,6 +164,14 @@ class UserUpdate(BaseModel):
     respond_synced: Optional[str] = None
     superior_id: Optional[str] = None
     tier: Optional[int] = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_optional_email(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s.lower() if s else None
 
 
 class UserResponse(UserBase):

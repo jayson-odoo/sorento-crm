@@ -43,7 +43,7 @@ import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
 import { useTenantModules } from '@/hooks/useTenantModules';
 import { getPromotions } from '../services/promotionService';
 import type { Promotion } from '../types/promotion.types';
-import { formatDateInMalaysia } from '@/lib/helpers';
+import { formatPromotionBoundaryInMalaysia } from '@/lib/helpers';
 import { postListQuerySearch, type ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import PromotionBulkDeleteDialog from './PromotionBulkDeleteDialog';
 import PromotionBulkAccessLevelsDialog from './PromotionBulkAccessLevelsDialog';
@@ -227,13 +227,13 @@ export default function PromotionsList() {
       {
         accessorKey: 'start_date',
         header: ({ column }) => <DataGridColumnHeader title="Start Date" column={column} />,
-        cell: ({ row }) => formatDateInMalaysia(row.original.start_date),
+        cell: ({ row }) => formatPromotionBoundaryInMalaysia(row.original.start_date),
         size: 120,
       },
       {
         accessorKey: 'end_date',
         header: ({ column }) => <DataGridColumnHeader title="End Date" column={column} />,
-        cell: ({ row }) => formatDateInMalaysia(row.original.end_date),
+        cell: ({ row }) => formatPromotionBoundaryInMalaysia(row.original.end_date),
         size: 120,
       },
       {

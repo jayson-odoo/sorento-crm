@@ -1,6 +1,7 @@
 'use client';
 
 import { useId, useState, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   DndContext,
   DragOverlay,
@@ -22,6 +23,9 @@ import type { AttachmentDirectoryTreeNode } from '../../attachments/services/dir
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import DirectoryTreeSidebar from './DirectoryTreeSidebar';
 import AttachmentsInFolderPanel from './AttachmentsInFolderPanel';
+import BulkAttachmentAccessLevelsDialog, {
+  type BulkAccessLevelsScope,
+} from './BulkAttachmentAccessLevelsDialog';
 
 export const DND_ID_ATTACHMENT_PREFIX = 'attachment-';
 export const DND_ID_FOLDER_PREFIX = 'folder-';
@@ -67,10 +71,12 @@ function AttachmentDirectoriesContent({
   selectedId,
   setSelectedId,
   selectedFolderName,
+  onOpenAccessLevels,
 }: {
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
   selectedFolderName: string | null;
+  onOpenAccessLevels: (scope: BulkAccessLevelsScope) => void;
 }) {
   const [activeDrag, setActiveDrag] = useState<{
     id: string;
@@ -99,7 +105,11 @@ function AttachmentDirectoriesContent({
         className="flex-1 min-h-0 rounded-lg border bg-card"
       >
         <ResizablePanel defaultSize={20} minSize={15} maxSize={45} className="min-w-0">
-          <DirectoryTreeSidebar selectedId={selectedId} onSelect={setSelectedId} />
+          <DirectoryTreeSidebar
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onAdjustFolderAccessLevels={(id) => onOpenAccessLevels({ directoryId: id })}
+          />
         </ResizablePanel>
         <ResizableHandle withHandle className="bg-border" />
         <ResizablePanel defaultSize={80} minSize={50} className="min-w-0">
@@ -108,6 +118,7 @@ function AttachmentDirectoriesContent({
               directoryId={selectedId}
               directoryName={selectedFolderName}
               onSelectFolder={setSelectedId}
+              onBulkAdjustAccessLevels={(ids) => onOpenAccessLevels({ attachmentIds: ids })}
             />
           </div>
         </ResizablePanel>
@@ -133,8 +144,10 @@ export default function AttachmentDirectoriesView({
 }: {
   initialDirectoryId?: string | null;
 }) {
+  const queryClient = useQueryClient();
   const dndId = useId();
   const [selectedId, setSelectedId] = useState<string | null>(initialDirectoryId);
+  const [accessLevelsScope, setAccessLevelsScope] = useState<BulkAccessLevelsScope>(null);
   const { data: tree = [] } = useDirectoryTree();
   const updateAttachmentMutation = useUpdateAttachment();
   const updateDirectoryMutation = useUpdateDirectory();
@@ -222,6 +235,15 @@ export default function AttachmentDirectoriesView({
         selectedId={selectedId}
         setSelectedId={setSelectedId}
         selectedFolderName={selectedFolderName}
+        onOpenAccessLevels={setAccessLevelsScope}
+      />
+      <BulkAttachmentAccessLevelsDialog
+        open={accessLevelsScope !== null}
+        onOpenChange={(open) => {
+          if (!open) setAccessLevelsScope(null);
+        }}
+        scope={accessLevelsScope}
+        onSuccess={() => queryClient.invalidateQueries({ queryKey: ['attachments'] })}
       />
     </DndContext>
   );

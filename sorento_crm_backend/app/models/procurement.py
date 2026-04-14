@@ -1,6 +1,6 @@
 """Procurement models."""
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Date, Computed, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -84,6 +84,7 @@ class InboundShipment(Base):
     created_by = Column(String, nullable=True)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True)
+    access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     
@@ -123,6 +124,7 @@ class InboundShipment(Base):
         Index("ix_inbound_shipments_supplier_id", "supplier_id"),
         Index("ix_inbound_shipments_shipment_number", "shipment_number"),
         Index("ix_inbound_shipments_shipment_status", "shipment_status"),
+        Index("ix_inbound_shipments_access_levels", "access_levels", postgresql_using="gin"),
     )
 
 

@@ -8,7 +8,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Send, ExternalLink, RefreshCw, Link2 } from 'lucide-react';
 import { usePurchaseRequestConversation, useUpdatePurchaseRequestAndReply } from '../hooks/usePurchaseRequests';
 import type { RespondMessageItem } from '../services/purchaseRequestService';
-import { formatDateTimeInMalaysia, respondIoTimestampToDate } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { getRespondMessageDisplayTimeMs, getRespondMessageSortTimeMs } from '@/lib/respondIoMessage';
 import {
   getNormalizedRespondSource,
   getOutgoingBubbleClass,
@@ -61,12 +62,10 @@ export default function PurchaseRequestConversationPanel({
   const items: RespondMessageItem[] = data?.items ?? [];
   const sortedItems = useMemo(() => {
     return [...items].sort((a, b) => {
-      const ta = respondIoTimestampToDate(a.status?.[0]?.timestamp ?? 0).getTime();
-      const tb = respondIoTimestampToDate(b.status?.[0]?.timestamp ?? 0).getTime();
-      if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
-      if (Number.isNaN(ta)) return 1;
-      if (Number.isNaN(tb)) return -1;
-      return ta - tb;
+      const ta = getRespondMessageSortTimeMs(a);
+      const tb = getRespondMessageSortTimeMs(b);
+      if (ta !== tb) return ta - tb;
+      return (a.messageId ?? 0) - (b.messageId ?? 0);
     });
   }, [items]);
 
@@ -161,11 +160,10 @@ export default function PurchaseRequestConversationPanel({
             {sortedItems.map((item, idx) => {
               const isOutgoing = item.traffic === 'outgoing';
               const text = item.message?.text ?? '';
-              const ts = item.status?.[0]?.timestamp ?? 0;
-              const tsDate = respondIoTimestampToDate(ts);
+              const displayMs = getRespondMessageDisplayTimeMs(item);
               const dateStr =
-                ts && !Number.isNaN(tsDate.getTime())
-                  ? formatDateTimeInMalaysia(tsDate)
+                displayMs > 0 && !Number.isNaN(displayMs)
+                  ? formatDateTimeInMalaysia(displayMs)
                   : '';
               const sourceNorm = getNormalizedRespondSource(item);
               const senderLabel = isOutgoing ? getOutgoingSenderLabel(sourceNorm) : 'Contact';

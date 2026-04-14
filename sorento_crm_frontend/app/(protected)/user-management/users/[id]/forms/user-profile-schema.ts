@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const UserProfileSchema = z.object({
   name: z.string().min(1, { message: 'Name is required.' }),
+  email: z.string().min(1, { message: 'Email is required.' }).email({ message: 'Enter a valid email address.' }),
   roleIds: z.array(z.string()).min(1, { message: 'At least one role is required.' }),
   status: z.string().min(1, { message: 'Status is required.' }),
   respond_user_id: z.string().optional().nullable(),

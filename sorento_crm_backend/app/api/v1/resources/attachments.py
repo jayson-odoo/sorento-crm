@@ -16,7 +16,17 @@ from app.services.resources_service import AttachmentService, AttachmentTypeServ
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.integration_service import IntegrationLogService
 from app.services.attachment_webhook_helper import build_signed_attachment_url_for_webhook
-from app.schemas.resources import AttachmentCreate, AttachmentUpdate, AttachmentResponse, AttachmentBulkDeleteRequest, AttachmentReorderRequest
+from app.schemas.resources import (
+    AttachmentCreate,
+    AttachmentUpdate,
+    AttachmentResponse,
+    AttachmentBulkDeleteRequest,
+    AttachmentReorderRequest,
+    BulkAccessLevelsPreviewRequest,
+    BulkAccessLevelsPreviewResponse,
+    BulkAccessLevelsApplyRequest,
+    BulkAccessLevelsApplyResponse,
+)
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
@@ -866,6 +876,48 @@ async def reorder_attachments(
         service = AttachmentService(db)
         result = service.reorder_attachments(body.attachment_ids, body.directory_id)
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/bulk-access-levels/preview", response_model=BulkAccessLevelsPreviewResponse)
+async def preview_bulk_access_levels(
+    body: BulkAccessLevelsPreviewRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List linked products / promotions / forms / packing lists that would receive propagated access levels."""
+    try:
+        service = AttachmentService(db)
+        aids = service.resolve_bulk_attachment_ids(body.attachment_ids, body.directory_id)
+        if not aids:
+            return BulkAccessLevelsPreviewResponse(attachment_count=0, targets=[])
+        result = service.preview_access_propagation(aids)
+        return BulkAccessLevelsPreviewResponse(**result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/bulk-access-levels/apply", response_model=BulkAccessLevelsApplyResponse)
+async def apply_bulk_access_levels(
+    body: BulkAccessLevelsApplyRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set access levels on attachments in scope; optionally cascade to linked records."""
+    try:
+        service = AttachmentService(db)
+        aids = service.resolve_bulk_attachment_ids(body.attachment_ids, body.directory_id)
+        result = service.apply_bulk_access_levels(
+            aids,
+            body.access_levels,
+            body.propagate_to_linked,
+        )
+        return BulkAccessLevelsApplyResponse(**result)
     except HTTPException:
         raise
     except Exception as e:

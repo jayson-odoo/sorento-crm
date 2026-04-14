@@ -1,9 +1,15 @@
 """Marketing management schemas."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator
 from typing import Optional
 from datetime import datetime
+
+from app.schemas.promotion_dates import (
+    naive_utc_stored_instant_to_malaysia_iso_date,
+    normalize_promotion_start_end,
+    normalize_promotion_start_end_optional,
+)
 from decimal import Decimal
 import uuid
 
@@ -20,7 +26,10 @@ class PromotionBase(BaseModel):
 
 
 class PromotionCreate(PromotionBase):
-    pass
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def _normalize_promotion_dates(cls, v):
+        return normalize_promotion_start_end(v)
 
 
 class PromotionUpdate(BaseModel):
@@ -32,6 +41,11 @@ class PromotionUpdate(BaseModel):
     end_date: Optional[datetime] = None
     is_active: Optional[bool] = None
     access_levels: Optional[list[str]] = None
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def _normalize_promotion_dates_optional(cls, v):
+        return normalize_promotion_start_end_optional(v)
 
 
 class FocTier(BaseModel):
@@ -106,6 +120,10 @@ class PromotionResponse(PromotionBase):
     products: Optional[list["PromotionProductResponse"]] = None
     promotion_groups: Optional[list["PromotionGroupResponse"]] = None
 
+    @field_serializer("start_date", "end_date")
+    def _serialize_promotion_boundary_dates(self, v: datetime) -> str:
+        return naive_utc_stored_instant_to_malaysia_iso_date(v)
+
     @field_validator('id', 'created_by', mode='before')
     @classmethod
     def convert_uuid_to_string(cls, v):
@@ -126,6 +144,10 @@ class PromotionListItemResponse(PromotionBase):
     created_at: datetime
     updated_at: datetime
     products_count: Optional[int] = 0
+
+    @field_serializer("start_date", "end_date")
+    def _serialize_promotion_boundary_dates(self, v: datetime) -> str:
+        return naive_utc_stored_instant_to_malaysia_iso_date(v)
 
     @field_validator('id', 'created_by', mode='before')
     @classmethod

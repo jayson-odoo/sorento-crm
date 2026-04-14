@@ -10,7 +10,7 @@ from app.schemas.resources import (
     AttachmentCreate, AttachmentUpdate, AttachmentTypeCreate, AttachmentTypeUpdate,
     AttachmentDirectoryCreate, AttachmentDirectoryUpdate,
 )
-from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
 
 
 class AttachmentDirectoryService:
@@ -573,6 +573,233 @@ class AttachmentService:
             "linked_form": linked_form,
             "linked_packing_lists": linked_packing_lists,
         }
+
+    def list_attachment_ids_in_directory_subtree(self, root_directory_id: str) -> List[str]:
+        """Non-deleted attachments in root folder and all non-deleted descendant folders."""
+        dir_service = AttachmentDirectoryService(self.db)
+        dir_ids = dir_service.get_descendant_directory_ids(root_directory_id, include_deleted=False)
+        if not dir_ids:
+            return []
+        rows = (
+            self.db.query(Attachment.id)
+            .filter(
+                Attachment.directory_id.in_(dir_ids),
+                Attachment.is_deleted == False,
+            )
+            .all()
+        )
+        return [str(r.id) for r in rows]
+
+    def resolve_bulk_attachment_ids(
+        self,
+        attachment_ids: Optional[List[str]],
+        directory_id: Optional[str],
+    ) -> List[str]:
+        """Normalize scope to a unique list of attachment UUID strings."""
+        if directory_id and str(directory_id).strip():
+            did = str(directory_id).strip()
+            AttachmentDirectoryService(self.db).get_directory(did, include_deleted=False)
+            return self.list_attachment_ids_in_directory_subtree(did)
+        ids = [str(a) for a in (attachment_ids or []) if a]
+        return list(dict.fromkeys(ids))
+
+    def preview_access_propagation(self, attachment_ids: List[str]) -> dict:
+        """Deduplicated linked entities (product / promotion / form / packing list) that have propagatable access_levels."""
+        unique_aids = list(dict.fromkeys([a for a in (attachment_ids or []) if a]))
+        if not unique_aids:
+            return {"attachment_count": 0, "targets": []}
+
+        from sqlalchemy import cast as sql_cast, String
+        from app.models.product import Product, ProductAttachment
+        from app.models.marketing import Promotion, PromotionAttachment
+        from app.models.forms import Form
+        from app.models.procurement import InboundShipment
+        from app.models.entity_attachment import EntityAttachmentLink
+
+        targets: List[dict] = []
+        seen = set()
+
+        q = (
+            self.db.query(Product.id, Product.product_code, Product.product_name)
+            .join(ProductAttachment, ProductAttachment.product_id == Product.id)
+            .filter(ProductAttachment.attachment_id.in_(unique_aids))
+            .distinct()
+        )
+        for row in q.all():
+            key = ("product", str(row.id))
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append({
+                "kind": "product",
+                "entity_id": str(row.id),
+                "code": row.product_code,
+                "name": row.product_name or None,
+            })
+
+        q = (
+            self.db.query(Promotion.id, Promotion.promo_code, Promotion.name)
+            .join(PromotionAttachment, PromotionAttachment.promotion_id == Promotion.id)
+            .filter(PromotionAttachment.attachment_id.in_(unique_aids))
+            .distinct()
+        )
+        for row in q.all():
+            key = ("promotion", str(row.id))
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append({
+                "kind": "promotion",
+                "entity_id": str(row.id),
+                "code": row.promo_code,
+                "name": row.name or None,
+            })
+
+        q = self.db.query(Form.id, Form.code, Form.name).filter(Form.attachment_id.in_(unique_aids))
+        for row in q.all():
+            key = ("form", str(row.id))
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append({
+                "kind": "form",
+                "entity_id": str(row.id),
+                "code": row.code,
+                "name": row.name or None,
+            })
+
+        q = (
+            self.db.query(InboundShipment.id, InboundShipment.shipment_number)
+            .join(
+                EntityAttachmentLink,
+                EntityAttachmentLink.entity_id == sql_cast(InboundShipment.id, String),
+            )
+            .filter(
+                EntityAttachmentLink.attachment_id.in_(unique_aids),
+                EntityAttachmentLink.entity_type == "inbound_shipment",
+            )
+            .distinct()
+        )
+        for row in q.all():
+            key = ("packing_list", str(row.id))
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append({
+                "kind": "packing_list",
+                "entity_id": str(row.id),
+                "code": row.shipment_number,
+                "name": None,
+            })
+
+        direct = self.db.query(InboundShipment.id, InboundShipment.shipment_number).filter(
+            InboundShipment.attachment_id.in_(unique_aids)
+        )
+        for row in direct.all():
+            key = ("packing_list", str(row.id))
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append({
+                "kind": "packing_list",
+                "entity_id": str(row.id),
+                "code": row.shipment_number,
+                "name": None,
+            })
+
+        kind_order = {"product": 0, "promotion": 1, "form": 2, "packing_list": 3}
+        targets.sort(key=lambda t: (kind_order.get(t["kind"], 9), t["code"] or ""))
+
+        return {"attachment_count": len(unique_aids), "targets": targets}
+
+    def apply_bulk_access_levels(
+        self,
+        attachment_ids: List[str],
+        access_levels: List[str],
+        propagate_to_linked: bool,
+    ) -> dict:
+        """Set access_levels on attachments; optionally cascade to linked product links, promotions, forms, packing lists."""
+        from sqlalchemy import update
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        from app.models.product import ProductAttachment
+        from app.models.marketing import Promotion, PromotionAttachment
+        from app.models.forms import Form
+        from app.models.procurement import InboundShipment
+        from app.models.entity_attachment import EntityAttachmentLink
+
+        access_svc = ContactAccessTypeService(self.db)
+        validated = access_svc.validate_access_levels(access_levels, field_name="access_levels")
+
+        unique_aids = list(dict.fromkeys([a for a in attachment_ids if a]))
+        if not unique_aids:
+            raise handle_validation_error("No attachments in scope.")
+
+        count_att = (
+            self.db.query(Attachment)
+            .filter(Attachment.id.in_(unique_aids), Attachment.is_deleted == False)
+            .update({"access_levels": validated}, synchronize_session=False)
+        )
+
+        propagated: dict = {
+            "product_links": 0,
+            "promotions": 0,
+            "forms": 0,
+            "packing_lists": 0,
+        }
+
+        if propagate_to_linked:
+            r1 = self.db.execute(
+                update(ProductAttachment)
+                .where(ProductAttachment.attachment_id.in_(unique_aids))
+                .values(access_levels=validated)
+            )
+            propagated["product_links"] = r1.rowcount or 0
+
+            promo_ids = [
+                str(x[0])
+                for x in self.db.query(PromotionAttachment.promotion_id)
+                .filter(PromotionAttachment.attachment_id.in_(unique_aids))
+                .distinct()
+                .all()
+            ]
+            if promo_ids:
+                r2 = self.db.execute(
+                    update(Promotion).where(Promotion.id.in_(promo_ids)).values(access_levels=validated)
+                )
+                propagated["promotions"] = r2.rowcount or 0
+
+            r3 = self.db.execute(
+                update(Form).where(Form.attachment_id.in_(unique_aids)).values(access_levels=validated)
+            )
+            propagated["forms"] = r3.rowcount or 0
+
+            link_ids = [
+                str(x[0])
+                for x in self.db.query(EntityAttachmentLink.entity_id)
+                .filter(
+                    EntityAttachmentLink.attachment_id.in_(unique_aids),
+                    EntityAttachmentLink.entity_type == "inbound_shipment",
+                )
+                .distinct()
+                .all()
+            ]
+            direct_ids = [
+                str(x[0])
+                for x in self.db.query(InboundShipment.id)
+                .filter(InboundShipment.attachment_id.in_(unique_aids))
+                .all()
+            ]
+            ship_ids = list(dict.fromkeys(link_ids + direct_ids))
+            if ship_ids:
+                r4 = self.db.execute(
+                    update(InboundShipment)
+                    .where(InboundShipment.id.in_(ship_ids))
+                    .values(access_levels=validated)
+                )
+                propagated["packing_lists"] = r4.rowcount or 0
+
+        self.db.commit()
+        return {"updated_attachments": count_att, "propagated": propagated if propagate_to_linked else None}
 
     def get_entity_display_name(self, entity_type: Optional[str], entity_id: Optional[str]) -> Optional[str]:
         """Fallback: resolve entity_type + entity_id to a display name when not found via junction tables."""

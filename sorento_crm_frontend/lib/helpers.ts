@@ -235,6 +235,40 @@ function toUTCDate(input: Date | string | number): Date {
   return parseDateTimeAsUTC(input);
 }
 
+const PROMOTION_CIVIL_YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Parse promotion start/end from the API into an instant `Date`.
+ * - `YYYY-MM-DD` alone is Malaysia civil calendar (same as server `promotion_dates` DATE_ONLY).
+ * - Datetime strings use naive-UTC semantics via {@link parseDateTimeAsUTC}.
+ */
+export function promotionBoundaryUtcInstantFromApi(input: Date | string | number): Date {
+  if (input instanceof Date) return input;
+  if (typeof input === 'number') return new Date(input);
+  const s = String(input).trim();
+  if (!s) return new Date(NaN);
+  if (PROMOTION_CIVIL_YMD.test(s) && !s.includes('T')) {
+    const ms = Date.parse(`${s}T00:00:00+08:00`);
+    return new Date(ms);
+  }
+  return parseDateTimeAsUTC(s);
+}
+
+/**
+ * Format promotion start/end (API string or Date) as dd/mm/yyyy in Malaysia.
+ * Prefer over {@link formatDateInMalaysia} for promotion boundaries so date-only payloads stay aligned.
+ */
+export function formatPromotionBoundaryInMalaysia(input: Date | string | number): string {
+  const date = promotionBoundaryUtcInstantFromApi(input);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: MALAYSIA_TZ,
+  }).format(date);
+}
+
 /**
  * Format a UTC datetime (from API/DB) as date only in Malaysia timezone.
  * Pass naive UTC strings from the backend; they are parsed as UTC then displayed in Malaysia.
@@ -248,6 +282,61 @@ export function formatDateInMalaysia(input: Date | string | number): string {
     year: 'numeric',
     timeZone: MALAYSIA_TZ,
   }).format(date);
+}
+
+/**
+ * Calendar day in Malaysia (same instant semantics as {@link formatDateInMalaysia}) as a local
+ * `Date` at midnight. Use when populating `<input type="date">` from API datetimes so
+ * view → edit → save without changes does not shift the day (splitting `YYYY-MM-DD` from ISO
+ * strings alone is wrong when the time is a UTC offset of the intended business date).
+ */
+export function malaysiaCalendarDateFromApi(
+  input: Date | string | number | null | undefined,
+): Date | null {
+  if (input == null) return null;
+  const date = promotionBoundaryUtcInstantFromApi(input as Date | string | number);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: MALAYSIA_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const y = Number(parts.find((p) => p.type === 'year')?.value);
+  const m = Number(parts.find((p) => p.type === 'month')?.value);
+  const day = Number(parts.find((p) => p.type === 'day')?.value);
+  if (!y || !m || !day) return null;
+  return new Date(y, m - 1, day);
+}
+
+/**
+ * Local calendar date as YYYY-MM-DD for JSON APIs that interpret promotion dates as
+ * civil days (server applies Asia/Kuala_Lumpur midnight). Avoids Date JSON.stringify → UTC shift.
+ */
+export function formatLocalDateToYyyyMmDd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Serialize promotion start/end for PUT/POST as YYYY-MM-DD (Malaysia civil), including if the value
+ * is an ISO string from a stale client cache.
+ */
+export function promotionFormDateToApiYyyyMmDd(value: Date | string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return formatLocalDateToYyyyMmDd(value);
+  }
+  if (typeof value === 'string') {
+    const t = value.trim();
+    if (PROMOTION_CIVIL_YMD.test(t)) return t;
+    const cal = malaysiaCalendarDateFromApi(t);
+    if (!cal || Number.isNaN(cal.getTime())) return t;
+    return formatLocalDateToYyyyMmDd(cal);
+  }
+  return undefined;
 }
 
 /**

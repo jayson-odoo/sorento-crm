@@ -1,6 +1,6 @@
 """Resource management schemas."""
-from pydantic import BaseModel, ConfigDict, field_validator
-from typing import Optional, List
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from typing import Optional, List, Literal
 from datetime import datetime
 import uuid
 
@@ -196,4 +196,50 @@ class AttachmentResponse(AttachmentBase):
         if isinstance(v, str):
             return v
         return str(v)
-    
+
+
+class AccessPropagationTarget(BaseModel):
+    """Linked entity that can receive propagated access_levels (with human-facing code)."""
+    kind: Literal["product", "promotion", "form", "packing_list"]
+    entity_id: str
+    code: str
+    name: Optional[str] = None
+
+
+class BulkAccessLevelsPreviewRequest(BaseModel):
+    """Preview propagation targets: pass either directory_id (folder subtree) or attachment_ids (bulk selection)."""
+    attachment_ids: Optional[list[str]] = None
+    directory_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def exactly_one_scope(self):
+        has_attachments = bool(self.attachment_ids and len(self.attachment_ids) > 0)
+        has_dir = bool(self.directory_id and str(self.directory_id).strip())
+        if has_attachments == has_dir:
+            raise ValueError("Provide exactly one of: non-empty attachment_ids or directory_id")
+        return self
+
+
+class BulkAccessLevelsPreviewResponse(BaseModel):
+    attachment_count: int
+    targets: list[AccessPropagationTarget]
+
+
+class BulkAccessLevelsApplyRequest(BaseModel):
+    attachment_ids: Optional[list[str]] = None
+    directory_id: Optional[str] = None
+    access_levels: list[str]
+    propagate_to_linked: bool = False
+
+    @model_validator(mode="after")
+    def exactly_one_scope(self):
+        has_attachments = bool(self.attachment_ids and len(self.attachment_ids) > 0)
+        has_dir = bool(self.directory_id and str(self.directory_id).strip())
+        if has_attachments == has_dir:
+            raise ValueError("Provide exactly one of: non-empty attachment_ids or directory_id")
+        return self
+
+
+class BulkAccessLevelsApplyResponse(BaseModel):
+    updated_attachments: int
+    propagated: Optional[dict] = None

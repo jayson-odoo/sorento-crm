@@ -13,6 +13,7 @@ import {
   Pencil,
   Trash2,
   MoreHorizontal,
+  Shield,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -45,6 +46,8 @@ import { Star, StarOff } from 'lucide-react';
 interface DirectoryTreeSidebarProps {
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  /** When set, folder menu includes adjusting access levels for all attachments in the folder subtree. */
+  onAdjustFolderAccessLevels?: (directoryId: string) => void;
 }
 
 const FOLDER_DROP_PREFIX = 'folder-';
@@ -141,6 +144,7 @@ function DirectoryRow({
   quickAccessEntryIdByDirectoryId,
   onPinToQuickAccess,
   onUnpinFromQuickAccess,
+  onAdjustFolderAccessLevels,
 }: {
   node: AttachmentDirectoryTreeNode;
   depth: number;
@@ -154,6 +158,7 @@ function DirectoryRow({
   quickAccessEntryIdByDirectoryId: Record<string, string>;
   onPinToQuickAccess: (directoryId: string, label: string) => void;
   onUnpinFromQuickAccess: (entryId: string) => void;
+  onAdjustFolderAccessLevels?: (directoryId: string) => void;
 }) {
   const isExpanded = expandedIds.has(node.id);
   const hasChildren = node.children && node.children.length > 0;
@@ -245,6 +250,12 @@ function DirectoryRow({
               <Plus className="size-4 mr-2" />
               Add subfolder
             </DropdownMenuItem>
+            {onAdjustFolderAccessLevels ? (
+              <DropdownMenuItem onClick={() => onAdjustFolderAccessLevels(node.id)}>
+                <Shield className="size-4 mr-2" />
+                Adjust access levels
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onClick={() => onRename(node.id, node.name)}>
               <Pencil className="size-4 mr-2" />
               Rename
@@ -276,6 +287,7 @@ function DirectoryRow({
               quickAccessEntryIdByDirectoryId={quickAccessEntryIdByDirectoryId}
               onPinToQuickAccess={onPinToQuickAccess}
               onUnpinFromQuickAccess={onUnpinFromQuickAccess}
+              onAdjustFolderAccessLevels={onAdjustFolderAccessLevels}
             />
           ))}
         </div>
@@ -288,7 +300,11 @@ function buildFolderQuickAccessPath(directoryId: string): string {
   return `${ATTACHMENT_DIRECTORIES_PATH}?directoryId=${directoryId}`;
 }
 
-export default function DirectoryTreeSidebar({ selectedId, onSelect }: DirectoryTreeSidebarProps) {
+export default function DirectoryTreeSidebar({
+  selectedId,
+  onSelect,
+  onAdjustFolderAccessLevels,
+}: DirectoryTreeSidebarProps) {
   const { data: tree = [], isLoading } = useDirectoryTree();
   const createMutation = useCreateDirectory();
   const updateMutation = useUpdateDirectory();
@@ -487,6 +503,7 @@ export default function DirectoryTreeSidebar({ selectedId, onSelect }: Directory
                   quickAccessEntryIdByDirectoryId={quickAccessEntryIdByDirectoryId}
                   onPinToQuickAccess={onPinToQuickAccess}
                   onUnpinFromQuickAccess={onUnpinFromQuickAccess}
+                  onAdjustFolderAccessLevels={onAdjustFolderAccessLevels}
                 />
               ))
             )}

@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { promotionFormDateToApiYyyyMmDd } from '@/lib/helpers';
 import type {
   Promotion,
   PromotionFormData,
@@ -39,11 +40,21 @@ export async function getPromotion(id: string): Promise<PromotionDetail> {
   return response.json();
 }
 
+function serializePromotionWriteBody(data: Partial<PromotionFormData>): Record<string, unknown> {
+  const { start_date, end_date, ...rest } = data;
+  const out: Record<string, unknown> = { ...rest };
+  const s = promotionFormDateToApiYyyyMmDd(start_date);
+  if (s !== undefined) out.start_date = s;
+  const e = promotionFormDateToApiYyyyMmDd(end_date);
+  if (e !== undefined) out.end_date = e;
+  return out;
+}
+
 export async function createPromotion(data: PromotionFormData): Promise<Promotion> {
   const response = await apiFetch('/api/v1/marketing/promotions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
+    body: JSON.stringify(serializePromotionWriteBody(data)),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to create promotion' }));
@@ -56,7 +67,7 @@ export async function updatePromotion(id: string, data: Partial<PromotionFormDat
   const response = await apiFetch(`/api/v1/marketing/promotions/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
+    body: JSON.stringify(serializePromotionWriteBody(data)),
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to update promotion' }));

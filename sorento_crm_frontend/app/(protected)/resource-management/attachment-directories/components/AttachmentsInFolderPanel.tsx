@@ -15,7 +15,19 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, Download, Eye, Trash2, Plus, RefreshCw, GripVertical, FileArchive, RotateCcw } from 'lucide-react';
+import {
+  Search,
+  X,
+  Download,
+  Eye,
+  Trash2,
+  Plus,
+  RefreshCw,
+  GripVertical,
+  FileArchive,
+  RotateCcw,
+  Shield,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -84,11 +96,14 @@ interface AttachmentsInFolderPanelProps {
   onRestoreFolder?: () => void;
   /** @deprecated Folders are only shown in the left pane; kept for parent compatibility */
   onSelectFolder?: (id: string) => void;
+  /** Bulk adjust access levels for the selected attachment rows */
+  onBulkAdjustAccessLevels?: (attachmentIds: string[]) => void;
 }
 
 export default function AttachmentsInFolderPanel({
   directoryId,
   onRestoreFolder,
+  onBulkAdjustAccessLevels,
 }: AttachmentsInFolderPanelProps) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'uploaded_at', desc: true }]);
@@ -507,6 +522,15 @@ export default function AttachmentsInFolderPanel({
                     Permanently delete ({selectedDeletableIds.length})
                   </Button>
                 </>
+              )}
+              {selectedDeletableIds.length > 0 && !isTrashView && onBulkAdjustAccessLevels && (
+                <Button
+                  variant="outline"
+                  onClick={() => onBulkAdjustAccessLevels(selectedDeletableIds)}
+                >
+                  <Shield className="size-4 mr-2" />
+                  Access levels ({selectedDeletableIds.length})
+                </Button>
               )}
               {selectedDeletableIds.length > 0 && !isTrashView && (
                 <>

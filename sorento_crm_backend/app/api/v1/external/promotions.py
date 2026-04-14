@@ -130,7 +130,7 @@ def create_promotion(
     - `promotion_products` (flat list), or
     - `promotion_groups` (bundle / FOC groups with nested products; same SKU may appear in multiple groups).
 
-    **promo_code** is not accepted in the body; each request gets a unique server-generated code
+    **promo_code** in the body is ignored if present; each request gets a unique server-generated code
     (document numbering rule `external_promotion`, e.g. `PROMO2026_0001`, yearly sequence by promotion start date).
 
     Products are matched by exact product_code (trim only, no case change).

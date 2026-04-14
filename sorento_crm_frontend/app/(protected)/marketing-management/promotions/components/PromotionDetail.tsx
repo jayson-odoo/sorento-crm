@@ -39,7 +39,7 @@ import {
 } from '../hooks/usePromotions';
 import { useProducts } from '../../../master-data-management/products/hooks/useProducts';
 import type { GetProductsParams } from '../../../master-data-management/products/services/productService';
-import { formatDateInMalaysia } from '@/lib/helpers';
+import { formatPromotionBoundaryInMalaysia } from '@/lib/helpers';
 import { toast } from 'sonner';
 import { LoaderCircleIcon } from 'lucide-react';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
@@ -571,11 +571,11 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <p className="text-sm text-muted-foreground">Start Date</p>
-              <p className="font-medium">{formatDateInMalaysia(promotion.start_date)}</p>
+              <p className="font-medium">{formatPromotionBoundaryInMalaysia(promotion.start_date)}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">End Date</p>
-              <p className="font-medium">{formatDateInMalaysia(promotion.end_date)}</p>
+              <p className="font-medium">{formatPromotionBoundaryInMalaysia(promotion.end_date)}</p>
             </div>
             {promotion.access_levels && promotion.access_levels.length > 0 && (
               <div className="md:col-span-2">

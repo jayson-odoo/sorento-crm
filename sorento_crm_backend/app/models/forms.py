@@ -18,6 +18,7 @@ class Form(Base):
     version = Column(Integer, default=1, nullable=False)
     is_active = Column(Boolean, default=False, nullable=False)
     attachment_id = Column(UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True)
+    access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
     # created_by column doesn't exist in database, removed from model
     # created_by = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -30,6 +31,7 @@ class Form(Base):
     __table_args__ = (
         Index("ix_forms_is_active", "is_active"),
         Index("ix_forms_language", "language"),
+        Index("ix_forms_access_levels", "access_levels", postgresql_using="gin"),
     )
 
 

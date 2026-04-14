@@ -71,9 +71,6 @@ const UserProfileEditDialog = ({
   closeDialog: () => void;
   user: User;
 }) => {
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'user-profile-edit-dialog.tsx:60',message:'UserProfileEditDialog component rendered',data:{open,userId:user?.id,hasUser:!!user},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-  // #endregion
   const queryClient = useQueryClient();
   const [superiorOpen, setSuperiorOpen] = useState(false);
 
@@ -94,6 +91,7 @@ const UserProfileEditDialog = ({
     resolver: zodResolver(UserProfileSchema) as Resolver<UserProfileSchemaType>,
     defaultValues: {
       name: user?.name || '',
+      email: user?.email || '',
       roleIds: user?.roles?.length ? user.roles.map((r) => r.id) : (user?.roleId ? [user.roleId] : []),
       status: user?.status || '',
       respond_user_id: user?.respondUserId || '',
@@ -116,6 +114,7 @@ const UserProfileEditDialog = ({
     const roleIds = userRoles.length ? userRoles.map((r: { id: string }) => r.id) : (user?.roles?.length ? user.roles.map((r) => r.id) : (user?.roleId ? [user.roleId] : []));
     form.reset({
       name: user.name || '',
+      email: user.email || '',
       roleIds,
       status: user.status || '',
       respond_user_id: user.respondUserId || '',
@@ -124,7 +123,7 @@ const UserProfileEditDialog = ({
       superior_id: user.superiorId || '',
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; omit to avoid reset loop
-  }, [open, user?.id, user?.name, user?.status, user?.roles, user?.respondUserId, user?.tier, user?.superiorId, userRoles.length]);
+  }, [open, user?.id, user?.name, user?.email, user?.status, user?.roles, user?.respondUserId, user?.tier, user?.superiorId, userRoles.length]);
 
   const { data: superiorUsers } = useQuery({
     queryKey: ['users-select'],
@@ -166,6 +165,7 @@ const UserProfileEditDialog = ({
 
       const profileData: Record<string, unknown> = {
         name: values.name,
+        email: values.email.trim().toLowerCase(),
         status: values.status,
       };
       profileData.contact_number = values.contact_number?.trim() || null;
@@ -290,20 +290,6 @@ const UserProfileEditDialog = ({
     mutation.mutate(values);
   };
 
-  // Debug: Log when component renders
-  useEffect(() => {
-    if (open) {
-      console.log('🔍 UserProfileEditDialog opened', {
-        hasRespondUsers: !!respondUsers,
-        respondUsersCount: respondUsers?.length || 0,
-        userRespondId: user?.respondUserId
-      });
-    }
-  }, [open, respondUsers, user]);
-
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'user-profile-edit-dialog.tsx:261',message:'Rendering dialog JSX',data:{open,formFieldsCount:6},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-  // #endregion
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent className="max-h-[90vh] overflow-hidden flex flex-col">
@@ -329,6 +315,24 @@ const UserProfileEditDialog = ({
                   <FormLabel>Name</FormLabel>
                   <FormControl>
                     <Input placeholder="Enter user name" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Email address</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="email"
+                      autoComplete="email"
+                      placeholder="name@company.com"
+                      {...field}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -423,11 +427,7 @@ const UserProfileEditDialog = ({
             <FormField
               control={form.control}
               name="respond_user_id"
-              render={({ field }) => {
-                // #region agent log
-                fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'user-profile-edit-dialog.tsx:350',message:'Respond User ID field rendering',data:{fieldValue:field.value,hasField:!!field},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
-                // #endregion
-                return (
+              render={({ field }) => (
                 <FormItem>
                   <FormLabel className="text-lg font-semibold">Respond User ID</FormLabel>
                   <FormControl>
@@ -456,8 +456,7 @@ const UserProfileEditDialog = ({
                   </FormControl>
                   <FormMessage />
                 </FormItem>
-              );
-              }}
+              )}
             />
             <FormField
               control={form.control}

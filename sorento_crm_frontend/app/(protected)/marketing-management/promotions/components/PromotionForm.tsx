@@ -34,6 +34,7 @@ import type { PromotionFormData } from '../types/promotion.types';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+import { malaysiaCalendarDateFromApi } from '@/lib/helpers';
 
 function parseDateOnly(value: Date | string | null | undefined): Date | null {
   if (value == null) return null;
@@ -113,8 +114,8 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
       // Use setTimeout to ensure SelectContent items are rendered before form reset
       // This is especially important when navigating from list view
       const timeoutId = setTimeout(() => {
-        const startDate = parseDateOnly(promotion.start_date);
-        const endDate = parseDateOnly(promotion.end_date);
+        const startDate = malaysiaCalendarDateFromApi(promotion.start_date);
+        const endDate = malaysiaCalendarDateFromApi(promotion.end_date);
         form.reset({
           promo_code: promotion.promo_code,
           name: promotion.name,

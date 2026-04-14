@@ -243,6 +243,63 @@ export async function bulkArchiveAttachments(ids: string[]): Promise<{ message: 
   return response.json();
 }
 
+export type AccessPropagationKind = 'product' | 'promotion' | 'form' | 'packing_list';
+
+export interface AccessPropagationTarget {
+  kind: AccessPropagationKind;
+  entity_id: string;
+  code: string;
+  name?: string | null;
+}
+
+export async function previewBulkAccessLevels(body: {
+  attachment_ids?: string[];
+  directory_id?: string;
+}): Promise<{ attachment_count: number; targets: AccessPropagationTarget[] }> {
+  const response = await apiFetch('/api/v1/resource-management/attachments/bulk-access-levels/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Preview failed' }));
+    const d = error.detail;
+    const message =
+      typeof d === 'string'
+        ? d
+        : typeof d === 'object' && d && 'message' in d
+          ? String((d as { message?: string }).message)
+          : error.message ?? 'Preview failed';
+    throw new Error(message);
+  }
+  return response.json();
+}
+
+export async function applyBulkAccessLevels(body: {
+  attachment_ids?: string[];
+  directory_id?: string;
+  access_levels: string[];
+  propagate_to_linked: boolean;
+}): Promise<{ updated_attachments: number; propagated?: Record<string, number> | null }> {
+  const response = await apiFetch('/api/v1/resource-management/attachments/bulk-access-levels/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Apply failed' }));
+    const d = error.detail;
+    const message =
+      typeof d === 'string'
+        ? d
+        : typeof d === 'object' && d && 'message' in d
+          ? String((d as { message?: string }).message)
+          : error.message ?? 'Apply failed';
+    throw new Error(message);
+  }
+  return response.json();
+}
+
 export async function reorderAttachments(
   attachmentIds: string[],
   directoryId?: string | null

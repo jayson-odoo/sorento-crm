@@ -1,4 +1,6 @@
 """User management service for business logic."""
+import html as html_module
+import secrets
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, func
 from sqlalchemy import inspect as sa_inspect
@@ -13,6 +15,7 @@ from app.models.user import (
     UserRolePermission,
     SystemLog,
     UserQuickAccess,
+    SystemSetting,
 )
 from app.models.access import (
     AccessAgent,
@@ -40,6 +43,13 @@ def _normalize_respond_user_id(value: Optional[str]) -> Optional[str]:
     return s if s else None
 
 
+def _normalize_email_for_storage(value: Optional[str]) -> str:
+    """Lowercase trimmed email for comparison and storage."""
+    if value is None:
+        return ""
+    return str(value).strip().lower()
+
+
 def _rr_user_id_key(value: Optional[object]) -> str:
     """
     Canonical string key for round-robin user id comparisons.
@@ -56,6 +66,77 @@ class UserService:
     
     def __init__(self, db: Session):
         self.db = db
+
+    def _resolve_crm_base_url(self) -> str:
+        """Public CRM URL for sign-in links (env frontend_base_url, else system website_url)."""
+        from app.config import settings as app_settings
+
+        base = (getattr(app_settings, "frontend_base_url", None) or "").strip().rstrip("/")
+        if base:
+            return base
+        row = self.db.query(SystemSetting).first()
+        if row and getattr(row, "website_url", None):
+            return str(row.website_url).strip().rstrip("/")
+        return ""
+
+    def _queue_email_address_change_notification(
+        self,
+        *,
+        user_id: str,
+        old_email: str,
+        new_email: str,
+    ) -> None:
+        """Queue outgoing mail to the new address via notification deliveries."""
+        base = self._resolve_crm_base_url()
+        safe_old = html_module.escape(old_email)
+        safe_new = html_module.escape(new_email)
+        safe_link = html_module.escape(base) if base else ""
+        link_html = (
+            f'<p><a href="{safe_link}">{safe_link}</a></p>'
+            if base
+            else "<p>Sign in using the CRM web address your organization uses.</p>"
+        )
+        title = "Your sign-in email was updated"
+        sign_in_line = f"Sign in: {base}\n\n" if base else ""
+        body_text = (
+            f"Your account sign-in email for Sorento CRM was changed.\n\n"
+            f"Previous email: {old_email}\n"
+            f"New email: {new_email}\n\n"
+            f"{sign_in_line}"
+            f"Your password is unchanged. Continue to use your existing password to sign in.\n\n"
+            f"If you did not expect this change, contact your administrator immediately."
+        )
+        body_html = (
+            "<!DOCTYPE html><html><body style=\"font-family:system-ui,Segoe UI,sans-serif;"
+            'line-height:1.5;color:#1a1a1a;">'
+            "<p>Hello,</p>"
+            "<p>Your <strong>sign-in email</strong> for Sorento CRM has been updated by an administrator.</p>"
+            '<table cellpadding="6" style="border-collapse:collapse;margin:12px 0;">'
+            f'<tr><td style="color:#666;">Previous</td><td>{safe_old}</td></tr>'
+            f'<tr><td style="color:#666;">New</td><td><strong>{safe_new}</strong></td></tr>'
+            "</table>"
+            f"{link_html}"
+            "<p><strong>Your password is unchanged.</strong> Use the same password you used before to "
+            "access the system; only the email used for sign-in was updated.</p>"
+            '<p style="color:#666;font-size:13px;">If you did not expect this change, contact your '
+            "administrator immediately.</p>"
+            "</body></html>"
+        )
+        from app.services.notification_service import NotificationService
+
+        NotificationService(self.db).create_with_channel_preferences(
+            user_id=user_id,
+            type="account_email_changed",
+            title=title,
+            body=body_text,
+            data={"body_html": body_html},
+            source_entity_type="user",
+            source_entity_id=f"email_change:{user_id}:{secrets.token_hex(8)}",
+            event_type="email_changed",
+            send_in_app=False,
+            send_email=True,
+            send_web_push=False,
+        )
 
     def _has_table(self, table_name: str) -> bool:
         """Return True if table exists in current DB schema."""
@@ -328,6 +409,30 @@ class UserService:
         # Get all fields that were explicitly set in the request
         update_data = user_data.model_dump(exclude_unset=True)
         logger.info(f"Updating user {user_id} with data: {update_data}")
+
+        old_email_for_notification: Optional[str] = None
+        email_changed = False
+        if "email" in update_data:
+            new_email = update_data.pop("email")
+            if new_email is None:
+                pass  # treat as no email field
+            else:
+                current_norm = _normalize_email_for_storage(user.email)
+                if new_email != current_norm:
+                    existing = (
+                        self.db.query(User)
+                        .filter(
+                            func.lower(User.email) == new_email,
+                            User.id != user_id,
+                        )
+                        .first()
+                    )
+                    if existing:
+                        raise handle_conflict("Email is already registered.")
+                    old_email_for_notification = (user.email or "").strip() or user.email
+                    user.email = new_email
+                    user.email_verified_at = None
+                    email_changed = True
         
         # Enforce Respond User ID uniqueness before applying any updates
         if "respond_user_id" in update_data:
@@ -363,6 +468,15 @@ class UserService:
         self.db.commit()
         self.db.refresh(user)
         logger.info(f"After commit - respond_user_id: {user.respond_user_id}, superior_id: {user.superior_id}")
+        if email_changed and old_email_for_notification is not None:
+            try:
+                self._queue_email_address_change_notification(
+                    user_id=str(user.id),
+                    old_email=old_email_for_notification,
+                    new_email=user.email or "",
+                )
+            except Exception as e:
+                logger.warning("Failed to queue email change notification: %s", e)
         return user
 
     def delete_user(self, user_id: str) -> None:
