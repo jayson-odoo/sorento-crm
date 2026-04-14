@@ -256,3 +256,14 @@ export async function getOrCreateComplaintViewLink(
   }
   return response.json();
 }
+
+/** Strip legacy composed customer message so the CRM shows only technician wording (matches backend). */
+export function displayComplaintTechnicalResponse(text: string | null | undefined): string {
+  const s = (text ?? '').trim();
+  if (!s.startsWith('There has been an update regarding your complaint')) {
+    return s;
+  }
+  const idx = s.lastIndexOf(': ');
+  if (idx === -1) return s;
+  return s.slice(idx + 2).trim();
+}

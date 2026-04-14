@@ -28,6 +28,7 @@ import {
   useStockInquiry,
   useStockInquiries,
   useUpdateStockInquiry,
+  useUpdateStockInquiryAndReply,
   useSubmitStockInquiryForProjectSales,
   useProjectSalesApproveStockInquiry,
   useProjectSalesRejectStockInquiry,
@@ -72,6 +73,7 @@ export default function StockInquiryDetail({
   const { data: inquiryListData } = useStockInquiries(navParams);
   const inquiryListItems = inquiryListData?.data ?? [];
   const updateInquiryMutation = useUpdateStockInquiry();
+  const updateAndReplyMutation = useUpdateStockInquiryAndReply();
   const submitForProjectSalesMutation = useSubmitStockInquiryForProjectSales();
   const projectSalesApproveMutation = useProjectSalesApproveStockInquiry();
   const projectSalesRejectMutation = useProjectSalesRejectStockInquiry();
@@ -110,7 +112,7 @@ export default function StockInquiryDetail({
     }
   };
 
-  const openUpdateAndReplyInChatFromText = useCallback(
+  const buildPurchasingRespondMessage = useCallback(
     async (purchasingResponseText: string) => {
       let viewUrl = '';
       if (publicViewLinksEnabled) {
@@ -125,19 +127,44 @@ export default function StockInquiryDetail({
       const body = (purchasingResponseText ?? '').trim();
       const linkPart = viewUrl ? ` ${viewUrl}` : '';
       const fullMessage = `There is a response to your stock inquiry${linkPart}: ${body}`;
-      setReplyComposePrefill((p) => ({
-        key: (p?.key ?? 0) + 1,
-        text: fullMessage,
-      }));
-      setConversationSheetOpen(true);
+      return { body, fullMessage };
     },
     [inquiryId, publicViewLinksEnabled],
   );
 
-  const openUpdateAndReplyInChat = useCallback(async () => {
+  /** Persists short purchasing response when `skipSaveShort` is false, then sends the composed message via Respond.io */
+  const sendPurchasingUpdateAndReplyViaRespond = useCallback(
+    async (purchasingResponseText: string, options?: { skipSaveShort?: boolean }) => {
+      const { body, fullMessage } = await buildPurchasingRespondMessage(purchasingResponseText);
+      if (!body) {
+        toast.error('Enter a purchasing response before sending.');
+        return;
+      }
+      if (!options?.skipSaveShort) {
+        await updateInquiryMutation.mutateAsync({
+          id: inquiryId,
+          data: { purchasing_response: body },
+        });
+      }
+      await updateAndReplyMutation.mutateAsync({
+        id: inquiryId,
+        data: { purchasing_response: fullMessage },
+      });
+    },
+    [
+      buildPurchasingRespondMessage,
+      inquiryId,
+      updateInquiryMutation,
+      updateAndReplyMutation,
+    ],
+  );
+
+  const sendPurchasingUpdateAndReplyFromSavedRecord = useCallback(async () => {
     if (!inquiry) return;
-    await openUpdateAndReplyInChatFromText(inquiry.purchasing_response ?? '');
-  }, [inquiry, openUpdateAndReplyInChatFromText]);
+    await sendPurchasingUpdateAndReplyViaRespond(inquiry.purchasing_response ?? '', {
+      skipSaveShort: true,
+    });
+  }, [inquiry, sendPurchasingUpdateAndReplyViaRespond]);
 
   if (!isValidId) {
     return (
@@ -354,18 +381,20 @@ export default function StockInquiryDetail({
               (inquiry.status === 'pending_purchasing' ||
                 inquiry.status === 'responded') && (
                 <DropdownMenuItem
-                  disabled={openingReplySheet}
+                  disabled={openingReplySheet || updateAndReplyMutation.isPending}
                   onClick={async () => {
                     setOpeningReplySheet(true);
                     try {
-                      await openUpdateAndReplyInChat();
+                      await sendPurchasingUpdateAndReplyFromSavedRecord();
                     } finally {
                       setOpeningReplySheet(false);
                     }
                   }}
                 >
                   <Send className="size-4" />
-                  {openingReplySheet ? 'Opening…' : 'Update & Reply'}
+                  {openingReplySheet || updateAndReplyMutation.isPending
+                    ? 'Sending…'
+                    : 'Update & Reply'}
                 </DropdownMenuItem>
               )}
             <DropdownMenuItem
@@ -501,7 +530,7 @@ export default function StockInquiryDetail({
           <DialogHeader>
             <DialogTitle>Edit purchasing response</DialogTitle>
             <DialogDescription>
-              Save updates the record only. Use Update &amp; Reply to open the chat with this text prefilled so you can send to the contact.
+              Save updates the record only. Update &amp; Reply saves your text and sends it to the contact.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -540,16 +569,16 @@ export default function StockInquiryDetail({
               (inquiry.status === 'pending_purchasing' || inquiry.status === 'responded') && (
                 <Button
                   variant="primary"
-                  disabled={updateInquiryMutation.isPending || openingReplySheet}
+                  disabled={
+                    updateInquiryMutation.isPending ||
+                    openingReplySheet ||
+                    updateAndReplyMutation.isPending
+                  }
                   onClick={async () => {
                     setOpeningReplySheet(true);
                     try {
-                      await updateInquiryMutation.mutateAsync({
-                        id: inquiryId,
-                        data: { purchasing_response: editPurchasingResponseValue.trim() },
-                      });
+                      await sendPurchasingUpdateAndReplyViaRespond(editPurchasingResponseValue);
                       setEditPurchasingResponseOpen(false);
-                      await openUpdateAndReplyInChatFromText(editPurchasingResponseValue);
                     } catch {
                       // toast from mutation
                     } finally {
@@ -558,7 +587,9 @@ export default function StockInquiryDetail({
                   }}
                 >
                   <Send className="size-4 mr-1" />
-                  {openingReplySheet ? 'Opening…' : 'Update & Reply'}
+                  {openingReplySheet || updateAndReplyMutation.isPending
+                    ? 'Sending…'
+                    : 'Update & Reply'}
                 </Button>
               )}
           </DialogFooter>

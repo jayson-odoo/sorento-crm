@@ -36,6 +36,26 @@ class ComplaintService:
             return None
         return f"{base}/space/{space_id.strip()}/inbox/{contact_id.strip()}"
 
+    def _normalize_complaint_reply_body_for_storage(self, raw: Optional[str]) -> str:
+        """Keep only technician wording; strip legacy composed customer message template."""
+        s = (raw or "").strip()
+        if not s.startswith("There has been an update regarding your complaint"):
+            return s
+        idx = s.rfind(": ")
+        if idx == -1:
+            return s
+        return s[idx + 2 :].strip()
+
+    def _complaint_public_view_links_enabled(self) -> bool:
+        """Match frontend App Store toggle for tokenized public view links."""
+        from app.modules.runtime.installer import DEFAULT_TENANT_ID, is_module_enabled, tenant_has_any_module_row
+        from app.modules.runtime.guards import PUBLIC_VIEW_LINKS_MODULE_KEY
+
+        tenant_id = DEFAULT_TENANT_ID
+        if not tenant_has_any_module_row(self.db, tenant_id):
+            return True
+        return is_module_enabled(self.db, tenant_id, PUBLIC_VIEW_LINKS_MODULE_KEY)
+
     def _resolve_user_display_name(self, user_id: Optional[str]) -> Optional[str]:
         """Resolve user id (CRM id or respond_user_id) to display name (name or email)."""
         if not user_id or not str(user_id).strip():
@@ -385,6 +405,10 @@ class ComplaintService:
         complaint_dict = complaint_data.model_dump(
             exclude={"attachments", "assigned_to_name", "last_responded_by_name"}
         )
+        if complaint_dict.get("technical_team_response"):
+            complaint_dict["technical_team_response"] = self._normalize_complaint_reply_body_for_storage(
+                str(complaint_dict["technical_team_response"])
+            )
         contact_id = complaint_dict.get("contact_id")
         space_id = complaint_dict.get("space_id")
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -425,6 +449,11 @@ class ComplaintService:
             update_data["respond_inbox_url"] = respond_inbox_url
         elif contact_id is None and space_id is None:
             update_data["respond_inbox_url"] = None
+
+        if "technical_team_response" in update_data and update_data["technical_team_response"] is not None:
+            update_data["technical_team_response"] = self._normalize_complaint_reply_body_for_storage(
+                str(update_data["technical_team_response"])
+            )
 
         if "technical_team_response" in update_data and getattr(complaint, "status", None) != "responded":
             update_data["status"] = "updated"
@@ -475,24 +504,37 @@ class ComplaintService:
         elif contact_id is None and space_id is None:
             update_data["respond_inbox_url"] = None
 
-        message_text = update_data.get("technical_team_response") or getattr(complaint, "technical_team_response", None)
-        if not (message_text and str(message_text).strip()):
+        raw_incoming = update_data.get("technical_team_response")
+        if raw_incoming is None or not str(raw_incoming).strip():
+            raw_incoming = getattr(complaint, "technical_team_response", None)
+        if not (raw_incoming and str(raw_incoming).strip()):
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error("technical_team_response is required to reply.")
+
+        stored_body = self._normalize_complaint_reply_body_for_storage(str(raw_incoming))
+        if not stored_body:
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error("technical_team_response is required to reply.")
+
+        update_data.pop("technical_team_response", None)
 
         for key, value in update_data.items():
             setattr(complaint, key, value)
         self.db.flush()
 
+        complaint.technical_team_response = stored_body
+
         identifier = self._identifier_from_respond_inbox_url(getattr(complaint, "respond_inbox_url", None))
         do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
-        technical_response = str(message_text).strip() if message_text else ""
-        # If frontend sent the full composed message (with view link), use as-is; else prepend intro
-        if technical_response.startswith("There has been an update"):
-            display_message = technical_response
-        else:
-            do_spec = f" for delivery order {do_number}" if do_number else ""
-            display_message = f"There has been an update regarding your complaint{do_spec}: {technical_response}"
+        do_spec = f" for delivery order {do_number}" if do_number else ""
+        link_part = ""
+        if self._complaint_public_view_links_enabled():
+            view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
+            if view_url:
+                link_part = f" {view_url}"
+        display_message = (
+            f"There has been an update regarding your complaint{do_spec}{link_part}: {stored_body}"
+        )
 
         if identifier:
             try:

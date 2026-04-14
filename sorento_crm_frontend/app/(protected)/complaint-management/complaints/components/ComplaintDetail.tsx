@@ -19,8 +19,11 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { useComplaint, useUpdateComplaint } from '../hooks/useComplaints';
-import { getOrCreateComplaintViewLink } from '../services/complaintService';
+import { useComplaint, useUpdateComplaint, useUpdateComplaintAndReply } from '../hooks/useComplaints';
+import {
+  getOrCreateComplaintViewLink,
+  displayComplaintTechnicalResponse,
+} from '../services/complaintService';
 import { toast } from 'sonner';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import ComplaintDeleteDialog from './ComplaintDeleteDialog';
@@ -42,6 +45,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const isValidId = complaintId && complaintId !== 'new' && complaintId !== 'edit';
   const { data: complaint, isLoading } = useComplaint(isValidId ? complaintId : null);
   const updateComplaintMutation = useUpdateComplaint();
+  const updateComplaintAndReplyMutation = useUpdateComplaintAndReply();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
@@ -54,38 +58,27 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [openingReplySheet, setOpeningReplySheet] = useState(false);
 
-  const openUpdateAndReplyInChatFromText = useCallback(
+  const sendComplaintUpdateAndReplyViaRespond = useCallback(
     async (technicalTeamResponseText: string) => {
-      let viewUrl = '';
-      if (publicViewLinksEnabled) {
-        try {
-          const baseUrl = typeof window !== 'undefined' ? window.location.origin : undefined;
-          const res = await getOrCreateComplaintViewLink(complaintId, baseUrl);
-          viewUrl = res.view_url ?? '';
-        } catch {
-          // continue without view link
-        }
+      const technicalResponse = displayComplaintTechnicalResponse(
+        (technicalTeamResponseText ?? '').trim(),
+      ).trim();
+      if (!technicalResponse) {
+        toast.error('Enter a technical team response before sending.');
+        return;
       }
-      const technicalResponse = (technicalTeamResponseText ?? '').trim();
-      const doNumber = (complaint?.delivery_order_number ?? '').toString().trim();
-      const doPart = doNumber ? ` for delivery order ${doNumber}` : '';
-      const linkPart = viewUrl ? ` ${viewUrl}` : '';
-      const fullMessage = technicalResponse.startsWith('There has been an update')
-        ? technicalResponse
-        : `There has been an update regarding your complaint${doPart}${linkPart}: ${technicalResponse}`;
-      setReplyComposePrefill((p) => ({
-        key: (p?.key ?? 0) + 1,
-        text: fullMessage,
-      }));
-      setConversationSheetOpen(true);
+      await updateComplaintAndReplyMutation.mutateAsync({
+        id: complaintId,
+        data: { technical_team_response: technicalResponse },
+      });
     },
-    [complaintId, complaint, publicViewLinksEnabled],
+    [complaintId, updateComplaintAndReplyMutation],
   );
 
-  const openUpdateAndReplyInChat = useCallback(async () => {
+  const sendComplaintUpdateAndReplyFromSavedRecord = useCallback(async () => {
     if (!complaint) return;
-    await openUpdateAndReplyInChatFromText(complaint.technical_team_response ?? '');
-  }, [complaint, openUpdateAndReplyInChatFromText]);
+    await sendComplaintUpdateAndReplyViaRespond(complaint.technical_team_response ?? '');
+  }, [complaint, sendComplaintUpdateAndReplyViaRespond]);
 
   if (!isValidId) {
     return (
@@ -161,7 +154,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             variant="outline"
             size="sm"
             onClick={() => {
-              setEditTechnicalResponseValue(complaint.technical_team_response ?? '');
+              setEditTechnicalResponseValue(
+                displayComplaintTechnicalResponse(complaint.technical_team_response ?? ''),
+              );
               setEditTechnicalResponseOpen(true);
             }}
           >
@@ -222,18 +217,20 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             )}
             {canUseRespondChat && (
               <DropdownMenuItem
-                disabled={openingReplySheet}
+                disabled={openingReplySheet || updateComplaintAndReplyMutation.isPending}
                 onClick={async () => {
                   setOpeningReplySheet(true);
                   try {
-                    await openUpdateAndReplyInChat();
+                    await sendComplaintUpdateAndReplyFromSavedRecord();
                   } finally {
                     setOpeningReplySheet(false);
                   }
                 }}
               >
                 <Send className="size-4" />
-                {openingReplySheet ? 'Opening…' : 'Update & Reply'}
+                {openingReplySheet || updateComplaintAndReplyMutation.isPending
+                  ? 'Sending…'
+                  : 'Update & Reply'}
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
@@ -264,7 +261,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           <DialogHeader>
             <DialogTitle>Edit technical team response</DialogTitle>
             <DialogDescription>
-              Save updates the record only. Use Update &amp; Reply to open the chat with this text prefilled so you can send to the contact.
+              Save updates the record only. Update &amp; Reply saves your text and sends it to the contact.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -302,16 +299,16 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             {canUseRespondChat && (
               <Button
                 variant="primary"
-                disabled={updateComplaintMutation.isPending || openingReplySheet}
+                disabled={
+                  updateComplaintMutation.isPending ||
+                  openingReplySheet ||
+                  updateComplaintAndReplyMutation.isPending
+                }
                 onClick={async () => {
                   setOpeningReplySheet(true);
                   try {
-                    await updateComplaintMutation.mutateAsync({
-                      id: complaintId,
-                      data: { technical_team_response: editTechnicalResponseValue.trim() },
-                    });
+                    await sendComplaintUpdateAndReplyViaRespond(editTechnicalResponseValue);
                     setEditTechnicalResponseOpen(false);
-                    await openUpdateAndReplyInChatFromText(editTechnicalResponseValue);
                   } catch {
                     // toast from mutation
                   } finally {
@@ -320,7 +317,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 }}
               >
                 <Send className="size-4 mr-1" />
-                {openingReplySheet ? 'Opening…' : 'Update & Reply'}
+                {openingReplySheet || updateComplaintAndReplyMutation.isPending
+                  ? 'Sending…'
+                  : 'Update & Reply'}
               </Button>
             )}
           </DialogFooter>
@@ -459,7 +458,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  setEditTechnicalResponseValue(complaint.technical_team_response ?? '');
+                  setEditTechnicalResponseValue(
+                    displayComplaintTechnicalResponse(complaint.technical_team_response ?? ''),
+                  );
                   setEditTechnicalResponseOpen(true);
                 }}
                 aria-label="Edit technical team response"
@@ -469,7 +470,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               </Button>
             </div>
             <p className="font-medium whitespace-pre-wrap">
-              {complaint.technical_team_response || '-'}
+              {displayComplaintTechnicalResponse(complaint.technical_team_response) || '-'}
             </p>
           </div>
           {complaint.last_responded_at && (
@@ -519,7 +520,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 canReply={canUseRespondChat}
                 respondInboxUrl={complaint.respond_inbox_url}
                 showAsPopup
-                technicalTeamResponse={complaint.technical_team_response}
+                technicalTeamResponse={displayComplaintTechnicalResponse(
+                  complaint.technical_team_response,
+                )}
                 replyComposePrefill={replyComposePrefill}
                 onGetViewLink={
                   publicViewLinksEnabled
