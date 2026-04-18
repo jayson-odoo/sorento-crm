@@ -1,5 +1,5 @@
 """Resource management models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Index, event
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -56,6 +56,7 @@ class Attachment(Base):
     entity_id = Column(String, nullable=True)
     uploaded_by = Column(String, nullable=True)
     uploaded_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False)
     deleted_at = Column(DateTime(timezone=False), nullable=True)
     deleted_by = Column(String, nullable=True)
@@ -76,3 +77,14 @@ class Attachment(Base):
         Index("ix_attachments_directory_id", "directory_id"),
         Index("ix_attachments_access_levels", "access_levels", postgresql_using="gin"),
     )
+
+
+@event.listens_for(Attachment, "before_insert")
+def _attachment_sync_created_at_with_uploaded(_mapper, _connection, target: Attachment) -> None:
+    """Keep created_at identical to uploaded_at on insert (single timestamp for both)."""
+    from datetime import datetime
+
+    now = datetime.utcnow()
+    if target.uploaded_at is None:
+        target.uploaded_at = now
+    target.created_at = target.uploaded_at

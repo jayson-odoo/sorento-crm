@@ -8,6 +8,7 @@ export interface ComplaintAttachment {
   file_url?: string | null;
   file_size_bytes?: number | null;
   uploaded_at: Date;
+  created_at?: Date;
   /** From complaint_attachments table */
   link_type?: 'complaint_attachment' | null;
 }

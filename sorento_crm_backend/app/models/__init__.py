@@ -31,6 +31,7 @@ from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
 from app.models.numbering import DocumentNumberingRule
 from app.models.app_modules import AppModuleCatalog, AppModuleBundle, TenantModule, ModuleInstallEvent
 from app.models.list_query_metadata import ListQueryResource, ListQueryField
+from app.models.embeddings import EmbeddingQueue, EmbeddingDocument, EmbeddingChunk
 
 __all__ = [
     "User",
@@ -114,4 +115,7 @@ __all__ = [
     "ModuleInstallEvent",
     "ListQueryResource",
     "ListQueryField",
+    "EmbeddingQueue",
+    "EmbeddingDocument",
+    "EmbeddingChunk",
 ]

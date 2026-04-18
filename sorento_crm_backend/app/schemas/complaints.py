@@ -42,6 +42,7 @@ class ComplaintAttachmentResponse(ComplaintAttachmentBase):
     attachment_id: Optional[str] = None
     original_filename: Optional[str] = None  # Human-readable name for display
     uploaded_at: datetime
+    created_at: datetime
     link_type: Optional[str] = None  # "complaint_attachment"
 
     class Config:

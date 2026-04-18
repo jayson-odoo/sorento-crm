@@ -11,6 +11,7 @@ from app.schemas.resources import (
     AttachmentDirectoryCreate, AttachmentDirectoryUpdate,
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services.embedding_events import publish_embedding_event
 
 
 class AttachmentDirectoryService:
@@ -865,7 +866,16 @@ class AttachmentService:
         attachment = self.db.query(Attachment).options(
             joinedload(Attachment.attachment_type)
         ).filter(Attachment.id == attachment.id).first()
-        
+        publish_embedding_event(
+            self.db,
+            source_type="attachment",
+            source_id=attachment.id,
+            source_key=attachment.original_filename,
+            source_updated_at=attachment.created_at,
+            event_type="attachment.created",
+            changed_fields=["original_filename", "description", "entity_type", "entity_id", "access_levels"],
+            triggered_by=str(uploaded_by) if uploaded_by else None,
+        )
         return attachment
     
     def update_attachment(self, attachment_id: str, attachment_data: AttachmentUpdate):
@@ -891,6 +901,15 @@ class AttachmentService:
         
         self.db.commit()
         self.db.refresh(attachment)
+        publish_embedding_event(
+            self.db,
+            source_type="attachment",
+            source_id=attachment.id,
+            source_key=attachment.original_filename,
+            source_updated_at=attachment.created_at,
+            event_type="attachment.updated",
+            changed_fields=list(update_data.keys()),
+        )
         return attachment
     
     def reorder_attachments(self, attachment_ids: list[str], directory_id: Optional[str] = None):

@@ -27,6 +27,7 @@ export interface Attachment {
   linked_packing_lists?: LinkedEntityRef[];
   uploaded_by?: string | null;
   uploaded_at: Date;
+  created_at: Date;
   is_deleted: boolean;
   deleted_at?: Date | null;
   deleted_by?: string | null;
@@ -64,6 +65,7 @@ export interface AttachmentSimple {
   file_size_bytes?: number | null;
   mime_type?: string | null;
   uploaded_at: Date | string;
+  created_at?: Date | string;
   attachment_type?: AttachmentTypeSimple | null;
   full_directory_path?: string | null;
   access_levels?: string[] | null;
@@ -91,6 +93,7 @@ export interface AttachmentResponse {
   linked_packing_lists?: LinkedEntityRef[];
   uploaded_by?: string | null;
   uploaded_at: Date | string;
+  created_at?: Date | string;
   is_deleted: boolean;
   deleted_at?: Date | string | null;
   deleted_by?: string | null;

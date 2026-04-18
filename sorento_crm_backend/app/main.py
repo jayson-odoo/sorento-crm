@@ -98,6 +98,12 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Failed to register audit listeners: {str(e)}", exc_info=True)
     try:
+        from app.services.embedding_change_listener import register_embedding_change_listeners
+        register_embedding_change_listeners()
+        logging.info("Embedding change listeners registered")
+    except Exception as e:
+        logging.error(f"Failed to register embedding change listeners: {str(e)}", exc_info=True)
+    try:
         from app.scheduler.task_scheduler import start_scheduler
         scheduler = start_scheduler()
         logging.info("Background scheduler started successfully")

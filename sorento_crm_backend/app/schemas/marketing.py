@@ -365,6 +365,7 @@ class AttachmentSimple(BaseModel):
     file_size_bytes: Optional[int] = None
     mime_type: Optional[str] = None
     uploaded_at: datetime
+    created_at: datetime
     attachment_type: Optional[AttachmentTypeSimple] = None
     access_levels: Optional[list[str]] = None
     directory_id: Optional[str] = None  # for "Open in folder" link

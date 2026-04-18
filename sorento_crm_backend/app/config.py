@@ -52,6 +52,17 @@ class Settings(BaseSettings):
     
     # Redis Queue
     redis_url: str = "redis://localhost:6379/0"
+    embedding_queue_name: str = "embeddings"
+    embedding_max_retries: int = 5
+    embedding_retry_backoff_seconds: int = 60
+    embedding_chunk_size: int = 900
+    embedding_chunk_overlap: int = 120
+    embedding_provider: str = "openai"
+    embedding_model_name: str = "text-embedding-3-small"
+    embedding_model_version: str = "v1"
+    embedding_dimensions: int = 1536
+    openai_api_key: str | None = None
+    openai_embeddings_url: str = "https://api.openai.com/v1/embeddings"
 
     # Frontend app URL (for password reset and other links in emails)
     frontend_base_url: str | None = None

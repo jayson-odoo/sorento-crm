@@ -257,6 +257,7 @@ class AttachmentSimple(BaseModel):
     file_size_bytes: Optional[int] = None
     mime_type: Optional[str] = None
     uploaded_at: datetime
+    created_at: datetime
     attachment_type: Optional[AttachmentTypeSimple] = None
     full_directory_path: Optional[str] = None  # e.g. "SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve"
     access_levels: Optional[list[str]] = None  # e.g. ["dealer", "end_user"]; source of truth at attachment level

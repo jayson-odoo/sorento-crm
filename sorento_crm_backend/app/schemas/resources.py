@@ -175,6 +175,7 @@ class AttachmentResponse(AttachmentBase):
     uploaded_by: Optional[str] = None
     uploaded_by_user: Optional[UploadedByUser] = None
     uploaded_at: datetime
+    created_at: datetime
     is_deleted: bool = False
     deleted_at: Optional[datetime] = None
     deleted_by: Optional[str] = None

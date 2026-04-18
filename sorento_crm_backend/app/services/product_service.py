@@ -16,6 +16,7 @@ from app.schemas.product import (
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
+from app.services.embedding_events import publish_embedding_event
 
 
 class ProductService:
@@ -205,6 +206,16 @@ class ProductService:
         self._ensure_default_supplier_lead_time(product.id)
         self.db.commit()
         self.db.refresh(product)
+        publish_embedding_event(
+            self.db,
+            source_type="product",
+            source_id=product.id,
+            source_key=product.product_code,
+            source_updated_at=product.updated_at or product.created_at,
+            event_type="product.created",
+            changed_fields=["product_code", "product_name", "description", "category_id", "brand_id", "is_active"],
+            triggered_by=created_by,
+        )
         return product
     
     def update_product(self, product_id: str, product_data: ProductUpdate, updated_by: str):
@@ -220,6 +231,16 @@ class ProductService:
             
             self.db.commit()
             self.db.refresh(product)
+            publish_embedding_event(
+                self.db,
+                source_type="product",
+                source_id=product.id,
+                source_key=product.product_code,
+                source_updated_at=product.updated_at or product.created_at,
+                event_type="product.updated" if product.is_active else "product.deactivated",
+                changed_fields=list(update_data.keys()),
+                triggered_by=updated_by,
+            )
         
         return product
     
@@ -484,6 +505,23 @@ class ProductService:
                         on_progress(idx, created + updated, len(errors), 0)
 
         self.db.commit()
+        if created or updated:
+            touched = (
+                self.db.query(Product.id, Product.product_code, Product.updated_at, Product.created_at)
+                .filter(Product.product_code.in_(all_codes))
+                .all()
+            )
+            for pid, pcode, updated_at, created_at in touched:
+                publish_embedding_event(
+                    self.db,
+                    source_type="product",
+                    source_id=pid,
+                    source_key=pcode,
+                    source_updated_at=updated_at or created_at,
+                    event_type="product.updated",
+                    changed_fields=["bulk_import"],
+                    triggered_by=user_id,
+                )
         if on_progress:
             on_progress(len(products_data), created + updated, len(errors), 0)
         return {"created": created, "updated": updated, "errors": errors}

@@ -9,6 +9,7 @@ from app.schemas.forms import (
     FormSubmissionCreate, FormSubmissionUpdate
 )
 from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.embedding_events import publish_embedding_event
 
 
 class FormService:
@@ -106,6 +107,16 @@ class FormService:
         self.db.add(form)
         self.db.commit()
         self.db.refresh(form)
+        publish_embedding_event(
+            self.db,
+            source_type="form",
+            source_id=form.id,
+            source_key=form.code,
+            source_updated_at=form.updated_at or form.created_at,
+            event_type="form.created",
+            changed_fields=["code", "name", "purpose", "language", "is_active"],
+            triggered_by=created_by,
+        )
         return form
     
     def update_form(self, form_id: str, form_data: FormUpdate):
@@ -118,6 +129,15 @@ class FormService:
         
         self.db.commit()
         self.db.refresh(form)
+        publish_embedding_event(
+            self.db,
+            source_type="form",
+            source_id=form.id,
+            source_key=form.code,
+            source_updated_at=form.updated_at or form.created_at,
+            event_type="form.updated",
+            changed_fields=list(update_data.keys()),
+        )
         return form
 
     def delete_form(self, form_id: str) -> dict:

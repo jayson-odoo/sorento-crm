@@ -238,6 +238,7 @@ export interface Attachment {
   entity_id: string;
   uploaded_by?: string | null;
   uploaded_at: Date;
+  created_at?: Date;
   is_deleted: boolean;
   deleted_at?: Date | null;
   deleted_by?: string | null;

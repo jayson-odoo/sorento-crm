@@ -12,6 +12,7 @@ from app.services.scheduled_task_service import (
 from app.services.respond_sync_handler import run_respond_contacts_sync
 from app.services.user_sla_daily_summary_service import run_user_sla_daily_summary
 from app.services.marketing_service import PromotionService
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,11 @@ def _handler_notification_delivery_processor(db, task):
     """Handler for notification_delivery_processor: process notification email/push deliveries from queue."""
     result = _run_notification_delivery_jobs_impl()
     return result
+
+
+def _handler_embedding_job_processor(db, task):
+    """Handler for embedding_job_processor: process embedding jobs from queue."""
+    return _run_queue_jobs_impl(settings.embedding_queue_name, max_jobs_per_run=10)
 
 
 def _handler_user_sla_daily_summary(db, task):
@@ -145,6 +151,53 @@ def _run_import_jobs_impl():
             processed += 1
         except Exception as e:
             logger.error("Error processing import job %s: %s", job.id, e, exc_info=True)
+            try:
+                job.set_status("failed")
+                job.meta["exc_info"] = str(e)
+                job.save()
+                queue.remove(job)
+            except Exception:
+                pass
+    return {"processed": processed, "queued": len(queued_jobs)}
+
+
+def _run_queue_jobs_impl(queue_name: str, max_jobs_per_run: int) -> dict:
+    """Generic queue processor used by scheduled task heartbeat."""
+    from rq.job import Job
+    from app.services.queue_service import redis_conn
+
+    queue = get_queue(queue_name)
+    all_job_ids = queue.get_job_ids()
+    if not all_job_ids:
+        return {"processed": 0, "queued": 0}
+    queued_jobs = []
+    for job_id in all_job_ids:
+        try:
+            job = Job.fetch(job_id, connection=redis_conn)
+            if job.get_status() == "queued":
+                queued_jobs.append(job)
+            else:
+                try:
+                    queue.remove(job)
+                except Exception:
+                    pass
+        except Exception:
+            continue
+    processed = 0
+    for job in queued_jobs[:max_jobs_per_run]:
+        try:
+            job.set_status("started")
+            job.save()
+            job.func(*job.args, **job.kwargs)
+            job.set_status("finished")
+            job.save()
+            try:
+                queue.remove(job)
+            except Exception:
+                pass
+            processed += 1
+        except Exception as e:
+            logger.error("Error processing %s job %s: %s", queue_name, job.id, e, exc_info=True)
             try:
                 job.set_status("failed")
                 job.meta["exc_info"] = str(e)
@@ -296,6 +349,7 @@ def start_scheduler():
     register_handler("integration_log_retry", _handler_integration_log_retry)
     register_handler("import_job_processor", _handler_import_job_processor)
     register_handler("notification_delivery_processor", _handler_notification_delivery_processor)
+    register_handler("embedding_job_processor", _handler_embedding_job_processor)
     register_handler("user_sla_daily_summary", _handler_user_sla_daily_summary)
     register_handler("promotion_active_window", _handler_promotion_active_window)
     register_handler("respond_contacts_sync", run_respond_contacts_sync)

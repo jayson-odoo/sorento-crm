@@ -663,6 +663,7 @@ model Attachment {
   entityId         String?   @map("entity_id")
   uploadedBy       String?   @map("uploaded_by")
   uploadedAt       DateTime  @default(now()) @map("uploaded_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
   isDeleted        Boolean   @default(false) @map("is_deleted")
   deletedAt        DateTime? @map("deleted_at")
   deletedBy        String?   @map("deleted_by")

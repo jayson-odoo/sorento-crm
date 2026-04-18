@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.list_query_metadata import ListQueryField, ListQueryResource
 from app.services.list_query_registry import ADAPTERS, ListQueryResourceAdapter
+from app.services.embedding_events import publish_embedding_event
 
 
 def _is_uuid_type(col: Any) -> bool:
@@ -130,6 +131,16 @@ class ListQueryMetadataSyncService:
                 out.fields_updated += 1
 
         self.db.flush()
+        publish_embedding_event(
+            self.db,
+            source_type="schema_doc",
+            source_id=resource.id,
+            source_key=resource.resource_key,
+            source_updated_at=resource.updated_at or resource.created_at,
+            event_type="knowledge_document.updated",
+            changed_fields=["resource_schema_sync"],
+            triggered_by="system",
+        )
         return out
 
     def _upsert_resource(self, adapter: ListQueryResourceAdapter) -> Optional[ListQueryResource]:

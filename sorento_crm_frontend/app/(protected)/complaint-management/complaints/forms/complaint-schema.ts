@@ -37,6 +37,7 @@ export const ComplaintSchema = z.object({
       file_url: z.string().optional().nullable(),
       file_size_bytes: z.number().optional().nullable(),
       uploaded_at: z.date().optional(),
+      created_at: z.date().optional(),
     }),
   ),
 });

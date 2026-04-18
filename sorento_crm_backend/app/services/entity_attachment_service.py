@@ -197,6 +197,9 @@ class EntityAttachmentService:
             "file_url": self._resolve_attachment_url(getattr(att, "file_path", None)),
             "file_size_bytes": getattr(att, "file_size_bytes", None),
             "uploaded_at": getattr(att, "uploaded_at", None) or link.created_at,
+            "created_at": getattr(att, "created_at", None)
+            or getattr(att, "uploaded_at", None)
+            or link.created_at,
             "link_type": link_type or link.entity_type,
         }
 

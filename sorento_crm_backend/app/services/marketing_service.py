@@ -37,6 +37,7 @@ from app.schemas.marketing import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error, handle_validation_error
 from app.services.contact_access_type_service import ContactAccessTypeService
+from app.services.embedding_events import publish_embedding_event
 
 _MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
@@ -388,6 +389,16 @@ class PromotionService:
         self.db.add(promotion)
         self.db.commit()
         self.db.refresh(promotion)
+        publish_embedding_event(
+            self.db,
+            source_type="promotion",
+            source_id=promotion.id,
+            source_key=promotion.promo_code,
+            source_updated_at=promotion.updated_at or promotion.created_at,
+            event_type="promotion.created",
+            changed_fields=["promo_code", "name", "description", "promo_type", "start_date", "end_date", "access_levels"],
+            triggered_by=created_by,
+        )
         return promotion
     
     def update_promotion(self, promotion_id: str, promotion_data: PromotionUpdate):
@@ -420,6 +431,15 @@ class PromotionService:
 
         self.db.commit()
         self.db.refresh(promotion)
+        publish_embedding_event(
+            self.db,
+            source_type="promotion",
+            source_id=promotion.id,
+            source_key=promotion.promo_code,
+            source_updated_at=promotion.updated_at or promotion.created_at,
+            event_type="promotion.updated" if promotion.is_active else "promotion.deactivated",
+            changed_fields=list(update_data.keys()),
+        )
         return promotion
 
     def delete_promotion(self, promotion_id: str):
