@@ -4,7 +4,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.database import SessionLocal
 from app.services.integration_service import IntegrationLogService
-from app.services.queue_service import get_queue
+from app.services.queue_service import get_queue, run_sync_rq_jobs
 from app.services.scheduled_task_service import (
     run_due_tasks,
     register_handler,
@@ -13,6 +13,7 @@ from app.services.respond_sync_handler import run_respond_contacts_sync
 from app.services.user_sla_daily_summary_service import run_user_sla_daily_summary
 from app.services.marketing_service import PromotionService
 from app.config import settings
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +42,56 @@ def _handler_notification_delivery_processor(db, task):
 
 
 def _handler_embedding_job_processor(db, task):
-    """Handler for embedding_job_processor: process embedding jobs from queue."""
-    return _run_queue_jobs_impl(settings.embedding_queue_name, max_jobs_per_run=10)
+    """Process embedding jobs: Redis RQ first; optional Postgres embedding_queue fallback."""
+    rq_result = _run_queue_jobs_impl(settings.embedding_queue_name, max_jobs_per_run=10)
+    if not getattr(settings, "embedding_queue_db_fallback_enabled", True):
+        return {
+            "processed": rq_result.get("processed", 0),
+            "queued_redis": rq_result.get("queued", 0),
+            "processed_redis": rq_result.get("processed", 0),
+            "processed_db": 0,
+            "db_fallback_enabled": False,
+        }
+    db_result = _run_embedding_db_queue_fallback(db, max_jobs_per_run=10)
+    return {
+        "processed": rq_result.get("processed", 0) + db_result.get("processed", 0),
+        "queued_redis": rq_result.get("queued", 0),
+        "queued_db_pending_before": db_result.get("queued_db_pending_before", 0),
+        "processed_redis": rq_result.get("processed", 0),
+        "processed_db": db_result.get("processed", 0),
+        "db_fallback_enabled": True,
+    }
+
+
+def _run_embedding_db_queue_fallback(db, max_jobs_per_run: int) -> dict:
+    """Run worker for pending ``embedding_queue`` rows (available now), no Redis required."""
+    from sqlalchemy import func
+    from app.models.embeddings import EmbeddingQueue
+    from app.services.embedding_worker import process_embedding_queue_item
+
+    now_naive = datetime.utcnow()
+    pending_before = (
+        db.query(func.count(EmbeddingQueue.id))
+        .filter(EmbeddingQueue.status == "pending", EmbeddingQueue.available_at <= now_naive)
+        .scalar()
+        or 0
+    )
+    ids = (
+        db.query(EmbeddingQueue.id)
+        .filter(EmbeddingQueue.status == "pending", EmbeddingQueue.available_at <= now_naive)
+        .order_by(EmbeddingQueue.created_at.asc())
+        .limit(max_jobs_per_run)
+        .all()
+    )
+    ids = [str(row[0]) for row in ids]
+    processed = 0
+    for qid in ids:
+        try:
+            process_embedding_queue_item(qid)
+            processed += 1
+        except Exception as e:
+            logger.error("Embedding DB fallback failed for queue id %s: %s", qid, e, exc_info=True)
+    return {"processed": processed, "queued_db_pending_before": int(pending_before)}
 
 
 def _handler_user_sla_daily_summary(db, task):
@@ -163,49 +212,7 @@ def _run_import_jobs_impl():
 
 def _run_queue_jobs_impl(queue_name: str, max_jobs_per_run: int) -> dict:
     """Generic queue processor used by scheduled task heartbeat."""
-    from rq.job import Job
-    from app.services.queue_service import redis_conn
-
-    queue = get_queue(queue_name)
-    all_job_ids = queue.get_job_ids()
-    if not all_job_ids:
-        return {"processed": 0, "queued": 0}
-    queued_jobs = []
-    for job_id in all_job_ids:
-        try:
-            job = Job.fetch(job_id, connection=redis_conn)
-            if job.get_status() == "queued":
-                queued_jobs.append(job)
-            else:
-                try:
-                    queue.remove(job)
-                except Exception:
-                    pass
-        except Exception:
-            continue
-    processed = 0
-    for job in queued_jobs[:max_jobs_per_run]:
-        try:
-            job.set_status("started")
-            job.save()
-            job.func(*job.args, **job.kwargs)
-            job.set_status("finished")
-            job.save()
-            try:
-                queue.remove(job)
-            except Exception:
-                pass
-            processed += 1
-        except Exception as e:
-            logger.error("Error processing %s job %s: %s", queue_name, job.id, e, exc_info=True)
-            try:
-                job.set_status("failed")
-                job.meta["exc_info"] = str(e)
-                job.save()
-                queue.remove(job)
-            except Exception:
-                pass
-    return {"processed": processed, "queued": len(queued_jobs)}
+    return run_sync_rq_jobs(queue_name, max_jobs_per_run)
 
 
 def process_pending_integration_logs():

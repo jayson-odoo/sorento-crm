@@ -50,9 +50,12 @@ class Settings(BaseSettings):
     # When set, X-API-Key auth resolves RBAC as this users row (required for MCP/n8n read tools).
     external_api_key_act_as_user_id: str | None = None  # EXTERNAL_API_KEY_ACT_AS_USER_ID
     
-    # Redis Queue
+    # Redis Queue (must match everywhere: API, workers, seed scripts; use same host:port/db)
     redis_url: str = "redis://localhost:6379/0"
     embedding_queue_name: str = "embeddings"
+    # When True, scheduled task also drains pending rows from embedding_queue if Redis is empty of jobs.
+    # Set False to use Redis (RQ) only; then REDIS_URL must be the instance where jobs were enqueued.
+    embedding_queue_db_fallback_enabled: bool = True  # EMBEDDING_QUEUE_DB_FALLBACK_ENABLED
     embedding_max_retries: int = 5
     embedding_retry_backoff_seconds: int = 60
     embedding_chunk_size: int = 900

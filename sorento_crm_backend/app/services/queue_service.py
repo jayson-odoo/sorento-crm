@@ -74,6 +74,61 @@ def get_job_status(job_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def run_sync_rq_jobs(queue_name: str, max_jobs: int) -> dict[str, int]:
+    """Pop up to max_jobs from the RQ list and execute each synchronously.
+
+    Uses O(max_jobs) Redis ops instead of scanning every queued job id (important when
+    the backlog is large). Semantics match the scheduler's previous _run_queue_jobs_impl.
+    """
+    queue = get_queue(queue_name)
+    processed = 0
+    for _ in range(max_jobs):
+        popped = queue.pop_job_id()
+        if not popped:
+            break
+        job_id = popped.decode() if isinstance(popped, bytes) else popped
+        try:
+            job = Job.fetch(job_id, connection=redis_conn)
+        except Exception as e:
+            logger.warning("RQ job fetch failed after pop (%s): %s", job_id, e)
+            continue
+        if job.get_status() != JobStatus.QUEUED:
+            logger.warning(
+                "RQ popped job %s has status %s (expected queued); skipping execution",
+                job_id,
+                job.get_status(),
+            )
+            continue
+        try:
+            job.set_status(JobStatus.STARTED)
+            job.save()
+            job.func(*job.args, **job.kwargs)
+            job.set_status(JobStatus.FINISHED)
+            job.save()
+            try:
+                queue.remove(job)
+            except Exception:
+                pass
+            processed += 1
+        except Exception as e:
+            logger.error(
+                "Error processing %s job %s: %s",
+                queue_name,
+                job.id,
+                e,
+                exc_info=True,
+            )
+            try:
+                job.set_status(JobStatus.FAILED)
+                job.meta["exc_info"] = str(e)
+                job.save()
+                queue.remove(job)
+            except Exception:
+                pass
+    remaining = queue.count
+    return {"processed": processed, "queued": remaining, "queued_remaining": remaining}
+
+
 def cancel_job(job_id: str) -> bool:
     """Cancel a job. Uses send_stop_job_command for running jobs, job.cancel() for queued."""
     try:
