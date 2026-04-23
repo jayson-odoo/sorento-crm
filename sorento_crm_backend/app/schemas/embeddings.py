@@ -63,3 +63,30 @@ class EmbeddingSearchResponse(BaseModel):
     data: list[EmbeddingSearchResultItem]
     model: str
     dimensions: int
+
+
+class ToolRagSearchRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    include_planned: bool = False
+    category: Optional[str] = None
+    implementation_status: Optional[str] = None
+
+
+class ToolRagResultItem(BaseModel):
+    tool_name: str
+    score: float
+    why_selected: str
+    status: str
+    category: Optional[str] = None
+    required_params: list[str] = Field(default_factory=list)
+    missing_params: list[str] = Field(default_factory=list)
+    source_id: str
+    source_type: str
+    chunk_text: str
+
+
+class ToolRagSearchResponse(BaseModel):
+    data: list[ToolRagResultItem]
+    model: str
+    dimensions: int

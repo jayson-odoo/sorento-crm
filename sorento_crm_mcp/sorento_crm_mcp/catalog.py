@@ -37,7 +37,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_master_products_get",
-        "Get one product by id (includes related data per API).",
+        "Get one product by UUID id (full detail record). For keyword searches like 'bathtubs' or product names/codes, use crm_master_products_list with query.",
         "/api/v1/master-data/products/{product_id}",
         ("product_id",),
         (),
@@ -563,7 +563,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- workflow-forms ---
     ToolSpec(
         "crm_workflow_forms_definitions_list",
-        "List workflow form definitions.",
+        "List workflow form definitions. Use q for search (tool also accepts query alias and maps it to q).",
         "/api/v1/workflow-forms/definitions",
         (),
         ("page", "limit", "q", "is_active"),

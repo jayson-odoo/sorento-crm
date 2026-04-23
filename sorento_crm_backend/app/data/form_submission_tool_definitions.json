@@ -1,0 +1,358 @@
+[
+  {
+    "tool_name": "create_stock_inquiry_submission",
+    "category": "stock_inquiries",
+    "implementation_status": "planned",
+    "description": "Create a new stock inquiry submission for purchasing with project, product, quantity, and delivery details.",
+    "required_fields": [
+      "product_code",
+      "salesperson",
+      "item_description",
+      "project_customer",
+      "project_name",
+      "quantity",
+      "delivery_date"
+    ],
+    "optional_fields": [
+      "remark",
+      "additional_remark",
+      "product_name",
+      "standard_lead_time_days"
+    ],
+    "typical_user_questions": [
+      "Help me submit a new stock inquiry for product SRTW2048.",
+      "Create a stock inquiry for 50 units needed by 15/05/2026.",
+      "I want to send a stock inquiry for customer ABC and project Tower B.",
+      "Please file this stock inquiry to purchasing with my project details.",
+      "Submit my stock inquiry now with this product code and quantity."
+    ]
+  },
+  {
+    "tool_name": "list_stock_inquiry_submissions",
+    "category": "stock_inquiries",
+    "implementation_status": "planned",
+    "description": "List stock inquiry submissions for the current contact with optional status and date filters.",
+    "required_fields": [
+      "contact_id"
+    ],
+    "optional_fields": [
+      "status",
+      "inquiry_number",
+      "project_customer",
+      "project_name",
+      "date_from",
+      "date_to",
+      "limit"
+    ],
+    "typical_user_questions": [
+      "Show my latest stock inquiries.",
+      "List my rejected stock inquiries this month.",
+      "Can you show pending stock inquiries under my account?",
+      "Find my stock inquiry submissions for project Sunway.",
+      "Show the last 10 stock inquiries I submitted."
+    ]
+  },
+  {
+    "tool_name": "view_stock_inquiry_submission",
+    "category": "stock_inquiries",
+    "implementation_status": "planned",
+    "description": "Retrieve a single stock inquiry submission summary for viewing by inquiry number.",
+    "required_fields": [
+      "contact_id",
+      "inquiry_number"
+    ],
+    "optional_fields": [
+      "id"
+    ],
+    "typical_user_questions": [
+      "Show details for stock inquiry SI-2026-00123.",
+      "Open my stock inquiry SI-2026-00405.",
+      "View the full summary of this stock inquiry number.",
+      "What did I submit in inquiry SI-2026-00310?",
+      "Display my stock inquiry details for this inquiry number."
+    ]
+  },
+  {
+    "tool_name": "update_rejected_stock_inquiry_submission",
+    "category": "stock_inquiries",
+    "implementation_status": "planned",
+    "description": "Update an existing rejected stock inquiry submission before re-submission to purchasing.",
+    "required_fields": [
+      "contact_id",
+      "inquiry_number"
+    ],
+    "optional_fields": [
+      "product_code",
+      "salesperson",
+      "item_description",
+      "project_customer",
+      "project_name",
+      "quantity",
+      "delivery_date",
+      "remark",
+      "additional_remark"
+    ],
+    "typical_user_questions": [
+      "Update rejected stock inquiry SI-2026-00123 with quantity 80.",
+      "I need to edit delivery date in my rejected stock inquiry.",
+      "Change project name and remarks for inquiry SI-2026-00088.",
+      "Revise my rejected stock inquiry and prepare it for re-submit.",
+      "Edit this rejected stock inquiry with new product and quantity."
+    ]
+  },
+  {
+    "tool_name": "create_purchase_request_submission",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "Create a new purchase request submission with request header details and product line items.",
+    "required_fields": [
+      "request_type",
+      "customer_name",
+      "project_title",
+      "purpose",
+      "expected_delivery_date",
+      "requested_by",
+      "products"
+    ],
+    "optional_fields": [
+      "delivery_address",
+      "total_project_value",
+      "expected_po_date",
+      "requested_at"
+    ],
+    "typical_user_questions": [
+      "Create a purchase request for customer Alpha with three items.",
+      "Submit a new purchase request for my project by next week.",
+      "I want to file a purchase request with these product lines.",
+      "Help me send a purchase request with expected delivery date 30/04/2026.",
+      "Prepare and submit this purchase request under my name."
+    ]
+  },
+  {
+    "tool_name": "create_sponsorship_form_submission",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "Create a new sponsorship form submission with sponsorship details and supporting item lines.",
+    "required_fields": [
+      "request_type",
+      "sponsor_subject",
+      "customer_name",
+      "date_of_delivery",
+      "requested_by",
+      "products"
+    ],
+    "optional_fields": [
+      "project_title",
+      "purpose",
+      "total_project_value",
+      "requested_at",
+      "delivery_address"
+    ],
+    "typical_user_questions": [
+      "Create a sponsorship form for our dealer launch event.",
+      "Submit a sponsorship request for customer Bright Build.",
+      "I need to file a sponsorship form with these items and quantities.",
+      "Help me create sponsorship submission for event delivery on 20/05/2026.",
+      "Prepare sponsorship form under my name with this subject."
+    ]
+  },
+  {
+    "tool_name": "list_purchase_request_submissions",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "List purchase request and sponsorship form submissions for the current contact with filters.",
+    "required_fields": [
+      "contact_id"
+    ],
+    "optional_fields": [
+      "request_type",
+      "approval_status",
+      "request_number",
+      "customer_name",
+      "project_title",
+      "date_from",
+      "date_to",
+      "limit"
+    ],
+    "typical_user_questions": [
+      "List my latest purchase requests.",
+      "Show my rejected sponsorship forms.",
+      "Can you find my pending requests for this month?",
+      "Display my requests for customer Horizon Group.",
+      "Show the last 5 requests I submitted."
+    ]
+  },
+  {
+    "tool_name": "view_purchase_request_submission",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "Retrieve one purchase request or sponsorship form submission with full summary details.",
+    "required_fields": [
+      "contact_id",
+      "request_number"
+    ],
+    "optional_fields": [
+      "id",
+      "include_lines"
+    ],
+    "typical_user_questions": [
+      "Show details for request PR-2026-00231.",
+      "Open sponsorship request SF-2026-00019 for me.",
+      "View the full summary of this request number.",
+      "What line items were submitted in PR-2026-00110?",
+      "Display my request details for this selected request."
+    ]
+  },
+  {
+    "tool_name": "update_rejected_purchase_request_submission",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "Update an existing rejected purchase request or sponsorship form before re-submission.",
+    "required_fields": [
+      "contact_id",
+      "request_number"
+    ],
+    "optional_fields": [
+      "customer_name",
+      "delivery_address",
+      "project_title",
+      "purpose",
+      "expected_delivery_date",
+      "expected_po_date",
+      "date_of_delivery",
+      "sponsor_subject",
+      "products",
+      "total_project_value"
+    ],
+    "typical_user_questions": [
+      "Update rejected request PR-2026-00231 with new quantities.",
+      "Edit my rejected sponsorship form and change delivery date.",
+      "Revise customer name and project title in rejected request SF-2026-00019.",
+      "Help me amend this rejected request before I confirm again.",
+      "Change line items in my rejected purchase request."
+    ]
+  },
+  {
+    "tool_name": "search_complaint_delivery_orders",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Search matching delivery orders for complaint filing using customer, item, and delivery date range.",
+    "required_fields": [
+      "search_customer",
+      "search_item",
+      "delivery_date_from",
+      "delivery_date_to"
+    ],
+    "optional_fields": [
+      "search_customer_code",
+      "limit"
+    ],
+    "typical_user_questions": [
+      "Find delivery orders for customer Beta Tiles with item WC-889 last week.",
+      "Search DO records for this product between 01/04/2026 and 15/04/2026.",
+      "I need matching delivery orders to file a complaint.",
+      "Look up orders by debtor name and product code for complaint.",
+      "Show me DOs delivered this month for this customer and item."
+    ]
+  },
+  {
+    "tool_name": "select_complaint_delivery_orders",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Resolve and validate selected delivery orders from a presented complaint search list.",
+    "required_fields": [
+      "do_list",
+      "selected_indexes"
+    ],
+    "optional_fields": [
+      "allow_multiple"
+    ],
+    "typical_user_questions": [
+      "Use delivery orders number 1 and 3 from the list.",
+      "Select the first DO only.",
+      "I want to complain for options 2, 4, and 5.",
+      "Choose number 2 from the delivery order list.",
+      "Proceed with the DOs I selected."
+    ]
+  },
+  {
+    "tool_name": "capture_complaint_submission_details",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Capture and merge complaint details after delivery order selection, with validation-friendly field mapping.",
+    "required_fields": [
+      "selected_do_list",
+      "date_of_complaint",
+      "product_code",
+      "quantity",
+      "complaint_type",
+      "defect_description",
+      "customer_name",
+      "contact_number"
+    ],
+    "optional_fields": [
+      "customer_type",
+      "customer_type_other",
+      "within_warranty",
+      "product_type",
+      "defect_discovered_when",
+      "contact_person",
+      "address",
+      "sales_person",
+      "project_title"
+    ],
+    "typical_user_questions": [
+      "Record complaint details for DO 500123 with cracked basin issue.",
+      "Set quantity affected as 12 and complaint type as damage.",
+      "Capture customer and contact details for this complaint submission.",
+      "Add defect description and warranty status to my complaint.",
+      "Save these complaint fields for the selected delivery orders."
+    ]
+  },
+  {
+    "tool_name": "confirm_complaint_submission",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Confirm the validated complaint summary and mark the complaint ready for submission.",
+    "required_fields": [
+      "selected_do_list",
+      "date_of_complaint",
+      "product_code",
+      "quantity",
+      "complaint_type",
+      "defect_description",
+      "customer_name",
+      "contact_number"
+    ],
+    "optional_fields": [
+      "attachments"
+    ],
+    "typical_user_questions": [
+      "Everything is correct, confirm this complaint now.",
+      "Please proceed and submit my complaint.",
+      "Yes, I confirm the complaint details.",
+      "Looks good, file this complaint case.",
+      "Confirm complaint for these selected delivery orders."
+    ]
+  },
+  {
+    "tool_name": "collect_complaint_attachments",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Collect optional complaint evidence files such as photos and videos after complaint confirmation.",
+    "required_fields": [
+      "complaint_reference"
+    ],
+    "optional_fields": [
+      "attachments",
+      "notes"
+    ],
+    "typical_user_questions": [
+      "Attach these photos to my confirmed complaint.",
+      "Upload a video showing the leak for this complaint case.",
+      "Add image evidence to complaint reference CMP-2026-0031.",
+      "I am sending attachment files for this complaint.",
+      "Save these supporting media files to my complaint record."
+    ]
+  }
+]

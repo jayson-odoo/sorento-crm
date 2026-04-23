@@ -36,6 +36,7 @@ def main() -> None:
             "order",
             "order_status",
             "order_line",
+            "mcp_tool",
         ],
         help="Source table to backfill",
     )

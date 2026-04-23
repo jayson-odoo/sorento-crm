@@ -76,7 +76,7 @@ def request_rebuild(
 def backfill_embeddings(
     source: str = Query(
         "all",
-        pattern="^(all|product|promotion|promotion_product|inbound_shipment|inbound_shipment_line|spo_allocation|picking_header|picking_line|product_attachment|promotion_attachment|attachment|form|schema_doc|order|order_status|order_line)$",
+        pattern="^(all|product|promotion|promotion_product|inbound_shipment|inbound_shipment_line|spo_allocation|picking_header|picking_line|product_attachment|promotion_attachment|attachment|form|schema_doc|order|order_status|order_line|mcp_tool)$",
     ),
     batch_size: int = Query(500, ge=1, le=5000),
     max_rows: int | None = Query(None, ge=1, le=1_000_000),

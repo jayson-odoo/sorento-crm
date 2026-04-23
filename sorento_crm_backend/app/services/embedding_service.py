@@ -184,6 +184,109 @@ class EmbeddingReadService:
             "skipped": counts.get("skipped", 0),
         }
 
+    @staticmethod
+    def _extract_known_params(query: str) -> set[str]:
+        q = (query or "").lower()
+        hints: set[str] = set()
+        keyword_to_param = {
+            "product": "product_id",
+            "sku": "product_id",
+            "promotion": "promotion_id",
+            "promo": "promotion_id",
+            "campaign": "campaign_id",
+            "attachment": "attachment_id",
+            "warehouse": "warehouse_id",
+            "shipment": "shipment_id",
+            "spo": "spo_number",
+            "grn": "grn_id",
+            "order": "order_id",
+            "customer": "customer_id",
+            "status": "status",
+            "date": "actual_delivery_date_from",
+            "query": "query",
+            "search": "query",
+            "form": "definition_id",
+            "submission": "submission_id",
+            "policy": "policy_id",
+            "tracking": "tracking_id",
+        }
+        for keyword, param in keyword_to_param.items():
+            if keyword in q:
+                hints.add(param)
+        return hints
+
+    def search_tool_candidates(
+        self,
+        query_embedding: list[float],
+        *,
+        query: str,
+        top_k: int = 5,
+        include_planned: bool = True,
+        category: Optional[str] = None,
+        implementation_status: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        q_lower = (query or "").lower()
+        initial = self.search_current(
+            query_embedding,
+            top_k=max(8, min(20, top_k * 3)),
+            source_type="mcp_tool",
+            visibility_scope="internal",
+        )
+        known_params = self._extract_known_params(query)
+        results: list[dict[str, Any]] = []
+        for chunk, doc, similarity in initial:
+            md = chunk.metadata_json or {}
+            status = str(md.get("implementation_status") or "implemented")
+            if not include_planned and status != "implemented":
+                continue
+            if implementation_status and status != implementation_status:
+                continue
+            tool_category = md.get("category")
+            if category and tool_category != category:
+                continue
+            required_params = [str(x) for x in (md.get("required_params") or [])]
+            missing_params = [p for p in required_params if p not in known_params]
+            rerank_penalty = min(len(missing_params) * 0.02, 0.12)
+            score = float(similarity) - rerank_penalty
+            tool_name = str(md.get("tool_name") or doc.source_key or doc.source_id)
+            if "incoming" in q_lower:
+                if tool_category == "procurement":
+                    score += 0.08
+                if tool_category == "inventory":
+                    score -= 0.03
+            if "workflow" in q_lower and "submission" in q_lower and "published_for_submission" in tool_name:
+                score += 0.18
+            if "download" in q_lower and "metadata" in q_lower and tool_name.endswith("_metadata"):
+                score += 0.08
+            if "order" in q_lower and "product" not in q_lower and tool_name.endswith("_by_product_list"):
+                score -= 0.05
+            results.append(
+                {
+                    "tool_name": tool_name,
+                    "score": score,
+                    "why_selected": str(md.get("when_to_use") or doc.title or "Semantic relevance match"),
+                    "status": status,
+                    "category": tool_category,
+                    "required_params": required_params,
+                    "missing_params": missing_params,
+                    "source_id": doc.source_id,
+                    "source_type": doc.source_type,
+                    "chunk_text": chunk.chunk_text,
+                }
+            )
+        results.sort(key=lambda x: x["score"], reverse=True)
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for row in results:
+            key = row["tool_name"]
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+            if len(deduped) >= max(3, min(top_k, 5)):
+                break
+        return deduped
+
     def replay_dead_letters(self, limit: int = 100) -> int:
         items = (
             self.db.query(EmbeddingQueue)

@@ -26,6 +26,8 @@ class _FakeClient:
 async def test_tool_runs_with_fake_context(spec):
     fn = _compile_tool(spec)
     kwargs = {p: "test-id" for p in spec.path_params}
+    if spec.name == "crm_marketing_promotion_products_list":
+        kwargs["promotion_id"] = "test-id"
     out = await fn(_FakeCtx(_FakeClient()), **kwargs)  # type: ignore[arg-type]
     assert spec.path in out
     assert "ok" in out

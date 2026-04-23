@@ -15,6 +15,7 @@ from app.models.list_query_metadata import ListQueryResource
 from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine
 from app.models.order import Order, OrderStatus, OrderLine
 from app.services.embedding_service import EmbeddingEventService
+from app.services.mcp_tool_capability_service import build_capability_documents
 
 BackfillSource = Literal[
     "product",
@@ -33,6 +34,7 @@ BackfillSource = Literal[
     "order",
     "order_status",
     "order_line",
+    "mcp_tool",
     "all",
 ]
 
@@ -76,6 +78,7 @@ class EmbeddingBackfillService:
             "order",
             "order_status",
             "order_line",
+            "mcp_tool",
         ] if source == "all" else [source]
         results: list[BackfillStats] = []
         for one in sources:
@@ -126,6 +129,7 @@ class EmbeddingBackfillService:
                         source_updated_at=row.get("source_updated_at"),
                         event_type="embedding.rebuild_requested",
                         changed_fields=["manual_backfill"],
+                        payload=row.get("payload"),
                         triggered_by=triggered_by or "system",
                     )
                     stats.queued += 1
@@ -237,4 +241,11 @@ class EmbeddingBackfillService:
         if source == "order_line":
             rows = self.db.query(OrderLine.id, OrderLine.created_at, OrderLine.updated_at).order_by(OrderLine.created_at.asc()).offset(offset).limit(limit).all()
             return [{"id": r.id, "source_key": str(r.id), "source_updated_at": r.updated_at or r.created_at} for r in rows]
+        if source == "mcp_tool":
+            docs = build_capability_documents(include_planned=True)
+            sliced = docs[offset: offset + limit]
+            return [
+                {"id": d.source_id, "source_key": d.source_key, "source_updated_at": None, "payload": {"capability": {"title": d.title, "source_key": d.source_key, "body_text": d.body_text, "metadata": d.metadata}}}
+                for d in sliced
+            ]
         raise ValueError(f"Unsupported source: {source}")

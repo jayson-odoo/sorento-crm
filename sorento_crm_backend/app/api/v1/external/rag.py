@@ -8,7 +8,14 @@ import httpx
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.config import settings
-from app.schemas.embeddings import EmbeddingSearchRequest, EmbeddingSearchResponse, EmbeddingSearchResultItem
+from app.schemas.embeddings import (
+    EmbeddingSearchRequest,
+    EmbeddingSearchResponse,
+    EmbeddingSearchResultItem,
+    ToolRagSearchRequest,
+    ToolRagSearchResponse,
+    ToolRagResultItem,
+)
 from app.services.embedding_service import EmbeddingReadService
 
 router = APIRouter()
@@ -66,6 +73,31 @@ def semantic_search(
     ]
     return EmbeddingSearchResponse(
         data=data,
+        model=settings.embedding_model_name,
+        dimensions=settings.embedding_dimensions,
+    )
+
+
+@router.post("/tool-search", response_model=ToolRagSearchResponse)
+def tool_search(
+    body: ToolRagSearchRequest,
+    current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    query = (body.query or "").strip()
+    if not query:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
+    query_embedding = _embed_query(query)
+    rows = EmbeddingReadService(db).search_tool_candidates(
+        query_embedding,
+        query=query,
+        top_k=body.top_k,
+        include_planned=body.include_planned,
+        category=body.category,
+        implementation_status=body.implementation_status,
+    )
+    return ToolRagSearchResponse(
+        data=[ToolRagResultItem(**r) for r in rows],
         model=settings.embedding_model_name,
         dimensions=settings.embedding_dimensions,
     )

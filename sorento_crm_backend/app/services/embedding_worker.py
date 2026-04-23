@@ -43,7 +43,22 @@ def _chunk_text(text: str, size: int, overlap: int) -> list[str]:
     return chunks
 
 
-def _canonical_for_source(db: Session, source_type: str, source_id: str) -> dict[str, Any]:
+def _canonical_for_source(db: Session, source_type: str, source_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    if source_type == "mcp_tool":
+        capability = (payload or {}).get("capability") or {}
+        body_text = str(capability.get("body_text") or "").strip()
+        if not body_text:
+            raise ValueError("mcp_tool payload.capability.body_text is required")
+        metadata = capability.get("metadata") or {}
+        return {
+            "source_key": capability.get("source_key") or source_id,
+            "title": capability.get("title") or source_id,
+            "body_text": body_text,
+            "visibility_scope": "internal",
+            "source_updated_at": datetime.utcnow(),
+            "metadata": metadata,
+        }
+
     if source_type == "product":
         row = (
             db.query(Product, ProductCategory, Brand)
@@ -362,6 +377,20 @@ def _embed_text_chunks(chunks: list[str]) -> list[list[float]]:
     return vectors
 
 
+def _chunks_for_source(source_type: str, source: dict[str, Any]) -> list[str]:
+    if source_type == "mcp_tool":
+        md = source.get("metadata") or {}
+        questions = md.get("typical_user_questions") or []
+        required_fields = md.get("required_fields") or []
+        optional_fields = md.get("optional_fields") or []
+        chunks: list[str] = [str(q).strip() for q in questions if str(q).strip()]
+        chunks.extend([f"Required field for {source.get('title')}: {str(f).strip()}" for f in required_fields if str(f).strip()])
+        chunks.extend([f"Optional field for {source.get('title')}: {str(f).strip()}" for f in optional_fields if str(f).strip()])
+        if chunks:
+            return chunks
+    return _chunk_text(source["body_text"], settings.embedding_chunk_size, settings.embedding_chunk_overlap)
+
+
 def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
     db = SessionLocal()
     try:
@@ -374,7 +403,9 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         queue_item.status = "processing"
         db.commit()
 
-        source = _canonical_for_source(db, queue_item.source_type, queue_item.source_id)
+        payload = queue_item.payload or {}
+        source_payload = payload.get("payload") if isinstance(payload, dict) else None
+        source = _canonical_for_source(db, queue_item.source_type, queue_item.source_id, payload=source_payload)
         read_svc = EmbeddingReadService(db)
         source_hash = read_svc.deterministic_hash(
             {
@@ -414,7 +445,7 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         db.add(doc)
         db.flush()
 
-        chunks = _chunk_text(source["body_text"], settings.embedding_chunk_size, settings.embedding_chunk_overlap)
+        chunks = _chunks_for_source(queue_item.source_type, source)
         vectors = _embed_text_chunks(chunks)
 
         read_svc.mark_previous_non_current(

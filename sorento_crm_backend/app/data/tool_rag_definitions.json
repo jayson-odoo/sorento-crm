@@ -1,0 +1,561 @@
+[
+  {
+    "tool_name": "get_product_information",
+    "category": "general_enquiries",
+    "implementation_status": "planned",
+    "description": "Retrieve product details from catalog data, including code, name, description, category, brand, and MYR pricing for items such as bathtubs, sinks, faucets, toilets, furniture, and accessories.",
+    "typical_user_questions": [
+      "Do you sell matte black kitchen sinks?",
+      "Show me details for product SRTKS6092-BL",
+      "What is the price for this bathtub model?",
+      "I need product information for a wall-hung toilet",
+      "Show catalog items for bathroom vanity furniture"
+    ]
+  },
+  {
+    "tool_name": "get_promotion_information",
+    "category": "general_enquiries",
+    "implementation_status": "planned",
+    "description": "Retrieve promotion details by promo code or linked products, including promotion name, active period, promotion type, and covered products.",
+    "typical_user_questions": [
+      "What is included in promo MIX01?",
+      "Any promotions for this sink model?",
+      "Show active promotions for product SRTKS6092-BL",
+      "When does this promotion end?",
+      "Give me promotion details for this code"
+    ]
+  },
+  {
+    "tool_name": "get_related_attachments",
+    "category": "general_enquiries",
+    "implementation_status": "planned",
+    "description": "Retrieve downloadable attachments for products, promotions, or global documents, including brochures, flyers, certificates, datasheets, and stock lists.",
+    "typical_user_questions": [
+      "Can I get the brochure for this product?",
+      "Send me the promotion flyer for MIX01",
+      "Do you have the product certificate PDF?",
+      "I need the latest stock list document",
+      "Can you find the technical datasheet for this sink?"
+    ]
+  },
+  {
+    "tool_name": "check_stock_availability",
+    "category": "general_enquiries",
+    "implementation_status": "planned",
+    "description": "Check stock availability for one or more products, with quantity and warehouse balance output when visibility is allowed.",
+    "typical_user_questions": [
+      "Do you have stock for SRTKS6092-BL?",
+      "How many units are available for this item?",
+      "Check stock by warehouse for this product",
+      "Is this product currently in stock?",
+      "Do we have enough quantity for 30 units?"
+    ]
+  },
+  {
+    "tool_name": "get_product_lead_time",
+    "category": "general_enquiries",
+    "implementation_status": "planned",
+    "description": "Retrieve lead-time values for products, including standard lead time days and cross-product comparisons.",
+    "typical_user_questions": [
+      "What is the lead time for SRTKS6092-BL?",
+      "How long does this product take to arrive?",
+      "Which one has shorter lead time, sink A or sink B?",
+      "Check standard lead time for this SKU",
+      "How many days is delivery lead time for this model?"
+    ]
+  },
+  {
+    "tool_name": "get_incoming_stock_summary",
+    "category": "general_enquiries",
+    "implementation_status": "planned",
+    "description": "Retrieve incoming stock summary by product, including outstanding incoming quantity, nearest ETA, and shipment references.",
+    "typical_user_questions": [
+      "Any incoming stock for SRTKS6092-BL?",
+      "When is the next shipment arriving for this product?",
+      "How many units are still on the way?",
+      "Check incoming quantity and ETA for this SKU",
+      "What shipment is bringing this product in?"
+    ]
+  },
+  {
+    "tool_name": "get_order_product_stock_overview",
+    "category": "general_enquiries",
+    "implementation_status": "planned",
+    "description": "Retrieve order lines for selected products and summarize stock context for those order-linked products.",
+    "typical_user_questions": [
+      "Which orders contain product SRTKS6092-BL?",
+      "Do we have enough stock to fulfill orders for this item?",
+      "Show order list for this product",
+      "Any pending orders for this SKU and stock status?",
+      "Order and stock overview for this product please"
+    ]
+  },
+  {
+    "tool_name": "create_stock_inquiry_draft",
+    "category": "stock_inquiries",
+    "implementation_status": "planned",
+    "description": "Create a stock inquiry draft with customer, project, product, quantity, and delivery date fields for submission.",
+    "typical_user_questions": [
+      "Create a stock inquiry for me",
+      "I want to submit a stock inquiry for 50 units",
+      "Help me raise a stock inquiry for this project",
+      "Prepare a stock inquiry with delivery next week",
+      "Draft a stock inquiry for customer ABC and this SKU"
+    ]
+  },
+  {
+    "tool_name": "list_user_stock_inquiries",
+    "category": "stock_inquiries",
+    "implementation_status": "planned",
+    "description": "List stock inquiries for the current user with inquiry number, date, status, and summary fields.",
+    "typical_user_questions": [
+      "List my stock inquiries",
+      "Show my recent stock inquiry submissions",
+      "Any stock inquiries I submitted this month?",
+      "Can I see my pending stock inquiries?",
+      "Show all rejected stock inquiries under my account"
+    ]
+  },
+  {
+    "tool_name": "view_stock_inquiry_details",
+    "category": "stock_inquiries",
+    "implementation_status": "planned",
+    "description": "Retrieve full stock inquiry details for a selected inquiry, including header fields and line data.",
+    "typical_user_questions": [
+      "Show details of stock inquiry SI-2026-0012",
+      "Open my stock inquiry record",
+      "View this stock inquiry in full",
+      "What did I submit in inquiry SI-2026-0040?",
+      "Show line items for this stock inquiry"
+    ]
+  },
+  {
+    "tool_name": "load_rejected_stock_inquiry_for_edit",
+    "category": "stock_inquiries",
+    "implementation_status": "planned",
+    "description": "Load a rejected stock inquiry into editable state with current values prefilled for revision.",
+    "typical_user_questions": [
+      "I want to revise my rejected stock inquiry",
+      "Load rejected inquiry SI-2026-0012 for editing",
+      "Open this rejected stock inquiry so I can update it",
+      "Retrieve my rejected inquiry draft",
+      "Prepare this rejected stock inquiry for resubmission"
+    ]
+  },
+  {
+    "tool_name": "update_rejected_stock_inquiry_draft",
+    "category": "stock_inquiries",
+    "implementation_status": "planned",
+    "description": "Apply field updates to a rejected stock inquiry draft, including product, quantity, date, and remarks.",
+    "typical_user_questions": [
+      "Change quantity in my rejected stock inquiry to 80",
+      "Update delivery date in the rejected inquiry",
+      "Replace product code in that rejected stock inquiry",
+      "Edit project name and customer in the draft",
+      "Update line items before I resubmit"
+    ]
+  },
+  {
+    "tool_name": "confirm_stock_inquiry_submission",
+    "category": "stock_inquiries",
+    "implementation_status": "planned",
+    "description": "Confirm and finalize stock inquiry payload for create or resubmission flow.",
+    "typical_user_questions": [
+      "Confirm and submit this stock inquiry",
+      "Looks good, proceed with submission",
+      "Please finalize this inquiry now",
+      "Yes, submit the updated stock inquiry",
+      "Send this inquiry for approval"
+    ]
+  },
+  {
+    "tool_name": "list_user_purchase_requests",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "List purchase and sponsorship requests created by the user with request number, type, date, and status.",
+    "typical_user_questions": [
+      "List my purchase requests",
+      "Show my sponsorship requests",
+      "What requests have I submitted recently?",
+      "Any rejected purchase requests under my account?",
+      "Can you show my pending requests?"
+    ]
+  },
+  {
+    "tool_name": "search_user_purchase_requests",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "Search user purchase or sponsorship requests using request number, customer, project, type, and status filters.",
+    "typical_user_questions": [
+      "Find request PR-2026-0101",
+      "Search my requests for project Sunway",
+      "Show requests for customer ABC Holdings",
+      "Find rejected sponsorship forms I submitted",
+      "Filter my requests by approved status"
+    ]
+  },
+  {
+    "tool_name": "view_purchase_request_details",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "Retrieve complete purchase or sponsorship request details, including header and line items.",
+    "typical_user_questions": [
+      "Show details for request PR-2026-0101",
+      "Open this purchase request",
+      "View full line items for my selected request",
+      "What did I submit in this sponsorship form?",
+      "Display complete request details"
+    ]
+  },
+  {
+    "tool_name": "create_purchase_request_draft",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "Create a purchase request draft with header fields and product line items ready for submission.",
+    "typical_user_questions": [
+      "Create a purchase request for me",
+      "I need to submit a new PR for these items",
+      "Help me draft a purchase request",
+      "Prepare a PR with three product lines",
+      "Draft a new purchase request with this customer info"
+    ]
+  },
+  {
+    "tool_name": "create_sponsorship_form_draft",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "Create a sponsorship form draft with event or project details and requested support items.",
+    "typical_user_questions": [
+      "Create a sponsorship form for this event",
+      "I want to submit a sponsorship request",
+      "Help me draft a sponsorship application",
+      "Prepare sponsorship form details for customer ABC",
+      "Start a new sponsorship submission"
+    ]
+  },
+  {
+    "tool_name": "load_rejected_request_for_edit",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "Load a rejected purchase or sponsorship request into editable mode with prefilled data.",
+    "typical_user_questions": [
+      "Open my rejected purchase request for editing",
+      "Load rejected request PR-2026-0101",
+      "I need to revise a rejected sponsorship form",
+      "Retrieve my rejected request draft",
+      "Prepare this rejected request for update"
+    ]
+  },
+  {
+    "tool_name": "update_rejected_request_draft",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "Apply header and line-item edits to a rejected purchase or sponsorship request draft.",
+    "typical_user_questions": [
+      "Change quantity in my rejected PR to 120",
+      "Update customer and remarks in the rejected request",
+      "Replace one item in the rejected sponsorship draft",
+      "Edit unit price and recalculate totals",
+      "Update this rejected request before resubmitting"
+    ]
+  },
+  {
+    "tool_name": "confirm_purchase_request_submission",
+    "category": "purchase_request",
+    "implementation_status": "planned",
+    "description": "Confirm and finalize a purchase or sponsorship request payload for submission.",
+    "typical_user_questions": [
+      "Confirm and submit this purchase request",
+      "Proceed with this sponsorship submission",
+      "Yes, finalize the updated request",
+      "Submit this request now",
+      "Everything is correct, send it"
+    ]
+  },
+  {
+    "tool_name": "identify_complaint_delivery_orders",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Find delivery orders relevant to a complaint using customer, product, and delivery date criteria.",
+    "typical_user_questions": [
+      "Find delivery orders for customer ABC last week",
+      "Which DO includes this damaged sink item?",
+      "Search DO records for this product and customer",
+      "Show related delivery orders so I can file a complaint",
+      "List matching DOs by date range"
+    ]
+  },
+  {
+    "tool_name": "select_complaint_delivery_orders",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Resolve user index selections to concrete delivery order numbers for complaint scope.",
+    "typical_user_questions": [
+      "Use number 2 and 4 from the DO list",
+      "Select the first delivery order",
+      "I choose DO options 1, 3, and 5",
+      "Take the second one only",
+      "Proceed with the selected DOs"
+    ]
+  },
+  {
+    "tool_name": "capture_complaint_details",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Capture structured complaint fields, including complaint type, affected product, quantity, and issue description.",
+    "typical_user_questions": [
+      "Record complaint type as damaged item with chipped corner",
+      "Add complaint details for 12 units of this product",
+      "Set issue description for wrong color delivered",
+      "Capture customer complaint information for this DO",
+      "Save these complaint fields"
+    ]
+  },
+  {
+    "tool_name": "validate_complaint_fields",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Validate complaint payload completeness and identify missing or invalid fields before submission.",
+    "typical_user_questions": [
+      "Check if my complaint form is complete",
+      "Validate complaint fields before I submit",
+      "Am I missing any required complaint details?",
+      "Verify this complaint payload",
+      "Run validation on this complaint draft"
+    ]
+  },
+  {
+    "tool_name": "confirm_complaint_submission",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Confirm final complaint payload after validation and mark it ready for submission.",
+    "typical_user_questions": [
+      "Confirm and submit this complaint",
+      "Proceed with complaint submission",
+      "Yes, file this complaint now",
+      "Looks correct, submit the case",
+      "Finalize this complaint request"
+    ]
+  },
+  {
+    "tool_name": "collect_complaint_evidence_attachments",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Attach evidence files such as photos and videos to the active complaint session.",
+    "typical_user_questions": [
+      "Attach these photos to my complaint",
+      "Upload video evidence for this complaint",
+      "Add image attachments for the damaged items",
+      "Save these media files to my complaint",
+      "Attach proof documents to this case"
+    ]
+  },
+  {
+    "tool_name": "close_complaint_case",
+    "category": "complaint",
+    "implementation_status": "planned",
+    "description": "Close complaint intake flow after submission confirmation and evidence upload completion.",
+    "typical_user_questions": [
+      "I am done uploading, close this complaint",
+      "Finish this complaint submission flow",
+      "No more files, complete the case",
+      "End complaint process now",
+      "Finalize and close"
+    ]
+  },
+  {
+    "tool_name": "check_product_incoming_stock",
+    "category": "incoming_stock",
+    "implementation_status": "planned",
+    "description": "Check still-incoming stock for a product, including outstanding quantity, ETA, and shipment references.",
+    "typical_user_questions": [
+      "How much incoming stock is left for SRTKS6092-BL?",
+      "Check product inbound quantity and ETA",
+      "Is this item still incoming?",
+      "Show incoming status for this SKU",
+      "Any incoming stock pending for this item?"
+    ]
+  },
+  {
+    "tool_name": "track_incoming_shipments",
+    "category": "incoming_stock",
+    "implementation_status": "planned",
+    "description": "Track inbound shipments by shipment number, container number, or ETA date for open incoming lines.",
+    "typical_user_questions": [
+      "Track shipment SHP-2026-1001",
+      "Check incoming status for container ABCU1234567",
+      "Which shipments are arriving this week?",
+      "Show open inbound shipments by ETA",
+      "Find shipment details for this container"
+    ]
+  },
+  {
+    "tool_name": "list_incoming_products_in_shipment",
+    "category": "incoming_stock",
+    "implementation_status": "planned",
+    "description": "List products still incoming within a selected shipment or container.",
+    "typical_user_questions": [
+      "List incoming products in shipment SHP-2026-1001",
+      "What items are still on the way in this container?",
+      "Show product lines for this inbound shipment",
+      "Which SKUs are pending receipt in this shipment?",
+      "Can you show incoming products for this container?"
+    ]
+  },
+  {
+    "tool_name": "get_incoming_warehouse_allocation",
+    "category": "incoming_stock",
+    "implementation_status": "planned",
+    "description": "Summarize incoming stock allocation by warehouse for selected shipment-product pairs.",
+    "typical_user_questions": [
+      "How is incoming stock allocated by warehouse?",
+      "Show warehouse allocation for this incoming shipment",
+      "Which warehouse gets the incoming quantity for this product?",
+      "Break down incoming allocation by location",
+      "Warehouse-level incoming distribution for this SKU"
+    ]
+  },
+  {
+    "tool_name": "get_shipment_packing_list_attachment",
+    "category": "incoming_stock",
+    "implementation_status": "planned",
+    "description": "Retrieve packing list document metadata for a shipment, including filename and file reference.",
+    "typical_user_questions": [
+      "Get packing list attachment for shipment SHP-2026-1001",
+      "Send me the shipment packing list",
+      "I need the packing list document for this container",
+      "Show packing list file for this shipment",
+      "Retrieve the packing list attachment"
+    ]
+  },
+  {
+    "tool_name": "get_shipment_grn_status",
+    "category": "incoming_stock",
+    "implementation_status": "planned",
+    "description": "Retrieve GRN status and related identifiers or dates for selected shipment and product context.",
+    "typical_user_questions": [
+      "What is the GRN status for this shipment?",
+      "Has GRN been created for shipment SHP-2026-1001?",
+      "Show GRN number and date for this inbound item",
+      "Check goods receipt status for this shipment",
+      "Retrieve GRN details for this inbound reference"
+    ]
+  },
+  {
+    "tool_name": "track_order_status_by_order_number",
+    "category": "order_enquiries",
+    "implementation_status": "planned",
+    "description": "Track order delivery status and key timeline fields by order number.",
+    "typical_user_questions": [
+      "Track status for order ORD-2026-00421",
+      "Has my order been delivered?",
+      "What is the latest status of this order?",
+      "Check delivery progress for this order number",
+      "Where is my order now?"
+    ]
+  },
+  {
+    "tool_name": "list_customer_order_statuses",
+    "category": "order_enquiries",
+    "implementation_status": "planned",
+    "description": "List orders and current statuses for a customer using debtor code or name filters.",
+    "typical_user_questions": [
+      "List orders for customer ABC with status",
+      "Show all undelivered orders for this customer",
+      "What are my recent orders and statuses?",
+      "Get customer order status list for this month",
+      "List order statuses by debtor code DBT001"
+    ]
+  },
+  {
+    "tool_name": "get_order_logistics_details",
+    "category": "order_enquiries",
+    "implementation_status": "planned",
+    "description": "Retrieve order logistics details including transporter, vehicle, driver, and delivery timing.",
+    "typical_user_questions": [
+      "Which lorry is delivering order ORD-2026-00421?",
+      "Who is the transporter for this order?",
+      "Show logistics details for this order number",
+      "Check driver and delivery schedule for this order",
+      "I need shipment logistics info for this order"
+    ]
+  },
+  {
+    "tool_name": "find_orders_by_product",
+    "category": "order_enquiries",
+    "implementation_status": "planned",
+    "description": "Find orders containing a selected product and return related customer and status context.",
+    "typical_user_questions": [
+      "Find orders containing product SRTKS6092-BL",
+      "Which customers ordered this SKU?",
+      "Show recent orders for this product",
+      "List order numbers that include this item",
+      "Find product-based order history"
+    ]
+  },
+  {
+    "tool_name": "list_active_application_forms",
+    "category": "marketing_forms",
+    "implementation_status": "planned",
+    "description": "List active application forms with form code, name, purpose, and language.",
+    "typical_user_questions": [
+      "Show active application forms",
+      "List available forms I can submit",
+      "What forms are currently active?",
+      "List marketing application forms",
+      "I need the list of active forms"
+    ]
+  },
+  {
+    "tool_name": "search_application_forms",
+    "category": "marketing_forms",
+    "implementation_status": "planned",
+    "description": "Search application forms by keyword and language and return matched form options.",
+    "typical_user_questions": [
+      "Find the annual dinner sponsorship form",
+      "Search forms for promotion campaign applications",
+      "Any form related to event sponsorship?",
+      "Look up application form by keyword marketing",
+      "Find form using this keyword"
+    ]
+  },
+  {
+    "tool_name": "resolve_form_selection_from_list",
+    "category": "marketing_forms",
+    "implementation_status": "planned",
+    "description": "Resolve user selection references such as index or ordinal to a specific form from a presented list.",
+    "typical_user_questions": [
+      "Use the first form",
+      "I want number 2 from the list",
+      "Select the third one",
+      "Proceed with option 1",
+      "Take the second form in the results"
+    ]
+  },
+  {
+    "tool_name": "get_application_form_attachment",
+    "category": "marketing_forms",
+    "implementation_status": "planned",
+    "description": "Retrieve attachment metadata for a selected application form, including filename and file reference.",
+    "typical_user_questions": [
+      "Get the file for this selected form",
+      "Send me the application form attachment",
+      "Can I download this form document?",
+      "Retrieve attachment for form code FM-001",
+      "Show file info for the selected application form"
+    ]
+  },
+  {
+    "tool_name": "generate_readonly_postgresql_query",
+    "category": "sql_agent",
+    "implementation_status": "planned",
+    "description": "Generate a single read-only PostgreSQL SELECT query from a natural-language request using allowed schema constraints.",
+    "typical_user_questions": [
+      "Generate a query to find orders by product code",
+      "Write SQL to list promotions linked to a product",
+      "Create a read-only query for incoming stock by SKU",
+      "Build a SELECT query for customer order statuses",
+      "Generate PostgreSQL query for stock balance by warehouse"
+    ]
+  }
+]
