@@ -16,6 +16,7 @@ class ToolSpec:
 
 
 # Paths match [sorento_crm_backend/app/api/v1/__init__.py](sorento_crm_backend/app/api/v1/__init__.py) prefixes.
+# Comment to rebuild
 CATALOG: tuple[ToolSpec, ...] = (
     # --- entity resolution (disambiguator) ---
     ToolSpec(
