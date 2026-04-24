@@ -12,6 +12,7 @@ from app.schemas.inventory import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
 from app.services.import_log_service import ImportLogService
+from app.services.identifier_resolver import resolve_identifier
 
 
 def _resolve_stock_product_id(db: Session, product_id: Optional[str]) -> Optional[str]:
@@ -86,8 +87,16 @@ class WarehouseService:
         }
     
     def get_warehouse(self, warehouse_id: str):
-        """Get a warehouse by ID."""
-        warehouse = self.db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+        """Get a warehouse by UUID or warehouse_code/name."""
+        resolved_ids = resolve_identifier(
+            self.db,
+            warehouse_id,
+            Warehouse,
+            code_fields=("warehouse_code", "warehouse_name"),
+        )
+        if not resolved_ids:
+            raise handle_not_found("Warehouse", warehouse_id)
+        warehouse = self.db.query(Warehouse).filter(Warehouse.id.in_(resolved_ids)).first()
         if not warehouse:
             raise handle_not_found("Warehouse", warehouse_id)
         return warehouse
@@ -146,10 +155,22 @@ class StorageZoneService:
     def list_zones(self, warehouse_id: Optional[str] = None, page: int = 1, limit: int = 50):
         """List storage zones."""
         q = self.db.query(StorageZone)
-        
-        if warehouse_id:
-            q = q.filter(StorageZone.warehouse_id == warehouse_id)
-        
+
+        warehouse_ids = resolve_identifier(
+            self.db,
+            warehouse_id,
+            Warehouse,
+            code_fields=("warehouse_code", "warehouse_name"),
+        )
+        if warehouse_ids is not None:
+            if not warehouse_ids:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            q = q.filter(StorageZone.warehouse_id.in_(warehouse_ids))
+
         total = q.count()
         offset = (page - 1) * limit
         zones = q.offset(offset).limit(limit).all()
@@ -165,8 +186,16 @@ class StorageZoneService:
         from sqlalchemy.orm import joinedload
 
         q = self.db.query(StorageZone).options(joinedload(StorageZone.warehouse))
-        if warehouse_id:
-            q = q.filter(StorageZone.warehouse_id == warehouse_id)
+        warehouse_ids = resolve_identifier(
+            self.db,
+            warehouse_id,
+            Warehouse,
+            code_fields=("warehouse_code", "warehouse_name"),
+        )
+        if warehouse_ids is not None:
+            if not warehouse_ids:
+                return []
+            q = q.filter(StorageZone.warehouse_id.in_(warehouse_ids))
         return q.all()
     
     def get_zone(self, zone_id: str):
@@ -240,8 +269,20 @@ class StockService:
             selectinload(Stock.warehouse),
         )
 
-        if warehouse_id:
-            q = q.filter(Stock.warehouse_id == warehouse_id)
+        warehouse_ids = resolve_identifier(
+            self.db,
+            warehouse_id,
+            Warehouse,
+            code_fields=("warehouse_code", "warehouse_name"),
+        )
+        if warehouse_ids is not None:
+            if not warehouse_ids:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            q = q.filter(Stock.warehouse_id.in_(warehouse_ids))
 
         if product_id:
             resolved_pid = _resolve_stock_product_id(self.db, product_id)
@@ -364,8 +405,19 @@ class StockService:
                     pagination={"total": 0, "page": page, "limit": limit},
                 )
             q = q.filter(StockLedger.product_id == resolved_pid)
-        if warehouse_id:
-            q = q.filter(StockLedger.warehouse_id == warehouse_id)
+        warehouse_ids = resolve_identifier(
+            self.db,
+            warehouse_id,
+            Warehouse,
+            code_fields=("warehouse_code", "warehouse_name"),
+        )
+        if warehouse_ids is not None:
+            if not warehouse_ids:
+                return ListResponse(
+                    data=[],
+                    pagination={"total": 0, "page": page, "limit": limit},
+                )
+            q = q.filter(StockLedger.warehouse_id.in_(warehouse_ids))
         if transaction_type:
             q = q.filter(StockLedger.transaction_type == transaction_type)
 
@@ -404,12 +456,24 @@ class StockService:
                 pagination={"total": 0, "page": page, "limit": limit},
             )
 
+        warehouse_ids = resolve_identifier(
+            self.db,
+            warehouse_id,
+            Warehouse,
+            code_fields=("warehouse_code", "warehouse_name"),
+        )
+        if warehouse_ids is None or not warehouse_ids:
+            return ListResponse(
+                data=[],
+                pagination={"total": 0, "page": page, "limit": limit},
+            )
+
         q = self.db.query(StockLedger).options(
             selectinload(StockLedger.product),
             selectinload(StockLedger.warehouse)
         ).filter(
             StockLedger.product_id == resolved_pid,
-            StockLedger.warehouse_id == warehouse_id
+            StockLedger.warehouse_id.in_(warehouse_ids)
         )
 
         total = q.count()
@@ -457,8 +521,16 @@ class StockService:
             selectinload(Stock.warehouse)
         )
         
-        if warehouse_id:
-            q = q.filter(Stock.warehouse_id == warehouse_id)
+        warehouse_ids = resolve_identifier(
+            self.db,
+            warehouse_id,
+            Warehouse,
+            code_fields=("warehouse_code", "warehouse_name"),
+        )
+        if warehouse_ids is not None:
+            if not warehouse_ids:
+                return []
+            q = q.filter(Stock.warehouse_id.in_(warehouse_ids))
         
         if product_id:
             resolved_pid = _resolve_stock_product_id(self.db, product_id)
@@ -1103,8 +1175,20 @@ class StockBatchService:
                     "empty": True,
                 }
             q = q.filter(StockBatch.product_id == resolved_pid)
-        if warehouse_id:
-            q = q.filter(StockBatch.warehouse_id == warehouse_id)
+        warehouse_ids = resolve_identifier(
+            self.db,
+            warehouse_id,
+            Warehouse,
+            code_fields=("warehouse_code", "warehouse_name"),
+        )
+        if warehouse_ids is not None:
+            if not warehouse_ids:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            q = q.filter(StockBatch.warehouse_id.in_(warehouse_ids))
         
         total = q.count()
         offset = (page - 1) * limit

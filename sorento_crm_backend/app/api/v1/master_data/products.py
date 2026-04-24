@@ -1,4 +1,6 @@
 """Products API routes."""
+import logging
+import time
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -11,10 +13,11 @@ from app.schemas.common import ListResponse, ErrorResponse, ValidateImportRespon
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/", response_model=ListResponse[ProductResponse])
-async def get_products(
+def get_products(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
     query: Optional[str] = Query(None),
@@ -30,6 +33,17 @@ async def get_products(
     db: Session = Depends(get_db)
 ):
     """Get products with pagination, filtering, and sorting."""
+    started = time.perf_counter()
+    logger.info(
+        "products.get start page=%s limit=%s query=%s category_id=%s brand_id=%s status=%s item_type=%s",
+        page,
+        limit,
+        (query or "")[:80],
+        category_id,
+        brand_id,
+        status,
+        item_type,
+    )
     try:
         service = ProductService(db)
         result = service.list_products(
@@ -45,13 +59,24 @@ async def get_products(
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
         )
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        data_len = len(result.get("data") or []) if isinstance(result, dict) else -1
+        total = (result.get("pagination") or {}).get("total") if isinstance(result, dict) else None
+        logger.info(
+            "products.get done elapsed_ms=%.1f rows=%s total=%s",
+            elapsed_ms,
+            data_len,
+            total,
+        )
         return result
     except Exception as e:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.exception("products.get failed elapsed_ms=%.1f error=%s", elapsed_ms, str(e))
         raise handle_internal_error(str(e))
 
 
 @router.get("/{product_id}", response_model=ProductResponse)
-async def get_product(
+def get_product(
     product_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)

@@ -83,10 +83,20 @@ def run_sync_rq_jobs(queue_name: str, max_jobs: int) -> dict[str, int]:
     queue = get_queue(queue_name)
     processed = 0
     for _ in range(max_jobs):
-        popped = queue.pop_job_id()
-        if not popped:
+        # NOTE: do NOT use queue.pop_job_id() here. In rq 2.x that helper calls
+        # as_text(connection.lpop(...)) without a None-check, so an empty queue
+        # raises ValueError("Unknown type <class 'NoneType'>"). We pop via the
+        # raw Redis connection and guard for None explicitly.
+        try:
+            popped = queue.connection.lpop(queue.key)
+        except Exception as e:
+            logger.warning("RQ lpop failed for queue %s: %s", queue_name, e)
+            break
+        if popped is None:
             break
         job_id = popped.decode() if isinstance(popped, bytes) else popped
+        if not job_id:
+            break
         try:
             job = Job.fetch(job_id, connection=redis_conn)
         except Exception as e:

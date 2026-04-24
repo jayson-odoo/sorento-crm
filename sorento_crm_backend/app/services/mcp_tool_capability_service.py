@@ -1,7 +1,19 @@
-"""Build capability documents for MCP Tool-RAG indexing."""
+"""Build capability documents for MCP Tool-RAG indexing.
+
+The RAG retrieves MCP tools using pgvector cosine similarity over `embedding_chunks`.
+For every MCP tool we emit:
+  - a rich `body_text` (tool name, category, intent, description, path, params),
+  - a set of disjoint `typical_user_questions` modelled after the legacy n8n
+    `next_agents/*` prompts (general enquiries, order status, incoming stock,
+    marketing/forms, stock inquiries, purchase request/sponsorship, complaint),
+  - alias phrases derived from the tool name.
+
+Both the body and the question bank are chunked and embedded, so the tool's real
+purpose — not just hand-picked phrases — drives retrieval.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import json
 import re
@@ -29,20 +41,1190 @@ class ToolDefinition:
     optional_fields: list[str] | None = None
 
 
+@dataclass(frozen=True)
+class ToolIntent:
+    """Prompt-aligned intent metadata for one MCP tool."""
+
+    category: str
+    intent: str
+    description: str
+    typical_user_questions: tuple[str, ...]
+    aliases: tuple[str, ...] = field(default_factory=tuple)
+
+
+# ---------------------------------------------------------------------------
+# Prompt-aligned intent catalog (next_agents/*)
+# ---------------------------------------------------------------------------
+# Categories mirror the legacy sub-prompts:
+#   general_enquiries.product          → crm_master_products_*
+#   general_enquiries.promotion        → crm_marketing_promotions_* / campaign_*
+#   general_enquiries.attachment       → crm_resource_* / crm_master_product_attachments_*
+#   general_enquiries.stock            → crm_inventory_stock_balance_* / alerts / dashboard
+#   general_enquiries.lead_time        → product supplier lead time (see note below)
+#   general_enquiries.incoming_stock   → crm_procurement_packing_lists_* / spo_allocations_*
+#   order_enquiries                    → crm_order_management_*
+#   marketing_agent.form_lookup        → crm_forms_management_* / crm_workflow_forms_*
+#   stock_inquiries.form_submission    → crm_forms_stock_inquiries_*
+#   purchase_request.form_submission   → crm_forms_purchase_requests_*
+#   complaint.form_submission          → crm_forms_complaints_* / entity_attachments
+#   sla_management                     → crm_sla_*
+# ---------------------------------------------------------------------------
+
+
+TOOL_INTENTS: dict[str, ToolIntent] = {
+    # ==================================================================
+    # ENTITY RESOLVER — disambiguates free-text codes into entity types.
+    # The AI assistant already pre-resolves codes on every turn (see "Resolved
+    # references" block in the user message). Use this MCP tool only when
+    # resolving a NEW code mid-conversation that was not pre-resolved.
+    # ==================================================================
+    "crm_resolve_reference": ToolIntent(
+        category="system.resolver",
+        intent="Disambiguate a free-text business code into its canonical entity type.",
+        description=(
+            "Three-tier resolver that maps a code (e.g. RF2601-025, ACC-SRT1024, FJ24041192, "
+            "MSCU5475129) to one of nine entity types: product, customer_order, customer, "
+            "inbound_shipment, spo_allocation, grn, warehouse, supplier, promotion. "
+            "Tier 1 does exact match on business code fields; Tier 2 does prefix / substring match "
+            "for partial codes (so 'SRTWCX7604' can match 'SRTWCX7604-S-RL-NEW'); Tier 3 is a "
+            "gated embedding vector fallback. Returns the canonical_code to pass to other tools "
+            "and a minimal display payload. Tokens with no deterministic match appear in "
+            "`unresolved_tokens` \u2014 in that case tell the user 'no record found for that code'. "
+            "Tokens with multiple candidates are marked `ambiguous` \u2014 ask the user to pick one "
+            "of the surfaced candidates before calling any other tool. The system already calls "
+            "this resolver automatically before each LLM turn; reuse the 'Resolved references' "
+            "block in the user message and only call this tool when a NEW code appears mid-answer."
+        ),
+        typical_user_questions=(
+            "What is RF2601-025 / ACC-SRT1024 / FJ24041192?",
+            "Is this code a product, an order, or a shipment?",
+            "Resolve this reference for me.",
+            "Which product / order does this partial code belong to?",
+        ),
+        aliases=("resolve code", "disambiguate reference", "what kind of code is this"),
+    ),
+    # ==================================================================
+    # MASTER DATA — product catalog, brands, categories, UOMs, attachments
+    # ==================================================================
+    "crm_master_products_list": ToolIntent(
+        category="general_enquiries.product",
+        intent="Browse and search the Sorento product catalog (what products we sell).",
+        description=(
+            "Search and list Sorento's product catalog with filters (query / category_id / brand_id "
+            "/ status / price_min / price_max / item_type). Use this for any question about which "
+            "products we sell, catalog browsing, finding products by keyword (e.g. 'matte black "
+            "kitchen sink'), brand, or category. Not for stock quantities, stock ledger movements, "
+            "orders, or promotions — those have dedicated tools."
+        ),
+        typical_user_questions=(
+            "What products do you sell?",
+            "Show me your product catalog.",
+            "List all products available in Sorento.",
+            "Do you sell matte black kitchen sinks?",
+            "Show me bathtubs / toilets / basins / faucets in your catalog.",
+            "What items are in your catalog under the bathroom category?",
+            "Find products by brand or category.",
+            "Browse the Sorento product list with pricing.",
+            "I want to see product information and list price in MYR.",
+        ),
+        aliases=("master products list", "product catalog", "products we sell", "browse catalog"),
+    ),
+    "crm_master_products_get": ToolIntent(
+        category="general_enquiries.product",
+        intent="Fetch full detail for a single product by its UUID.",
+        description=(
+            "Get one product record by UUID id, returning code, name, description, brand/category "
+            "relations, and full pricing fields. Use AFTER crm_master_products_list has resolved a "
+            "product's UUID, or when the user pastes a UUID. For keyword / SKU / name searches use "
+            "crm_master_products_list instead."
+        ),
+        typical_user_questions=(
+            "Show full product detail for this product id.",
+            "Open this product record and show all fields.",
+            "Get the complete profile for this product UUID.",
+            "Retrieve pricing and description for this specific product id.",
+            "Fetch the product record behind this id.",
+        ),
+        aliases=("get product by id", "product detail by uuid"),
+    ),
+    "crm_master_products_select": ToolIntent(
+        category="general_enquiries.product",
+        intent="Lightweight product picker for dropdowns / typeaheads.",
+        description=(
+            "Minimal active-only product list intended for dropdown or select-control population. "
+            "Prefer crm_master_products_list for user-facing catalog questions."
+        ),
+        typical_user_questions=(
+            "Give me a lightweight product list for a dropdown.",
+            "I need product options for a select control.",
+            "Fetch active products for an autocomplete input.",
+        ),
+        aliases=("products for dropdown", "product select options"),
+    ),
+    "crm_master_brands_list": ToolIntent(
+        category="general_enquiries.product",
+        intent="List brands Sorento carries.",
+        description="List brands with pagination and keyword filter. Use for brand discovery questions.",
+        typical_user_questions=(
+            "What brands do you carry?",
+            "List all brands in the system.",
+            "Show available brands for filtering products.",
+        ),
+        aliases=("brand list", "list brands"),
+    ),
+    "crm_master_brands_get": ToolIntent(
+        category="general_enquiries.product",
+        intent="Get one brand by id.",
+        description="Fetch a single brand record by its UUID id.",
+        typical_user_questions=(
+            "Show brand details for this id.",
+            "Open this brand record.",
+        ),
+    ),
+    "crm_master_brands_select": ToolIntent(
+        category="general_enquiries.product",
+        intent="Brands for select controls.",
+        description="Lightweight brand list for dropdowns.",
+        typical_user_questions=("Give me brands for a dropdown.",),
+    ),
+    "crm_master_product_categories_list": ToolIntent(
+        category="general_enquiries.product",
+        intent="List product categories.",
+        description="Flat list of product categories with pagination and query filter.",
+        typical_user_questions=(
+            "List the product categories.",
+            "What categories are available?",
+            "Show me all catalog categories.",
+        ),
+    ),
+    "crm_master_product_categories_tree": ToolIntent(
+        category="general_enquiries.product",
+        intent="Hierarchical product category tree.",
+        description="Tree structure of product categories including parent/child relationships.",
+        typical_user_questions=(
+            "Show the category tree.",
+            "I want the full product category hierarchy.",
+        ),
+    ),
+    "crm_master_product_categories_get": ToolIntent(
+        category="general_enquiries.product",
+        intent="Get one product category by id.",
+        description="Single category detail record.",
+        typical_user_questions=("Show category detail for this id.",),
+    ),
+    "crm_master_product_categories_select": ToolIntent(
+        category="general_enquiries.product",
+        intent="Categories for select controls.",
+        description="Lightweight product category list for dropdowns.",
+        typical_user_questions=("Categories for a dropdown.",),
+    ),
+    "crm_master_units_of_measure_list": ToolIntent(
+        category="general_enquiries.product",
+        intent="List units of measure (UOM).",
+        description="List UOMs used for products.",
+        typical_user_questions=(
+            "List all units of measure.",
+            "What UOMs do we support?",
+        ),
+    ),
+    "crm_master_units_of_measure_get": ToolIntent(
+        category="general_enquiries.product",
+        intent="Get one UOM by id.",
+        description="Single UOM record.",
+        typical_user_questions=("Get this UOM record.",),
+    ),
+    "crm_master_units_of_measure_select": ToolIntent(
+        category="general_enquiries.product",
+        intent="UOMs for select controls.",
+        description="Lightweight UOM list for dropdowns.",
+        typical_user_questions=("UOM options for a dropdown.",),
+    ),
+    "crm_master_product_attachments_list": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Find product attachments (brochures, datasheets, certificates) linked to a product.",
+        description=(
+            "List product↔attachment links filtered by product_id (UUID or exact product code), "
+            "attachment_id, or user_type. Use this when the user asks for product brochures, "
+            "datasheets, certificates, test reports, or installation guides tied to a SKU. "
+            "Not for global stock-list documents (use crm_resource_attachments_current_stock_list) "
+            "and not for promotion flyers (use crm_marketing_promotion_attachments_list)."
+        ),
+        typical_user_questions=(
+            "Can I get the brochure for this product?",
+            "Send me the datasheet for SKU X.",
+            "Find the technical certificate / test report for this product code.",
+            "Show attachments for this product.",
+            "Is there an installation guide document linked to this product?",
+        ),
+        aliases=("product brochures", "product datasheets"),
+    ),
+    "crm_master_product_attachments_by_product": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="All attachments for a specific product.",
+        description=(
+            "Returns every attachment linked to one product, given its UUID or product code. "
+            "Preferred when the user is asking for the full set of documents for a specific SKU."
+        ),
+        typical_user_questions=(
+            "Give me all documents for product SKU X.",
+            "List every attachment for this product code.",
+            "What marketing/technical files do we have for this specific product?",
+        ),
+    ),
+    "crm_master_product_attachments_get": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Get one product-attachment link by id.",
+        description="Single product-attachment link record.",
+        typical_user_questions=("Get this product attachment link record.",),
+    ),
+    # ==================================================================
+    # MARKETING — promotions, promotion products, promo attachments, campaigns
+    # ==================================================================
+    "crm_marketing_promotions_list": ToolIntent(
+        category="general_enquiries.promotion",
+        intent="List and search promotions by promo code, status, or type.",
+        description=(
+            "List promotion headers (summary fields and products_count only; no product lines). "
+            "Use for promotion discovery — browsing active promotions, searching by promo_code, "
+            "filtering by status or promo_type. For promotion line items / SKU coverage, use "
+            "crm_marketing_promotion_products_list or the nested products tool."
+        ),
+        typical_user_questions=(
+            "What promotions are active now?",
+            "List current Sorento promotions.",
+            "Show active promo codes.",
+            "Any promotions running this month?",
+            "Find the promotion with code MIX01.",
+        ),
+        aliases=("list promotions", "active promos"),
+    ),
+    "crm_marketing_promotions_get": ToolIntent(
+        category="general_enquiries.promotion",
+        intent="Fetch one promotion's metadata by id.",
+        description=(
+            "Get promotion metadata (name, promo_type, start/end dates, FOC tiers/groups). "
+            "Does not include product lines by default — set include_products=true only if needed."
+        ),
+        typical_user_questions=(
+            "Give me the full metadata for this promo.",
+            "Open promotion details for this id.",
+            "When does this promotion start and end?",
+        ),
+    ),
+    "crm_marketing_promotion_products_list": ToolIntent(
+        category="general_enquiries.promotion",
+        intent="Paged promotion product lines (which SKUs are under which promo).",
+        description=(
+            "Promotion product lines, paginated. REQUIRED PATTERN: set promotion_id to ONE promotion "
+            "(UUID or promo_code). Optional query filters by SKU/name/promo code. Use when the user "
+            "asks for the SKUs included in a promotion, or which promotions a product participates in."
+        ),
+        typical_user_questions=(
+            "Which products are included in promo MIX01?",
+            "List the SKUs under this promotion.",
+            "Show the item lines in this promo campaign.",
+            "Is product SKU X part of any active promotion?",
+        ),
+    ),
+    "crm_marketing_promotion_products_nested": ToolIntent(
+        category="general_enquiries.promotion",
+        intent="All product lines for one promotion, nested under the promotion id.",
+        description="Products linked to a promotion, returned nested under the promotion id.",
+        typical_user_questions=(
+            "Give me every product under this one promotion.",
+            "Show all SKUs nested under this promo.",
+        ),
+    ),
+    "crm_marketing_promotion_attachments_list": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Find promotion attachments (flyers, brochures, sales kits).",
+        description=(
+            "List promotion↔attachment links. Use for promo flyers, promotional brochures, "
+            "campaign collateral. Not for product datasheets (crm_master_product_attachments_*) "
+            "and not for global docs (crm_resource_attachments_*)."
+        ),
+        typical_user_questions=(
+            "Send me the promotion flyer for MIX01.",
+            "Do you have the promo brochure for this campaign?",
+            "I need the promotion sales kit attachment.",
+            "Attach the promotional flyer PDF.",
+        ),
+    ),
+    "crm_marketing_promotion_attachments_by_promotion": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="All attachments for one promotion.",
+        description="Fetch every attachment linked to the given promotion (UUID or promo_code).",
+        typical_user_questions=(
+            "Give me every document for this promotion.",
+            "List all attachments for promo code MIX01.",
+        ),
+    ),
+    "crm_marketing_promotion_attachments_get": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Get one promotion-attachment link by id.",
+        description="Single promotion-attachment link record.",
+        typical_user_questions=("Get this promotion attachment link record.",),
+    ),
+    "crm_marketing_campaigns_list": ToolIntent(
+        category="general_enquiries.promotion",
+        intent="List marketing campaigns.",
+        description="List marketing campaign headers.",
+        typical_user_questions=(
+            "What marketing campaigns are running?",
+            "List campaigns.",
+        ),
+    ),
+    "crm_marketing_campaigns_get": ToolIntent(
+        category="general_enquiries.promotion",
+        intent="Get one marketing campaign by id.",
+        description="Single marketing campaign record.",
+        typical_user_questions=("Open this campaign.",),
+    ),
+    "crm_marketing_campaign_types_list": ToolIntent(
+        category="general_enquiries.promotion",
+        intent="List campaign types.",
+        description="Reference list of campaign types.",
+        typical_user_questions=("List campaign types.",),
+    ),
+    "crm_marketing_campaign_types_get": ToolIntent(
+        category="general_enquiries.promotion",
+        intent="Get one campaign type by id.",
+        description="Single campaign type record.",
+        typical_user_questions=("Get this campaign type.",),
+    ),
+    # ==================================================================
+    # RESOURCE MANAGEMENT — global attachments & directories (stock list, global docs)
+    # ==================================================================
+    "crm_resource_attachments_list": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Search global file attachments by query/entity/directory.",
+        description=(
+            "List file attachments across entities with filters: free-text query, entity_type, "
+            "entity_id, directory_id, is_deleted. Use for general document search across the CRM. "
+            "For product-specific brochures prefer crm_master_product_attachments_list; for the "
+            "current stock list document prefer crm_resource_attachments_current_stock_list."
+        ),
+        typical_user_questions=(
+            "Search the document library for this keyword.",
+            "Find an uploaded file by name.",
+            "Do you have a file in the company directory called X?",
+        ),
+    ),
+    "crm_resource_attachments_current_stock_list": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Fetch the latest published Stock List document.",
+        description=(
+            "Returns the latest Stock List attachment row when configured. Use whenever the user "
+            "asks for 'the stock list', 'current stock list PDF', or 'latest price/stock list doc'."
+        ),
+        typical_user_questions=(
+            "Send me the latest stock list document.",
+            "I need the current stock list PDF.",
+            "Can you share the latest price/stock list file?",
+        ),
+        aliases=("stock list document", "latest stock list"),
+    ),
+    "crm_resource_attachments_get": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Get attachment metadata by id (includes linked entities).",
+        description="Single attachment record with linked entity references.",
+        typical_user_questions=("Show attachment metadata for this id.",),
+    ),
+    "crm_resource_attachments_download": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Download raw attachment bytes (prefer metadata or preview URL tools).",
+        description=(
+            "Downloads attachment bytes (binary; may be large). Prefer metadata or preview URL "
+            "tools for normal user-facing flows."
+        ),
+        typical_user_questions=("Download the binary contents of this attachment.",),
+    ),
+    "crm_resource_attachments_metadata": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Attachment metadata only.",
+        description="Metadata for one attachment (no entity links).",
+        typical_user_questions=("Just the metadata of this attachment.",),
+    ),
+    "crm_resource_attachments_preview_url": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Signed preview URL for an attachment.",
+        description="Returns a signed URL to preview an attachment.",
+        typical_user_questions=(
+            "Give me a preview link for this attachment.",
+            "I need a signed URL to view this file.",
+        ),
+    ),
+    "crm_resource_attachment_types_list": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="List attachment types.",
+        description="Reference list of attachment types.",
+        typical_user_questions=("List attachment types.",),
+    ),
+    "crm_resource_attachment_types_get": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Get one attachment type by id.",
+        description="Single attachment type record.",
+        typical_user_questions=("Get this attachment type.",),
+    ),
+    "crm_resource_directories_list": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="List directories under an optional parent.",
+        description="List directories under optional parent_id for folder navigation.",
+        typical_user_questions=(
+            "List folders under this parent.",
+            "Show the document directories.",
+        ),
+    ),
+    "crm_resource_directories_tree": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Directory tree, optionally trash.",
+        description="Directory tree; use deleted=true for trash tree.",
+        typical_user_questions=("Show the directory tree.",),
+    ),
+    "crm_resource_directories_get": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Get one directory by id.",
+        description="Single directory record.",
+        typical_user_questions=("Open this directory.",),
+    ),
+    # ==================================================================
+    # INVENTORY — stock balance, alerts, dashboard, ledger, batches
+    # ==================================================================
+    "crm_inventory_stock_balance_list": ToolIntent(
+        category="general_enquiries.stock",
+        intent="Current stock balance per product and warehouse (how much we have).",
+        description=(
+            "Paged stock balances with warehouse / product / quantity filters. Use for 'how much "
+            "stock do we have', 'stock availability', 'sufficient stock?', warehouse-level balance. "
+            "THIS IS NOT FOR TRANSACTION / MOVEMENT HISTORY — use crm_inventory_stock_ledger_list "
+            "for stock movement/ledger; NOT for general product catalog — use "
+            "crm_master_products_list; NOT for incoming/inbound stock — use "
+            "crm_procurement_packing_lists_list."
+        ),
+        typical_user_questions=(
+            "How much stock do we have for this SKU?",
+            "Check stock availability by warehouse for this product code.",
+            "Is there sufficient stock for 30 units of this item?",
+            "Show current on-hand balance per warehouse.",
+            "Stock quantity remaining for this product.",
+        ),
+        aliases=("stock balance", "stock on hand", "stock availability"),
+    ),
+    "crm_inventory_stock_balance_export": ToolIntent(
+        category="general_enquiries.stock",
+        intent="Export full stock balance (no pagination).",
+        description=(
+            "Export all stock-balance rows with optional filters; requires export permission "
+            "on the act-as user. Use for 'export stock balance', 'download all stock'."
+        ),
+        typical_user_questions=(
+            "Export the full stock balance.",
+            "I need a dump of all stock levels.",
+        ),
+    ),
+    "crm_inventory_stock_dashboard": ToolIntent(
+        category="general_enquiries.stock",
+        intent="Aggregated stock dashboard metrics.",
+        description="Aggregated stock dashboard: totals, KPIs, distribution.",
+        typical_user_questions=(
+            "Show the stock dashboard summary.",
+            "Give me stock KPIs and totals.",
+        ),
+    ),
+    "crm_inventory_stock_alerts": ToolIntent(
+        category="general_enquiries.stock",
+        intent="Low-stock / reorder alerts.",
+        description="Low-stock style alerts from API (items below threshold / approaching minimum).",
+        typical_user_questions=(
+            "What SKUs are low in stock?",
+            "Show reorder / low-stock alerts.",
+            "Which items are running out?",
+        ),
+    ),
+    "crm_inventory_stock_ledger_list": ToolIntent(
+        category="general_enquiries.stock_ledger",
+        intent="Stock transaction / movement history across the whole ledger.",
+        description=(
+            "Global stock ledger (inventory TRANSACTION HISTORY: IN, OUT, TRANSFER, ADJUSTMENT). "
+            "Use ONLY when the user explicitly asks for stock movements, stock history, ledger "
+            "entries, or transaction audit trail. Do NOT use for general catalog browsing, current "
+            "stock balance, or incoming shipment questions."
+        ),
+        typical_user_questions=(
+            "Show me the stock ledger transaction history.",
+            "List recent stock movements (IN / OUT / transfer / adjustment).",
+            "Audit trail of inventory transactions for this SKU.",
+            "Stock ledger entries for this warehouse.",
+        ),
+        aliases=("stock ledger", "stock transactions", "inventory movement history"),
+    ),
+    "crm_inventory_stock_ledger_by_product_warehouse": ToolIntent(
+        category="general_enquiries.stock_ledger",
+        intent="Stock ledger for one specific product in one specific warehouse.",
+        description=(
+            "Ledger (transaction history) for one product in one warehouse. Not for balance — "
+            "use crm_inventory_stock_balance_list for current on-hand quantity."
+        ),
+        typical_user_questions=(
+            "Ledger history for this product at this warehouse.",
+            "Show transactions for SKU X in warehouse Y.",
+        ),
+    ),
+    "crm_inventory_stock_batches_list": ToolIntent(
+        category="general_enquiries.stock",
+        intent="List stock batches (lot numbers) by product and warehouse.",
+        description="List stock batches (lot / batch number records) with product and warehouse filters.",
+        typical_user_questions=(
+            "List batch numbers for this SKU.",
+            "Show stock batches in this warehouse.",
+        ),
+    ),
+    "crm_inventory_stock_batches_get": ToolIntent(
+        category="general_enquiries.stock",
+        intent="Get stock batch by id.",
+        description="Single batch detail record.",
+        typical_user_questions=("Show this batch record.",),
+    ),
+    "crm_inventory_warehouses_list": ToolIntent(
+        category="general_enquiries.stock",
+        intent="List warehouses.",
+        description="List warehouse records.",
+        typical_user_questions=(
+            "What warehouses do we have?",
+            "List Sorento warehouse locations.",
+        ),
+    ),
+    "crm_inventory_warehouses_get": ToolIntent(
+        category="general_enquiries.stock",
+        intent="Get warehouse by id.",
+        description="Single warehouse record.",
+        typical_user_questions=("Open this warehouse.",),
+    ),
+    "crm_inventory_storage_zones_list": ToolIntent(
+        category="general_enquiries.stock",
+        intent="List storage zones within warehouses.",
+        description="List storage zone records with optional warehouse filter.",
+        typical_user_questions=("List storage zones in this warehouse.",),
+    ),
+    "crm_inventory_storage_zones_tree": ToolIntent(
+        category="general_enquiries.stock",
+        intent="Storage zone tree.",
+        description="Hierarchical tree of storage zones by warehouse.",
+        typical_user_questions=("Show the storage zone tree.",),
+    ),
+    "crm_inventory_storage_zones_get": ToolIntent(
+        category="general_enquiries.stock",
+        intent="Get storage zone by id.",
+        description="Single storage zone record.",
+        typical_user_questions=("Open this storage zone.",),
+    ),
+    # ==================================================================
+    # ORDER MANAGEMENT — order status, delivery, logistics, orders by product
+    # ==================================================================
+    "crm_order_management_orders_list": ToolIntent(
+        category="order_enquiries",
+        intent="Find and track customer orders by number, debtor, status, or delivery date.",
+        description=(
+            "List orders with filters (customer_id / order_status_id / has_order_lines / actual "
+            "delivery date / free-text query over order_number, debtor_code, debtor_name, customer "
+            "name/code). Use for 'order status', 'track my order', 'delivery date', 'lorry / "
+            "transporter / driver', and customer-based order searches. NOT for orders filtered by "
+            "a specific product — use crm_order_management_orders_by_product_list."
+        ),
+        typical_user_questions=(
+            "What is the status of order ORD-12345?",
+            "Track my order.",
+            "When will order ORD-2026-001 be delivered?",
+            "Show orders for customer ABC Corp / debtor code C001.",
+            "Which lorry / transporter / driver is handling this order?",
+            "List recent orders for this customer.",
+            "Any delayed orders for this account?",
+        ),
+        aliases=("order status", "order tracking", "delivery date"),
+    ),
+    "crm_order_management_orders_get": ToolIntent(
+        category="order_enquiries",
+        intent="Get one CUSTOMER SALES order by its order_number or UUID.",
+        description=(
+            "Single customer-sales order detail including order lines. Call this when the user gives "
+            "a CODE that the resolver has identified as entity_type=customer_order (e.g. RF2601-025, "
+            "ORD-2026-001). Pass the canonical_code from the Resolved references block as "
+            "`order_id`; the endpoint accepts either a UUID or an order_number. Do NOT call this "
+            "tool with product codes, shipment numbers, SPO numbers, or GRN numbers — use the "
+            "corresponding tool for those entity types instead."
+        ),
+        typical_user_questions=(
+            "When is order RF2601-025 delivered?",
+            "What is the status of order ORD-2026-001?",
+            "Open this order and show its line items.",
+            "Full order detail with lines.",
+            "Who is the customer for this order?",
+        ),
+        aliases=("order detail", "order status by number", "track this order number"),
+    ),
+    "crm_order_management_orders_by_product_list": ToolIntent(
+        category="order_enquiries",
+        intent="Find CUSTOMER SALES orders that contain a specific PRODUCT (outgoing / sold, NOT incoming stock).",
+        description=(
+            "Distinct CUSTOMER SALES orders matched by product. Call this ONLY when the resolver has "
+            "classified the code as entity_type=product AND the user is asking who bought / which "
+            "sales orders contain this product. Pass the canonical_code (product_code / SKU) as "
+            "`product_id`. This is about OUTGOING orders sold to customers — it is NOT about "
+            "incoming stock, inbound shipments, SPO, PO, GRN, or procurement. For 'any incoming for "
+            "product X' / 'when is product X arriving' use crm_incoming_stock_by_product. For a "
+            "single order lookup by order_number, use crm_order_management_orders_get."
+        ),
+        typical_user_questions=(
+            "Which customers bought / ordered this product?",
+            "Pending customer sales orders containing this product.",
+            "Sales orders / outgoing orders for this SKU.",
+            "Delayed customer deliveries for this product.",
+        ),
+        aliases=("customer orders by product", "sales orders with a product", "who bought this SKU"),
+    ),
+    # ==================================================================
+    # INCOMING STOCK — user-facing tools (redacted, business-rule compliant).
+    # These are the PRIMARY tools for user enquiries about incoming stock. They hide
+    # received/rejected quantities, SPO numbers, internal IDs; they compute
+    # remaining_incoming_quantity and warehouse allocation summaries.
+    # See: agent-prompt/next_agents/incoming_stock_enquiries.txt
+    # ==================================================================
+    "crm_incoming_stock_by_product": ToolIntent(
+        category="general_enquiries.incoming_stock",
+        intent="ONE-SHOT answer for 'any incoming for product X / SKU X' \u2014 returns pending quantity, warehouse allocations, per-shipment breakdown, ETA, and packing-list attachment in a single call.",
+        description=(
+            "ONE-SHOT tool for ALL product-centric incoming-stock questions. A single call returns "
+            "everything the user needs: (1) total_remaining_incoming_quantity computed as "
+            "quantity_shipped - quantity_received across still-incoming lines (fully-received lines "
+            "are auto-filtered out); (2) warehouse_allocation_summary aggregated per warehouse from "
+            "SPO allocations \u2014 each entry has warehouse_code, warehouse_name, and allocated_quantity; "
+            "(3) per-shipment breakdown with shipment_number, shipping_container_number, ETA, "
+            "batch_number, remaining_incoming_quantity, packing-list attachment, and that "
+            "shipment's warehouse_allocations; (4) nearest estimated_arrival_date. Do NOT also "
+            "call crm_incoming_stock_shipments, crm_incoming_stock_shipment_products, "
+            "crm_incoming_stock_shipment_attachment, or crm_incoming_stock_grn when answering a "
+            "product-incoming question \u2014 this tool already includes all of their data. Never "
+            "exposes received / rejected quantities, SPO numbers, or internal IDs. Accepts "
+            "`product_id` (UUID or product_code / SKU) or a free-text `query`."
+        ),
+        typical_user_questions=(
+            "Any incoming for this product / SKU?",
+            "How much is pending / still coming for this SKU?",
+            "Give me the packing list and ETA for this incoming product.",
+            "Which warehouses is this incoming stock allocated to and how many to each?",
+            "When is this SKU arriving?",
+            "Where will this product be stocked when it arrives?",
+        ),
+        aliases=(
+            "incoming for a product",
+            "pending incoming stock for product",
+            "arrival summary for SKU",
+            "packing list for this product",
+            "warehouse allocation for incoming product",
+        ),
+    ),
+    "crm_incoming_stock_shipments": ToolIntent(
+        category="general_enquiries.incoming_stock",
+        intent="SHIPMENT-level summaries (not product-level): 'any incoming shipments?' / 'what is arriving this month?'.",
+        description=(
+            "Use ONLY for SHIPMENT-CENTRIC questions where the user has a shipment / container "
+            "number or asks about shipments in aggregate. Do NOT use this for 'any incoming for "
+            "product X' \u2014 use crm_incoming_stock_by_product, which already includes per-shipment "
+            "breakdown. Returns shipment headers (shipment_number, shipping_container_number, "
+            "estimated_arrival_date, total_remaining_incoming_quantity, distinct_products_incoming, "
+            "packing-list attachment). Filters by `query` (shipment_number / container / BOL / "
+            "invoice) and ETA range. Does NOT surface received quantities or internal IDs."
+        ),
+        typical_user_questions=(
+            "Any incoming shipments right now?",
+            "What is arriving this month?",
+            "Tell me about shipment FJ24041192.",
+            "Check container MSCU5475129.",
+            "List packing lists still in transit.",
+        ),
+        aliases=(
+            "incoming shipments",
+            "inbound shipments overview",
+            "pending packing lists",
+            "arriving containers",
+        ),
+    ),
+    "crm_incoming_stock_shipment_products": ToolIntent(
+        category="general_enquiries.incoming_stock",
+        intent="List still-incoming products on ONE shipment identified by shipment number / container \u2014 not for product-centric questions.",
+        description=(
+            "Use ONLY when the user has a SHIPMENT NUMBER / container and asks 'what products are "
+            "on this shipment?'. Do NOT use for 'any incoming for product X' \u2014 use "
+            "crm_incoming_stock_by_product instead. Returns still-incoming products on the "
+            "shipment (product_code, product_name, batch_number, remaining_incoming_quantity, "
+            "per-product warehouse allocation) plus shipment header and packing-list attachment. "
+            "Received / rejected data is hidden. `shipment_id` accepts UUID or any business "
+            "reference (shipment_number, container, BOL, invoice)."
+        ),
+        typical_user_questions=(
+            "What products are still incoming on this shipment?",
+            "Show me the incoming products in this packing list / container.",
+            "Does shipment FJ24041192 contain SKU ABC?",
+        ),
+        aliases=(
+            "products incoming on shipment",
+            "still-incoming items in packing list",
+            "shipment incoming line items",
+        ),
+    ),
+    "crm_incoming_stock_shipment_attachment": ToolIntent(
+        category="general_enquiries.incoming_stock",
+        intent="Fetch the packing-list file for ONE shipment identified by shipment number / container \u2014 not for product questions.",
+        description=(
+            "Use ONLY when the user EXPLICITLY asks for the packing-list file / shipment document "
+            "for a specific SHIPMENT (by shipment_number, container, BOL, or invoice). Do NOT use "
+            "this for product questions \u2014 crm_incoming_stock_by_product already includes the "
+            "per-shipment attachment in its response. Returns filename, file_path (URL), and "
+            "mime_type, or null if no attachment."
+        ),
+        typical_user_questions=(
+            "Can I have the packing list file for shipment FJ24041192?",
+            "Send me the shipment document for this container.",
+            "Download the packing list for MSCU5475129.",
+        ),
+        aliases=(
+            "packing list file for shipment",
+            "shipment attachment file",
+            "packing list download",
+        ),
+    ),
+    "crm_incoming_stock_grn": ToolIntent(
+        category="general_enquiries.incoming_stock",
+        intent="Look up GRN (goods received note) records only when the user EXPLICITLY asks about GRNs.",
+        description=(
+            "Use ONLY when the user EXPLICITLY mentions GRN / goods received note / receipt "
+            "document / 'has a GRN been created?'. Do NOT use this for 'any incoming for product "
+            "X' questions \u2014 those are about stock still coming, not stock already received, and "
+            "crm_incoming_stock_by_product handles them in one call. Returns minimal GRN info "
+            "(grn_number, grn_date, grn_status, shipment_number). NO quantities, NO received / "
+            "rejected / discrepancy counts, NO SPO numbers. Requires `shipment_id` or `product_id` "
+            "(each accepts UUID or business code)."
+        ),
+        typical_user_questions=(
+            "Has a GRN been created for this shipment?",
+            "Show me the goods received note for this packing list.",
+            "Is there a receipt document for this container?",
+        ),
+        aliases=("GRN enquiry", "goods received note status", "receipt document lookup"),
+    ),
+    # ==================================================================
+    # PROCUREMENT — ADMIN / INTERNAL raw data (do NOT use for user enquiries).
+    # These expose received/rejected quantities, SPO numbers, internal IDs. Kept
+    # for back-office operations only. Category `internal_admin.procurement` keeps
+    # them out of user-question retrieval.
+    # ==================================================================
+    "crm_procurement_packing_lists_list": ToolIntent(
+        category="internal_admin.procurement",
+        intent="ADMIN ONLY — raw packing list / inbound shipment headers with received quantity data.",
+        description=(
+            "Raw inbound shipment headers including received quantities, SPO allocation counts, "
+            "and internal IDs. For user-facing 'any incoming shipments?' use "
+            "crm_incoming_stock_shipments instead. Restricted to admin / back-office use."
+        ),
+        typical_user_questions=(
+            "Admin: raw packing list headers with totals.",
+            "Back-office: full shipment list with received counts.",
+        ),
+        aliases=("admin raw packing lists",),
+    ),
+    "crm_procurement_packing_lists_get": ToolIntent(
+        category="internal_admin.procurement",
+        intent="ADMIN ONLY — raw inbound shipment detail with received quantities, SPO allocations, and linked GRNs.",
+        description=(
+            "Raw shipment detail including quantity_received, SPO allocations, linked GRNs and "
+            "internal IDs. For user-facing 'products still incoming on this shipment' use "
+            "crm_incoming_stock_shipment_products instead."
+        ),
+        typical_user_questions=(
+            "Admin: open raw packing list with received counts.",
+            "Back-office: full SPO/GRN context for a shipment.",
+        ),
+        aliases=("admin raw packing list detail",),
+    ),
+    "crm_procurement_spo_allocations_grouped_by_shipment": ToolIntent(
+        category="internal_admin.procurement",
+        intent="ADMIN ONLY — raw SPO allocation aggregates per shipment.",
+        description=(
+            "Raw SPO allocation summaries grouped by shipment including receipt_status. For user-"
+            "facing 'any incoming for product X' use crm_incoming_stock_by_product instead."
+        ),
+        typical_user_questions=("Admin: raw SPO aggregates grouped by shipment.",),
+        aliases=("admin raw spo by shipment",),
+    ),
+    "crm_procurement_spo_allocations_grouped_by_spo": ToolIntent(
+        category="internal_admin.procurement",
+        intent="ADMIN ONLY — SPO allocations grouped by SPO number.",
+        description="Raw SPO allocation groups by SPO number. Admin / back-office use only.",
+        typical_user_questions=("Admin: group raw allocations by SPO number.",),
+        aliases=("admin raw spo by number",),
+    ),
+    "crm_procurement_spo_allocations_list": ToolIntent(
+        category="internal_admin.procurement",
+        intent="ADMIN ONLY — flat list of raw SPO allocation rows with receipt_status and received/rejected quantities.",
+        description=(
+            "Raw SPO allocation rows exposing spo_number, allocated_quantity, quantity_received, "
+            "quantity_rejected, receipt_status. For user-facing incoming-stock enquiries use the "
+            "crm_incoming_stock_* tools."
+        ),
+        typical_user_questions=("Admin: raw SPO allocation rows with receipt data.",),
+        aliases=("admin raw spo allocations",),
+    ),
+    "crm_procurement_spo_allocations_get": ToolIntent(
+        category="internal_admin.procurement",
+        intent="ADMIN ONLY — single raw SPO allocation with linked GRNs and receipt fields.",
+        description="Raw SPO allocation detail. Admin / back-office use only.",
+        typical_user_questions=("Admin: open one raw SPO allocation with GRN context.",),
+        aliases=("admin raw spo detail",),
+    ),
+    "crm_procurement_grn_list": ToolIntent(
+        category="internal_admin.procurement",
+        intent="ADMIN ONLY — raw GRN / picking header list with statuses and totals.",
+        description=(
+            "Raw GRN / picking headers with picking_status, inspection_status, totals. For user-"
+            "facing 'has a GRN been created?' use crm_incoming_stock_grn instead."
+        ),
+        typical_user_questions=("Admin: raw GRN list with totals.",),
+        aliases=("admin raw GRN list",),
+    ),
+    "crm_procurement_grn_get": ToolIntent(
+        category="internal_admin.procurement",
+        intent="ADMIN ONLY — full raw GRN detail including picking lines and quantities.",
+        description="Raw GRN with picking lines, quantity_expected, quantity_picked. Admin only.",
+        typical_user_questions=("Admin: open one GRN with picking lines.",),
+        aliases=("admin raw GRN detail",),
+    ),
+    "crm_procurement_picking_lines_list": ToolIntent(
+        category="internal_admin.procurement",
+        intent="ADMIN ONLY — raw picking (receipt) lines with quantities and discrepancies.",
+        description="Raw picking lines. Admin / back-office use only.",
+        typical_user_questions=("Admin: raw picking / receipt lines.",),
+        aliases=("admin raw picking lines",),
+    ),
+    # ==================================================================
+    # FORMS (marketing agent — application form lookup)
+    # ==================================================================
+    "crm_forms_management_forms_list": ToolIntent(
+        category="marketing_agent.form_lookup",
+        intent="Find application / marketing forms (flower stand, sponsorship, exhibition, renovation).",
+        description=(
+            "List legacy application forms with query + language + status filters. Use for "
+            "'flower stand form', 'sponsorship form', 'exhibition form', 'renovation form in "
+            "Chinese'. Returns forms that can be attached via their attachment_id."
+        ),
+        typical_user_questions=(
+            "What forms do you have?",
+            "Show me the sponsorship application form.",
+            "Do you have an exhibition form?",
+            "Flower stand application form.",
+            "Annual dinner sponsorship form in English / Chinese / Malay.",
+            "Renovation form I can download.",
+        ),
+        aliases=("application form", "sponsorship form lookup", "flower stand form"),
+    ),
+    "crm_forms_management_forms_get": ToolIntent(
+        category="marketing_agent.form_lookup",
+        intent="Get one legacy form by id.",
+        description="Single legacy form record.",
+        typical_user_questions=("Open this legacy form by id.",),
+    ),
+    "crm_workflow_forms_definitions_list": ToolIntent(
+        category="marketing_agent.form_lookup",
+        intent="List workflow form definitions.",
+        description=(
+            "List workflow form definitions. Use q for search (alias `query` is also accepted and "
+            "mapped to q). Different from legacy forms — these drive workflow submissions."
+        ),
+        typical_user_questions=(
+            "List workflow form definitions.",
+            "What workflow forms are available?",
+            "Search workflow form templates by keyword.",
+        ),
+    ),
+    "crm_workflow_forms_definitions_published_for_submission": ToolIntent(
+        category="marketing_agent.form_lookup",
+        intent="List workflow forms currently published for user submission.",
+        description="Published workflow form definitions visible to submitters.",
+        typical_user_questions=(
+            "What workflow forms can I submit right now?",
+            "List active forms I'm allowed to submit.",
+        ),
+    ),
+    "crm_workflow_forms_definitions_get": ToolIntent(
+        category="marketing_agent.form_lookup",
+        intent="Get a workflow form definition by id.",
+        description="Single workflow form definition record.",
+        typical_user_questions=("Open this workflow form definition.",),
+    ),
+    "crm_workflow_forms_definitions_preview": ToolIntent(
+        category="marketing_agent.form_lookup",
+        intent="Preview a workflow form schema (draft or published).",
+        description="Preview draft or published workflow form schema (source=draft|published).",
+        typical_user_questions=(
+            "Preview this workflow form schema.",
+            "Show me the draft version of this workflow form.",
+        ),
+    ),
+    "crm_workflow_forms_definitions_published_schema": ToolIntent(
+        category="marketing_agent.form_lookup",
+        intent="Published schema for a workflow form (for building submissions).",
+        description="Published workflow form schema used to construct submissions.",
+        typical_user_questions=("Published schema to build a submission for this form.",),
+    ),
+    "crm_workflow_forms_definitions_flow_graph": ToolIntent(
+        category="marketing_agent.form_lookup",
+        intent="Flow graph of a workflow form definition.",
+        description="Flow graph nodes/edges for a workflow form definition.",
+        typical_user_questions=("Show the workflow flow graph.",),
+    ),
+    "crm_workflow_forms_submissions_list": ToolIntent(
+        category="marketing_agent.form_lookup",
+        intent="List workflow form submissions.",
+        description="List workflow submissions with definition_id / state_code filters.",
+        typical_user_questions=(
+            "List workflow submissions.",
+            "Show submissions for this workflow form.",
+        ),
+    ),
+    "crm_workflow_forms_submissions_get": ToolIntent(
+        category="marketing_agent.form_lookup",
+        intent="Get a workflow form submission by id (with lines/logs).",
+        description="Workflow submission detail including lines and logs.",
+        typical_user_questions=("Open this workflow submission.",),
+    ),
+    "crm_workflow_forms_submissions_allowed_transitions": ToolIntent(
+        category="marketing_agent.form_lookup",
+        intent="Allowed workflow transitions for a submission.",
+        description="Allowed transitions for a submission for the current act-as user.",
+        typical_user_questions=("What transitions can I do on this workflow submission?",),
+    ),
+    # ==================================================================
+    # FORM SUBMISSIONS — stock inquiry (purchasing escalation)
+    # ==================================================================
+    "crm_forms_stock_inquiries_submit": ToolIntent(
+        category="stock_inquiries.form_submission",
+        intent="Create or resubmit a Stock Inquiry to the purchasing team.",
+        description=(
+            "POST /api/v1/external/stock-inquiries/ with payload_json. Use when the user wants to "
+            "submit a NEW stock inquiry to purchasing (product, salesperson, item description, "
+            "project customer, project name, quantity, delivery date), or resubmit an updated "
+            "rejected stock inquiry. This is a WRITE action — only call after the user confirms. "
+            "Not for listing / viewing existing stock inquiries (use the list / get tools)."
+        ),
+        typical_user_questions=(
+            "Submit a new stock inquiry to purchasing.",
+            "Create stock inquiry for 50 units of SKU X by 15/05/2026.",
+            "Send this stock inquiry with project customer ABC and project Tower B.",
+            "File a stock inquiry for purchasing team review.",
+            "Resubmit my rejected stock inquiry with the updated quantity.",
+        ),
+        aliases=("create stock inquiry", "submit stock inquiry", "resubmit stock inquiry"),
+    ),
+    "crm_forms_stock_inquiries_list": ToolIntent(
+        category="stock_inquiries.form_submission",
+        intent="List the current user's Stock Inquiry submissions.",
+        description=(
+            "List stock inquiries for the authenticated scope with pagination and query. Use for "
+            "'show my stock inquiries', 'list my rejected stock inquiries', 'pending stock "
+            "inquiries this month'. Not for submitting — use crm_forms_stock_inquiries_submit."
+        ),
+        typical_user_questions=(
+            "Show my stock inquiries.",
+            "List my rejected stock inquiries.",
+            "Pending stock inquiries under my account.",
+            "Show the last 5 stock inquiries I submitted.",
+            "Find my stock inquiries for project Sunway.",
+        ),
+        aliases=("list my stock inquiries", "my stock inquiry list"),
+    ),
+    "crm_forms_stock_inquiries_get": ToolIntent(
+        category="stock_inquiries.form_submission",
+        intent="View one Stock Inquiry submission (for VIEW or prepare UPDATE).",
+        description=(
+            "Get one stock inquiry by inquiry_id for view-only summary or to preload an update flow "
+            "for a REJECTED stock inquiry. Not for submit — use crm_forms_stock_inquiries_submit."
+        ),
+        typical_user_questions=(
+            "Show details for stock inquiry SI-2026-00123.",
+            "Open my stock inquiry with this inquiry number.",
+            "Load this rejected stock inquiry so I can edit it.",
+            "View the full summary of this stock inquiry.",
+        ),
+    ),
+    # ==================================================================
+    # FORM SUBMISSIONS — purchase request / sponsorship form
+    # ==================================================================
+    "crm_forms_purchase_requests_submit": ToolIntent(
+        category="purchase_request.form_submission",
+        intent="Create or update a Purchase Request OR Sponsorship Form submission.",
+        description=(
+            "POST /api/v1/external/purchase-requests/ with payload_json. One tool handles BOTH "
+            "request_type='purchase_request' AND request_type='sponsorship_form' creation, plus "
+            "updates to rejected requests before resubmission. WRITE action — only call after "
+            "the user confirms the summary. Not for listing / viewing — use list / get tools."
+        ),
+        typical_user_questions=(
+            "Create a purchase request for customer Alpha with three items.",
+            "Submit a new sponsorship form for our dealer launch event.",
+            "File a purchase request with these product lines and expected delivery date.",
+            "Submit a sponsorship form under my name with this subject.",
+            "Resubmit my rejected purchase request with the updated quantities.",
+            "Update rejected sponsorship form and submit again.",
+        ),
+        aliases=(
+            "create purchase request",
+            "submit purchase request",
+            "create sponsorship form",
+            "submit sponsorship form",
+            "update rejected purchase request",
+            "update rejected sponsorship form",
+        ),
+    ),
+    "crm_forms_purchase_requests_list": ToolIntent(
+        category="purchase_request.form_submission",
+        intent="List my purchase requests AND sponsorship forms with filters.",
+        description=(
+            "List purchase requests + sponsorship forms for the authenticated user. Supports "
+            "request_type (purchase_request / sponsorship_form), approval_status, free-text query, "
+            "and pagination. Use for 'list my requests', 'show my rejected sponsorship forms', "
+            "'pending requests this month'."
+        ),
+        typical_user_questions=(
+            "List my latest purchase requests.",
+            "Show my rejected sponsorship forms.",
+            "Pending purchase requests this month.",
+            "Find my requests for customer Horizon Group.",
+            "Show the last 5 purchase requests / sponsorship forms I submitted.",
+        ),
+        aliases=("list my purchase requests", "list my sponsorship forms"),
+    ),
+    "crm_forms_purchase_requests_get": ToolIntent(
+        category="purchase_request.form_submission",
+        intent="View ONE purchase request or sponsorship form in detail.",
+        description=(
+            "Get one purchase request or sponsorship form by request_id for a view-only summary "
+            "(header + lines) or to preload an update flow for a REJECTED request."
+        ),
+        typical_user_questions=(
+            "Show details for request PR-2026-00231.",
+            "Open sponsorship request SF-2026-00019.",
+            "View the full summary of this purchase request.",
+            "Load this rejected sponsorship form so I can edit it.",
+        ),
+    ),
+    # ==================================================================
+    # FORM SUBMISSIONS — complaint + entity attachments
+    # ==================================================================
+    "crm_forms_complaints_submit": ToolIntent(
+        category="complaint.form_submission",
+        intent="File a customer complaint about a delivered order (after DO identification).",
+        description=(
+            "POST /api/v1/complaints-management/complaints/ with payload_json. Use after the "
+            "user has identified the delivery order(s) and captured complaint details (complaint "
+            "type, defect description, product code, quantity, customer contact). WRITE action — "
+            "only call after the user confirms. Attachments (photos/videos) are linked via "
+            "crm_forms_entity_attachments_link."
+        ),
+        typical_user_questions=(
+            "File a complaint for delivery order DO-500123.",
+            "Submit this complaint with cracked basin defect.",
+            "Record this complaint about damaged product on my order.",
+            "Create a complaint case after I confirm the summary.",
+            "Log this customer complaint for the selected delivery orders.",
+        ),
+        aliases=("create complaint", "submit complaint", "file complaint"),
+    ),
+    "crm_forms_entity_attachments_link": ToolIntent(
+        category="complaint.form_submission",
+        intent="Attach photos/videos/files to a complaint, stock inquiry, or purchase request.",
+        description=(
+            "POST /api/v1/external/entity-attachments/ to create and link an attachment to an "
+            "entity (complaint / stock_inquiry / purchase_request). Use AFTER the parent "
+            "submission is confirmed — e.g. after a complaint is filed, to attach defect photos "
+            "or videos. Not for browsing existing attachments — use crm_resource_attachments_* "
+            "or crm_master_product_attachments_* instead."
+        ),
+        typical_user_questions=(
+            "Attach these photos to my confirmed complaint.",
+            "Upload a defect video to this complaint case.",
+            "Link this file to my stock inquiry submission.",
+            "Add supporting attachments to my purchase request.",
+            "Send these images as evidence for my complaint.",
+        ),
+        aliases=("attach file to complaint", "upload complaint evidence", "link attachment to submission"),
+    ),
+    # ==================================================================
+    # SLA MANAGEMENT — internal tooling
+    # ==================================================================
+    "crm_sla_policies_list": ToolIntent(
+        category="sla_management",
+        intent="List SLA policies.",
+        description="List SLA policies with filters.",
+        typical_user_questions=("List SLA policies.",),
+    ),
+    "crm_sla_policies_get": ToolIntent(
+        category="sla_management",
+        intent="Get one SLA policy.",
+        description="Single SLA policy record.",
+        typical_user_questions=("Open this SLA policy.",),
+    ),
+    "crm_sla_policies_tiers": ToolIntent(
+        category="sla_management",
+        intent="Tiers for an SLA policy.",
+        description="SLA policy tiers.",
+        typical_user_questions=("Show tiers for this SLA policy.",),
+    ),
+    "crm_sla_conversation_tracking_dashboard": ToolIntent(
+        category="sla_management",
+        intent="SLA conversation tracking dashboard metrics.",
+        description="Aggregated SLA tracking dashboard metrics.",
+        typical_user_questions=("Show the SLA tracking dashboard.",),
+    ),
+    "crm_sla_conversation_tracking_list": ToolIntent(
+        category="sla_management",
+        intent="List conversation SLA tracking rows.",
+        description="List SLA conversation tracking rows with filters.",
+        typical_user_questions=("List SLA conversation tracking rows.",),
+    ),
+    "crm_sla_conversation_tracking_get": ToolIntent(
+        category="sla_management",
+        intent="Get one SLA conversation tracking record.",
+        description="Single SLA conversation tracking record.",
+        typical_user_questions=("Open this SLA tracking record.",),
+    ),
+    "crm_sla_conversation_event_logs_list": ToolIntent(
+        category="sla_management",
+        intent="List SLA event logs.",
+        description="SLA event logs with filters.",
+        typical_user_questions=("List SLA event logs.",),
+    ),
+}
+
+
+def _tool_aliases_from_name(tool_name: str) -> list[str]:
+    base = re.sub(r"^crm_", "", tool_name)
+    spaced = base.replace("_", " ").strip()
+    parts = [p for p in base.split("_") if p]
+    phrases: list[str] = [spaced]
+    if len(parts) >= 2:
+        phrases.append(" ".join(parts[:2]))
+    if len(parts) >= 3:
+        phrases.append(" ".join(parts[-2:]))
+    return list(dict.fromkeys(phrases))
+
+
 def _extract_category(tool_name: str) -> str:
+    intent = TOOL_INTENTS.get(tool_name)
+    if intent:
+        return intent.category
     parts = tool_name.split("_")
     if len(parts) >= 3 and parts[0] == "crm":
         return parts[1]
     return "general"
-
-
-def _question_templates(name: str, description: str) -> list[str]:
-    base = name.replace("crm_", "").replace("_", " ")
-    return [
-        f"When should I use {name}?",
-        f"Which tool helps me to {base}?",
-        description[:180],
-    ]
 
 
 def _parse_required_query_hints(description: str) -> list[str]:
@@ -51,11 +1233,6 @@ def _parse_required_query_hints(description: str) -> list[str]:
     if "required pattern" in lowered and "promotion_id" in lowered:
         hints.append("promotion_id")
     return hints
-
-
-def _definitions_path_from_repo() -> Path:
-    repo_root = Path(__file__).resolve().parents[3]
-    return repo_root / "sorento_crm_backend" / "app" / "data" / "tool_rag_definitions.json"
 
 
 def load_tool_definitions(definitions_file: str | None = None) -> list[ToolDefinition]:
@@ -87,7 +1264,6 @@ def load_tool_definitions(definitions_file: str | None = None) -> list[ToolDefin
 
 
 def _load_catalog_specs():
-    # Ensure sibling package is importable when executing from backend app path.
     repo_root = Path(__file__).resolve().parents[3]
     mcp_root = repo_root / "sorento_crm_mcp"
     if str(mcp_root) not in sys.path:
@@ -97,18 +1273,43 @@ def _load_catalog_specs():
     return CATALOG
 
 
+def _intent_for(tool_name: str) -> ToolIntent | None:
+    return TOOL_INTENTS.get(tool_name)
+
+
+def _fallback_intent(tool_name: str, path: str, required_params: list[str], optional_params: list[str]) -> ToolIntent:
+    base_required = ", ".join(required_params) if required_params else "none"
+    base_optional = ", ".join(optional_params) if optional_params else "none"
+    return ToolIntent(
+        category=_extract_category(tool_name),
+        intent=f"Call {tool_name} to access {path}.",
+        description=(
+            f"Call {tool_name} to fetch CRM data from {path}. Required params: [{base_required}]. "
+            f"Optional params: [{base_optional}]."
+        ),
+        typical_user_questions=(
+            f"Use {tool_name} for this request.",
+            "Fetch CRM data relevant to this query.",
+            "Retrieve records from this endpoint.",
+        ),
+        aliases=tuple(_tool_aliases_from_name(tool_name)),
+    )
+
+
 def build_capability_documents(include_planned: bool = True, definitions_file: str | None = None) -> list[CapabilityDoc]:
     docs: list[CapabilityDoc] = []
     from_file = load_tool_definitions(definitions_file)
     if from_file:
         for td in from_file:
             category = td.category or _extract_category(td.tool_name)
+            aliases = _tool_aliases_from_name(td.tool_name)
             body_text = (
                 f"Tool Name: {td.tool_name}\n"
                 f"Category: {category}\n"
-                f"Description: {td.description}\n"
+                f"Intent: {td.description}\n"
                 f"Required Fields: {', '.join(td.required_fields or []) if td.required_fields else 'none'}\n"
                 f"Optional Fields: {', '.join(td.optional_fields or []) if td.optional_fields else 'none'}\n"
+                f"Aliases: {', '.join(aliases)}\n"
             )
             docs.append(
                 CapabilityDoc(
@@ -123,7 +1324,7 @@ def build_capability_documents(include_planned: bool = True, definitions_file: s
                         "optional_params": [],
                         "required_fields": td.required_fields or [],
                         "optional_fields": td.optional_fields or [],
-                        "aliases": [td.tool_name.replace("_", " ")],
+                        "aliases": aliases,
                         "typical_user_questions": td.typical_user_questions,
                         "implementation_status": td.implementation_status,
                         "tool_type": "tool_rag_definition",
@@ -136,15 +1337,22 @@ def build_capability_documents(include_planned: bool = True, definitions_file: s
         required_params = [*spec.path_params]
         optional_params = [*spec.query_params]
         required_params.extend(_parse_required_query_hints(spec.description))
-        category = _extract_category(spec.name)
-        user_facing_description, user_questions = _prompt_aligned_tool_summary(spec.name, spec.path, required_params, optional_params)
+        intent = _intent_for(spec.name) or _fallback_intent(spec.name, spec.path, required_params, optional_params)
+        category = intent.category
+        aliases = list(intent.aliases) + _tool_aliases_from_name(spec.name)
+        aliases = list(dict.fromkeys(aliases))
         body_text = (
             f"Tool Name: {spec.name}\n"
             f"Category: {category}\n"
-            f"Description: {user_facing_description}\n"
+            f"Intent: {intent.intent}\n"
+            f"Description: {intent.description}\n"
+            f"Tool Spec: {spec.description}\n"
+            f"Method: {spec.method}\n"
             f"Path: {spec.path}\n"
             f"Required Params: {', '.join(required_params) if required_params else 'none'}\n"
             f"Optional Params: {', '.join(optional_params) if optional_params else 'none'}\n"
+            f"Body Params: {', '.join(spec.body_params) if spec.body_params else 'none'}\n"
+            f"Aliases: {', '.join(aliases)}\n"
         )
         docs.append(
             CapabilityDoc(
@@ -157,11 +1365,14 @@ def build_capability_documents(include_planned: bool = True, definitions_file: s
                     "category": category,
                     "required_params": required_params,
                     "optional_params": optional_params,
-                    "aliases": [re.sub(r"^crm_", "", spec.name).replace("_", " ")],
-                    "typical_user_questions": user_questions,
+                    "aliases": aliases,
+                    "typical_user_questions": list(intent.typical_user_questions),
                     "implementation_status": "implemented",
-                    "tool_type": "enquiry",
+                    "tool_type": _tool_type_for_category(category),
                     "api_path": spec.path,
+                    "method": spec.method,
+                    "body_params": list(spec.body_params),
+                    "when_to_use": intent.intent,
                 },
             )
         )
@@ -171,202 +1382,59 @@ def build_capability_documents(include_planned: bool = True, definitions_file: s
     return docs
 
 
-def _prompt_aligned_tool_summary(
-    tool_name: str,
-    path: str,
-    required_params: list[str],
-    optional_params: list[str],
-) -> tuple[str, list[str]]:
-    # Correlate descriptions to legacy next_agents intent language:
-    # product/promotion/attachment/stock/lead_time/incoming/order/forms/workflow.
-    if "products_get" in tool_name:
-        return (
-            "Fetch full product details by product_id for product information requests, including code, name, description, brand/category relations, and pricing fields returned by the API.",
-            [
-                "Show me details for this product id",
-                "I need full product information for this item",
-                "Open this product record and show all fields",
-                "Can you retrieve this product profile?",
-                "Get product details for this SKU id mapping",
-            ],
-        )
-    if "products_list" in tool_name:
-        return (
-            "Search and list products using query/category/brand/status filters for catalog discovery questions such as bathtubs, sinks, faucets, toilets, furniture, and accessories.",
-            [
-                "Do you sell matte black kitchen sinks?",
-                "List products matching this keyword",
-                "Show available products in this category",
-                "Find products by brand and status",
-                "Search catalog items for this product type",
-            ],
-        )
-    if "promotions_list" in tool_name or "promotions_get" in tool_name or "promotion_products" in tool_name:
-        return (
-            "Retrieve promotion details and linked product lines for promo-code or product-promotion enquiries, including active windows and promo item coverage.",
-            [
-                "What is included in this promo code?",
-                "Show active promotions for this product",
-                "List products under this promotion",
-                "Get promotion details and dates",
-                "Find promo lines for this campaign",
-            ],
-        )
-    if "attachments" in tool_name or "directories" in tool_name:
-        return (
-            "Retrieve attachment metadata, file references, and linked entities for brochure, flyer, certificate, datasheet, and stock-list document requests.",
-            [
-                "Can I get the brochure for this product?",
-                "Show attachments for this promotion",
-                "Find the technical datasheet for this item",
-                "Retrieve the latest stock list document",
-                "Get attachment metadata for this file",
-            ],
-        )
-    if "stock_balance" in tool_name or "stock_ledger" in tool_name or "stock_batches" in tool_name or "stock_alerts" in tool_name:
-        return (
-            "Return stock availability and inventory movement data by product and warehouse for stock-balance and sufficiency checks.",
-            [
-                "Do you have stock for this SKU?",
-                "How many units are available by warehouse?",
-                "Check inventory balance for this product",
-                "Show stock movement for this item",
-                "Find current stock quantity for this product",
-            ],
-        )
-    if "packing_lists" in tool_name or "spo_allocations" in tool_name or "grn" in tool_name or "picking_lines" in tool_name:
-        return (
-            "Retrieve inbound shipment, SPO allocation, and GRN context for incoming-stock questions such as outstanding quantity, ETA, and shipment references.",
-            [
-                "Any incoming stock for this product?",
-                "Track this inbound shipment number",
-                "Show SPO allocation for this SKU",
-                "What is the GRN status for this shipment?",
-                "List inbound lines still pending receipt",
-            ],
-        )
-    if "orders_" in tool_name:
-        return (
-            "Retrieve order and order-product relationships for delivery status, customer order listing, and product-in-order queries.",
-            [
-                "Track status for this order number",
-                "List customer orders and statuses",
-                "Find orders containing this product",
-                "Show recent orders for this account",
-                "Get order details for this order id",
-            ],
-        )
-    if "forms_management_forms" in tool_name or "workflow_forms_definitions" in tool_name or "workflow_forms_submissions" in tool_name:
-        return (
-            "Retrieve form definitions and submission states for marketing/purchase/sponsorship workflow discovery and follow-up checks.",
-            [
-                "Show active forms I can submit",
-                "Search forms for sponsorship",
-                "Get this workflow form definition",
-                "List submissions for this form",
-                "What transitions are allowed for this submission?",
-            ],
-        )
-    if "sla_" in tool_name:
-        return (
-            "Retrieve SLA policy and conversation-tracking metrics for escalation and SLA status monitoring.",
-            [
-                "Show SLA tracking for this conversation",
-                "List active SLA policies",
-                "Get SLA event logs for this tracking id",
-                "Open SLA dashboard metrics",
-                "Retrieve SLA policy tiers",
-            ],
-        )
-    base_required = ", ".join(required_params) if required_params else "none"
-    base_optional = ", ".join(optional_params) if optional_params else "none"
-    return (
-        f"Call {tool_name} to fetch API data from {path} with required params [{base_required}] and optional params [{base_optional}] for live CRM enquiries.",
-        [
-            f"Run {tool_name} for this request",
-            "Fetch live CRM data for my query",
-            "Get the relevant records from this endpoint",
-            "Retrieve latest data for this context",
-            "Load records that match these filters",
-        ],
-    )
+def _tool_type_for_category(category: str) -> str:
+    if category.endswith("form_submission"):
+        return "form_submission"
+    if category == "marketing_agent.form_lookup":
+        return "form_lookup"
+    if category == "order_enquiries":
+        return "enquiry"
+    if category.startswith("general_enquiries"):
+        return "enquiry"
+    if category == "sla_management":
+        return "internal"
+    return "enquiry"
 
 
 def _planned_capabilities() -> list[CapabilityDoc]:
     planned = [
-        {
-            "tool_name": "create_purchase_request",
-            "category": "workflow",
-            "required_params": ["contact_id", "line_items"],
-            "optional_params": ["remarks", "requested_by_name"],
-            "tool_type": "form_submission",
-            "description": "Create a purchase request and return request number and workflow state.",
-        },
-        {
-            "tool_name": "update_rejected_purchase_request",
-            "category": "workflow",
-            "required_params": ["request_id", "contact_id"],
-            "optional_params": ["line_items", "remarks"],
-            "tool_type": "form_submission",
-            "description": "Update a rejected purchase request before re-submission.",
-        },
-        {
-            "tool_name": "create_stock_inquiry",
-            "category": "workflow",
-            "required_params": ["contact_id", "project_name", "line_items"],
-            "optional_params": ["notes"],
-            "tool_type": "form_submission",
-            "description": "Create stock inquiry form with requested products and quantities.",
-        },
-        {
-            "tool_name": "update_rejected_stock_inquiry",
-            "category": "workflow",
-            "required_params": ["stock_inquiry_id", "contact_id"],
-            "optional_params": ["line_items", "notes"],
-            "tool_type": "form_submission",
-            "description": "Revise a rejected stock inquiry and submit for approval.",
-        },
-        {
-            "tool_name": "create_complaint",
-            "category": "service",
-            "required_params": ["order_id", "complaint_type", "description"],
-            "optional_params": ["line_items", "attachments"],
-            "tool_type": "form_submission",
-            "description": "Create complaint case from delivery/order context.",
-        },
         {
             "tool_name": "submit_workflow_transition",
             "category": "workflow",
             "required_params": ["submission_id", "transition_code"],
             "optional_params": ["comment"],
             "tool_type": "workflow_action",
-            "description": "Execute workflow transition chosen from allowed transitions.",
+            "description": "Execute a workflow transition chosen from the allowed transitions on a submission.",
+            "typical_user_questions": [
+                "Move this workflow submission to the next state.",
+                "Approve / reject this workflow submission.",
+                "Advance this workflow submission using an allowed transition.",
+            ],
         },
     ]
     docs: list[CapabilityDoc] = []
     for row in planned:
         tool_name = row["tool_name"]
+        aliases = _tool_aliases_from_name(tool_name)
+        body_text = (
+            f"Tool Name: {tool_name}\n"
+            f"Category: {row['category']}\n"
+            f"Intent: {row['description']}\n"
+            f"Required Params: {', '.join(row['required_params'])}\n"
+            f"Optional Params: {', '.join(row['optional_params']) if row['optional_params'] else 'none'}\n"
+            f"Aliases: {', '.join(aliases)}\n"
+            "When To Use: Use when the user asks to progress a workflow submission via an allowed transition.\n"
+        )
         docs.append(
             CapabilityDoc(
                 source_id=f"planned::{tool_name}",
                 source_key=tool_name,
                 title=tool_name,
-                body_text=(
-                    f"Tool Name: {tool_name}\n"
-                    f"Category: {row['category']}\n"
-                    f"Description: {row['description']}\n"
-                    f"Required Params: {', '.join(row['required_params'])}\n"
-                    f"Optional Params: {', '.join(row['optional_params']) if row['optional_params'] else 'none'}\n"
-                    "When To Use: Use when user asks to create or update form-based workflows.\n"
-                    "When Not To Use: Do not use for read-only enquiries.\n"
-                ),
+                body_text=body_text,
                 metadata={
                     **row,
-                    "aliases": [tool_name.replace("_", " ")],
-                    "typical_user_questions": [
-                        f"Can you {tool_name.replace('_', ' ')} for me?",
-                        f"I need help to {tool_name.replace('_', ' ')}",
-                    ],
+                    "aliases": aliases,
+                    "typical_user_questions": row["typical_user_questions"],
                     "implementation_status": "planned",
                 },
             )

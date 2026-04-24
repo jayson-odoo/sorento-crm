@@ -17,6 +17,7 @@ from app.services.error_handler import handle_not_found, handle_conflict
 from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
 from app.services.embedding_events import publish_embedding_event
+from app.services.identifier_resolver import resolve_identifier
 
 
 class ProductService:
@@ -46,12 +47,36 @@ class ProductService:
         
         # Apply filters
         filters = []
-        
-        if category_id and category_id != "all":
-            filters.append(Product.category_id == category_id)
-        
-        if brand_id and brand_id != "all":
-            filters.append(Product.brand_id == brand_id)
+
+        category_ids = resolve_identifier(
+            self.db,
+            category_id,
+            ProductCategory,
+            code_fields=("category_code", "category_name"),
+        )
+        if category_ids is not None:
+            if not category_ids:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            filters.append(Product.category_id.in_(category_ids))
+
+        brand_ids = resolve_identifier(
+            self.db,
+            brand_id,
+            Brand,
+            code_fields=("brand_code", "brand_name"),
+        )
+        if brand_ids is not None:
+            if not brand_ids:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            filters.append(Product.brand_id.in_(brand_ids))
         
         if status and status != "all":
             filters.append(Product.is_active == (status == "active"))
@@ -116,11 +141,19 @@ class ProductService:
         }
     
     def get_product(self, product_id: str):
-        """Get a single product by ID with category and brand eager-loaded."""
+        """Get a single product by UUID or product_code (SKU)."""
+        resolved_ids = resolve_identifier(
+            self.db,
+            product_id,
+            Product,
+            code_fields=("product_code",),
+        )
+        if not resolved_ids:
+            raise handle_not_found("Product", product_id)
         product = (
             self.db.query(Product)
             .options(joinedload(Product.category), joinedload(Product.brand), joinedload(Product.base_uom))
-            .filter(Product.id == product_id)
+            .filter(Product.id.in_(resolved_ids))
             .first()
         )
         if not product:
@@ -638,8 +671,16 @@ class ProductCategoryService:
         }
     
     def get_category(self, category_id: str):
-        """Get a category by ID."""
-        category = self.db.query(ProductCategory).filter(ProductCategory.id == category_id).first()
+        """Get a category by UUID or category_code/name."""
+        resolved_ids = resolve_identifier(
+            self.db,
+            category_id,
+            ProductCategory,
+            code_fields=("category_code", "category_name"),
+        )
+        if not resolved_ids:
+            raise handle_not_found("Category", category_id)
+        category = self.db.query(ProductCategory).filter(ProductCategory.id.in_(resolved_ids)).first()
         if not category:
             raise handle_not_found("Category", category_id)
         return category
@@ -813,8 +854,16 @@ class BrandService:
         }
     
     def get_brand(self, brand_id: str):
-        """Get a brand by ID."""
-        brand = self.db.query(Brand).filter(Brand.id == brand_id).first()
+        """Get a brand by UUID or brand_code/name."""
+        resolved_ids = resolve_identifier(
+            self.db,
+            brand_id,
+            Brand,
+            code_fields=("brand_code", "brand_name"),
+        )
+        if not resolved_ids:
+            raise handle_not_found("Brand", brand_id)
+        brand = self.db.query(Brand).filter(Brand.id.in_(resolved_ids)).first()
         if not brand:
             raise handle_not_found("Brand", brand_id)
         return brand

@@ -26,6 +26,8 @@ from app.models.procurement import (
 from app.models.product import Product
 from app.models.resources import Attachment
 from app.models.user import User
+from app.models.inventory import Warehouse
+from app.services.identifier_resolver import resolve_identifier
 from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
@@ -234,11 +236,23 @@ class InboundShipmentService:
     ):
         """List inbound shipments."""
         q = self.db.query(InboundShipment)
-        
+
         filters = []
-        
-        if supplier_id and supplier_id != "all":
-            filters.append(InboundShipment.supplier_id == supplier_id)
+
+        supplier_ids = resolve_identifier(
+            self.db,
+            supplier_id,
+            Supplier,
+            code_fields=("supplier_code", "supplier_name"),
+        )
+        if supplier_ids is not None:
+            if not supplier_ids:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            filters.append(InboundShipment.supplier_id.in_(supplier_ids))
         
         status_norm = (shipment_status or "").strip().lower()
         if status_norm and status_norm != "all":
@@ -354,12 +368,20 @@ class InboundShipmentService:
         }
     
     def get_shipment(self, shipment_id: str):
-        """Get a shipment by ID with lines and product details."""
+        """Get a shipment by UUID or business reference (shipment_number, container #, BOL, invoice #)."""
         from sqlalchemy.orm import joinedload
+        resolved_ids = resolve_identifier(
+            self.db,
+            shipment_id,
+            InboundShipment,
+            code_fields=("shipment_number", "shipping_container_number", "bill_of_lading_number", "invoice_number"),
+        )
+        if not resolved_ids:
+            raise handle_not_found("Inbound Shipment", shipment_id)
         shipment = self.db.query(InboundShipment).options(
             joinedload(InboundShipment.attachment).joinedload(Attachment.attachment_type),
             joinedload(InboundShipment.shipment_lines).joinedload(InboundShipmentLine.product),
-        ).filter(InboundShipment.id == shipment_id).first()
+        ).filter(InboundShipment.id.in_(resolved_ids)).first()
         if not shipment:
             raise handle_not_found("Inbound Shipment", shipment_id)
         return shipment
@@ -599,13 +621,37 @@ class SPOAllocationService:
         )
         
         filters = []
-        
-        if shipment_id and shipment_id != "all":
-            filters.append(SPOAllocation.inbound_shipment_id == shipment_id)
-        
-        if warehouse_id and warehouse_id != "all":
-            filters.append(SPOAllocation.warehouse_id == warehouse_id)
-        
+
+        shipment_ids = resolve_identifier(
+            self.db,
+            shipment_id,
+            InboundShipment,
+            code_fields=("shipment_number", "shipping_container_number", "bill_of_lading_number", "invoice_number"),
+        )
+        if shipment_ids is not None:
+            if not shipment_ids:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            filters.append(SPOAllocation.inbound_shipment_id.in_(shipment_ids))
+
+        warehouse_ids = resolve_identifier(
+            self.db,
+            warehouse_id,
+            Warehouse,
+            code_fields=("warehouse_code", "warehouse_name"),
+        )
+        if warehouse_ids is not None:
+            if not warehouse_ids:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            filters.append(SPOAllocation.warehouse_id.in_(warehouse_ids))
+
         if receipt_status and receipt_status != "all":
             filters.append(
                 SPOAllocation.receipt_status == _normalize_spo_receipt_status(receipt_status)
@@ -681,9 +727,22 @@ class SPOAllocationService:
             .distinct()
         )
 
+        resolved_warehouse_ids = resolve_identifier(
+            self.db,
+            warehouse_id,
+            Warehouse,
+            code_fields=("warehouse_code", "warehouse_name"),
+        )
+        if resolved_warehouse_ids is not None and not resolved_warehouse_ids:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+
         shipment_filters = []
-        if warehouse_id and warehouse_id != "all":
-            shipment_filters.append(SPOAllocation.warehouse_id == warehouse_id)
+        if resolved_warehouse_ids:
+            shipment_filters.append(SPOAllocation.warehouse_id.in_(resolved_warehouse_ids))
         if receipt_status and receipt_status != "all":
             shipment_filters.append(
                 SPOAllocation.receipt_status == _normalize_spo_receipt_status(receipt_status)
@@ -707,8 +766,8 @@ class SPOAllocationService:
             q_shipments = q_shipments.filter(and_(*shipment_filters))
 
         allocation_filters = []
-        if warehouse_id and warehouse_id != "all":
-            allocation_filters.append(SPOAllocation.warehouse_id == warehouse_id)
+        if resolved_warehouse_ids:
+            allocation_filters.append(SPOAllocation.warehouse_id.in_(resolved_warehouse_ids))
         if receipt_status and receipt_status != "all":
             allocation_filters.append(
                 SPOAllocation.receipt_status == _normalize_spo_receipt_status(receipt_status)
@@ -807,8 +866,20 @@ class SPOAllocationService:
         # Base filter query (no eager load) – reuse for count and for page of spo_numbers
         q_base = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None))
         filters = []
-        if warehouse_id and warehouse_id != "all":
-            filters.append(SPOAllocation.warehouse_id == warehouse_id)
+        resolved_warehouse_ids = resolve_identifier(
+            self.db,
+            warehouse_id,
+            Warehouse,
+            code_fields=("warehouse_code", "warehouse_name"),
+        )
+        if resolved_warehouse_ids is not None and not resolved_warehouse_ids:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+        if resolved_warehouse_ids:
+            filters.append(SPOAllocation.warehouse_id.in_(resolved_warehouse_ids))
         if receipt_status and receipt_status != "all":
             filters.append(
                 SPOAllocation.receipt_status == _normalize_spo_receipt_status(receipt_status)
@@ -938,13 +1009,21 @@ class SPOAllocationService:
         }
 
     def get_allocation(self, allocation_id: str):
-        """Get an SPO allocation by ID."""
+        """Get an SPO allocation by UUID or spo_number."""
         from sqlalchemy.orm import joinedload
+        resolved_ids = resolve_identifier(
+            self.db,
+            allocation_id,
+            SPOAllocation,
+            code_fields=("spo_number",),
+        )
+        if not resolved_ids:
+            raise handle_not_found("SPO Allocation", allocation_id)
         allocation = self.db.query(SPOAllocation).options(
             joinedload(SPOAllocation.product),
             joinedload(SPOAllocation.warehouse),
             joinedload(SPOAllocation.inbound_shipment),
-        ).filter(SPOAllocation.id == allocation_id).first()
+        ).filter(SPOAllocation.id.in_(resolved_ids)).first()
         if not allocation:
             raise handle_not_found("SPO Allocation", allocation_id)
         return allocation
@@ -1233,15 +1312,23 @@ class PickingHeaderService:
         return {"data": data, "pagination": {"total": total, "page": page, "limit": limit}, "empty": total == 0}
 
     def get_grn(self, grn_id: str):
-        """Get a GRN by ID."""
+        """Get a GRN by UUID or picking_number."""
         from sqlalchemy.orm import selectinload, joinedload
+        resolved_ids = resolve_identifier(
+            self.db,
+            grn_id,
+            PickingHeader,
+            code_fields=("picking_number",),
+        )
+        if not resolved_ids:
+            raise handle_not_found("GRN", grn_id)
         grn = self.db.query(PickingHeader).options(
             selectinload(PickingHeader.picking_lines).joinedload(PickingLine.product),
             selectinload(PickingHeader.picking_lines).joinedload(PickingLine.spo_allocation),
             selectinload(PickingHeader.picking_lines).joinedload(PickingLine.source_warehouse),
             selectinload(PickingHeader.picking_lines).joinedload(PickingLine.destination_warehouse),
         ).filter(
-            PickingHeader.id == grn_id,
+            PickingHeader.id.in_(resolved_ids),
             PickingHeader.picking_type == "goods_received"
         ).first()
         if not grn:

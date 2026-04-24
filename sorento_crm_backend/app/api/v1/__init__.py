@@ -7,6 +7,7 @@ from app.api.v1 import (
     order_management,
     inventory,
     procurement,
+    incoming_stock,
     marketing,
     forms,
     complaints,
@@ -60,6 +61,14 @@ api_router.include_router(
     procurement.router,
     prefix="/procurement",
     tags=["procurement"],
+    dependencies=[Depends(require_module_enabled_with_api_key("procurement"))],
+)
+# User-facing incoming-stock surface (redacts received quantities, hides IDs/SPO details).
+# Intended primary route for the AI assistant / MCP layer.
+api_router.include_router(
+    incoming_stock.router,
+    prefix="/incoming-stock",
+    tags=["incoming-stock"],
     dependencies=[Depends(require_module_enabled_with_api_key("procurement"))],
 )
 api_router.include_router(

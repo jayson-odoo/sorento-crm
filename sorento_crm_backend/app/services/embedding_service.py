@@ -73,11 +73,13 @@ class EmbeddingEventService:
         self.db.add(queue_item)
         self.db.flush()
 
+        is_priority_source = source_type == "mcp_tool"
         job = enqueue_job(
             _get_embedding_worker(),
             str(queue_item.id),
             queue_name=settings.embedding_queue_name,
             job_timeout=900,
+            at_front=is_priority_source,
         )
         queue_item.rq_job_id = job.id
         self.db.commit()
@@ -249,11 +251,187 @@ class EmbeddingReadService:
             rerank_penalty = min(len(missing_params) * 0.02, 0.12)
             score = float(similarity) - rerank_penalty
             tool_name = str(md.get("tool_name") or doc.source_key or doc.source_id)
-            if "incoming" in q_lower:
-                if tool_category == "procurement":
+            cat = str(tool_category or "")
+
+            # Intent nudges aligned with next_agents/* domains. These are small
+            # (<=0.1) and only reinforce unambiguous keywords; they do NOT
+            # replace the semantic match but keep ties sensible.
+            if (
+                "incoming" in q_lower
+                or "inbound" in q_lower
+                or "packing list" in q_lower
+                or "shipment" in q_lower
+                or "arriving" in q_lower
+                or "arrival" in q_lower
+                or "eta" in q_lower
+                or "when will" in q_lower and "arriv" in q_lower
+            ):
+                if cat == "general_enquiries.incoming_stock":
                     score += 0.08
-                if tool_category == "inventory":
+                if cat in ("general_enquiries.stock", "general_enquiries.stock_ledger"):
                     score -= 0.03
+                # "incoming" is a procurement word; customer sales tools should NOT win here.
+                if cat == "order_enquiries":
+                    score -= 0.08
+                # Admin / raw procurement tools should never beat the user-facing
+                # incoming-stock tools for end-user enquiries.
+                if cat.startswith("internal_admin"):
+                    score -= 0.20
+            # Always penalize admin tools for any user-style question. Only admin-
+            # keyworded queries should surface raw procurement data.
+            if cat.startswith("internal_admin") and not any(
+                w in q_lower for w in ("admin", "raw", "back-office", "back office", "internal")
+            ):
+                score -= 0.15
+            # Strong boost: product-centric incoming questions should land on the
+            # dedicated user-facing tool and suppress the shipment-level sidecars.
+            _is_product_incoming_query = (
+                ("incoming" in q_lower or "pending" in q_lower or "arriv" in q_lower or "coming" in q_lower)
+                and ("product" in q_lower or "sku" in q_lower or "item" in q_lower or "stock for" in q_lower)
+            )
+            if _is_product_incoming_query:
+                if tool_name == "crm_incoming_stock_by_product":
+                    score += 0.12
+                if tool_name in (
+                    "crm_incoming_stock_shipments",
+                    "crm_incoming_stock_shipment_products",
+                    "crm_incoming_stock_shipment_attachment",
+                    "crm_incoming_stock_grn",
+                ):
+                    score -= 0.25
+            if (
+                ("packing list" in q_lower or "attachment" in q_lower or "document" in q_lower or "file" in q_lower)
+                and ("shipment" in q_lower or "container" in q_lower or "packing list" in q_lower)
+                and tool_name == "crm_incoming_stock_shipment_attachment"
+            ):
+                score += 0.08
+            if (
+                ("grn" in q_lower or "goods received" in q_lower or "receipt document" in q_lower)
+                and tool_name == "crm_incoming_stock_grn"
+            ):
+                score += 0.08
+            if "ledger" in q_lower or "transaction history" in q_lower or "movement history" in q_lower:
+                if cat == "general_enquiries.stock_ledger":
+                    score += 0.08
+                if cat == "general_enquiries.stock":
+                    score -= 0.04
+            if ("balance" in q_lower or "available" in q_lower or "how much stock" in q_lower or "on hand" in q_lower) and "ledger" not in q_lower:
+                if cat == "general_enquiries.stock":
+                    score += 0.06
+                if cat == "general_enquiries.stock_ledger":
+                    score -= 0.04
+            if ("products" in q_lower or "catalog" in q_lower or "sell" in q_lower) and "stock" not in q_lower and "order" not in q_lower:
+                if cat == "general_enquiries.product":
+                    score += 0.06
+                if cat in ("general_enquiries.stock", "general_enquiries.stock_ledger"):
+                    score -= 0.04
+            if ("order" in q_lower or "delivery" in q_lower or "lorry" in q_lower or "transporter" in q_lower) and cat == "order_enquiries":
+                score += 0.08
+            # When the query clearly talks about customer sales orders (not incoming/inbound),
+            # downrank procurement/incoming-stock tools so they don't beat orders_by_product.
+            _procurement_words = ("incoming", "inbound", "arriv", "packing list", "shipment", "eta", "grn", "purchase order", "spo ")
+            _sales_words = ("order", "delivery", "customer", "sold", "bought", "buy")
+            if (
+                any(w in q_lower for w in _sales_words)
+                and not any(w in q_lower for w in _procurement_words)
+                and cat == "general_enquiries.incoming_stock"
+            ):
+                score -= 0.15
+            # Specific boost for orders_by_product when the query mentions a product AND orders/customer buying context
+            if (
+                ("product" in q_lower or "sku" in q_lower)
+                and any(w in q_lower for w in ("order", "bought", "sold", "customer", "buy"))
+                and not any(w in q_lower for w in _procurement_words)
+                and tool_name == "crm_order_management_orders_by_product_list"
+            ):
+                score += 0.10
+            if ("complaint" in q_lower or "defect" in q_lower or "broken" in q_lower or "leak" in q_lower) and cat == "complaint.form_submission":
+                score += 0.08
+            if ("stock inquiry" in q_lower or "stock enquiry" in q_lower or "lead time" in q_lower) and cat == "stock_inquiries.form_submission":
+                score += 0.08
+            if ("purchase request" in q_lower or "sponsorship" in q_lower) and cat == "purchase_request.form_submission":
+                score += 0.08
+            if ("application form" in q_lower or "flower stand" in q_lower or "renovation form" in q_lower) and cat == "marketing_agent.form_lookup":
+                score += 0.08
+
+            # The resolver MCP tool is meta: the system already pre-resolves codes
+            # every turn. Keep it reachable but never let it take a top-k slot away
+            # from a real data tool.
+            if tool_name == "crm_resolve_reference":
+                score -= 0.25
+
+            # --- Entity-resolver-driven nudges -------------------------------
+            # The AI assistant appends a "Resolved references:" line to the RAG
+            # query for each resolved token (e.g. '"RF2601-025" is customer_order').
+            # These nudges lock in the right tool once we KNOW the entity type.
+            if "is customer_order" in q_lower:
+                if tool_name == "crm_order_management_orders_get":
+                    score += 0.20
+                if tool_name == "crm_order_management_orders_list":
+                    score += 0.05
+                if tool_name in (
+                    "crm_order_management_orders_by_product_list",
+                    "crm_incoming_stock_by_product",
+                    "crm_master_products_get",
+                ):
+                    score -= 0.15
+            if "is product" in q_lower:
+                # Product code known; prefer the incoming-stock tool when the user also
+                # asks about availability / arrival, otherwise products_get / orders_by_product.
+                product_incoming_intent = (
+                    "incoming" in q_lower
+                    or "pending" in q_lower
+                    or "arriv" in q_lower
+                    or "coming" in q_lower
+                    or "stock for" in q_lower
+                )
+                if tool_name == "crm_incoming_stock_by_product" and product_incoming_intent:
+                    score += 0.25
+                if tool_name == "crm_master_products_get":
+                    score += 0.10
+                if tool_name == "crm_order_management_orders_get":
+                    score -= 0.15
+                # Lock out sidecar incoming-stock tools for product-centric incoming questions \u2014
+                # crm_incoming_stock_by_product already returns everything they would (shipment
+                # breakdown, warehouse allocation, packing-list attachment). Keeping them in top-k
+                # tempts the LLM to make redundant calls.
+                if product_incoming_intent and tool_name in (
+                    "crm_incoming_stock_shipments",
+                    "crm_incoming_stock_shipment_products",
+                    "crm_incoming_stock_shipment_attachment",
+                    "crm_incoming_stock_grn",
+                ):
+                    score -= 0.35
+            if "is inbound_shipment" in q_lower:
+                if tool_name in ("crm_incoming_stock_shipments", "crm_incoming_stock_shipment_products"):
+                    score += 0.18
+                if tool_name == "crm_incoming_stock_shipment_attachment" and (
+                    "packing list" in q_lower or "attachment" in q_lower or "document" in q_lower
+                ):
+                    score += 0.10
+                if tool_name in ("crm_order_management_orders_get", "crm_master_products_get"):
+                    score -= 0.15
+            if "is customer" in q_lower and "is customer_order" not in q_lower:
+                if tool_name == "crm_order_management_orders_list":
+                    score += 0.10
+                if tool_name in ("crm_master_customers_get", "crm_order_management_customers_get"):
+                    score += 0.10
+            if "is warehouse" in q_lower and tool_name.startswith("crm_inventory_"):
+                score += 0.08
+            if "is supplier" in q_lower and tool_name.startswith("crm_procurement_"):
+                score += 0.08
+            if "is promotion" in q_lower and tool_name.startswith("crm_marketing_promotions"):
+                score += 0.15
+            if "is grn" in q_lower and tool_name == "crm_incoming_stock_grn":
+                score += 0.20
+            if "is spo_allocation" in q_lower and tool_name.startswith("crm_procurement_spo"):
+                score += 0.15
+            # If a code is explicitly unresolved, strongly penalize every data tool —
+            # the LLM should just tell the user "no record found".
+            if "unresolved" in q_lower and "is customer_order" not in q_lower and "is product" not in q_lower:
+                score -= 0.10
+
+            # Legacy heuristics kept for specific tool names
             if "workflow" in q_lower and "submission" in q_lower and "published_for_submission" in tool_name:
                 score += 0.18
             if "download" in q_lower and "metadata" in q_lower and tool_name.endswith("_metadata"):

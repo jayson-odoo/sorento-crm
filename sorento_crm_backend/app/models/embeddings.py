@@ -71,6 +71,7 @@ class EmbeddingDocument(Base):
     __table_args__ = (
         Index("ix_embedding_documents_source", "source_type", "source_id"),
         Index("ix_embedding_documents_source_hash", "source_type", "source_id", "source_hash"),
+        Index("uq_embedding_documents_source", "source_type", "source_id", unique=True),
     )
 
 

@@ -310,11 +310,15 @@ class PromotionService:
         }
     
     def get_promotion(self, promotion_id: str, *, include_products: bool = True):
-        """Get a promotion by ID.
+        """Get a promotion by UUID or promo_code.
 
         When *include_products* is False, loads groups without promotion product lines (no nested Product rows).
         """
         from sqlalchemy.orm import joinedload, noload
+
+        resolved_pid = _resolve_promotion_id_for_filter(self.db, promotion_id)
+        if not resolved_pid:
+            raise handle_not_found("Promotion", promotion_id)
 
         if not include_products:
             promotion = (
@@ -324,7 +328,7 @@ class PromotionService:
                         noload(PromotionGroup.promotion_products)
                     ),
                 )
-                .filter(Promotion.id == promotion_id)
+                .filter(Promotion.id == resolved_pid)
                 .first()
             )
             if not promotion:
@@ -333,7 +337,7 @@ class PromotionService:
             groups = sorted(promotion.promotion_groups or [], key=lambda g: (g.sort_order, g.created_at))
             promotion.products_count = (
                 self.db.query(func.count(PromotionProduct.id))
-                .filter(PromotionProduct.promotion_id == promotion_id)
+                .filter(PromotionProduct.promotion_id == resolved_pid)
                 .scalar()
                 or 0
             )
@@ -348,7 +352,7 @@ class PromotionService:
                     PromotionProduct.product
                 ),
             )
-            .filter(Promotion.id == promotion_id)
+            .filter(Promotion.id == resolved_pid)
             .first()
         )
         if not promotion:
@@ -686,15 +690,29 @@ class PromotionProductService:
         )
         
         if promotion_ids:
-            q = q.filter(PromotionProduct.promotion_id.in_(promotion_ids))
-            logger.debug("Filtering by promotion_ids count=%s", len(promotion_ids))
+            resolved_bulk: list[str] = []
+            for raw in promotion_ids:
+                resolved = _resolve_promotion_id_for_filter(self.db, raw)
+                if resolved:
+                    resolved_bulk.append(resolved)
+            if not resolved_bulk:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            q = q.filter(PromotionProduct.promotion_id.in_(resolved_bulk))
+            logger.debug("Filtering by promotion_ids count=%s", len(resolved_bulk))
         elif promotion_id:
-            logger.debug(f"Filtering by promotion_id: {promotion_id} (type: {type(promotion_id)})")
-            # Ensure UUID comparison works correctly
-            q = q.filter(PromotionProduct.promotion_id == promotion_id)
-            # Debug: check how many match
-            count_before = q.count()
-            logger.debug(f"Found {count_before} promotion products matching promotion_id {promotion_id}")
+            resolved_pid = _resolve_promotion_id_for_filter(self.db, promotion_id)
+            if not resolved_pid:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            logger.debug(f"Filtering by resolved promotion_id: {resolved_pid}")
+            q = q.filter(PromotionProduct.promotion_id == resolved_pid)
         
         if query:
             # Search in product code, product name, or promotion code

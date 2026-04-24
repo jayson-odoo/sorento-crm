@@ -20,6 +20,7 @@ from app.schemas.order import (
 from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.import_log_service import ImportLogService
 from app.services.calendar_service import CalendarService
+from app.services.identifier_resolver import resolve_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +50,36 @@ class OrderService:
         q = self.db.query(Order).filter(Order.deleted_at.is_(None))
         
         filters = []
-        
-        if customer_id and customer_id != "all":
-            filters.append(Order.customer_id == customer_id)
-        
-        if order_status_id and order_status_id != "all":
-            filters.append(Order.order_status_id == order_status_id)
+
+        customer_ids = resolve_identifier(
+            self.db,
+            customer_id,
+            Customer,
+            code_fields=("customer_code", "customer_name"),
+        )
+        if customer_ids is not None:
+            if not customer_ids:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            filters.append(Order.customer_id.in_(customer_ids))
+
+        status_ids = resolve_identifier(
+            self.db,
+            order_status_id,
+            OrderStatus,
+            code_fields=("status_code", "status_name"),
+        )
+        if status_ids is not None:
+            if not status_ids:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            filters.append(Order.order_status_id.in_(status_ids))
 
         hol = (has_order_lines or "").strip().lower()
         if hol == "yes":
@@ -156,10 +181,18 @@ class OrderService:
         }
     
     def get_order(self, order_id: str):
-        """Get a single order by ID with lines, product and warehouse loaded for each line."""
+        """Get a single order by UUID or order_number (accepts either form)."""
+        resolved_ids = resolve_identifier(
+            self.db,
+            order_id,
+            Order,
+            code_fields=("order_number",),
+        )
+        if not resolved_ids:
+            raise handle_not_found("Order", order_id)
         order = (
             self.db.query(Order)
-            .filter(Order.id == order_id, Order.deleted_at.is_(None))
+            .filter(Order.id.in_(resolved_ids), Order.deleted_at.is_(None))
             .options(
                 joinedload(Order.lines).joinedload(OrderLine.product),
                 joinedload(Order.lines).joinedload(OrderLine.warehouse),
@@ -193,8 +226,20 @@ class OrderService:
 
         filters = []
 
-        if product_id and product_id != "all":
-            filters.append(OrderLine.product_id == product_id)
+        product_ids = resolve_identifier(
+            self.db,
+            product_id,
+            Product,
+            code_fields=("product_code",),
+        )
+        if product_ids is not None:
+            if not product_ids:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                }
+            filters.append(OrderLine.product_id.in_(product_ids))
 
         hadd = (has_actual_delivery_date or "").strip().lower()
         if hadd == "yes":

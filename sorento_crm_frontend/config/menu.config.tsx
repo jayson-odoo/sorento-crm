@@ -630,6 +630,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Running Numbers',
         path: '/system-management/numbering-rules',
       },
+      {
+        title: 'AI Assistant',
+        path: '/system-management/ai-assistant',
+        permission: 'system.ai_assistant_settings.view',
+      },
     ],
   },
   // Hidden: Store - Client

@@ -11,14 +11,38 @@ class ToolSpec:
     path: str
     path_params: tuple[str, ...] = ()
     query_params: tuple[str, ...] = ()
+    method: str = "GET"
+    body_params: tuple[str, ...] = ()
 
 
 # Paths match [sorento_crm_backend/app/api/v1/__init__.py](sorento_crm_backend/app/api/v1/__init__.py) prefixes.
 CATALOG: tuple[ToolSpec, ...] = (
+    # --- entity resolution (disambiguator) ---
+    ToolSpec(
+        "crm_resolve_reference",
+        (
+            "Disambiguate a free-text code or mid-turn reference into its canonical entity type. "
+            "Call this ONLY when you need to resolve a NEW code that was not already resolved by "
+            "the 'Resolved references' block in the user message (the system pre-resolves codes "
+            "on every turn; reuse that first). Accepts either `query` (free text, resolver extracts "
+            "codes) or `tokens` (comma-separated list of codes). Uses three tiers: (1) exact match "
+            "on business code fields; (2) prefix / substring match for partial codes like "
+            "'SRTWCX7604' matching 'SRTWCX7604-S-RL-NEW'; (3) embedding vector fallback with a "
+            "confidence gate. Returns, per token: `resolved` (single match), `ambiguous` (multiple "
+            "candidates \u2014 ask the user to pick), or in `unresolved_tokens` (no record). Each match "
+            "includes entity_type (product, customer_order, customer, inbound_shipment, "
+            "spo_allocation, grn, warehouse, supplier, promotion), canonical_code to pass to other "
+            "tools, match_tier (exact / prefix / substring / embedding), and a display payload. "
+            "Never call another tool with a code that came back unresolved or ambiguous."
+        ),
+        "/api/v1/system/references/resolve",
+        (),
+        ("query", "tokens"),
+    ),
     # --- master-data ---
     ToolSpec(
         "crm_master_products_list",
-        "List products with filters and pagination. Parameter `query` matches product code, name, and description.",
+        "List products with filters and pagination. `query` filters by code/name/description; omit it for a general paged list. `category_id` accepts UUID or category_code/name. `brand_id` accepts UUID or brand_code/name.",
         "/api/v1/master-data/products",
         (),
         (
@@ -37,7 +61,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_master_products_get",
-        "Get one product by UUID id (full detail record). For keyword searches like 'bathtubs' or product names/codes, use crm_master_products_list with query.",
+        "Get one product full detail record. `product_id` accepts UUID or product_code (SKU). For keyword searches like 'bathtubs' or product names, use crm_master_products_list with query.",
         "/api/v1/master-data/products/{product_id}",
         ("product_id",),
         (),
@@ -65,7 +89,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_master_brands_get",
-        "Get one brand by id.",
+        "Get one brand by id. `brand_id` accepts UUID or brand_code/name.",
         "/api/v1/master-data/brands/{brand_id}",
         ("brand_id",),
         (),
@@ -93,7 +117,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_master_product_categories_get",
-        "Get one product category by id.",
+        "Get one product category by id. `category_id` accepts UUID or category_code/name.",
         "/api/v1/master-data/product-categories/{category_id}",
         ("category_id",),
         (),
@@ -310,7 +334,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- inventory ---
     ToolSpec(
         "crm_inventory_stock_balance_list",
-        "Paged stock balances (warehouse, product, quantity filters, status). product_id accepts UUID or product_code (SKU).",
+        "Paged stock balances (warehouse, product, quantity filters, status). `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or warehouse_code/name.",
         "/api/v1/inventory/stock/balance",
         (),
         (
@@ -363,21 +387,21 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_inventory_warehouses_get",
-        "Get warehouse by id.",
+        "Get warehouse by id. `warehouse_id` accepts UUID or warehouse_code/name.",
         "/api/v1/inventory/warehouses/{warehouse_id}",
         ("warehouse_id",),
         (),
     ),
     ToolSpec(
         "crm_inventory_storage_zones_list",
-        "List storage zones.",
+        "List storage zones. `warehouse_id` accepts UUID or warehouse_code/name.",
         "/api/v1/inventory/storage-zones",
         (),
         ("page", "limit", "warehouse_id"),
     ),
     ToolSpec(
         "crm_inventory_storage_zones_tree",
-        "Storage zone tree.",
+        "Storage zone tree. `warehouse_id` accepts UUID or warehouse_code/name.",
         "/api/v1/inventory/storage-zones/tree",
         (),
         ("warehouse_id",),
@@ -391,14 +415,14 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_inventory_stock_ledger_list",
-        "Global stock ledger list. product_id query accepts UUID or product_code (SKU).",
+        "Global stock ledger list. `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or warehouse_code/name.",
         "/api/v1/inventory/stock-ledger",
         (),
         ("page", "limit", "product_id", "warehouse_id", "transaction_type"),
     ),
     ToolSpec(
         "crm_inventory_stock_batches_list",
-        "List stock batches. product_id accepts UUID or product_code (SKU).",
+        "List stock batches. `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or warehouse_code/name.",
         "/api/v1/inventory/stock-batches",
         (),
         ("page", "limit", "product_id", "warehouse_id"),
@@ -413,7 +437,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- order-management ---
     ToolSpec(
         "crm_order_management_orders_list",
-        "List orders (customer, status, has_order_lines, actual delivery date filters, search). Parameter `query` matches order number, debtor name/code, and customer name/code.",
+        "List orders (customer, status, has_order_lines, actual delivery date filters, search). Parameter `query` matches order number, debtor name/code, and customer name/code. `customer_id` accepts UUID or customer_code/name. `order_status_id` accepts UUID or status_code/name.",
         "/api/v1/order-management/orders",
         (),
         (
@@ -432,14 +456,14 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_order_management_orders_get",
-        "Get one order by id (includes order lines in response).",
+        "Get one order by id (includes order lines in response). `order_id` accepts UUID or order_number.",
         "/api/v1/order-management/orders/{order_id}",
         ("order_id",),
         (),
     ),
     ToolSpec(
         "crm_order_management_orders_by_product_list",
-        "List distinct orders matched by product search. Supports actual delivery date filters. Parameter `query` matches product code, name, description, order number, and debtor name.",
+        "List distinct CUSTOMER SALES orders containing a specific product (outgoing / sold, NOT incoming stock). Use when asked 'which customers bought SKU X' or 'pending customer orders for product X'. DO NOT use for 'any incoming for product X' / 'is product X arriving' — that is procurement, use crm_procurement_spo_allocations_grouped_by_shipment instead. Parameter `query` matches product code, name, description, order number, and debtor name. `product_id` accepts UUID or product_code (SKU).",
         "/api/v1/order-management/orders/by-product",
         (),
         (
@@ -454,24 +478,95 @@ CATALOG: tuple[ToolSpec, ...] = (
             "dir",
         ),
     ),
-    # --- procurement ---
+    # --- incoming-stock (user-facing, business-rule compliant) ---
+    # These are the PRIMARY tools the AI should use for "any incoming?" questions.
+    # They redact quantity_received / quantity_rejected / SPO numbers / internal IDs, and
+    # compute remaining_incoming_quantity + warehouse allocation summary for the user.
+    ToolSpec(
+        "crm_incoming_stock_by_product",
+        (
+            "ONE-SHOT tool for any 'incoming for product X' / 'is SKU X arriving?' / 'how much is pending for this product?' / 'where will this product be stocked?' question. "
+            "This single call returns EVERYTHING the user needs: "
+            "(1) total_remaining_incoming_quantity = sum of (quantity_shipped - quantity_received) across still-incoming lines, auto-excludes fully-received lines; "
+            "(2) warehouse_allocation_summary aggregated per warehouse from SPO allocations \u2014 each entry has warehouse_code, warehouse_name, allocated_quantity; "
+            "(3) per-shipment breakdown: shipment_number, shipping_container_number, estimated_arrival_date, batch_number, remaining_incoming_quantity, packing-list attachment (if any), and warehouse_allocations for that shipment; "
+            "(4) nearest_estimated_arrival_date. "
+            "DO NOT also call crm_incoming_stock_shipments, crm_incoming_stock_shipment_products, crm_incoming_stock_shipment_attachment, or crm_incoming_stock_grn when answering a product-incoming question \u2014 this tool already includes their data. "
+            "Does NOT expose received quantities, SPO numbers, or internal IDs. "
+            "`product_id` accepts UUID or product_code (SKU). Provide either product_id OR a free-text `query`."
+        ),
+        "/api/v1/incoming-stock/by-product",
+        (),
+        ("product_id", "query", "limit"),
+    ),
+    ToolSpec(
+        "crm_incoming_stock_shipments",
+        (
+            "Use ONLY for SHIPMENT-CENTRIC questions (not product questions): 'any incoming shipments this month?' / 'what is arriving with ETA on date X?' / 'list open shipments from supplier Y'. "
+            "Do NOT use this for 'any incoming for product X' \u2014 use crm_incoming_stock_by_product (which already includes per-shipment breakdown). "
+            "Returns shipment headers (shipment_number, shipping_container_number, estimated_arrival_date, total_remaining_incoming_quantity, distinct_products_incoming, packing-list attachment). "
+            "`query` searches shipment_number / container / BOL / invoice."
+        ),
+        "/api/v1/incoming-stock/shipments",
+        (),
+        ("query", "eta_from", "eta_to", "page", "limit"),
+    ),
+    ToolSpec(
+        "crm_incoming_stock_shipment_products",
+        (
+            "Use ONLY when the user asks 'what products are on shipment X?' with a SHIPMENT NUMBER (not a product). "
+            "Do NOT use this for 'any incoming for product X' \u2014 use crm_incoming_stock_by_product. "
+            "Returns still-incoming products on the shipment with product_code, product_name, batch_number, remaining_incoming_quantity, warehouse allocation per product, and shipment header. "
+            "`shipment_id` accepts UUID, shipment_number, container number, BOL, or invoice number."
+        ),
+        "/api/v1/incoming-stock/shipments/{shipment_id}/products",
+        ("shipment_id",),
+        (),
+    ),
+    ToolSpec(
+        "crm_incoming_stock_shipment_attachment",
+        (
+            "Use ONLY when the user EXPLICITLY asks for the packing-list file / shipment document for a SHIPMENT (by shipment number or container). "
+            "Do NOT use for product questions \u2014 crm_incoming_stock_by_product already includes the per-shipment attachment. "
+            "Returns filename, file_path (URL), mime_type, or null. `shipment_id` accepts UUID, shipment_number, container, BOL, or invoice."
+        ),
+        "/api/v1/incoming-stock/shipments/{shipment_id}/attachment",
+        ("shipment_id",),
+        (),
+    ),
+    ToolSpec(
+        "crm_incoming_stock_grn",
+        (
+            "Use ONLY when the user EXPLICITLY asks about GRN / goods received note / receipt document / 'has a GRN been created?'. "
+            "Do NOT use for 'any incoming for product X' questions \u2014 the user is asking about what's still coming, not what has been received. "
+            "Returns minimal GRN info (grn_number, grn_date, grn_status, shipment_number). NO quantities, NO received/rejected counts. "
+            "Requires `shipment_id` or `product_id` (either accepts UUID or business code)."
+        ),
+        "/api/v1/incoming-stock/grn",
+        (),
+        ("shipment_id", "product_id", "limit"),
+    ),
+    # --- procurement (ADMIN / INTERNAL raw data) ---
+    # These expose raw receipt data (quantity_received, quantity_rejected, SPO numbers,
+    # internal IDs). DO NOT use for user-facing enquiries — use crm_incoming_stock_* tools
+    # instead. Kept here for admin / back-office operations only.
     ToolSpec(
         "crm_procurement_packing_lists_list",
-        "Inbound shipment summaries (packing lists). Returns compact shipment headers only; use crm_procurement_packing_lists_get for full shipment lines. `shipment_status=open` means shipments with at least one line not fully received yet.",
+        "INTERNAL / ADMIN only: raw inbound shipment headers including received quantities, SPO counts, and internal IDs. For user-facing 'any incoming?' questions use crm_incoming_stock_shipments. `supplier_id` accepts UUID or supplier_code/name.",
         "/api/v1/procurement/packing-lists",
         (),
         ("page", "limit", "query", "supplier_id", "shipment_status", "sort", "dir"),
     ),
     ToolSpec(
         "crm_procurement_packing_lists_get",
-        "Inbound shipment detail by id (includes lines / SPO context per API).",
+        "INTERNAL / ADMIN only: full raw inbound shipment detail including received/rejected quantities, SPO allocations, linked GRNs, and internal IDs. For user-facing 'products in this shipment' use crm_incoming_stock_shipment_products. `shipment_id` accepts UUID, shipment_number, BOL, container #, or invoice #.",
         "/api/v1/procurement/packing-lists/{shipment_id}",
         ("shipment_id",),
         (),
     ),
     ToolSpec(
         "crm_procurement_spo_allocations_grouped_by_shipment",
-        "Find inbound shipments in summary form using SPO allocation filters. Returns shipment summary plus counts only; use crm_procurement_packing_lists_get or crm_procurement_spo_allocations_list for details.",
+        "INTERNAL / ADMIN only: raw SPO allocation aggregates per shipment (receipt_status, counts). For user-facing 'any incoming for product X' use crm_incoming_stock_by_product. `warehouse_id` accepts UUID or warehouse_code/name.",
         "/api/v1/procurement/spo-allocations/grouped-by-shipment",
         (),
         (
@@ -487,7 +582,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_procurement_spo_allocations_grouped_by_spo",
-        "SPO allocations grouped by SPO number.",
+        "INTERNAL / ADMIN only: SPO allocations grouped by SPO number.",
         "/api/v1/procurement/spo-allocations/grouped-by-spo-number",
         (),
         (
@@ -503,7 +598,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_procurement_spo_allocations_list",
-        "Flat list of SPO allocations.",
+        "INTERNAL / ADMIN only: flat list of raw SPO allocations with receipt_status, quantity_received, quantity_rejected, SPO numbers. Do NOT use for user enquiries. `shipment_id` accepts UUID or shipment_number / BOL / container / invoice. `warehouse_id` accepts UUID or warehouse_code/name.",
         "/api/v1/procurement/spo-allocations",
         (),
         (
@@ -519,28 +614,28 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_procurement_spo_allocations_get",
-        "Single SPO allocation with linked GRNs and computed receipt fields.",
+        "INTERNAL / ADMIN only: single SPO allocation with linked GRNs and raw receipt fields. `allocation_id` accepts UUID or spo_number.",
         "/api/v1/procurement/spo-allocations/{allocation_id}",
         ("allocation_id",),
         (),
     ),
     ToolSpec(
         "crm_procurement_grn_list",
-        "GRN / picking headers list.",
+        "INTERNAL / ADMIN only: raw GRN / picking headers list with statuses and totals. For user-facing 'has a GRN been created?' use crm_incoming_stock_grn.",
         "/api/v1/procurement/grn",
         (),
         ("page", "limit", "query", "picking_status", "inspection_status", "sort", "dir"),
     ),
     ToolSpec(
         "crm_procurement_grn_get",
-        "GRN / picking header by id.",
+        "INTERNAL / ADMIN only: full GRN / picking header including picking lines and quantities. `grn_id` accepts UUID or picking_number.",
         "/api/v1/procurement/grn/{grn_id}",
         ("grn_id",),
         (),
     ),
     ToolSpec(
         "crm_procurement_picking_lines_list",
-        "Picking lines with search (SPO / product) and sort.",
+        "INTERNAL / ADMIN only: picking lines (receipt lines) with quantities and discrepancies.",
         "/api/v1/procurement/picking-lines",
         (),
         ("page", "limit", "query", "sort", "dir"),
@@ -684,5 +779,149 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/sla-management/conversation-sla-tracking/{tracking_id}",
         ("tracking_id",),
         (),
+    ),
+    # --- form-submission tools (callable) ---
+    ToolSpec(
+        "crm_forms_stock_inquiries_submit",
+        (
+            "Submit a Stock Inquiry to the purchasing team. CALL ONLY AFTER all required "
+            "fields are collected AND the user has explicitly confirmed (CONFIRM / OK / "
+            "YES / CORRECT).\n"
+            "`payload_json` must be a JSON object with these fields:\n"
+            "REQUIRED:\n"
+            "  - product_code (string, e.g. SRTW2048)\n"
+            "  - item_description (string)\n"
+            "  - quantity (string or number)\n"
+            "  - delivery_date (string, DD/MM/YYYY)\n"
+            "  - project_customer (string, end customer / company name)\n"
+            "  - project_name (string)\n"
+            "  - salesperson (string)\n"
+            "OPTIONAL:\n"
+            "  - remark (string)\n"
+            "  - additional_remark (string)\n"
+            "  - inquiry_number (string; set ONLY when resubmitting a rejected inquiry, "
+            "otherwise omit)"
+        ),
+        "/api/v1/external/stock-inquiries/",
+        (),
+        (),
+        method="POST",
+        body_params=("payload_json",),
+    ),
+    ToolSpec(
+        "crm_forms_stock_inquiries_list",
+        "List stock inquiries for current authenticated scope. Supports pagination and query.",
+        "/api/v1/procurement/stock-inquiries",
+        (),
+        ("page", "limit", "query", "sort", "dir"),
+        method="GET",
+    ),
+    ToolSpec(
+        "crm_forms_stock_inquiries_get",
+        "Get one stock inquiry by inquiry_id for view/update preparation.",
+        "/api/v1/procurement/stock-inquiries/{inquiry_id}",
+        ("inquiry_id",),
+        (),
+        method="GET",
+    ),
+    ToolSpec(
+        "crm_forms_purchase_requests_submit",
+        (
+            "Submit a Purchase Request OR Sponsorship Form. CALL ONLY AFTER all required "
+            "header fields AND at least one complete product line are collected AND the "
+            "user has explicitly confirmed (CONFIRM / OK / YES / CORRECT).\n"
+            "First ask the user whether it is a PURCHASE REQUEST or SPONSORSHIP FORM; "
+            "required fields differ.\n"
+            "`payload_json` must be a JSON object with these fields:\n"
+            "HEADER REQUIRED (both types):\n"
+            "  - request_type ('purchase_request' | 'sponsorship_form')\n"
+            "  - customer_name (string)\n"
+            "  - purpose (string, short reason)\n"
+            "  - requested_by (string, user's own name)\n"
+            "  - products (array; at least 1 item, see LINE FIELDS)\n"
+            "HEADER REQUIRED for purchase_request:\n"
+            "  - project_title (string)\n"
+            "  - expected_delivery_date (string, DD/MM/YYYY)\n"
+            "HEADER REQUIRED for sponsorship_form:\n"
+            "  - sponsor_subject (string)\n"
+            "  - date_of_delivery (string, DD/MM/YYYY)\n"
+            "HEADER OPTIONAL:\n"
+            "  - delivery_address, expected_po_date (string or free text), "
+            "total_project_value, requested_at (DD/MM/YYYY, defaults to today), "
+            "project_title (sponsorship only), purpose (free text)\n"
+            "LINE FIELDS (each element of `products`):\n"
+            "  - item_code (string, REQUIRED)\n"
+            "  - quantity (string or number, REQUIRED)\n"
+            "  - unit_price (optional; required for sponsorship_form grand-total)\n"
+            "  - total (optional; auto = quantity * unit_price)\n"
+            "  - remark (optional string)\n"
+            "Include `request_number` ONLY when updating an existing rejected request."
+        ),
+        "/api/v1/external/purchase-requests/",
+        (),
+        (),
+        method="POST",
+        body_params=("payload_json",),
+    ),
+    ToolSpec(
+        "crm_forms_purchase_requests_list",
+        "List purchase requests and sponsorship forms. Supports request_type, approval_status, query, and pagination.",
+        "/api/v1/procurement/purchase-requests",
+        (),
+        ("page", "limit", "query", "request_type", "approval_status", "sort", "dir"),
+        method="GET",
+    ),
+    ToolSpec(
+        "crm_forms_purchase_requests_get",
+        "Get one purchase request or sponsorship form by request_id.",
+        "/api/v1/procurement/purchase-requests/{request_id}",
+        ("request_id",),
+        (),
+        method="GET",
+    ),
+    ToolSpec(
+        "crm_forms_complaints_submit",
+        (
+            "Submit a product/delivery complaint against one or more delivery orders. "
+            "CALL ONLY AFTER at least one delivery order number is known AND all required "
+            "complaint fields are collected AND the user has explicitly confirmed "
+            "(CONFIRM / OK / YES / CORRECT).\n"
+            "PREREQUISITE: If the user has not given a delivery-order number yet, FIRST "
+            "use the order-lookup tools to find matching DO(s) from customer name, "
+            "product, and delivery-date range, present a numbered list, and have the "
+            "user pick. DO NOT call this submit tool until at least one DO is "
+            "selected.\n"
+            "`payload_json` must be a JSON object with these fields:\n"
+            "REQUIRED:\n"
+            "  - delivery_order_numbers (string, comma-separated DO numbers)\n"
+            "  - date_of_complaint (string, DD/MM/YYYY)\n"
+            "  - customer_name (string)\n"
+            "  - contact_number (string, 8-15 digits after stripping symbols)\n"
+            "  - product_code (string)\n"
+            "  - quantity (string or number, positive)\n"
+            "  - complaint_type (string, e.g. Broken/Damage, Leak, Missing parts)\n"
+            "  - defect_description (string, free text)\n"
+            "OPTIONAL:\n"
+            "  - contact_person, address, customer_type (Dealer/Project/SMC/E-commerce/End User/Other), "
+            "customer_type_other, within_warranty (Yes/No/Not sure), product_type, "
+            "defect_discovered_when (DD/MM/YYYY or N/A), sales_person, project_title\n"
+            "After the complaint is submitted successfully, ask the user if they want to "
+            "attach photos/videos; use `crm_forms_entity_attachments_link` for each file "
+            "with entity_type='complaint' and entity_id set to the returned complaint id."
+        ),
+        "/api/v1/complaints-management/complaints/",
+        (),
+        (),
+        method="POST",
+        body_params=("payload_json",),
+    ),
+    ToolSpec(
+        "crm_forms_entity_attachments_link",
+        "Create and link attachment to complaint, stock_inquiry, or purchase_request. Provide payload_json with entity_type, entity_id, and file fields.",
+        "/api/v1/external/entity-attachments/",
+        (),
+        (),
+        method="POST",
+        body_params=("payload_json",),
     ),
 )

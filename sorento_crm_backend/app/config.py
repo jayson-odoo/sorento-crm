@@ -66,6 +66,19 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 1536
     openai_api_key: str | None = None
     openai_embeddings_url: str = "https://api.openai.com/v1/embeddings"
+    openai_chat_completions_url: str = "https://api.openai.com/v1/chat/completions"
+
+    # AI assistant
+    ai_assistant_enabled: bool = True
+    ai_assistant_mcp_url: str = "http://localhost:8765/mcp"
+    ai_assistant_mcp_timeout_seconds: int = 20
+    ai_assistant_tool_call_limit: int = 3
+    # RAG: how many MCP tool candidates to expose to the agent per turn (n8n parity).
+    ai_assistant_rag_top_k: int = 3
+    # Agent loop: max tool-calling iterations before forcing a final answer.
+    ai_assistant_agent_max_iterations: int = 6
+    # Reformulator: include the last N history messages (user+assistant) as context.
+    ai_assistant_reformulator_history_turns: int = 6
 
     # Frontend app URL (for password reset and other links in emails)
     frontend_base_url: str | None = None

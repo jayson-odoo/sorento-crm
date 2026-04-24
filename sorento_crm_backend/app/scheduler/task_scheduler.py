@@ -65,7 +65,7 @@ def _handler_embedding_job_processor(db, task):
 
 def _run_embedding_db_queue_fallback(db, max_jobs_per_run: int) -> dict:
     """Run worker for pending ``embedding_queue`` rows (available now), no Redis required."""
-    from sqlalchemy import func
+    from sqlalchemy import case, func
     from app.models.embeddings import EmbeddingQueue
     from app.services.embedding_worker import process_embedding_queue_item
 
@@ -79,7 +79,10 @@ def _run_embedding_db_queue_fallback(db, max_jobs_per_run: int) -> dict:
     ids = (
         db.query(EmbeddingQueue.id)
         .filter(EmbeddingQueue.status == "pending", EmbeddingQueue.available_at <= now_naive)
-        .order_by(EmbeddingQueue.created_at.asc())
+        .order_by(
+            case((EmbeddingQueue.source_type == "mcp_tool", 0), else_=1).asc(),
+            EmbeddingQueue.created_at.asc(),
+        )
         .limit(max_jobs_per_run)
         .all()
     )

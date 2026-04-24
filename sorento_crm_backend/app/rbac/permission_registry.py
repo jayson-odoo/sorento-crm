@@ -167,6 +167,25 @@ PERMISSION_REGISTRY.append({
     "name": "Manage App Store Modules",
     "description": "Install, enable, and disable application modules for the tenant.",
 })
+PERMISSION_REGISTRY.extend(
+    [
+        {
+            "slug": "system.ai_assistant_chat.use",
+            "name": "Use AI Assistant Chat",
+            "description": "Permission to use AI assistant chat in the application.",
+        },
+        {
+            "slug": "system.ai_assistant_settings.view",
+            "name": "View AI Assistant Settings",
+            "description": "Permission to view AI assistant settings.",
+        },
+        {
+            "slug": "system.ai_assistant_settings.edit",
+            "name": "Edit AI Assistant Settings",
+            "description": "Permission to edit AI assistant settings.",
+        },
+    ]
+)
 
 # Menu / Quick Access
 PERMISSION_REGISTRY.append({

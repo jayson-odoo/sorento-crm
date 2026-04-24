@@ -1,4 +1,5 @@
 """Shared dependencies for FastAPI routes."""
+import time
 from fastapi import Depends, HTTPException, status, Request, Header
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -158,7 +159,7 @@ async def get_current_user_optional(
         return None
 
 
-async def get_api_key(
+def get_api_key(
     x_api_key: Optional[str] = Header(None, alias="X-API-Key")
 ) -> Optional[str]:
     """Extract API key from X-API-Key header."""
@@ -172,7 +173,7 @@ def require_permission(permission_slug: str):
     When MODULE_GUARD_STRICT is on, also requires the mapped installable module to be enabled (superadmin/admin bypass).
     """
 
-    async def _require(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    def _require(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
         service = UserPermissionService(db)
         if not service.check_user_has_permission(current_user["id"], permission_slug):
             raise HTTPException(
@@ -211,7 +212,7 @@ def require_any_permission(permission_slugs: List[str]):
     Under strict module guard, user must satisfy at least one slug that is also allowed by module state.
     """
 
-    async def _require(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    def _require(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
         service = UserPermissionService(db)
         uid = current_user["id"]
         if service.get_user_role_slugs(uid) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
@@ -256,7 +257,7 @@ def require_permission_with_api_key(permission_slug: str):
     Use only on read endpoints; keep writes on require_permission + get_current_user.
     """
 
-    async def _require(
+    def _require(
         current_user: dict = Depends(get_current_user_or_api_key),
         db: Session = Depends(get_db),
     ) -> dict:
@@ -294,7 +295,7 @@ def require_permission_with_api_key(permission_slug: str):
 def require_any_permission_with_api_key(permission_slugs: List[str]):
     """Like require_any_permission but uses get_current_user_or_api_key (read/automation only)."""
 
-    async def _require(
+    def _require(
         current_user: dict = Depends(get_current_user_or_api_key),
         db: Session = Depends(get_db),
     ) -> dict:
@@ -338,6 +339,9 @@ def require_any_permission_with_api_key(permission_slugs: List[str]):
 
 def _user_dict_from_api_key_act_as(db: Session, request: Request) -> dict:
     """Build current_user for valid X-API-Key: act-as DB user if configured, else legacy system user."""
+    import logging
+    logger = logging.getLogger(__name__)
+    started = time.perf_counter()
     act_as_id = getattr(settings, "external_api_key_act_as_user_id", None) or None
     if not act_as_id:
         user = {
@@ -353,6 +357,8 @@ def _user_dict_from_api_key_act_as(db: Session, request: Request) -> dict:
 
         ip = request.client.host if request.client else None
         set_audit_context(user["id"], ip)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info("auth.api_key_act_as fallback_system_user elapsed_ms=%.1f", elapsed_ms)
         return user
 
     from app.models.user import User
@@ -362,6 +368,8 @@ def _user_dict_from_api_key_act_as(db: Session, request: Request) -> dict:
         .filter(User.id == act_as_id, User.is_trashed.is_(False))
         .first()
     )
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    logger.info("auth.api_key_act_as db_lookup elapsed_ms=%.1f found=%s", elapsed_ms, bool(row))
     if not row:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -422,7 +430,7 @@ async def get_external_api_user(
     }
 
 
-async def get_current_user_or_api_key(
+def get_current_user_or_api_key(
     request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
     api_key: Optional[str] = Depends(get_api_key),
@@ -436,8 +444,14 @@ async def get_current_user_or_api_key(
     import logging
     logger = logging.getLogger(__name__)
     
+    started = time.perf_counter()
+    auth_mode = "unknown"
+
+    logger.info("auth.get_current_user_or_api_key start has_api_key=%s has_token=%s", bool(api_key), bool(token))
+
     # If API key is provided, validate it
     if api_key:
+        auth_mode = "api_key"
         # Validate API key against environment variable
         valid_api_key = getattr(settings, 'external_api_key', None)
         if not valid_api_key:
@@ -454,9 +468,13 @@ async def get_current_user_or_api_key(
                 detail="Invalid API key"
             )
 
-        return _user_dict_from_api_key_act_as(db, request)
+        user = _user_dict_from_api_key_act_as(db, request)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)
+        return user
 
     # Otherwise, try JWT token authentication
+    auth_mode = "jwt"
     if not token:
         token = extract_token_from_request(request)
     
@@ -499,14 +517,20 @@ async def get_current_user_or_api_key(
         from app.audit_context import set_audit_context
         ip = request.client.host if request.client else None
         set_audit_context(user_id, ip)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)
         return user
     except JWTError as e:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.warning("auth.get_current_user_or_api_key failed mode=%s elapsed_ms=%.1f error=%s", auth_mode, elapsed_ms, str(e))
         logger.error(f"JWT validation failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {str(e)}"
         )
     except Exception as e:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.warning("auth.get_current_user_or_api_key failed mode=%s elapsed_ms=%.1f error=%s", auth_mode, elapsed_ms, str(e))
         logger.error(f"Unexpected error in authentication: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -1,0 +1,1094 @@
+"""Entity reference resolver.
+
+Given a free-text user query, extract "code-like" tokens and look each one up in parallel
+across the key business entities (products, orders, shipments, customers, suppliers,
+warehouses, SPOs, GRNs, promotions). Returns a structured resolution that the AI assistant
+can inject into the LLM prompt so the model does not have to guess what entity a code refers
+to.
+
+Design notes
+------------
+- Deterministic SQL only. No RAG / embedding call. Each probe is an indexed equality or
+  ILIKE lookup so the whole resolver runs in tens of milliseconds.
+- No UUIDs are ever returned. We keep the resolver user-facing: it returns business codes
+  and a minimal display payload (name, status, ETA...).
+- If zero entities match a token, the token is returned in `unresolved` so the LLM can
+  tell the user "no record found for X" rather than hallucinating a match.
+- Tokens that look like ordinary English words are filtered via a short stopword list and
+  a minimum-length / digit-presence requirement.
+"""
+from __future__ import annotations
+
+import logging
+import re
+import time
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from typing import Any, Iterable, Optional
+
+from sqlalchemy import func, or_, text
+from sqlalchemy.orm import Session
+
+from app.models.inventory import Warehouse
+from app.models.marketing import Promotion
+from app.models.order import Customer, Order, OrderStatus
+from app.models.procurement import (
+    InboundShipment,
+    PickingHeader,
+    SPOAllocation,
+    Supplier,
+)
+from app.models.product import Product
+
+
+logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------- #
+# Token extraction
+# --------------------------------------------------------------------------- #
+# Code-like token: contains at least one letter AND at least one digit, min length 3.
+# Allows letters, digits, hyphens, slashes, underscores, dots — but not pure numbers.
+# Examples accepted: ACC-SRT1024, RF2601-025, FJ24041192, MSCU5475129, CB310-BL, CB313, PL.2026.001
+# Examples rejected: the, and, 2026 (all digits), order, RF (no digit), product
+_CODE_RE = re.compile(
+    r"[A-Za-z][A-Za-z0-9]*(?:[-_./][A-Za-z0-9]+)+"  # multi-segment: e.g. ACC-SRT1024, RF2601-025
+    r"|[A-Za-z]+\d+[A-Za-z0-9]*"  # letters-then-digits: FJ24041192, CB313, MSCU5475129
+    r"|\d+[A-Za-z]+[A-Za-z0-9]*"  # digits-then-letters: 10KG, 24HR
+)
+
+# Tokens that match the regex but are almost always English words or noise. Keep SHORT
+# — we prefer false positives (extra SQL work) over false negatives (missed entity).
+_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "today",
+        "tomorrow",
+        "yesterday",
+        "please",
+        "thanks",
+        "thank",
+    }
+)
+
+
+def extract_candidate_tokens(query: str, *, max_candidates: int = 8) -> list[str]:
+    """Pull code-like tokens from the user's free-text query.
+
+    Returns at most `max_candidates` unique tokens, preserving order of first appearance.
+    """
+    if not query:
+        return []
+    raw = _CODE_RE.findall(query)
+    seen: set[str] = set()
+    out: list[str] = []
+    for tok in raw:
+        t = tok.strip(".-_/").strip()
+        if not t:
+            continue
+        if len(t) < 3:
+            continue
+        if t.lower() in _STOPWORDS:
+            continue
+        # Require BOTH a digit and a letter — rejects pure numbers ("2026", phone fragments)
+        # and pure words simultaneously.
+        if not (any(c.isdigit() for c in t) and any(c.isalpha() for c in t)):
+            continue
+        key = t.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
+        if len(out) >= max_candidates:
+            break
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Data classes
+# --------------------------------------------------------------------------- #
+@dataclass
+class ResolvedEntity:
+    """One hit for a candidate token."""
+
+    entity_type: str  # product | customer_order | customer | inbound_shipment | spo_allocation | grn | warehouse | supplier | promotion
+    canonical_code: str  # the business code the user should pass to tools (e.g. order_number)
+    display: dict[str, Any] = field(default_factory=dict)
+    match_field: str = ""  # which column matched (e.g. "product_code", "product_name")
+    match_tier: str = "exact"  # "exact" | "prefix" | "substring" | "embedding"
+    similarity: Optional[float] = None  # cosine similarity for embedding-tier matches
+
+
+@dataclass
+class TokenResolution:
+    token: str
+    matches: list[ResolvedEntity] = field(default_factory=list)
+    ambiguous: bool = False  # True when we found multiple candidates but picked none
+
+    @property
+    def resolved(self) -> bool:
+        # A single confident match. Ambiguous tokens are NOT resolved — the LLM must ask.
+        return bool(self.matches) and not self.ambiguous
+
+    @property
+    def confident_match(self) -> Optional[ResolvedEntity]:
+        """The single canonical match to pass to other tools, or None if ambiguous / unresolved."""
+        if self.ambiguous or not self.matches:
+            return None
+        return self.matches[0]
+
+
+@dataclass
+class ResolutionResult:
+    tokens: list[str]
+    resolutions: list[TokenResolution]
+    elapsed_ms: float
+
+    @property
+    def unresolved_tokens(self) -> list[str]:
+        """Tokens with zero candidate matches (NOT tokens that are ambiguous)."""
+        return [r.token for r in self.resolutions if not r.matches]
+
+    @property
+    def ambiguous_tokens(self) -> list[str]:
+        return [r.token for r in self.resolutions if r.ambiguous]
+
+    @property
+    def has_any_match(self) -> bool:
+        return any(r.resolved for r in self.resolutions)
+
+    def to_prompt_block(self) -> str:
+        """Render an authoritative block for the LLM. Empty string when nothing useful."""
+        if not self.resolutions:
+            return ""
+        lines: list[str] = []
+        resolved = [r for r in self.resolutions if r.resolved]
+        ambiguous = [r for r in self.resolutions if r.ambiguous]
+        unresolved = [r.token for r in self.resolutions if not r.matches]
+        if resolved:
+            lines.append("Resolved references in user query (authoritative \u2014 use these):")
+            for tr in resolved:
+                for match in tr.matches:
+                    display_bits = [f"{k}={v}" for k, v in match.display.items() if v not in (None, "", [])]
+                    desc = ", ".join(display_bits)
+                    tier_note = ""
+                    if match.match_tier == "prefix":
+                        tier_note = f" (fuzzy prefix match on {match.match_field})"
+                    elif match.match_tier == "substring":
+                        tier_note = f" (fuzzy substring match on {match.match_field})"
+                    elif match.match_tier == "embedding":
+                        sim_str = f"{match.similarity:.2f}" if match.similarity is not None else "?"
+                        tier_note = f" (semantic match, similarity={sim_str})"
+                    lines.append(
+                        f'- "{tr.token}" \u2192 {match.entity_type} (canonical_code={match.canonical_code})'
+                        + tier_note
+                        + (f" [{desc}]" if desc else "")
+                    )
+        if ambiguous:
+            if lines:
+                lines.append("")
+            lines.append(
+                "Ambiguous references in user query (multiple candidates \u2014 ask the user to pick one, "
+                "do NOT call any tool yet):"
+            )
+            for tr in ambiguous:
+                lines.append(f'- "{tr.token}" could be any of:')
+                for match in tr.matches:
+                    display_bits = [f"{k}={v}" for k, v in match.display.items() if v not in (None, "", [])]
+                    desc = ", ".join(display_bits)
+                    lines.append(
+                        f"    \u00b7 {match.entity_type} (canonical_code={match.canonical_code})"
+                        + (f" [{desc}]" if desc else "")
+                    )
+        if unresolved:
+            if lines:
+                lines.append("")
+            lines.append("Unresolved references (tell the user no record was found, do not guess):")
+            for t in unresolved:
+                lines.append(
+                    f'- "{t}" \u2014 no matching product, order, shipment, customer, supplier, warehouse, SPO, GRN, or promotion.'
+                )
+        return "\n".join(lines).strip()
+
+    def to_query_hint(self) -> str:
+        """Short hint appended to the reformulated query so the RAG tool picker sees entity types."""
+        if not self.resolutions:
+            return ""
+        bits: list[str] = []
+        for tr in self.resolutions:
+            if tr.resolved:
+                types = ", ".join(sorted({m.entity_type for m in tr.matches}))
+                bits.append(f'"{tr.token}" is {types}')
+            elif tr.ambiguous:
+                types = ", ".join(sorted({m.entity_type for m in tr.matches}))
+                bits.append(f'"{tr.token}" ambiguous ({types})')
+            else:
+                bits.append(f'"{tr.token}" unresolved')
+        return "Resolved references: " + "; ".join(bits) + "."
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "tokens": self.tokens,
+            "elapsed_ms": round(self.elapsed_ms, 2),
+            "resolutions": [
+                {
+                    "token": tr.token,
+                    "resolved": tr.resolved,
+                    "ambiguous": tr.ambiguous,
+                    "matches": [
+                        {
+                            "entity_type": m.entity_type,
+                            "canonical_code": m.canonical_code,
+                            "match_field": m.match_field,
+                            "match_tier": m.match_tier,
+                            "similarity": m.similarity,
+                            "display": m.display,
+                        }
+                        for m in tr.matches
+                    ],
+                }
+                for tr in self.resolutions
+            ],
+            "unresolved_tokens": self.unresolved_tokens,
+        }
+
+
+# --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
+def _iso(value: Any) -> Any:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
+
+
+def _first_nonempty(values: Iterable[Any]) -> Any:
+    for v in values:
+        if v not in (None, "", []):
+            return v
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Per-entity probes
+# --------------------------------------------------------------------------- #
+def _probe_product(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Exact match on product_code (case-insensitive)."""
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens]
+    rows = (
+        db.query(Product.product_code, Product.product_name, Product.is_active)
+        .filter(func.lower(Product.product_code).in_(lowered))
+        .all()
+    )
+    code_to_token = {t.lower(): t for t in tokens}
+    for code, name, is_active in rows:
+        token = code_to_token.get(str(code).lower())
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="product",
+                canonical_code=code,
+                match_field="product_code",
+                display={"product_name": name, "is_active": bool(is_active)},
+            )
+        )
+    return result
+
+
+def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Exact match on orders.order_number, joined to order_statuses for the label."""
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens]
+    rows = (
+        db.query(
+            Order.order_number,
+            Order.debtor_name,
+            Order.order_date,
+            Order.estimated_delivery_date,
+            Order.actual_delivery_date,
+            Order.delivery_time,
+            Order.transporter,
+            Order.is_cancelled,
+            OrderStatus.status_name,
+            OrderStatus.status_code,
+        )
+        .outerjoin(OrderStatus, OrderStatus.id == Order.order_status_id)
+        .filter(func.lower(Order.order_number).in_(lowered), Order.deleted_at.is_(None))
+        .all()
+    )
+    code_to_token = {t.lower(): t for t in tokens}
+    for row in rows:
+        token = code_to_token.get(str(row.order_number).lower())
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="customer_order",
+                canonical_code=row.order_number,
+                match_field="order_number",
+                display={
+                    "customer_name": row.debtor_name,
+                    "status": row.status_name or row.status_code,
+                    "order_date": _iso(row.order_date),
+                    "estimated_delivery_date": _iso(row.estimated_delivery_date),
+                    "actual_delivery_date": _iso(row.actual_delivery_date),
+                    "delivery_time": row.delivery_time,
+                    "transporter": row.transporter,
+                    "is_cancelled": bool(row.is_cancelled) if row.is_cancelled is not None else False,
+                },
+            )
+        )
+    return result
+
+
+def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Exact match on customer_code; fuzzy ILIKE on customer_name / phone_number / email."""
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens]
+    # Exact by customer_code
+    rows = (
+        db.query(
+            Customer.customer_code,
+            Customer.customer_name,
+            Customer.phone_number,
+            Customer.email,
+            Customer.is_active,
+        )
+        .filter(func.lower(Customer.customer_code).in_(lowered))
+        .all()
+    )
+    code_to_token = {t.lower(): t for t in tokens}
+    for code, name, phone, email, is_active in rows:
+        token = code_to_token.get(str(code).lower())
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="customer",
+                canonical_code=code,
+                match_field="customer_code",
+                display={
+                    "customer_name": name,
+                    "phone_number": phone,
+                    "email": email,
+                    "is_active": bool(is_active) if is_active is not None else True,
+                },
+            )
+        )
+    # Fuzzy on name / phone (only if still unresolved to avoid noise)
+    unresolved = [t for t in tokens if not result[t]]
+    for token in unresolved:
+        term = f"%{token}%"
+        rows = (
+            db.query(
+                Customer.customer_code,
+                Customer.customer_name,
+                Customer.phone_number,
+                Customer.email,
+            )
+            .filter(
+                or_(
+                    Customer.customer_name.ilike(term),
+                    Customer.phone_number.ilike(term),
+                )
+            )
+            .limit(3)
+            .all()
+        )
+        for code, name, phone, email in rows:
+            result[token].append(
+                ResolvedEntity(
+                    entity_type="customer",
+                    canonical_code=code or name,
+                    match_field="customer_name" if (name and token.lower() in (name or "").lower()) else "phone_number",
+                    display={"customer_name": name, "phone_number": phone, "email": email},
+                )
+            )
+    return result
+
+
+def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Exact match across shipment_number / container / BOL / invoice."""
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens]
+    rows = (
+        db.query(
+            InboundShipment.shipment_number,
+            InboundShipment.shipping_container_number,
+            InboundShipment.bill_of_lading_number,
+            InboundShipment.invoice_number,
+            InboundShipment.shipment_status,
+            InboundShipment.estimated_arrival_date,
+            InboundShipment.actual_arrival_date,
+        )
+        .filter(
+            or_(
+                func.lower(InboundShipment.shipment_number).in_(lowered),
+                func.lower(InboundShipment.shipping_container_number).in_(lowered),
+                func.lower(InboundShipment.bill_of_lading_number).in_(lowered),
+                func.lower(InboundShipment.invoice_number).in_(lowered),
+            )
+        )
+        .all()
+    )
+    for row in rows:
+        for token in tokens:
+            tl = token.lower()
+            match_field = None
+            if row.shipment_number and row.shipment_number.lower() == tl:
+                match_field = "shipment_number"
+            elif row.shipping_container_number and row.shipping_container_number.lower() == tl:
+                match_field = "shipping_container_number"
+            elif row.bill_of_lading_number and row.bill_of_lading_number.lower() == tl:
+                match_field = "bill_of_lading_number"
+            elif row.invoice_number and row.invoice_number.lower() == tl:
+                match_field = "invoice_number"
+            if not match_field:
+                continue
+            result[token].append(
+                ResolvedEntity(
+                    entity_type="inbound_shipment",
+                    canonical_code=row.shipment_number,
+                    match_field=match_field,
+                    display={
+                        "shipment_number": row.shipment_number,
+                        "shipping_container_number": row.shipping_container_number,
+                        "shipment_status": row.shipment_status,
+                        "estimated_arrival_date": _iso(row.estimated_arrival_date),
+                        "actual_arrival_date": _iso(row.actual_arrival_date),
+                    },
+                )
+            )
+    return result
+
+
+def _probe_spo(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens]
+    rows = (
+        db.query(SPOAllocation.spo_number)
+        .filter(func.lower(SPOAllocation.spo_number).in_(lowered))
+        .distinct()
+        .all()
+    )
+    code_to_token = {t.lower(): t for t in tokens}
+    for (spo_number,) in rows:
+        token = code_to_token.get(str(spo_number or "").lower())
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="spo_allocation",
+                canonical_code=spo_number,
+                match_field="spo_number",
+                display={"spo_number": spo_number},
+            )
+        )
+    return result
+
+
+def _probe_grn(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens]
+    rows = (
+        db.query(
+            PickingHeader.picking_number,
+            PickingHeader.picking_date,
+            PickingHeader.picking_status,
+            PickingHeader.picking_type,
+        )
+        .filter(
+            func.lower(PickingHeader.picking_number).in_(lowered),
+            PickingHeader.picking_type == "goods_received",
+        )
+        .all()
+    )
+    code_to_token = {t.lower(): t for t in tokens}
+    for row in rows:
+        token = code_to_token.get(str(row.picking_number).lower())
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="grn",
+                canonical_code=row.picking_number,
+                match_field="picking_number",
+                display={
+                    "grn_number": row.picking_number,
+                    "grn_date": _iso(row.picking_date),
+                    "grn_status": row.picking_status,
+                },
+            )
+        )
+    return result
+
+
+def _probe_warehouse(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens]
+    rows = (
+        db.query(Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location, Warehouse.is_active)
+        .filter(func.lower(Warehouse.warehouse_code).in_(lowered))
+        .all()
+    )
+    code_to_token = {t.lower(): t for t in tokens}
+    for code, name, location, is_active in rows:
+        token = code_to_token.get(str(code).lower())
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="warehouse",
+                canonical_code=code,
+                match_field="warehouse_code",
+                display={
+                    "warehouse_name": name,
+                    "location": location,
+                    "is_active": bool(is_active) if is_active is not None else True,
+                },
+            )
+        )
+    return result
+
+
+def _probe_supplier(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens]
+    rows = (
+        db.query(
+            Supplier.supplier_code,
+            Supplier.supplier_name,
+            Supplier.contact_name,
+            Supplier.email,
+            Supplier.phone_number,
+            Supplier.is_active,
+        )
+        .filter(func.lower(Supplier.supplier_code).in_(lowered))
+        .all()
+    )
+    code_to_token = {t.lower(): t for t in tokens}
+    for code, name, contact, email, phone, is_active in rows:
+        token = code_to_token.get(str(code).lower())
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="supplier",
+                canonical_code=code,
+                match_field="supplier_code",
+                display={
+                    "supplier_name": name,
+                    "contact_name": contact,
+                    "email": email,
+                    "phone_number": phone,
+                    "is_active": bool(is_active) if is_active is not None else True,
+                },
+            )
+        )
+    return result
+
+
+def _probe_promotion(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens]
+    rows = (
+        db.query(
+            Promotion.promo_code,
+            Promotion.name,
+            Promotion.promo_type,
+            Promotion.start_date,
+            Promotion.end_date,
+            Promotion.is_active,
+        )
+        .filter(func.lower(Promotion.promo_code).in_(lowered))
+        .all()
+    )
+    code_to_token = {t.lower(): t for t in tokens}
+    for code, name, ptype, start_date, end_date, is_active in rows:
+        token = code_to_token.get(str(code).lower())
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="promotion",
+                canonical_code=code,
+                match_field="promo_code",
+                display={
+                    "promotion_name": name,
+                    "promo_type": ptype,
+                    "start_date": _iso(start_date),
+                    "end_date": _iso(end_date),
+                    "is_active": bool(is_active) if is_active is not None else True,
+                },
+            )
+        )
+    return result
+
+
+# --------------------------------------------------------------------------- #
+# Tier 2 — prefix / substring probes (run only for tokens Tier 1 missed)
+# --------------------------------------------------------------------------- #
+# A Tier-2 probe takes a SINGLE token and returns a list of candidate entities.
+# - Preference order: prefix match first, then substring.
+# - Any token with >1 candidate is surfaced to the LLM as "ambiguous" so it asks
+#   the user to pick, rather than silently guessing or failing with "no record".
+PREFIX_LIMIT = 8
+
+
+def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
+    prefix = f"{token}%"
+    substr = f"%{token}%"
+    rows = (
+        db.query(Product.product_code, Product.product_name, Product.is_active)
+        .filter(Product.product_code.ilike(prefix))
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    tier = "prefix"
+    if not rows:
+        rows = (
+            db.query(Product.product_code, Product.product_name, Product.is_active)
+            .filter(Product.product_code.ilike(substr))
+            .limit(PREFIX_LIMIT)
+            .all()
+        )
+        tier = "substring"
+    return [
+        ResolvedEntity(
+            entity_type="product",
+            canonical_code=code,
+            match_field="product_code",
+            match_tier=tier,
+            display={"product_name": name, "is_active": bool(is_active)},
+        )
+        for code, name, is_active in rows
+    ]
+
+
+def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity]:
+    prefix = f"{token}%"
+    rows = (
+        db.query(
+            Order.order_number,
+            Order.debtor_name,
+            Order.estimated_delivery_date,
+            Order.actual_delivery_date,
+            OrderStatus.status_name,
+        )
+        .outerjoin(OrderStatus, OrderStatus.id == Order.order_status_id)
+        .filter(Order.order_number.ilike(prefix), Order.deleted_at.is_(None))
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="customer_order",
+            canonical_code=row.order_number,
+            match_field="order_number",
+            match_tier="prefix",
+            display={
+                "customer_name": row.debtor_name,
+                "status": row.status_name,
+                "estimated_delivery_date": _iso(row.estimated_delivery_date),
+                "actual_delivery_date": _iso(row.actual_delivery_date),
+            },
+        )
+        for row in rows
+    ]
+
+
+def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEntity]:
+    prefix = f"{token}%"
+    rows = (
+        db.query(
+            InboundShipment.shipment_number,
+            InboundShipment.shipping_container_number,
+            InboundShipment.shipment_status,
+            InboundShipment.estimated_arrival_date,
+        )
+        .filter(
+            or_(
+                InboundShipment.shipment_number.ilike(prefix),
+                InboundShipment.shipping_container_number.ilike(prefix),
+                InboundShipment.bill_of_lading_number.ilike(prefix),
+                InboundShipment.invoice_number.ilike(prefix),
+            )
+        )
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="inbound_shipment",
+            canonical_code=row.shipment_number,
+            match_field="shipment_number",
+            match_tier="prefix",
+            display={
+                "shipment_number": row.shipment_number,
+                "shipping_container_number": row.shipping_container_number,
+                "shipment_status": row.shipment_status,
+                "estimated_arrival_date": _iso(row.estimated_arrival_date),
+            },
+        )
+        for row in rows
+    ]
+
+
+def _prefix_probe_customer(db: Session, token: str) -> list[ResolvedEntity]:
+    prefix = f"{token}%"
+    rows = (
+        db.query(Customer.customer_code, Customer.customer_name, Customer.phone_number)
+        .filter(Customer.customer_code.ilike(prefix))
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="customer",
+            canonical_code=code,
+            match_field="customer_code",
+            match_tier="prefix",
+            display={"customer_name": name, "phone_number": phone},
+        )
+        for code, name, phone in rows
+    ]
+
+
+def _prefix_probe_warehouse(db: Session, token: str) -> list[ResolvedEntity]:
+    prefix = f"{token}%"
+    rows = (
+        db.query(Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.is_active)
+        .filter(Warehouse.warehouse_code.ilike(prefix))
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="warehouse",
+            canonical_code=code,
+            match_field="warehouse_code",
+            match_tier="prefix",
+            display={"warehouse_name": name, "is_active": bool(is_active)},
+        )
+        for code, name, is_active in rows
+    ]
+
+
+def _prefix_probe_supplier(db: Session, token: str) -> list[ResolvedEntity]:
+    prefix = f"{token}%"
+    rows = (
+        db.query(Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active)
+        .filter(Supplier.supplier_code.ilike(prefix))
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="supplier",
+            canonical_code=code,
+            match_field="supplier_code",
+            match_tier="prefix",
+            display={"supplier_name": name, "is_active": bool(is_active)},
+        )
+        for code, name, is_active in rows
+    ]
+
+
+def _prefix_probe_spo(db: Session, token: str) -> list[ResolvedEntity]:
+    prefix = f"{token}%"
+    rows = (
+        db.query(SPOAllocation.spo_number)
+        .filter(SPOAllocation.spo_number.ilike(prefix))
+        .distinct()
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="spo_allocation",
+            canonical_code=spo,
+            match_field="spo_number",
+            match_tier="prefix",
+            display={"spo_number": spo},
+        )
+        for (spo,) in rows
+    ]
+
+
+def _prefix_probe_grn(db: Session, token: str) -> list[ResolvedEntity]:
+    prefix = f"{token}%"
+    rows = (
+        db.query(
+            PickingHeader.picking_number,
+            PickingHeader.picking_date,
+            PickingHeader.picking_status,
+        )
+        .filter(
+            PickingHeader.picking_number.ilike(prefix),
+            PickingHeader.picking_type == "goods_received",
+        )
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="grn",
+            canonical_code=row.picking_number,
+            match_field="picking_number",
+            match_tier="prefix",
+            display={
+                "grn_number": row.picking_number,
+                "grn_date": _iso(row.picking_date),
+                "grn_status": row.picking_status,
+            },
+        )
+        for row in rows
+    ]
+
+
+def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
+    prefix = f"{token}%"
+    rows = (
+        db.query(Promotion.promo_code, Promotion.name, Promotion.is_active)
+        .filter(Promotion.promo_code.ilike(prefix))
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="promotion",
+            canonical_code=code,
+            match_field="promo_code",
+            match_tier="prefix",
+            display={"promotion_name": name, "is_active": bool(is_active)},
+        )
+        for code, name, is_active in rows
+    ]
+
+
+_TIER2_PROBES = (
+    _prefix_probe_product,
+    _prefix_probe_customer_order,
+    _prefix_probe_inbound_shipment,
+    _prefix_probe_customer,
+    _prefix_probe_warehouse,
+    _prefix_probe_supplier,
+    _prefix_probe_spo,
+    _prefix_probe_grn,
+    _prefix_probe_promotion,
+)
+
+
+def _tier2_fuzzy_lookup(db: Session, token: str) -> list[ResolvedEntity]:
+    """Run all Tier-2 prefix probes for a single token and return combined candidates."""
+    combined: list[ResolvedEntity] = []
+    for probe in _TIER2_PROBES:
+        try:
+            combined.extend(probe(db, token))
+        except Exception:
+            logger.exception("Tier-2 probe %s failed for token=%s", probe.__name__, token)
+    return combined
+
+
+# --------------------------------------------------------------------------- #
+# Tier 3 — embedding vector fallback (last resort)
+# --------------------------------------------------------------------------- #
+# Source types in embedding_chunks that correspond to primary business entities.
+# Child tables (order_line, picking_line, ...) are excluded: they'd match on noise.
+_EMBEDDING_SOURCE_TYPES: dict[str, str] = {
+    "product": "product",
+    "order": "customer_order",
+    "inbound_shipment": "inbound_shipment",
+    "spo_allocation": "spo_allocation",
+    "picking_header": "grn",
+    "promotion": "promotion",
+}
+EMBEDDING_MIN_SIMILARITY = 0.80
+EMBEDDING_CONFIDENCE_GAP = 0.05
+
+
+def _tier3_embedding_lookup(db: Session, token: str) -> list[ResolvedEntity]:
+    """Vector search over embedding_chunks for primary entities. Returns at most one
+    confident match, or an empty list when ambiguous / below threshold."""
+    # Local imports: these modules pull in heavy deps; we only want to pay the cost
+    # on the last-resort path.
+    try:
+        from app.services.embedding_worker import _embed_text_chunks
+    except Exception:
+        logger.exception("Tier-3 embedding worker import failed; skipping")
+        return []
+
+    try:
+        query_vec = _embed_text_chunks([token])[0]
+    except Exception:
+        logger.exception("Tier-3 query embedding failed for token=%s", token)
+        return []
+
+    allowed_types = tuple(_EMBEDDING_SOURCE_TYPES.keys())
+    sql = text(
+        """
+        SELECT ec.source_type, ec.source_id, ed.source_key,
+               1 - (ec.embedding <=> CAST(:vec AS vector)) AS similarity
+        FROM embedding_chunks ec
+        JOIN embedding_documents ed ON ed.source_type = ec.source_type AND ed.source_id = ec.source_id
+        WHERE ec.is_current = TRUE
+          AND ec.source_type = ANY(:types)
+        ORDER BY ec.embedding <=> CAST(:vec AS vector)
+        LIMIT 5
+        """
+    )
+    try:
+        rows = db.execute(sql, {"vec": list(query_vec), "types": list(allowed_types)}).all()
+    except Exception:
+        logger.exception("Tier-3 vector query failed for token=%s", token)
+        return []
+
+    if not rows:
+        return []
+
+    top = rows[0]
+    top_sim = float(top.similarity or 0.0)
+    if top_sim < EMBEDDING_MIN_SIMILARITY:
+        return []
+    second_sim = float(rows[1].similarity) if len(rows) > 1 else 0.0
+    if (top_sim - second_sim) < EMBEDDING_CONFIDENCE_GAP:
+        return []
+
+    entity_type = _EMBEDDING_SOURCE_TYPES.get(str(top.source_type))
+    if not entity_type:
+        return []
+    canonical_code = top.source_key or str(top.source_id)
+    return [
+        ResolvedEntity(
+            entity_type=entity_type,
+            canonical_code=canonical_code,
+            match_field=f"embedding:{top.source_type}",
+            match_tier="embedding",
+            similarity=top_sim,
+            display={"semantic_match": True},
+        )
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Public API
+# --------------------------------------------------------------------------- #
+_TIER1_PROBES = (
+    _probe_product,
+    _probe_customer_order,
+    _probe_inbound_shipment,
+    _probe_spo,
+    _probe_grn,
+    _probe_warehouse,
+    _probe_supplier,
+    _probe_promotion,
+    _probe_customer,
+)
+
+
+def resolve_references(
+    db: Session,
+    query_or_tokens: str | list[str],
+    *,
+    max_candidates: int = 8,
+    enable_prefix_fallback: bool = True,
+    enable_embedding_fallback: bool = True,
+) -> ResolutionResult:
+    """Main entry point.
+
+    Runs three tiers in order, stopping per-token as soon as a tier yields a match:
+
+      Tier 1 — exact case-insensitive lookup on all code fields.
+      Tier 2 — prefix / substring ILIKE on the same code fields (handles partial codes).
+      Tier 3 — embedding vector search over primary entities (semantic last resort).
+
+    Tier 2/3 results with ambiguity (multiple candidates, or low confidence gap) are
+    flagged `ambiguous=True` so the LLM asks the user to pick rather than guessing.
+    """
+    t0 = time.perf_counter()
+    if isinstance(query_or_tokens, list):
+        tokens = [t for t in (s.strip() for s in query_or_tokens) if t][:max_candidates]
+    else:
+        tokens = extract_candidate_tokens(query_or_tokens or "", max_candidates=max_candidates)
+
+    # ----- Tier 1: exact -----
+    per_token: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    ambiguous_tokens: set[str] = set()
+    if tokens:
+        for probe in _TIER1_PROBES:
+            try:
+                hits = probe(db, tokens)
+            except Exception:
+                logger.exception("Tier-1 probe %s failed", probe.__name__)
+                continue
+            for tok, matches in hits.items():
+                per_token[tok].extend(matches)
+
+    # ----- Tier 2: prefix / substring fallback (only for tokens still empty) -----
+    if enable_prefix_fallback:
+        for tok in tokens:
+            if per_token[tok]:
+                continue
+            candidates = _tier2_fuzzy_lookup(db, tok)
+            if not candidates:
+                continue
+            if len(candidates) == 1:
+                per_token[tok] = candidates
+                continue
+            # 2+ matches — let the LLM ask the user to pick, cap surface size.
+            per_token[tok] = candidates[:PREFIX_LIMIT]
+            ambiguous_tokens.add(tok)
+
+    # ----- Tier 3: embedding fallback (only for tokens still empty AND not ambiguous) -----
+    if enable_embedding_fallback:
+        for tok in tokens:
+            if per_token[tok] or tok in ambiguous_tokens:
+                continue
+            hits = _tier3_embedding_lookup(db, tok)
+            if hits:
+                per_token[tok] = hits
+
+    resolutions = [
+        TokenResolution(token=t, matches=per_token[t], ambiguous=(t in ambiguous_tokens))
+        for t in tokens
+    ]
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+    return ResolutionResult(tokens=tokens, resolutions=resolutions, elapsed_ms=elapsed_ms)

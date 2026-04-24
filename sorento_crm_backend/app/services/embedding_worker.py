@@ -380,12 +380,23 @@ def _embed_text_chunks(chunks: list[str]) -> list[list[float]]:
 def _chunks_for_source(source_type: str, source: dict[str, Any]) -> list[str]:
     if source_type == "mcp_tool":
         md = source.get("metadata") or {}
-        questions = md.get("typical_user_questions") or []
-        required_fields = md.get("required_fields") or []
-        optional_fields = md.get("optional_fields") or []
-        chunks: list[str] = [str(q).strip() for q in questions if str(q).strip()]
-        chunks.extend([f"Required field for {source.get('title')}: {str(f).strip()}" for f in required_fields if str(f).strip()])
-        chunks.extend([f"Optional field for {source.get('title')}: {str(f).strip()}" for f in optional_fields if str(f).strip()])
+        title = str(source.get("title") or "").strip()
+        body_text = str(source.get("body_text") or "").strip()
+        questions = [str(q).strip() for q in (md.get("typical_user_questions") or []) if str(q).strip()]
+        aliases = [str(a).strip() for a in (md.get("aliases") or []) if str(a).strip()]
+        required_fields = [str(f).strip() for f in (md.get("required_fields") or []) if str(f).strip()]
+        optional_fields = [str(f).strip() for f in (md.get("optional_fields") or []) if str(f).strip()]
+
+        chunks: list[str] = []
+        if body_text:
+            chunks.append(body_text)
+        if aliases:
+            chunks.append(f"Tool aliases for {title}: " + ", ".join(aliases))
+        chunks.extend(questions)
+        if required_fields:
+            chunks.append(f"Required fields for {title}: " + ", ".join(required_fields))
+        if optional_fields:
+            chunks.append(f"Optional fields for {title}: " + ", ".join(optional_fields))
         if chunks:
             return chunks
     return _chunk_text(source["body_text"], settings.embedding_chunk_size, settings.embedding_chunk_overlap)
@@ -430,19 +441,38 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
             db.commit()
             return {"status": "skipped", "queue_id": queue_id}
 
-        doc = EmbeddingDocument(
-            source_type=queue_item.source_type,
-            source_id=queue_item.source_id,
-            source_key=source.get("source_key"),
-            title=source.get("title"),
-            body_text=source["body_text"],
-            metadata_json=source.get("metadata", {}),
-            visibility_scope=source.get("visibility_scope"),
-            source_hash=source_hash,
-            source_updated_at=source.get("source_updated_at"),
-            is_active=True,
+        doc = (
+            db.query(EmbeddingDocument)
+            .filter(
+                EmbeddingDocument.source_type == queue_item.source_type,
+                EmbeddingDocument.source_id == queue_item.source_id,
+            )
+            .order_by(EmbeddingDocument.created_at.desc())
+            .first()
         )
-        db.add(doc)
+        if doc is not None:
+            doc.source_key = source.get("source_key")
+            doc.title = source.get("title")
+            doc.body_text = source["body_text"]
+            doc.metadata_json = source.get("metadata", {})
+            doc.visibility_scope = source.get("visibility_scope")
+            doc.source_hash = source_hash
+            doc.source_updated_at = source.get("source_updated_at")
+            doc.is_active = True
+        else:
+            doc = EmbeddingDocument(
+                source_type=queue_item.source_type,
+                source_id=queue_item.source_id,
+                source_key=source.get("source_key"),
+                title=source.get("title"),
+                body_text=source["body_text"],
+                metadata_json=source.get("metadata", {}),
+                visibility_scope=source.get("visibility_scope"),
+                source_hash=source_hash,
+                source_updated_at=source.get("source_updated_at"),
+                is_active=True,
+            )
+            db.add(doc)
         db.flush()
 
         chunks = _chunks_for_source(queue_item.source_type, source)

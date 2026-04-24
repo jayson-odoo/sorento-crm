@@ -1,4 +1,6 @@
 """Stock API routes."""
+import logging
+import time
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Body, Path
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -18,6 +20,7 @@ from app.schemas.common import ListResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class BulkDeleteStockRequest(BaseModel):
@@ -25,7 +28,7 @@ class BulkDeleteStockRequest(BaseModel):
 
 
 @router.get("/balance", response_model=ListResponse[StockResponse])
-async def get_stock_balance(
+def get_stock_balance(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
     query: Optional[str] = Query(None),
@@ -63,7 +66,7 @@ async def get_stock_balance(
 
 
 @router.get("/dashboard", response_model=StockDashboardResponse)
-async def get_stock_dashboard(
+def get_stock_dashboard(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -77,21 +80,28 @@ async def get_stock_dashboard(
 
 
 @router.get("/alerts")
-async def get_stock_alerts(
+def get_stock_alerts(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get low stock alerts."""
+    started = time.perf_counter()
+    logger.info("inventory.stock_alerts start")
     try:
         service = StockService(db)
         alerts = service.get_stock_alerts()
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        count = len(alerts) if isinstance(alerts, list) else -1
+        logger.info("inventory.stock_alerts done elapsed_ms=%.1f count=%s", elapsed_ms, count)
         return alerts
     except Exception as e:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.exception("inventory.stock_alerts failed elapsed_ms=%.1f error=%s", elapsed_ms, str(e))
         raise handle_internal_error(str(e))
 
 
 @router.get("/balance/export")
-async def export_stock_balance(
+def export_stock_balance(
     warehouse_id: Optional[str] = Query(None),
     product_id: Optional[str] = Query(
         None,
@@ -103,6 +113,14 @@ async def export_stock_balance(
     db: Session = Depends(get_db)
 ):
     """Export all stock balance data (no pagination, returns all records)."""
+    started = time.perf_counter()
+    logger.info(
+        "inventory.stock_balance_export start warehouse_id=%s product_id=%s quantity_operator=%s quantity_value=%s",
+        warehouse_id,
+        product_id,
+        quantity_operator,
+        quantity_value,
+    )
     try:
         service = StockService(db)
         stock_items = service.get_all_stock_for_export(
@@ -111,11 +129,15 @@ async def export_stock_balance(
             quantity_operator=quantity_operator,
             quantity_value=quantity_value
         )
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.info("inventory.stock_balance_export done elapsed_ms=%.1f rows=%s", elapsed_ms, len(stock_items))
         return {
             "data": stock_items,
             "total": len(stock_items)
         }
     except Exception as e:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.exception("inventory.stock_balance_export failed elapsed_ms=%.1f error=%s", elapsed_ms, str(e))
         raise handle_internal_error(str(e))
 
 
@@ -135,7 +157,7 @@ async def bulk_delete_stock(
 
 
 @router.get("/{product_id}/{warehouse_id}/ledger", response_model=ListResponse[StockLedgerResponse])
-async def get_stock_ledger_by_stock(
+def get_stock_ledger_by_stock(
     product_id: str = Path(
         ...,
         description="Product UUID or product_code (e.g. SKU).",

@@ -7,6 +7,7 @@ import { Footer } from './components/footer';
 import { Header } from './components/header';
 import { Sidebar } from './components/sidebar';
 import { ModuleRouteGuard } from '@/app/components/module-route-guard';
+import AIAssistantBubble from '@/app/components/common/AIAssistantBubble';
 
 export function Demo1Layout({ children }: { children: ReactNode }) {
   const isMobile = useIsMobile();
@@ -63,6 +64,7 @@ export function Demo1Layout({ children }: { children: ReactNode }) {
 
         <Footer />
       </div>
+      <AIAssistantBubble />
     </ModuleRouteGuard>
   );
 }

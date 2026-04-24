@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.procurement_service import PurchaseRequestService
 from app.schemas.procurement import (
     PurchaseRequestHeaderCreate,
@@ -48,7 +48,7 @@ async def get_purchase_requests(
     approval_status: Optional[str] = Query(None, description="draft, pending, approved, rejected"),
     sort: Optional[str] = Query("request_date"),
     dir: Optional[str] = Query("desc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """List purchase requests and sponsorship forms with pagination."""
@@ -71,7 +71,7 @@ async def get_purchase_requests(
 @router.get("/{request_id}", response_model=PurchaseRequestHeaderResponse)
 async def get_purchase_request(
     request_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """Get a purchase request or sponsorship form by ID with lines and attachments."""
@@ -126,7 +126,7 @@ async def get_purchase_request_conversation(
     request_id: str,
     limit: int = Query(50, ge=1, le=50),
     cursor: Optional[str] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """Get Respond.io conversation messages for this purchase request or sponsorship form."""

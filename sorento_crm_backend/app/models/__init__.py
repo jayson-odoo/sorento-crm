@@ -32,6 +32,12 @@ from app.models.numbering import DocumentNumberingRule
 from app.models.app_modules import AppModuleCatalog, AppModuleBundle, TenantModule, ModuleInstallEvent
 from app.models.list_query_metadata import ListQueryResource, ListQueryField
 from app.models.embeddings import EmbeddingQueue, EmbeddingDocument, EmbeddingChunk
+from app.models.ai_assistant import (
+    AIAssistantConfig,
+    AIAssistantConversation,
+    AIAssistantMessage,
+    AIAssistantGovernanceEvent,
+)
 
 __all__ = [
     "User",
@@ -118,4 +124,8 @@ __all__ = [
     "EmbeddingQueue",
     "EmbeddingDocument",
     "EmbeddingChunk",
+    "AIAssistantConfig",
+    "AIAssistantConversation",
+    "AIAssistantMessage",
+    "AIAssistantGovernanceEvent",
 ]
