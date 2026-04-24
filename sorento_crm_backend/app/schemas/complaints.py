@@ -128,6 +128,7 @@ class ComplaintUpdate(BaseModel):
 
 class ComplaintResponse(ComplaintBase):
     id: str
+    view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
     status: Optional[str] = None
     last_responded_by: Optional[str] = None

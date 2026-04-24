@@ -215,6 +215,7 @@ class PurchaseRequestExternalResponse(BaseModel):
     grand_total: Optional[Decimal] = None
     already_existed: bool = False
     message: Optional[str] = None
+    view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
     approval_status: Optional[str] = None
 

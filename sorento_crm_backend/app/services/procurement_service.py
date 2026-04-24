@@ -2151,6 +2151,7 @@ class StockInquiryService:
         """Get stock inquiry as dict with last_responded_by_name resolved for API response."""
         inquiry = self.get_inquiry(inquiry_id)
         data = {attr.key: getattr(inquiry, attr.key) for attr in inspect(inquiry).mapper.column_attrs}
+        data["view_url"] = self._build_stock_inquiry_view_url(str(inquiry.id))
         data["last_responded_by_name"] = (
             self._resolve_user_display_name(inquiry.last_responded_by) if inquiry.last_responded_by else None
         )

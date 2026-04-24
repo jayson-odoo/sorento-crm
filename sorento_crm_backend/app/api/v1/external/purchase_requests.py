@@ -103,6 +103,7 @@ def create_purchase_request(
             grand_total=_grand_total(header),
             already_existed=(outcome == "updated"),
             message="Updated existing form." if outcome == "updated" else None,
+            view_url=service._build_request_view_url(str(header.id), base_url_override=first.base_url),
             respond_inbox_url=getattr(header, "respond_inbox_url", None),
             approval_status=getattr(header, "approval_status", None),
         )

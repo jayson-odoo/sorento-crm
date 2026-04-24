@@ -562,6 +562,7 @@ class StockInquiryRejectReopenRequest(BaseModel):
 class StockInquiryResponse(StockInquiryBase):
     id: str
     inquiry_number: Optional[str] = None
+    view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
     status: Optional[str] = None
     last_responded_by: Optional[str] = None
@@ -702,6 +703,7 @@ class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
     """Response for list endpoint (no lines)."""
     id: str
     request_number: Optional[str] = None
+    view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -729,6 +731,7 @@ class PurchaseRequestAttachmentLinkRequest(BaseModel):
 class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     id: str
     request_number: Optional[str] = None
+    view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
     approver_display_name: Optional[str] = None  # Resolved from User when approver_user_id is set
     created_at: Optional[datetime] = None

@@ -79,6 +79,7 @@ class ComplaintService:
     ) -> dict:
         """Serialize complaint with attachments from generic entity_attachment_links table."""
         data = {attr.key: getattr(complaint, attr.key) for attr in inspect(complaint).mapper.column_attrs}
+        data["view_url"] = self._build_complaint_view_url(str(complaint.id))
         links = links_override if links_override is not None else self.entity_attachment_service.list_links("complaint", str(complaint.id))
         data["attachments"] = [
             self.entity_attachment_service.serialize_link(

@@ -27,6 +27,21 @@ TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
     "crm_marketing_promotion_products_list": ("promotion_id",),
 }
 
+TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
+    # Promotion list must always return active promotions only.
+    "crm_marketing_promotions_list": {"status": "active"},
+}
+
+PROMOTION_TOOL_NAMES: set[str] = {
+    "crm_marketing_promotions_list",
+    "crm_marketing_promotions_get",
+    "crm_marketing_promotion_products_nested",
+    "crm_marketing_promotion_products_list",
+    "crm_marketing_promotion_attachments_list",
+    "crm_marketing_promotion_attachments_get",
+    "crm_marketing_promotion_attachments_by_promotion",
+}
+
 UUID_REGEX = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 )
@@ -51,6 +66,81 @@ def _list_spec_by_path(path: str) -> ToolSpec | None:
         if s.path == path:
             return s
     return None
+
+
+def _json_loads_safe(payload: str) -> Any:
+    try:
+        return json.loads(payload)
+    except Exception:
+        return None
+
+
+def _is_active_promotion_obj(obj: Any) -> bool:
+    if not isinstance(obj, dict):
+        return False
+    if isinstance(obj.get("is_active"), bool):
+        return obj["is_active"]
+    status = obj.get("status")
+    if isinstance(status, str):
+        return status.strip().lower() == "active"
+    return False
+
+
+async def _ensure_promotion_active(client: Any, promotion_id: str | None) -> str | None:
+    if not promotion_id:
+        return None
+    try:
+        raw = await client.get(f"/api/v1/marketing/promotions/{promotion_id}", path_params={}, query={})
+    except Exception:
+        return None
+    data = _json_loads_safe(raw)
+    if isinstance(data, dict) and not _is_active_promotion_obj(data):
+        return json.dumps(
+            {
+                "message": "Promotion is inactive.",
+                "code": "PROMOTION_INACTIVE",
+                "promotion_id": str(promotion_id),
+            }
+        )
+    return None
+
+
+def _filter_active_promotion_records(tool_name: str, raw: str) -> str:
+    if tool_name not in PROMOTION_TOOL_NAMES:
+        return raw
+    data = _json_loads_safe(raw)
+    if data is None:
+        return raw
+
+    # Single-promotion details: block inactive promotion records.
+    if tool_name == "crm_marketing_promotions_get":
+        if isinstance(data, dict) and not _is_active_promotion_obj(data):
+            return json.dumps({"message": "Promotion is inactive.", "code": "PROMOTION_INACTIVE"})
+        return raw
+
+    # Single linked records (e.g. promotion attachment get): block if linked promotion inactive.
+    if isinstance(data, dict) and isinstance(data.get("promotion"), dict):
+        if not _is_active_promotion_obj(data.get("promotion")):
+            return json.dumps({"message": "Promotion is inactive.", "code": "PROMOTION_INACTIVE"})
+        return raw
+
+    # List-like responses: keep only rows with active promotion context.
+    if isinstance(data, dict) and isinstance(data.get("data"), list):
+        rows = data["data"]
+        filtered = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if _is_active_promotion_obj(row):
+                filtered.append(row)
+                continue
+            promotion = row.get("promotion")
+            if _is_active_promotion_obj(promotion):
+                filtered.append(row)
+        data["data"] = filtered
+        return json.dumps(data)
+
+    return raw
 
 
 async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[str, Any], query: dict[str, Any]) -> str:
@@ -80,7 +170,24 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
                     "code": "INVALID_IDENTIFIER_FORMAT",
                 }
             )
-    return await client.request(spec.method, spec.path, path_params=path_params, query=query)
+    if spec.name == "crm_marketing_promotions_get":
+        inactive_msg = await _ensure_promotion_active(client, path_params.get("promotion_id"))
+        if inactive_msg is not None:
+            return inactive_msg
+    elif spec.name in {
+        "crm_marketing_promotion_products_nested",
+        "crm_marketing_promotion_attachments_by_promotion",
+    }:
+        inactive_msg = await _ensure_promotion_active(client, path_params.get("promotion_id"))
+        if inactive_msg is not None:
+            return inactive_msg
+    elif spec.name in {"crm_marketing_promotion_products_list", "crm_marketing_promotion_attachments_list"}:
+        inactive_msg = await _ensure_promotion_active(client, query.get("promotion_id"))
+        if inactive_msg is not None:
+            return inactive_msg
+
+    response = await client.request(spec.method, spec.path, path_params=path_params, query=query)
+    return _filter_active_promotion_records(spec.name, response)
 
 
 async def _execute_tool_request_with_body(
@@ -122,6 +229,7 @@ def _compile_tool(spec: ToolSpec):
     b_dict = "{" + ", ".join(f'"{b}": {b}' for b in spec.body_params) + "}"
     aliases_repr = repr(aliases)
     required_hints = repr(TOOL_REQUIRED_QUERY_HINTS.get(spec.name, ()))
+    default_q = repr(TOOL_DEFAULT_QUERY_PARAMS.get(spec.name, {}))
 
     fname = f"_impl_{spec.name}"
     code = (
@@ -132,6 +240,7 @@ def _compile_tool(spec: ToolSpec):
         f"    _bb = {b_dict}\n"
         f"    _aliases = {aliases_repr}\n"
         f"    _required = {required_hints}\n"
+        f"    _defaults = {default_q}\n"
         f"    for _canonical, _alias_names in _aliases.items():\n"
         f"        if _qq.get(_canonical) is None:\n"
         f"            for _alias in _alias_names:\n"
@@ -141,6 +250,9 @@ def _compile_tool(spec: ToolSpec):
         f"    for _k, _v in list(_qq.items()):\n"
         f"        _qq[_k] = _normalize_query_value(_v)\n"
         f"    q = {{k: v for k, v in _qq.items() if v is not None}}\n"
+        f"    for _dk, _dv in _defaults.items():\n"
+        f"        if q.get(_dk) in (None, ''):\n"
+        f"            q[_dk] = _dv\n"
         f"    body = None\n"
         f"    if _bb:\n"
         f"        _decoded = {{}}\n"
