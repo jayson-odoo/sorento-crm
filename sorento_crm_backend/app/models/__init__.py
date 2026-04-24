@@ -38,6 +38,7 @@ from app.models.ai_assistant import (
     AIAssistantMessage,
     AIAssistantGovernanceEvent,
 )
+from app.models.chat_history import ChatHistory
 
 __all__ = [
     "User",
@@ -128,4 +129,5 @@ __all__ = [
     "AIAssistantConversation",
     "AIAssistantMessage",
     "AIAssistantGovernanceEvent",
+    "ChatHistory",
 ]

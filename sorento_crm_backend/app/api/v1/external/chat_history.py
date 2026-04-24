@@ -1,93 +1,173 @@
-"""
-External API: return latest n human messages from n8n_chat_histories for a contact (respond_io_id).
-
-Auth: X-API-Key header (get_external_api_user).
-"""
+"""External API for channel-based chat history ingestion and retrieval."""
+import json
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status
+import uuid
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.schemas.external.chat_history import (
-    ChatHistoryHumanMessagesRequest,
-    ChatHistoryHumanMessagesResponse,
+    ChatHistoryMessageIngestRequest,
+    ChatHistoryMessageIngestResponse,
+    ChatHistoryMessageItem,
+    ChatHistoryMessagesRequest,
+    ChatHistoryMessagesResponse,
 )
+from app.schemas.integration import IntegrationLogCreate
+from app.services.integration_service import IntegrationLogService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.post("", response_model=ChatHistoryHumanMessagesResponse, status_code=status.HTTP_200_OK)
-def get_latest_human_messages(
-    payload: ChatHistoryHumanMessagesRequest,
+def _safe_utc_datetime_from_epoch_ms(epoch_ms: int) -> datetime:
+    if epoch_ms <= 0:
+        raise ValueError("sent_at must be a valid epoch milliseconds value.")
+    return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).replace(tzinfo=None)
+
+
+@router.post("/messages", response_model=ChatHistoryMessageIngestResponse, status_code=status.HTTP_201_CREATED)
+def ingest_chat_message(
+    payload: ChatHistoryMessageIngestRequest,
+    request: Request,
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Return the latest n human messages for a contact from n8n_chat_histories.
-
-    Called by an external system (e.g. n8n) with contact_id (respond_io_id) and limit.
-    Reads from n8n_chat_histories where session_id = contact_id and message type is "human",
-    ordered by id descending, then returns the requested number of message content strings
-    in chronological order (oldest first).
-
-    **Auth:** X-API-Key header (external API key).
-
-    **Body:**
-    - contact_id (required): Respond.io contact id (maps to session_id in n8n_chat_histories).
-    - limit (optional): Number of latest human messages to return (default 10, max 100).
-
-    **Returns:** List of content strings only, e.g.:
-    ```json
-    {
-      "content": [
-        "Date today name shah delivery address my house...",
-        "confirm, all good"
-      ]
-    }
-    ```
-    """
-    contact_id = (payload.contact_id or "").strip()
-    if not contact_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="contact_id is required.",
-        )
-    limit = max(1, min(100, payload.limit))
-
-    query = text("""
-        SELECT message
-        FROM n8n_chat_histories
-        WHERE session_id = :session_id
-          AND message->>'type' = 'human'
-        ORDER BY id DESC
-        LIMIT :limit
-    """)
+    """Ingest one chat message from n8n into local storage."""
+    _ = current_user
     try:
-        result = db.execute(query, {"session_id": contact_id, "limit": limit})
+        sent_at = _safe_utc_datetime_from_epoch_ms(payload.sent_at)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    insert_query = text(
+        """
+        INSERT INTO chat_histories (
+            channel, contact_id, phone_number, message, sent_at, first_name, last_name, type
+        ) VALUES (
+            :channel, :contact_id, :phone_number, :message, :sent_at, :first_name, :last_name, :type
+        )
+        RETURNING id
+        """
+    )
+
+    message_id: int | None = None
+    status_code = status.HTTP_201_CREATED
+    error_message: str | None = None
+
+    try:
+        result = db.execute(
+            insert_query,
+            {
+                "channel": payload.channel,
+                "contact_id": payload.contact_id,
+                "phone_number": payload.phone_number,
+                "message": payload.message,
+                "sent_at": sent_at,
+                "first_name": payload.first_name,
+                "last_name": payload.last_name,
+                "type": payload.type,
+            },
+        )
+        message_id = result.scalar_one()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.exception("Failed to insert chat history: %s", e)
+        status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        error_message = "Failed to ingest chat history message."
+
+    try:
+        request_headers = dict(request.headers)
+        # Avoid persisting sensitive API key values in integration logs.
+        if "x-api-key" in request_headers:
+            request_headers["x-api-key"] = "***"
+
+        IntegrationLogService(db).create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="n8n",
+                business_table="chat_histories",
+                business_id=str(uuid.uuid4()),
+                external_reference=str(payload.contact_id),
+                direction="inbound",
+                endpoint=str(request.url.path),
+                http_method=request.method,
+                request_headers=json.dumps(request_headers),
+                request_payload=payload.model_dump_json(),
+                status_code=status_code,
+                status="success" if status_code < 400 else "failed",
+                error_message=error_message,
+            )
+        )
+    except Exception as log_error:
+        logger.warning("Failed to create integration log for chat history ingestion: %s", log_error, exc_info=True)
+
+    if message_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to ingest chat history message.",
+        )
+
+    return ChatHistoryMessageIngestResponse(id=message_id)
+
+
+@router.post("", response_model=ChatHistoryMessagesResponse, status_code=status.HTTP_200_OK)
+def get_chat_history_messages(
+    payload: ChatHistoryMessagesRequest,
+    current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """Return chat history from local high-volume channel-based chat storage."""
+    _ = current_user
+    limit = max(1, min(500, payload.limit))
+    order = payload.order.lower()
+    if order not in ("asc", "desc"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="order must be 'asc' or 'desc'.")
+
+    # Fetch latest rows first using descending index order, then optionally reverse for ascending response.
+    query = text(
+        """
+        SELECT id, channel, contact_id, phone_number, message, sent_at, first_name, last_name, type
+        FROM chat_histories
+        WHERE channel = :channel
+          AND contact_id = :contact_id
+        ORDER BY sent_at DESC, id DESC
+        LIMIT :limit
+        """
+    )
+    try:
+        result = db.execute(
+            query,
+            {"channel": payload.channel, "contact_id": payload.contact_id, "limit": limit},
+        )
         rows = result.fetchall()
     except Exception as e:
-        logger.exception("Failed to query n8n_chat_histories: %s", e)
+        logger.exception("Failed to query chat_histories: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to read chat history.",
         ) from e
 
-    # message column is jsonb; rows are (message_dict,); reverse so oldest first
-    raw_messages = [row[0] for row in rows]
-    raw_messages.reverse()
+    messages = [
+        ChatHistoryMessageItem(
+            id=row.id,
+            channel=row.channel,
+            contact_id=row.contact_id,
+            phone_number=row.phone_number,
+            message=row.message,
+            sent_at=row.sent_at,
+            first_name=row.first_name,
+            last_name=row.last_name,
+            type=row.type,
+        )
+        for row in rows
+    ]
+    if order == "asc":
+        messages.reverse()
 
-    content_list: list[str] = []
-    for raw in raw_messages:
-        if not raw or not isinstance(raw, dict):
-            continue
-        content = raw.get("content")
-        if isinstance(content, str):
-            content_list.append(content)
-        elif content is not None:
-            content_list.append(str(content))
-
-    return ChatHistoryHumanMessagesResponse(content=content_list)
+    return ChatHistoryMessagesResponse(messages=messages)

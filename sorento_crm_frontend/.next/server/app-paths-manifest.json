@@ -1,10 +1,8 @@
 {
-  "/api/auth/token/route": "app/api/auth/token/route.js",
-  "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/api/user-management/account/route": "app/api/user-management/account/route.js",
+  "/api/v1/external/[...path]/route": "app/api/v1/external/[...path]/route.js",
   "/(protected)/procurement-management/grn/[id]/page": "app/(protected)/procurement-management/grn/[id]/page.js",
-  "/(protected)/order-management/orders/page": "app/(protected)/order-management/orders/page.js",
-  "/(protected)/procurement-management/packing-lists/[id]/page": "app/(protected)/procurement-management/packing-lists/[id]/page.js",
   "/(protected)/procurement-management/spo-allocations/[id]/page": "app/(protected)/procurement-management/spo-allocations/[id]/page.js",
+  "/(protected)/procurement-management/packing-lists/[id]/page": "app/(protected)/procurement-management/packing-lists/[id]/page.js",
+  "/(protected)/order-management/orders/page": "app/(protected)/order-management/orders/page.js",
   "/(protected)/order-management/orders/[id]/page": "app/(protected)/order-management/orders/[id]/page.js"
 }

@@ -125,6 +125,11 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/api/v1/system/[...path]/route.js"
+    ],
+    "/api/v1/external/[...path]/route": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/api/v1/external/[...path]/route.js"
     ]
   }
 }
