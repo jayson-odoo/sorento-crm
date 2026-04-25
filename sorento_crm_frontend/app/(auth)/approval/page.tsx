@@ -459,7 +459,7 @@ function ApprovalContent() {
             <Button
               onClick={() => handleSubmit('approved')}
               disabled={submitting}
-              className="flex-1 sm:flex-none"
+              className="flex-1 sm:flex-none min-h-11 sm:min-h-10 text-base sm:text-sm font-semibold"
             >
               {submitting && <LoaderCircleIcon className="animate-spin h-4 w-4 mr-2" />}
               Approve
@@ -468,7 +468,7 @@ function ApprovalContent() {
               variant="destructive"
               onClick={() => handleSubmit('rejected')}
               disabled={submitting || !comments.trim()}
-              className="flex-1 sm:flex-none"
+              className="flex-1 sm:flex-none min-h-11 sm:min-h-10 text-base sm:text-sm font-semibold"
             >
               Reject
             </Button>

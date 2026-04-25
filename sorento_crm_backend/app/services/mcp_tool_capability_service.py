@@ -595,21 +595,20 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     "crm_order_management_orders_list": ToolIntent(
         category="order_enquiries",
-        intent="Find and track customer orders by number, debtor, status, or order date — including the FIRST step of complaint delivery-order discovery (customer + date range).",
+        intent="Find and track customer orders by number, debtor, status, or order date, including standalone delivery-order (DO) searches by customer/date filters.",
         description=(
             "List orders with filters (customer_id / order_status_id / has_order_lines / order_date "
             "range / optional actual delivery date / free-text `query` over order_number, debtor_code, "
             "debtor_name, customer name/code). "
-            "Also supports explicit complaint DO lookup filters: `customer_query` (debtor/customer partial), "
+            "Also supports delivery-order lookup filters: `customer_query` (debtor/customer partial), "
             "`product_query` (product code/name partial), and order_date range together. "
-            "DATE FILTER RULE: For complaint DO discovery and any 'orders in [month/period/date range]' "
+            "DATE FILTER RULE: For DO discovery and any 'orders in [month/period/date range]' "
             "question, ALWAYS use order_date_from/order_date_to. NEVER use actual_delivery_date_from/to "
             "unless the user EXPLICITLY mentions the delivery date. "
             "Date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO "
             "datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
-            "Use this tool BEFORE crm_forms_complaints_submit when the user wants to file a complaint "
-            "and you still need to find the Delivery Order numbers — gather customer name + optional "
-            "product + date range, then list orders so the user can pick the DO number(s). "
+            "Use this tool whenever the user asks to search/find DO numbers from customer + optional "
+            "product + date range filters. "
             "Use for 'order status', 'track my order', 'delivery date', 'lorry / transporter / driver', "
             "and customer-based order searches. NOT for orders filtered by a specific product — use "
             "crm_order_management_orders_by_product_list for that."
@@ -622,8 +621,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Which lorry / transporter / driver is handling this order?",
             "List recent orders for this customer.",
             "Any delayed orders for this account?",
-            "I want to file a complaint — find the delivery orders for customer X in February 2026.",
-            "Find delivery order number for debtor jayson in Feb 2026 so I can file a complaint.",
+            "Find delivery orders for customer X in February 2026.",
+            "Search DO numbers for debtor jayson in Feb 2026.",
         ),
         aliases=(
             "order status",
@@ -631,7 +630,6 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "find delivery order",
             "find DO",
             "DO lookup",
-            "complaint DO discovery",
             "orders in month",
         ),
     ),
@@ -658,18 +656,17 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     "crm_order_management_orders_by_product_list": ToolIntent(
         category="order_enquiries",
         intent=(
-            "Find CUSTOMER SALES orders that contain a specific PRODUCT — including the FIRST step of "
-            "complaint Delivery-Order discovery when the user has a product in mind."
+            "Find CUSTOMER SALES orders that contain a specific PRODUCT, including standalone delivery-order (DO) searches by product + customer + date range."
         ),
         description=(
             "Distinct CUSTOMER SALES orders matched by product. Call this when the resolver has "
             "classified the code as entity_type=product AND the user is asking who bought / which "
-            "sales orders contain this product, OR the user is filing a complaint and you still need "
-            "to find their Delivery Order number(s). Pass the canonical_code (product_code / SKU) as "
+            "sales orders contain this product, or when the user asks to search DO number(s) using "
+            "product + customer + order date range filters. Pass the canonical_code (product_code / SKU) as "
             "`product_id`, optionally combined with explicit `customer_query` + `product_query` filters "
             "(or a customer/debtor partial match in `query`) and a "
             "date range. "
-            "DATE FILTER RULE: For complaint DO discovery and any 'orders in [month/period/date "
+            "DATE FILTER RULE: For DO discovery and any 'orders in [month/period/date "
             "range]' question, ALWAYS use order_date_from/order_date_to. NEVER use "
             "actual_delivery_date_from/to unless the user EXPLICITLY mentions the delivery date. "
             "Date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, "
@@ -684,7 +681,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Pending customer sales orders containing this product.",
             "Sales orders / outgoing orders for this SKU.",
             "Delayed customer deliveries for this product.",
-            "I want to file a complaint about product CWC7601 ordered in February 2026 — find the DO numbers.",
+            "Search delivery order numbers for customer CHIN KET, product code SCBD701, from 01 January 2026 to 31 January 2026.",
+            "User wants to search for a Delivery Order with details: Customer name CHIN KET, Product code SCBD701, Order date from January 2026.",
             "Find the delivery order for customer X who bought product Y last month.",
         ),
         aliases=(
@@ -692,8 +690,10 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "sales orders with a product",
             "who bought this SKU",
             "find delivery order by product",
-            "complaint DO discovery by product",
             "DO lookup with product",
+            "search delivery order",
+            "search DO",
+            "delivery order search",
         ),
     ),
     # ==================================================================
@@ -1188,13 +1188,13 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "do not ask for all final complaint fields yet. After a valid DO is supplied, the same tool validates "
             "remaining required complaint fields and confirmation. Final submit requires user_confirmed=true only "
             "after all required fields are complete and the user explicitly confirms. Attachments are optional and "
-            "are linked via crm_forms_entity_attachments_link only when explicitly requested. contact_id and space_id are required for final complaint submission."
+            "are linked via crm_forms_entity_attachments_link only when explicitly requested. contact_id and space_id are required for final complaint submission. "
+            "If the user is only searching DO numbers and has NOT asked to file/submit a complaint, use order-management tools instead."
         ),
         typical_user_questions=(
             "I want to file a complaint.",
             "I need to complain about a damaged product.",
             "Start a complaint case.",
-            "Find my delivery orders for customer ABC and product SRT7017-BL between 1 Apr and 20 Apr, then file complaint.",
             "File a complaint for delivery order DO-500123.",
             "Submit this complaint with cracked basin defect.",
             "Record this complaint about damaged product on my order.",

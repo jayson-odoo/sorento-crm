@@ -251,6 +251,13 @@ class EmbeddingReadService:
         implementation_status: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         q_lower = (query or "").lower()
+        category_norm = (category or "").strip().lower()
+        # n8n/query-formulator commonly emits inquiry_type=general.
+        # Treat `general` as a broad search (no category filter) instead of an exact category key.
+        if category_norm in {"", "general", "all", "*"}:
+            category_filter: Optional[str] = None
+        else:
+            category_filter = category_norm
         looks_like_product_code = bool(re.search(r"\b[a-z]{2,}\d{2,}[a-z0-9-]*\b", q_lower))
         promo_intent_words = ("promo", "promotion", "discount", "campaign", "offer")
         has_promo_intent = any(w in q_lower for w in promo_intent_words)
@@ -270,7 +277,7 @@ class EmbeddingReadService:
             if implementation_status and status != implementation_status:
                 continue
             tool_category = md.get("category")
-            if category and tool_category != category:
+            if category_filter and tool_category != category_filter:
                 continue
             required_params = [str(x) for x in (md.get("required_params") or [])]
             missing_params = [p for p in required_params if p not in known_params]

@@ -460,16 +460,16 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_order_management_orders_by_product_list",
         (
             "List distinct CUSTOMER SALES orders containing a specific product (outgoing / sold, NOT incoming stock). "
-            "DATE FILTER RULE: For complaint Delivery-Order discovery and any 'orders in [month/period/date range]' question, "
+            "DATE FILTER RULE: For Delivery-Order (DO) discovery and any 'orders in [month/period/date range]' question, "
             "ALWAYS use `order_date_from`/`order_date_to`. NEVER use `actual_delivery_date_from`/`actual_delivery_date_to` "
             "unless the user EXPLICITLY mentions the delivery date. "
             "Both date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO datetime, "
             "'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
             "Use when asked 'which customers bought SKU X', 'pending customer orders for product X', or to find DO "
-            "numbers for a complaint via product+customer+date range. "
+            "numbers via product+customer+date range (independent of complaint filing flow). "
             "DO NOT use for 'any incoming for product X' / 'is product X arriving' — that is procurement, use "
             "crm_procurement_spo_allocations_grouped_by_shipment instead. "
-            "Use explicit filters for complaint DO lookup when available: `customer_query` (debtor/customer partial), "
+            "Use explicit filters for DO lookup when available: `customer_query` (debtor/customer partial), "
             "`product_query` (product code/name partial), plus `order_date_from`/`order_date_to`. "
             "Parameter `query` matches product code, name, description, order number, and debtor name (case-insensitive partial match). "
             "`product_id` accepts UUID or product_code (SKU)."
@@ -941,7 +941,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "contact_number, product_code, quantity, complaint_type, defect_description, "
             "defect_discovered_when, sales_person, address, customer_type, within_warranty, product_type, "
             "contact_person, project_title, contact_id, and space_id. Optional: customer_type_other, attachments. "
-            "Attachments are optional and should only be linked when the user explicitly wants to attach files."
+            "Attachments are optional and should only be linked when the user explicitly wants to attach files. "
+            "If the user is only searching for DO numbers and has not asked to file/submit a complaint, use order-management DO search tools instead."
         ),
         "/api/v1/complaints-management/complaints/",
         (),
