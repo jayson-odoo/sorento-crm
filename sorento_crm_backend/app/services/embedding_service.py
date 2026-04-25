@@ -373,6 +373,29 @@ class EmbeddingReadService:
                 score += 0.10
             if ("complaint" in q_lower or "defect" in q_lower or "broken" in q_lower or "leak" in q_lower) and cat == "complaint.form_submission":
                 score += 0.08
+            # Complaint flow should begin with DO lookup from orders if user is still
+            # providing customer/product/date filters and no concrete DO number yet.
+            _complaint_intent = any(w in q_lower for w in ("complaint", "defect", "broken", "leak"))
+            _has_do_number = bool(re.search(r"\bdo[-\s]?\d+\b", q_lower))
+            if _complaint_intent and not _has_do_number:
+                _mentions_product = any(w in q_lower for w in ("product", "sku", "item code", "product code")) or bool(
+                    re.search(r"\b[A-Z]{2,}\d{2,}(?:-[A-Z0-9]+)?\b", query)
+                )
+                if tool_name in ("crm_order_management_orders_list", "crm_order_management_orders_by_product_list"):
+                    score += 0.12
+                if _mentions_product and tool_name == "crm_order_management_orders_by_product_list":
+                    score += 0.10
+                if _mentions_product and tool_name == "crm_order_management_orders_list":
+                    score -= 0.06
+                if tool_name == "crm_forms_complaints_submit":
+                    score -= 0.16
+            # Complaint submissions should not route to attachment linking unless
+            # user explicitly mentions adding files/photos/videos.
+            _attachment_intent = any(
+                w in q_lower for w in ("attach", "attachment", "photo", "image", "video", "file", "upload")
+            )
+            if _complaint_intent and not _attachment_intent and tool_name == "crm_forms_entity_attachments_link":
+                score -= 0.30
             if ("stock inquiry" in q_lower or "stock enquiry" in q_lower or "lead time" in q_lower) and cat == "stock_inquiries.form_submission":
                 score += 0.08
             # Promotion questions should not rank stock inquiry form flows.

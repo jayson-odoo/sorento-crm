@@ -416,7 +416,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- order-management ---
     ToolSpec(
         "crm_order_management_orders_list",
-        "List orders (customer, status, has_order_lines, actual delivery date filters, search). Parameter `query` matches order number, debtor name/code, and customer name/code. `customer_id` accepts UUID or customer_code/name. `order_status_id` accepts UUID or status_code/name.",
+        "List orders (customer, status, has_order_lines, ORDER DATE filters, optional actual delivery date filters, search). For complaint DO discovery, prefer `order_date_from`/`order_date_to` (order date range) together with customer/product hints. Parameter `query` matches order number, debtor name/code, and customer name/code. `customer_id` accepts UUID or customer_code/name. `order_status_id` accepts UUID or status_code/name.",
         "/api/v1/order-management/orders",
         (),
         (
@@ -427,6 +427,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "order_status_id",
             "has_order_lines",
             "has_actual_delivery_date",
+            "order_date_from",
+            "order_date_to",
             "actual_delivery_date_from",
             "actual_delivery_date_to",
             "sort",
@@ -442,7 +444,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_order_management_orders_by_product_list",
-        "List distinct CUSTOMER SALES orders containing a specific product (outgoing / sold, NOT incoming stock). Use when asked 'which customers bought SKU X' or 'pending customer orders for product X'. DO NOT use for 'any incoming for product X' / 'is product X arriving' — that is procurement, use crm_procurement_spo_allocations_grouped_by_shipment instead. Parameter `query` matches product code, name, description, order number, and debtor name. `product_id` accepts UUID or product_code (SKU).",
+        "List distinct CUSTOMER SALES orders containing a specific product (outgoing / sold, NOT incoming stock). For complaint DO discovery, prefer `order_date_from`/`order_date_to` (ORDER DATE range), not delivery date range. Use when asked 'which customers bought SKU X' or 'pending customer orders for product X'. DO NOT use for 'any incoming for product X' / 'is product X arriving' — that is procurement, use crm_procurement_spo_allocations_grouped_by_shipment instead. Parameter `query` matches product code, name, description, order number, and debtor name. `product_id` accepts UUID or product_code (SKU).",
         "/api/v1/order-management/orders/by-product",
         (),
         (
@@ -451,6 +453,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "query",
             "product_id",
             "has_actual_delivery_date",
+            "order_date_from",
+            "order_date_to",
             "actual_delivery_date_from",
             "actual_delivery_date_to",
             "sort",
@@ -875,7 +879,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "after that confirmation (required for API key / integration requests).\n"
             "PREREQUISITE: If the user has not given a delivery-order number yet, FIRST "
             "use the order-lookup tools to find matching DO(s) from customer name, "
-            "product, and delivery-date range, present a numbered list, and have the "
+            "product, and order-date range, present a numbered list, and have the "
             "user pick. DO NOT call this submit tool until at least one DO is "
             "selected.\n"
             "`payload_json` must be a JSON object with these fields:\n"
@@ -889,10 +893,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  - quantity (string or number, positive)\n"
             "  - complaint_type (string, e.g. Broken/Damage, Leak, Missing parts)\n"
             "  - defect_description (string, free text)\n"
+            "  - defect_discovered_when (DD/MM/YYYY or N/A)\n"
+            "  - sales_person (string)\n"
+            "  - address (string)\n"
+            "  - customer_type (Dealer/Project/SMC/E-commerce/End User/Other)\n"
+            "  - within_warranty (Yes/No/Not sure)\n"
+            "  - product_type (string)\n"
+            "  - contact_person (string)\n"
+            "  - project_title (string)\n"
             "OPTIONAL:\n"
-            "  - contact_person, address, customer_type (Dealer/Project/SMC/E-commerce/End User/Other), "
-            "customer_type_other, within_warranty (Yes/No/Not sure), product_type, "
-            "defect_discovered_when (DD/MM/YYYY or N/A), sales_person, project_title\n"
+            "  - customer_type_other, contact_id, space_id, attachments\n"
             "After the complaint is submitted successfully, ask the user if they want to "
             "attach photos/videos; use `crm_forms_entity_attachments_link` for each file "
             "with entity_type='complaint' and entity_id set to the returned complaint id."

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
+import re
 from typing import Any, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 
 
 def _parse_complaint_date(v: Optional[str | date]) -> Optional[date]:
@@ -38,7 +40,7 @@ class ComplaintIntegrationCreate(BaseModel):
     within_warranty: Optional[str] = None
     product_type: Optional[str] = None
     product_code: Optional[str] = None
-    quantity: Optional[str] = None
+    quantity: Optional[str | int | float | Decimal] = None
     complaint_type: Optional[str] = None
     defect_description: Optional[str] = None
     customer_name: Optional[str] = None
@@ -56,6 +58,61 @@ class ComplaintIntegrationCreate(BaseModel):
     human_intervention: Optional[bool] = None
     team: Optional[str] = None
     user_confirmed: Optional[bool] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_alias_keys(cls, data: Any) -> Any:
+        """Accept common natural-language key variants from LLM payloads."""
+        if not isinstance(data, dict):
+            return data
+
+        def _norm_key(raw: Any) -> str:
+            s = str(raw or "").strip().lower()
+            s = re.sub(r"[^a-z0-9]+", "_", s)
+            return re.sub(r"_+", "_", s).strip("_")
+
+        alias_to_canonical = {
+            "delivery_order_number": "delivery_order_numbers",
+            "delivery_order_no": "delivery_order_numbers",
+            "delivery_order_nos": "delivery_order_numbers",
+            "do_number": "delivery_order_numbers",
+            "date_complaint": "date_of_complaint",
+            "complaint_date": "date_of_complaint",
+            "date_defect_discovered": "defect_discovered_when",
+            "defects_discovered": "defect_discovered_when",
+            "defect_discovered_date": "defect_discovered_when",
+            "salesperson": "sales_person",
+            "customer_address": "address",
+            "warranty_status": "within_warranty",
+            "product_within_warranty": "within_warranty",
+            "within_warranty_status": "within_warranty",
+            "qty": "quantity",
+            "quantity_involved": "quantity",
+            "product_qty": "quantity",
+            "contact_name": "contact_person",
+            "person_in_charge": "contact_person",
+            "project_name": "project_title",
+        }
+
+        normalized_items: dict[str, Any] = {}
+        for key, value in data.items():
+            nk = _norm_key(key)
+            canonical = alias_to_canonical.get(nk, nk)
+            normalized_items[canonical] = value
+
+        return normalized_items
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def coerce_quantity_to_string(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s else None
+        if isinstance(v, (int, float, Decimal)):
+            return str(v)
+        return None
 
     def to_complaint_create(self):
         from app.schemas.complaints import ComplaintCreate

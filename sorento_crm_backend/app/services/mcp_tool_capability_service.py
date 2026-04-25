@@ -597,9 +597,9 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="order_enquiries",
         intent="Find and track customer orders by number, debtor, status, or delivery date.",
         description=(
-            "List orders with filters (customer_id / order_status_id / has_order_lines / actual "
-            "delivery date / free-text query over order_number, debtor_code, debtor_name, customer "
-            "name/code). Use for 'order status', 'track my order', 'delivery date', 'lorry / "
+            "List orders with filters (customer_id / order_status_id / has_order_lines / order_date "
+            "range / optional actual delivery date / free-text query over order_number, debtor_code, debtor_name, customer "
+            "name/code). For complaint delivery-order discovery, use order_date range first. Use for 'order status', 'track my order', 'delivery date', 'lorry / "
             "transporter / driver', and customer-based order searches. NOT for orders filtered by "
             "a specific product — use crm_order_management_orders_by_product_list."
         ),
@@ -641,7 +641,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Distinct CUSTOMER SALES orders matched by product. Call this ONLY when the resolver has "
             "classified the code as entity_type=product AND the user is asking who bought / which "
             "sales orders contain this product. Pass the canonical_code (product_code / SKU) as "
-            "`product_id`. This is about OUTGOING orders sold to customers — it is NOT about "
+            "`product_id`. For complaint DO discovery, use order_date range filters for the requested date window. "
+            "This is about OUTGOING orders sold to customers — it is NOT about "
             "incoming stock, inbound shipments, SPO, PO, GRN, or procurement. For 'any incoming for "
             "product X' / 'when is product X arriving' use crm_incoming_stock_by_product. For a "
             "single order lookup by order_number, use crm_order_management_orders_get."
@@ -1135,13 +1136,16 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="File a customer complaint about a delivered order (after DO identification).",
         description=(
             "Complaint submission workflow tool. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. "
-            "POST /api/v1/complaints-management/complaints/ with payload_json. Use after the "
-            "user has identified the delivery order(s) and captured complaint details (complaint "
-            "type, defect description, product code, quantity, customer contact). WRITE action — "
-            "only call after the user confirms. Attachments (photos/videos) are linked via "
+            "POST /api/v1/complaints-management/complaints/ with payload_json. REQUIRED FLOW: first discover matching "
+            "delivery orders by asking for customer name (debtor), product (order line), and date range (order date), "
+            "then let the user pick DO number(s). Only after DO selection and complete complaint fields are captured "
+            "should this WRITE tool be called. Required fields include complaint core fields plus defect_discovered_when, "
+            "sales_person, address, customer_type, within_warranty, product_type, quantity, contact_person, and project_title. "
+            "Server validates required fields first; explicit confirmation is only required after all required fields are complete. Attachments (photos/videos) are linked via "
             "crm_forms_entity_attachments_link."
         ),
         typical_user_questions=(
+            "Find my delivery orders for customer ABC and product SRT7017-BL between 1 Apr and 20 Apr, then file complaint.",
             "File a complaint for delivery order DO-500123.",
             "Submit this complaint with cracked basin defect.",
             "Record this complaint about damaged product on my order.",

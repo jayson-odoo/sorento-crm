@@ -40,6 +40,8 @@ class OrderService:
         order_status_id: Optional[str] = None,
         has_order_lines: Optional[str] = None,
         has_actual_delivery_date: Optional[str] = None,
+        order_date_from: Optional[datetime] = None,
+        order_date_to: Optional[datetime] = None,
         actual_delivery_date_from: Optional[datetime] = None,
         actual_delivery_date_to: Optional[datetime] = None,
         sort_field: str = "created_at",
@@ -92,6 +94,12 @@ class OrderService:
             filters.append(Order.actual_delivery_date.is_not(None))
         elif hadd == "no":
             filters.append(Order.actual_delivery_date.is_(None))
+
+        if order_date_from is not None:
+            filters.append(Order.order_date >= order_date_from)
+
+        if order_date_to is not None:
+            filters.append(Order.order_date <= order_date_to)
 
         if actual_delivery_date_from is not None:
             filters.append(Order.actual_delivery_date >= actual_delivery_date_from)
@@ -210,6 +218,8 @@ class OrderService:
         query: Optional[str] = None,
         product_id: Optional[str] = None,
         has_actual_delivery_date: Optional[str] = None,
+        order_date_from: Optional[datetime] = None,
+        order_date_to: Optional[datetime] = None,
         actual_delivery_date_from: Optional[datetime] = None,
         actual_delivery_date_to: Optional[datetime] = None,
         sort_field: str = "order_date",
@@ -246,6 +256,12 @@ class OrderService:
             filters.append(Order.actual_delivery_date.is_not(None))
         elif hadd == "no":
             filters.append(Order.actual_delivery_date.is_(None))
+
+        if order_date_from is not None:
+            filters.append(Order.order_date >= order_date_from)
+
+        if order_date_to is not None:
+            filters.append(Order.order_date <= order_date_to)
 
         if actual_delivery_date_from is not None:
             filters.append(Order.actual_delivery_date >= actual_delivery_date_from)

@@ -678,6 +678,23 @@ class AIAssistantChatService:
                 + ". Do NOT call any tool yet. Ask the user to pick one of the candidates listed "
                 "in the Ambiguous references block above."
             )
+        selected_do_codes: list[str] = []
+        if resolution:
+            for tr in resolution.resolutions:
+                if not tr.resolved:
+                    continue
+                for match in tr.matches:
+                    if str(getattr(match, "entity_type", "")).strip() == "customer_order":
+                        code = str(getattr(match, "canonical_code", "")).strip()
+                        if code and code not in selected_do_codes:
+                            selected_do_codes.append(code)
+        if selected_do_codes:
+            extra_rules += (
+                "\nCRITICAL: Selected order(s) already resolved in context: "
+                + ", ".join(f'"{c}"' for c in selected_do_codes)
+                + ". In complaint flow, treat these as delivery order number(s) already captured. "
+                "Do NOT ask the user to key in delivery order number again unless they ask to change it."
+            )
         messages.append(
             {
                 "role": "user",
@@ -872,13 +889,29 @@ class AIAssistantChatService:
             "and ALWAYS include the returned public `view_url` so the user can open "
             "the record without logging in. For complaints, offer optional photos/videos via "
             "`crm_forms_entity_attachments_link` after submission.\n"
+            "Attachments are OPTIONAL. Never block complaint submission due to missing attachments. "
+            "Do NOT call `crm_forms_entity_attachments_link` unless the user explicitly asks to "
+            "attach files or provides file URL/path content.\n"
             "6) If the user says 'new <form>', 'start over', or changes to a "
             "different form, clear the in-memory form state and restart at step 1.\n"
             "7) For complaint forms only: BEFORE collecting complaint fields, make "
             "sure a delivery-order number is identified. If not, ask for customer, "
-            "product, and delivery-date range, use the order-lookup tools to find "
+            "product, and ORDER DATE range, use the order-lookup tools to find "
             "matching DOs, present them as a numbered list, and let the user pick "
             "by number. Only then start step 1 for the complaint form.\n"
+            "If the user already selected an order in the UI/chat and it appears in "
+            "Resolved references as entity_type=customer_order, treat its canonical_code "
+            "as the selected delivery order number and DO NOT ask for delivery order "
+            "number again.\n"
+            "8) Complaint DO date parsing rules: if user gives a month-only period "
+            "(e.g. 'February 2026'), convert it to full month range automatically "
+            "(2026-02-01 to 2026-02-28, or 29 for leap year) and continue without "
+            "asking leap-year clarification. Ask clarification only when month/year "
+            "is missing or ambiguous.\n"
+            "9) Complaint DO matching rules: partial text is valid. Use case-insensitive "
+            "partial matching (`query`) for debtor/customer and product terms; do not "
+            "require exact full debtor name or exact product code when user provides "
+            "partial values.\n"
         )
 
     def _deterministic_fallback(self, tool_calls: list[MCPToolCallResult]) -> str:

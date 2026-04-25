@@ -219,6 +219,39 @@ def _is_integration_payload(body: Any) -> bool:
     )
 
 
+def _validate_integration_payload_completeness(payload: ComplaintIntegrationCreate) -> None:
+    """Require integration complaint fields that are not persisted in ComplaintCreate."""
+    required_fields: tuple[str, ...] = (
+        "defect_discovered_when",
+        "sales_person",
+        "address",
+        "customer_type",
+        "within_warranty",
+        "product_type",
+        "quantity",
+        "contact_person",
+        "project_title",
+    )
+    payload_dict = payload.model_dump()
+    missing: list[str] = []
+    for key in required_fields:
+        value = payload_dict.get(key)
+        if value is None:
+            missing.append(key)
+            continue
+        if isinstance(value, str) and not value.strip():
+            missing.append(key)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Complaint submission is incomplete. Required integration fields: "
+                + ", ".join(required_fields)
+                + f". Missing or empty: {', '.join(missing)}."
+            ),
+        )
+
+
 @router.post("/", response_model=ComplaintResponse, status_code=status.HTTP_201_CREATED)
 async def create_complaint(
     request: Request,
@@ -236,11 +269,13 @@ async def create_complaint(
         user_confirmed: Optional[bool] = None
         if isinstance(body, list) and body and _is_integration_payload(body):
             payload = ComplaintIntegrationCreate.model_validate(body[0])
+            _validate_integration_payload_completeness(payload)
             user_confirmed = payload.user_confirmed
             complaint_data = payload.to_complaint_create()
             is_integration_payload = True
         elif isinstance(body, dict) and _is_integration_payload(body):
             payload = ComplaintIntegrationCreate.model_validate(body)
+            _validate_integration_payload_completeness(payload)
             user_confirmed = payload.user_confirmed
             complaint_data = payload.to_complaint_create()
             is_integration_payload = True
@@ -252,7 +287,11 @@ async def create_complaint(
                 raw = {k: v for k, v in raw.items() if k != "user_confirmed"}
             complaint_data = ComplaintCreate.model_validate(raw)
 
+        service = ComplaintService(db)
         requires_user_confirm = is_integration_payload or _request_has_valid_external_api_key(request)
+        if requires_user_confirm:
+            # Enforce missing-field validation before confirmation gating.
+            service.validate_submission_completeness(complaint_data)
         if requires_user_confirm and user_confirmed is not True:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -263,7 +302,6 @@ async def create_complaint(
                 ),
             )
 
-        service = ComplaintService(db)
         complaint = service.create_complaint(complaint_data)
         db.commit()
         should_notify_handlers = is_integration_payload or _request_has_valid_external_api_key(request)
@@ -304,8 +342,11 @@ async def create_complaint_integration(
             payload = body[0]
         else:
             payload = body
+        _validate_integration_payload_completeness(payload)
+        service = ComplaintService(db)
         # Validate payload completeness first; only then enforce explicit confirmation.
         complaint_data = payload.to_complaint_create()
+        service.validate_submission_completeness(complaint_data)
         if payload.user_confirmed is not True:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -315,7 +356,6 @@ async def create_complaint_integration(
                     "(e.g. OK, YES, CONFIRM)."
                 ),
             )
-        service = ComplaintService(db)
         complaint = service.create_complaint(complaint_data)
 
         try:

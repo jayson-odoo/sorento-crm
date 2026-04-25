@@ -26,6 +26,43 @@ class ComplaintService:
     def __init__(self, db: Session):
         self.db = db
         self.entity_attachment_service = EntityAttachmentService(db)
+        self._complaint_submission_required_fields: tuple[str, ...] = (
+            "delivery_order_number",
+            "complaint_date",
+            "product_code",
+            "complaint_type",
+            "defect_description",
+            "customer_name",
+            "contact_number",
+            "defects_discovered",
+            "salesperson",
+            "customer_address",
+            "customer_type",
+            "within_warranty",
+            "product_type",
+            "contact_person",
+            "project_title",
+        )
+
+    def validate_submission_completeness(self, complaint_data: ComplaintCreate) -> None:
+        """For external/MCP submission flow: require complete complaint payload before confirmation."""
+        payload = complaint_data.model_dump()
+        missing: list[str] = []
+        for key in self._complaint_submission_required_fields:
+            value = payload.get(key)
+            if value is None:
+                missing.append(key)
+                continue
+            if isinstance(value, str) and not value.strip():
+                missing.append(key)
+        if missing:
+            from app.services.error_handler import handle_validation_error
+
+            raise handle_validation_error(
+                "Complaint submission is incomplete. Required fields: "
+                + ", ".join(self._complaint_submission_required_fields)
+                + f". Missing or empty: {', '.join(missing)}."
+            )
 
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
         """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""

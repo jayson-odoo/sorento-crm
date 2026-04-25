@@ -494,6 +494,18 @@ def _parse_date_string(v: Optional[str | date]) -> Optional[date]:
     return None
 
 
+def _coerce_numeric_or_text_to_string(v: object) -> Optional[str]:
+    """Accept numeric/text values and normalize as trimmed string."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        return s if s else None
+    if isinstance(v, (int, float, Decimal)):
+        return str(v)
+    return None
+
+
 class StockInquiryBase(BaseModel):
     salesperson: Optional[str] = None
     product_code: Optional[str] = None
@@ -510,6 +522,11 @@ class StockInquiryBase(BaseModel):
     status: Optional[str] = None
     last_responded_by: Optional[str] = None
     last_responded_at: Optional[datetime] = None
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def coerce_quantity_to_string(cls, v: object) -> Optional[str]:
+        return _coerce_numeric_or_text_to_string(v)
 
 
 class StockInquiryCreate(StockInquiryBase):
@@ -545,6 +562,11 @@ class StockInquiryUpdate(BaseModel):
     status: Optional[str] = None
     last_responded_by: Optional[str] = None
     last_responded_at: Optional[datetime] = None
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def coerce_quantity_to_string(cls, v: object) -> Optional[str]:
+        return _coerce_numeric_or_text_to_string(v)
 
 
 class StockInquiryAttachmentResponse(BaseModel):
