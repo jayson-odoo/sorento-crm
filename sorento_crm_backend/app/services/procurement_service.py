@@ -2337,6 +2337,17 @@ class StockInquiryService:
     def _stock_inquiry_row_as_submission_dict(self, inquiry: StockInquiry) -> Dict[str, Any]:
         return {k: getattr(inquiry, k, None) for k in self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS}
 
+    def _merged_stock_inquiry_submission_for_resubmit(
+        self, inquiry: StockInquiry, inquiry_data: StockInquiryCreate
+    ) -> Dict[str, Any]:
+        """Merge rejected row + incoming payload to validate required submission fields pre-confirmation."""
+        merged = self._stock_inquiry_row_as_submission_dict(inquiry)
+        incoming = inquiry_data.model_dump(exclude_unset=True)
+        for key in self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS:
+            if key in incoming:
+                merged[key] = incoming.get(key)
+        return merged
+
     def _resubmit_rejected_inquiry(
         self, inquiry: StockInquiry, inquiry_data: StockInquiryCreate
     ) -> StockInquiry:
@@ -2402,14 +2413,6 @@ class StockInquiryService:
         """
         from datetime import date as date_cls
 
-        if require_user_confirmation:
-            if inquiry_data.user_confirmed is not True:
-                raise handle_validation_error(
-                    "Explicit user confirmation is required before submission. "
-                    "Set user_confirmed=true only after the user explicitly confirms the final summary "
-                    "(e.g. OK, YES, CONFIRM)."
-                )
-
         full = inquiry_data.model_dump()
         lookup_raw = full.get("inquiry_number")
         lookup = lookup_raw.strip() if isinstance(lookup_raw, str) else None
@@ -2425,6 +2428,17 @@ class StockInquiryService:
                         f"Inquiry number {lookup!r} already exists with status {existing.status!r}. "
                         "Use inquiry_number only to resubmit a rejected inquiry."
                     )
+                # For resubmission, enforce completion against merged existing+incoming values
+                # BEFORE asking for explicit confirmation.
+                self._require_complete_stock_inquiry_submission(
+                    self._merged_stock_inquiry_submission_for_resubmit(existing, inquiry_data)
+                )
+                if require_user_confirmation and inquiry_data.user_confirmed is not True:
+                    raise handle_validation_error(
+                        "Explicit user confirmation is required before submission. "
+                        "Set user_confirmed=true only after the user explicitly confirms the final summary "
+                        "(e.g. OK, YES, CONFIRM)."
+                    )
                 updated = self._resubmit_rejected_inquiry(existing, inquiry_data)
                 return updated, "resubmitted"
 
@@ -2434,6 +2448,12 @@ class StockInquiryService:
         self._require_complete_stock_inquiry_submission(
             {k: data.get(k) for k in self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS}
         )
+        if require_user_confirmation and inquiry_data.user_confirmed is not True:
+            raise handle_validation_error(
+                "Explicit user confirmation is required before submission. "
+                "Set user_confirmed=true only after the user explicitly confirms the final summary "
+                "(e.g. OK, YES, CONFIRM)."
+            )
         contact_id = data.get("contact_id")
         space_id = data.get("space_id")
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -3628,6 +3648,90 @@ class PurchaseRequestService:
             )
         return json.dumps(rows, ensure_ascii=True)
 
+    _PR_REQUIRED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+        "purchase_request": (
+            "customer_name",
+            "project_title",
+            "purpose",
+            "expected_delivery_date",
+            "requested_by",
+            "products",
+        ),
+        "sponsorship_form": (
+            "sponsor_subject",
+            "customer_name",
+            "date_of_delivery",
+            "requested_by",
+            "products",
+        ),
+    }
+
+    def _missing_external_request_fields(self, payload, existing: Optional[PurchaseRequestHeader] = None) -> list[str]:
+        request_type = str(getattr(payload, "request_type", "") or "").strip()
+        required = self._PR_REQUIRED_FIELDS_BY_TYPE.get(request_type, ())
+        missing: list[str] = []
+
+        for key in required:
+            if key == "expected_delivery_date":
+                # Accept either expected_delivery_date or date_of_delivery.
+                val = self._parse_date(getattr(payload, "expected_delivery_date", None))
+                if val is None:
+                    val = self._parse_date(getattr(payload, "date_of_delivery", None))
+                if val is None and existing is not None:
+                    val = getattr(existing, "expected_delivery_date", None)
+                if val is None:
+                    missing.append("expected_delivery_date")
+                continue
+
+            if key == "date_of_delivery":
+                val = self._parse_date(getattr(payload, "date_of_delivery", None))
+                if val is None:
+                    val = self._parse_date(getattr(payload, "expected_delivery_date", None))
+                if val is None and existing is not None:
+                    val = getattr(existing, "expected_delivery_date", None)
+                if val is None:
+                    missing.append("date_of_delivery")
+                continue
+
+            if key == "products":
+                rows = list(getattr(payload, "products", None) or [])
+                if not rows and existing is not None:
+                    rows = list(getattr(existing, "lines", None) or [])
+                if not rows:
+                    missing.append("products")
+                    continue
+                bad_rows: list[str] = []
+                for idx, row in enumerate(rows, start=1):
+                    item_code = getattr(row, "item_code", None)
+                    quantity = getattr(row, "quantity", None)
+                    if item_code is None or (isinstance(item_code, str) and not item_code.strip()) or quantity is None:
+                        bad_rows.append(str(idx))
+                if bad_rows:
+                    missing.append(f"products(item_code,quantity) rows: {', '.join(bad_rows)}")
+                continue
+
+            val = getattr(payload, key, None)
+            if (val is None or (isinstance(val, str) and not val.strip())) and existing is not None:
+                val = getattr(existing, key, None)
+            if val is None or (isinstance(val, str) and not val.strip()):
+                missing.append(key)
+        return missing
+
+    def _require_complete_external_request_submission(
+        self, payload, existing: Optional[PurchaseRequestHeader] = None
+    ) -> None:
+        request_type = str(getattr(payload, "request_type", "") or "").strip()
+        required = self._PR_REQUIRED_FIELDS_BY_TYPE.get(request_type, ())
+        if not required:
+            return
+        missing = self._missing_external_request_fields(payload, existing=existing)
+        if missing:
+            raise handle_validation_error(
+                f"{request_type} submission is incomplete. Required fields: "
+                + ", ".join(required)
+                + f". Missing or empty: {', '.join(missing)}."
+            )
+
     def upsert_external_request(self, payload):
         """
         Create or update from external payload.
@@ -3637,13 +3741,6 @@ class PurchaseRequestService:
 
         Returns ``(header, "created" | "updated")``.
         """
-        if getattr(payload, "user_confirmed", None) is not True:
-            raise handle_validation_error(
-                "Explicit user confirmation is required before submission. "
-                "Set user_confirmed=true only after the user explicitly confirms the final summary "
-                "(e.g. OK, YES, CONFIRM)."
-            )
-
         rn_raw = getattr(payload, "request_number", None)
         if rn_raw is None:
             lookup = ""
@@ -3656,7 +3753,21 @@ class PurchaseRequestService:
                 .first()
             )
             if existing is not None:
+                self._require_complete_external_request_submission(payload, existing=existing)
+                if getattr(payload, "user_confirmed", None) is not True:
+                    raise handle_validation_error(
+                        "Explicit user confirmation is required before submission. "
+                        "Set user_confirmed=true only after the user explicitly confirms the final summary "
+                        "(e.g. OK, YES, CONFIRM)."
+                    )
                 return self._update_external_request(existing, payload), "updated"
+        self._require_complete_external_request_submission(payload, existing=None)
+        if getattr(payload, "user_confirmed", None) is not True:
+            raise handle_validation_error(
+                "Explicit user confirmation is required before submission. "
+                "Set user_confirmed=true only after the user explicitly confirms the final summary "
+                "(e.g. OK, YES, CONFIRM)."
+            )
         return self.create_external_request(payload), "created"
 
     def create_external_request(self, payload):

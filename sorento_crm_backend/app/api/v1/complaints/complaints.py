@@ -304,6 +304,8 @@ async def create_complaint_integration(
             payload = body[0]
         else:
             payload = body
+        # Validate payload completeness first; only then enforce explicit confirmation.
+        complaint_data = payload.to_complaint_create()
         if payload.user_confirmed is not True:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -313,7 +315,6 @@ async def create_complaint_integration(
                     "(e.g. OK, YES, CONFIRM)."
                 ),
             )
-        complaint_data = payload.to_complaint_create()
         service = ComplaintService(db)
         complaint = service.create_complaint(complaint_data)
 
