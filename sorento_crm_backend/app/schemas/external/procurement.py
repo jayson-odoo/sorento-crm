@@ -211,6 +211,8 @@ class PurchaseRequestExternalCreate(BaseModel):
 
 class PurchaseRequestExternalResponse(BaseModel):
     id: str
+    system_id: Optional[str] = None
+    form_type: Optional[str] = None
     request_type: str
     request_number: Optional[str] = None
     action: str = "created"

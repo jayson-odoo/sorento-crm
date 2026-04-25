@@ -84,6 +84,8 @@ def create_purchase_request(
         products = [_line_to_external(line) for line in (header.lines or [])]
         return PurchaseRequestExternalResponse(
             id=header.id,
+            system_id=str(header.id),
+            form_type=header.request_type,
             request_type=header.request_type,
             request_number=getattr(header, "request_number", None),
             action=outcome,

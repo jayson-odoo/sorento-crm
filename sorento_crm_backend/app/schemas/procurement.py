@@ -506,6 +506,18 @@ def _coerce_numeric_or_text_to_string(v: object) -> Optional[str]:
     return None
 
 
+def _coerce_scope_id_to_string(v: object) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        return s if s else None
+    if isinstance(v, (int, float, Decimal)):
+        return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+    s = str(v).strip()
+    return s if s else None
+
+
 class StockInquiryBase(BaseModel):
     salesperson: Optional[str] = None
     product_code: Optional[str] = None
@@ -527,6 +539,11 @@ class StockInquiryBase(BaseModel):
     @classmethod
     def coerce_quantity_to_string(cls, v: object) -> Optional[str]:
         return _coerce_numeric_or_text_to_string(v)
+
+    @field_validator("contact_id", "space_id", mode="before")
+    @classmethod
+    def coerce_scope_ids(cls, v: object) -> Optional[str]:
+        return _coerce_scope_id_to_string(v)
 
 
 class StockInquiryCreate(StockInquiryBase):
@@ -568,6 +585,11 @@ class StockInquiryUpdate(BaseModel):
     def coerce_quantity_to_string(cls, v: object) -> Optional[str]:
         return _coerce_numeric_or_text_to_string(v)
 
+    @field_validator("contact_id", "space_id", mode="before")
+    @classmethod
+    def coerce_scope_ids(cls, v: object) -> Optional[str]:
+        return _coerce_scope_id_to_string(v)
+
 
 class StockInquiryAttachmentResponse(BaseModel):
     id: str
@@ -590,6 +612,8 @@ class StockInquiryRejectReopenRequest(BaseModel):
 
 class StockInquiryResponse(StockInquiryBase):
     id: str
+    system_id: Optional[str] = None
+    form_type: Optional[str] = None
     inquiry_number: Optional[str] = None
     view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
@@ -682,6 +706,11 @@ class PurchaseRequestHeaderCreate(PurchaseRequestHeaderBase):
     def parse_date(cls, v: Optional[str | date]) -> Optional[date]:
         return _parse_date_string(v)
 
+    @field_validator("contact_id", "space_id", mode="before")
+    @classmethod
+    def coerce_scope_ids(cls, v: object) -> Optional[str]:
+        return _coerce_scope_id_to_string(v)
+
 
 class PurchaseRequestHeaderUpdate(BaseModel):
     request_type: Optional[str] = None
@@ -720,6 +749,11 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     @classmethod
     def parse_date(cls, v: Optional[str | date]) -> Optional[date]:
         return _parse_date_string(v)
+
+    @field_validator("contact_id", "space_id", mode="before")
+    @classmethod
+    def coerce_scope_ids(cls, v: object) -> Optional[str]:
+        return _coerce_scope_id_to_string(v)
 
 
 class PurchaseRequestUpdateAndReply(PurchaseRequestHeaderUpdate):

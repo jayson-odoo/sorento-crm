@@ -26,6 +26,19 @@ def _parse_date_string(v: Any) -> Optional[date]:
     return None
 
 
+def _coerce_scope_id(v: Any) -> Optional[str]:
+    """Accept int/string identifiers and normalize to non-empty string."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        return s if s else None
+    if isinstance(v, (int, float, Decimal)):
+        return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+    s = str(v).strip()
+    return s if s else None
+
+
 class ComplaintAttachmentBase(BaseModel):
     complaint_id: str
     file_name: Optional[str] = None
@@ -68,6 +81,11 @@ class ComplaintBase(BaseModel):
     @classmethod
     def parse_complaint_date(cls, v: Any) -> Optional[date]:
         return _parse_date_string(v)
+
+    @field_validator("contact_id", "space_id", mode="before")
+    @classmethod
+    def coerce_scope_ids(cls, v: Any) -> Optional[str]:
+        return _coerce_scope_id(v)
     customer_type_others: Optional[str] = None
     within_warranty: Optional[str] = None
     product_type: Optional[str] = None
@@ -105,6 +123,11 @@ class ComplaintUpdate(BaseModel):
     @classmethod
     def parse_complaint_date(cls, v: Any) -> Optional[date]:
         return _parse_date_string(v)
+
+    @field_validator("contact_id", "space_id", mode="before")
+    @classmethod
+    def coerce_scope_ids(cls, v: Any) -> Optional[str]:
+        return _coerce_scope_id(v)
     customer_type_others: Optional[str] = None
     within_warranty: Optional[str] = None
     product_type: Optional[str] = None
@@ -128,6 +151,8 @@ class ComplaintUpdate(BaseModel):
 
 class ComplaintResponse(ComplaintBase):
     id: str
+    system_id: Optional[str] = None
+    form_type: Optional[str] = None
     view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
     status: Optional[str] = None
