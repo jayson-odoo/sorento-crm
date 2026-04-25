@@ -2,6 +2,7 @@ export interface Form {
   id: string;
   code: string;
   name: string;
+  form_type: string;
   purpose?: string | null;
   language: string;
   version: number;
@@ -53,6 +54,7 @@ export interface FormField {
 export interface FormFormData {
   code: string;
   name: string;
+  form_type?: string;
   purpose?: string;
   language: string;
   is_active: boolean;

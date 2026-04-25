@@ -9,6 +9,7 @@ from app.schemas.resources import AttachmentTypeSimple
 class FormBase(BaseModel):
     code: str
     name: str
+    form_type: str = "marketing"
     purpose: Optional[str] = None
     language: str = "en"
     version: int = 1
@@ -22,6 +23,7 @@ class FormCreate(FormBase):
 
 class FormUpdate(BaseModel):
     name: Optional[str] = None
+    form_type: Optional[str] = None
     purpose: Optional[str] = None
     language: Optional[str] = None
     version: Optional[int] = None

@@ -94,7 +94,7 @@
     "tool_name": "create_stock_inquiry_draft",
     "category": "stock_inquiries",
     "implementation_status": "planned",
-    "description": "Create a stock inquiry draft with customer, project, product, quantity, and delivery date fields for submission.",
+    "description": "Stock inquiry submission tool: creates or updates inquiry drafts in the CRM (not marketing downloads). DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Create a stock inquiry draft with customer, project, product, quantity, and delivery date fields for submission.",
     "typical_user_questions": [
       "Create a stock inquiry for me",
       "I want to submit a stock inquiry for 50 units",
@@ -107,7 +107,7 @@
     "tool_name": "list_user_stock_inquiries",
     "category": "stock_inquiries",
     "implementation_status": "planned",
-    "description": "List stock inquiries for the current user with inquiry number, date, status, and summary fields.",
+    "description": "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. List stock inquiries for the current user with inquiry number, date, status, and summary fields.",
     "typical_user_questions": [
       "List my stock inquiries",
       "Show my recent stock inquiry submissions",
@@ -120,7 +120,7 @@
     "tool_name": "view_stock_inquiry_details",
     "category": "stock_inquiries",
     "implementation_status": "planned",
-    "description": "Retrieve full stock inquiry details for a selected inquiry, including header fields and line data.",
+    "description": "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Retrieve full stock inquiry details for a selected inquiry, including header fields and line data.",
     "typical_user_questions": [
       "Show details of stock inquiry SI-2026-0012",
       "Open my stock inquiry record",
@@ -133,7 +133,7 @@
     "tool_name": "load_rejected_stock_inquiry_for_edit",
     "category": "stock_inquiries",
     "implementation_status": "planned",
-    "description": "Load a rejected stock inquiry into editable state with current values prefilled for revision.",
+    "description": "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Load a rejected stock inquiry into editable state with current values prefilled for revision.",
     "typical_user_questions": [
       "I want to revise my rejected stock inquiry",
       "Load rejected inquiry SI-2026-0012 for editing",
@@ -146,7 +146,7 @@
     "tool_name": "update_rejected_stock_inquiry_draft",
     "category": "stock_inquiries",
     "implementation_status": "planned",
-    "description": "Apply field updates to a rejected stock inquiry draft, including product, quantity, date, and remarks.",
+    "description": "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Apply field updates to a rejected stock inquiry draft, including product, quantity, date, and remarks.",
     "typical_user_questions": [
       "Change quantity in my rejected stock inquiry to 80",
       "Update delivery date in the rejected inquiry",
@@ -159,7 +159,7 @@
     "tool_name": "confirm_stock_inquiry_submission",
     "category": "stock_inquiries",
     "implementation_status": "planned",
-    "description": "Confirm and finalize stock inquiry payload for create or resubmission flow.",
+    "description": "Stock inquiry submission tool: confirm and finalize stock inquiry payload for create or resubmission flow. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "typical_user_questions": [
       "Confirm and submit this stock inquiry",
       "Looks good, proceed with submission",
@@ -172,7 +172,7 @@
     "tool_name": "list_user_purchase_requests",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "List purchase and sponsorship requests created by the user with request number, type, date, and status.",
+    "description": "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. List purchase and sponsorship requests created by the user with request number, type, date, and status.",
     "typical_user_questions": [
       "List my purchase requests",
       "Show my sponsorship requests",
@@ -185,7 +185,7 @@
     "tool_name": "search_user_purchase_requests",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "Search user purchase or sponsorship requests using request number, customer, project, type, and status filters.",
+    "description": "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Search user purchase or sponsorship requests using request number, customer, project, type, and status filters.",
     "typical_user_questions": [
       "Find request PR-2026-0101",
       "Search my requests for project Sunway",
@@ -198,7 +198,7 @@
     "tool_name": "view_purchase_request_details",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "Retrieve complete purchase or sponsorship request details, including header and line items.",
+    "description": "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Retrieve complete purchase or sponsorship request details, including header and line items.",
     "typical_user_questions": [
       "Show details for request PR-2026-0101",
       "Open this purchase request",
@@ -211,7 +211,7 @@
     "tool_name": "create_purchase_request_draft",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "Create a purchase request draft with header fields and product line items ready for submission.",
+    "description": "Purchase request and sponsorship submission tool: create a purchase request draft with header fields and product line items ready for submission. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "typical_user_questions": [
       "Create a purchase request for me",
       "I need to submit a new PR for these items",
@@ -224,7 +224,7 @@
     "tool_name": "create_sponsorship_form_draft",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "Create a sponsorship form draft with event or project details and requested support items.",
+    "description": "Purchase request and sponsorship submission tool: create a sponsorship form draft with event or project details and requested support items. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "typical_user_questions": [
       "Create a sponsorship form for this event",
       "I want to submit a sponsorship request",
@@ -237,7 +237,7 @@
     "tool_name": "load_rejected_request_for_edit",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "Load a rejected purchase or sponsorship request into editable mode with prefilled data.",
+    "description": "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Load a rejected purchase or sponsorship request into editable mode with prefilled data.",
     "typical_user_questions": [
       "Open my rejected purchase request for editing",
       "Load rejected request PR-2026-0101",
@@ -250,7 +250,7 @@
     "tool_name": "update_rejected_request_draft",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "Apply header and line-item edits to a rejected purchase or sponsorship request draft.",
+    "description": "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Apply header and line-item edits to a rejected purchase or sponsorship request draft.",
     "typical_user_questions": [
       "Change quantity in my rejected PR to 120",
       "Update customer and remarks in the rejected request",
@@ -263,7 +263,7 @@
     "tool_name": "confirm_purchase_request_submission",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "Confirm and finalize a purchase or sponsorship request payload for submission.",
+    "description": "Purchase request and sponsorship submission tool: confirm and finalize a purchase or sponsorship request payload for submission. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "typical_user_questions": [
       "Confirm and submit this purchase request",
       "Proceed with this sponsorship submission",
@@ -276,7 +276,7 @@
     "tool_name": "identify_complaint_delivery_orders",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Find delivery orders relevant to a complaint using customer, product, and delivery date criteria.",
+    "description": "Complaint submission workflow tool. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Find delivery orders relevant to a complaint using customer, product, and delivery date criteria.",
     "typical_user_questions": [
       "Find delivery orders for customer ABC last week",
       "Which DO includes this damaged sink item?",
@@ -289,7 +289,7 @@
     "tool_name": "select_complaint_delivery_orders",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Resolve user index selections to concrete delivery order numbers for complaint scope.",
+    "description": "Complaint submission workflow tool. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Resolve user index selections to concrete delivery order numbers for complaint scope.",
     "typical_user_questions": [
       "Use number 2 and 4 from the DO list",
       "Select the first delivery order",
@@ -302,7 +302,7 @@
     "tool_name": "capture_complaint_details",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Capture structured complaint fields, including complaint type, affected product, quantity, and issue description.",
+    "description": "Complaint submission workflow tool: capture structured complaint fields, including complaint type, affected product, quantity, and issue description. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "typical_user_questions": [
       "Record complaint type as damaged item with chipped corner",
       "Add complaint details for 12 units of this product",
@@ -315,7 +315,7 @@
     "tool_name": "validate_complaint_fields",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Validate complaint payload completeness and identify missing or invalid fields before submission.",
+    "description": "Complaint submission workflow tool: validate complaint payload completeness and missing or invalid fields before submission. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "typical_user_questions": [
       "Check if my complaint form is complete",
       "Validate complaint fields before I submit",
@@ -328,7 +328,7 @@
     "tool_name": "confirm_complaint_submission",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Confirm final complaint payload after validation and mark it ready for submission.",
+    "description": "Complaint submission workflow tool: confirm final complaint payload after validation and mark it ready for submission. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "typical_user_questions": [
       "Confirm and submit this complaint",
       "Proceed with complaint submission",
@@ -341,7 +341,7 @@
     "tool_name": "collect_complaint_evidence_attachments",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Attach evidence files such as photos and videos to the active complaint session.",
+    "description": "Complaint submission workflow tool: attach evidence files such as photos and videos to the active complaint session (not marketing downloads). DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "typical_user_questions": [
       "Attach these photos to my complaint",
       "Upload video evidence for this complaint",
@@ -354,7 +354,7 @@
     "tool_name": "close_complaint_case",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Close complaint intake flow after submission confirmation and evidence upload completion.",
+    "description": "Complaint submission workflow tool: close complaint intake after submission confirmation and evidence upload completion. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "typical_user_questions": [
       "I am done uploading, close this complaint",
       "Finish this complaint submission flow",
@@ -495,9 +495,9 @@
   },
   {
     "tool_name": "list_active_application_forms",
-    "category": "marketing_forms",
+    "category": "marketing_assets",
     "implementation_status": "planned",
-    "description": "List active application forms with form code, name, purpose, and language.",
+    "description": "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. Lists active application forms with form code, name, purpose, and language.",
     "typical_user_questions": [
       "Show active application forms",
       "List available forms I can submit",
@@ -508,9 +508,9 @@
   },
   {
     "tool_name": "search_application_forms",
-    "category": "marketing_forms",
+    "category": "marketing_assets",
     "implementation_status": "planned",
-    "description": "Search application forms by keyword and language and return matched form options.",
+    "description": "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. Search application forms by keyword and language and return matched form options.",
     "typical_user_questions": [
       "Find the annual dinner sponsorship form",
       "Search forms for promotion campaign applications",
@@ -521,9 +521,9 @@
   },
   {
     "tool_name": "resolve_form_selection_from_list",
-    "category": "marketing_forms",
+    "category": "marketing_assets",
     "implementation_status": "planned",
-    "description": "Resolve user selection references such as index or ordinal to a specific form from a presented list.",
+    "description": "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. Resolve user selection references such as index or ordinal to a specific form from a presented list.",
     "typical_user_questions": [
       "Use the first form",
       "I want number 2 from the list",
@@ -534,9 +534,9 @@
   },
   {
     "tool_name": "get_application_form_attachment",
-    "category": "marketing_forms",
+    "category": "marketing_assets",
     "implementation_status": "planned",
-    "description": "Retrieve attachment metadata for a selected application form, including filename and file reference.",
+    "description": "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. Attachment metadata for a selected application form, including filename and file reference.",
     "typical_user_questions": [
       "Get the file for this selected form",
       "Send me the application form attachment",

@@ -3,7 +3,7 @@
     "tool_name": "create_stock_inquiry_submission",
     "category": "stock_inquiries",
     "implementation_status": "planned",
-    "description": "Create a new stock inquiry submission for purchasing with project, product, quantity, and delivery details.",
+    "description": "Stock inquiry submission tool: create a new stock inquiry submission for purchasing with project, product, quantity, and delivery details. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "required_fields": [
       "product_code",
       "salesperson",
@@ -31,7 +31,7 @@
     "tool_name": "list_stock_inquiry_submissions",
     "category": "stock_inquiries",
     "implementation_status": "planned",
-    "description": "List stock inquiry submissions for the current contact with optional status and date filters.",
+    "description": "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. List stock inquiry submissions for the current contact with optional status and date filters.",
     "required_fields": [
       "contact_id"
     ],
@@ -56,7 +56,7 @@
     "tool_name": "view_stock_inquiry_submission",
     "category": "stock_inquiries",
     "implementation_status": "planned",
-    "description": "Retrieve a single stock inquiry submission summary for viewing by inquiry number.",
+    "description": "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Retrieve a single stock inquiry submission summary for viewing by inquiry number.",
     "required_fields": [
       "contact_id",
       "inquiry_number"
@@ -76,7 +76,7 @@
     "tool_name": "update_rejected_stock_inquiry_submission",
     "category": "stock_inquiries",
     "implementation_status": "planned",
-    "description": "Update an existing rejected stock inquiry submission before re-submission to purchasing.",
+    "description": "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Update an existing rejected stock inquiry submission before re-submission to purchasing.",
     "required_fields": [
       "contact_id",
       "inquiry_number"
@@ -104,7 +104,7 @@
     "tool_name": "create_purchase_request_submission",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "Create a new purchase request submission with request header details and product line items.",
+    "description": "Purchase request and sponsorship submission tool: create a new purchase request submission with request header details and product line items. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "required_fields": [
       "request_type",
       "customer_name",
@@ -132,7 +132,7 @@
     "tool_name": "create_sponsorship_form_submission",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "Create a new sponsorship form submission with sponsorship details and supporting item lines.",
+    "description": "Purchase request and sponsorship submission tool: create a new sponsorship form submission with sponsorship details and supporting item lines. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "required_fields": [
       "request_type",
       "sponsor_subject",
@@ -160,7 +160,7 @@
     "tool_name": "list_purchase_request_submissions",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "List purchase request and sponsorship form submissions for the current contact with filters.",
+    "description": "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. List purchase request and sponsorship form submissions for the current contact with filters.",
     "required_fields": [
       "contact_id"
     ],
@@ -186,7 +186,7 @@
     "tool_name": "view_purchase_request_submission",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "Retrieve one purchase request or sponsorship form submission with full summary details.",
+    "description": "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Retrieve one purchase request or sponsorship form submission with full summary details.",
     "required_fields": [
       "contact_id",
       "request_number"
@@ -207,7 +207,7 @@
     "tool_name": "update_rejected_purchase_request_submission",
     "category": "purchase_request",
     "implementation_status": "planned",
-    "description": "Update an existing rejected purchase request or sponsorship form before re-submission.",
+    "description": "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. Update an existing rejected purchase request or sponsorship form before re-submission.",
     "required_fields": [
       "contact_id",
       "request_number"
@@ -236,7 +236,7 @@
     "tool_name": "search_complaint_delivery_orders",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Search matching delivery orders for complaint filing using customer, item, and delivery date range.",
+    "description": "Complaint submission workflow tool: search matching delivery orders for complaint filing using customer, item, and delivery date range. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "required_fields": [
       "search_customer",
       "search_item",
@@ -259,7 +259,7 @@
     "tool_name": "select_complaint_delivery_orders",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Resolve and validate selected delivery orders from a presented complaint search list.",
+    "description": "Complaint submission workflow tool: resolve and validate selected delivery orders from a presented complaint search list. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "required_fields": [
       "do_list",
       "selected_indexes"
@@ -279,7 +279,7 @@
     "tool_name": "capture_complaint_submission_details",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Capture and merge complaint details after delivery order selection, with validation-friendly field mapping.",
+    "description": "Complaint submission workflow tool: capture and merge complaint details after delivery order selection, with validation-friendly field mapping. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "required_fields": [
       "selected_do_list",
       "date_of_complaint",
@@ -313,7 +313,7 @@
     "tool_name": "confirm_complaint_submission",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Confirm the validated complaint summary and mark the complaint ready for submission.",
+    "description": "Complaint submission workflow tool: confirm the validated complaint summary and mark the complaint ready for submission. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "required_fields": [
       "selected_do_list",
       "date_of_complaint",
@@ -339,7 +339,7 @@
     "tool_name": "collect_complaint_attachments",
     "category": "complaint",
     "implementation_status": "planned",
-    "description": "Collect optional complaint evidence files such as photos and videos after complaint confirmation.",
+    "description": "Complaint submission workflow tool: collect optional complaint evidence files such as photos and videos after complaint confirmation (not marketing form downloads). DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments.",
     "required_fields": [
       "complaint_reference"
     ],

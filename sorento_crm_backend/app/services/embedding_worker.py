@@ -146,6 +146,7 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
                 "Source Type: Form",
                 f"Form Code: {form.code}",
                 f"Form Name: {form.name}",
+                f"Form Type: {form.form_type}",
                 f"Purpose: {form.purpose or ''}",
                 f"Language: {form.language or ''}",
             ]
@@ -156,7 +157,11 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
             "body_text": body,
             "visibility_scope": "internal",
             "source_updated_at": form.updated_at or form.created_at,
-            "metadata": {"language": form.language, "is_active": form.is_active},
+            "metadata": {
+                "language": form.language,
+                "is_active": form.is_active,
+                "form_type": form.form_type,
+            },
         }
 
     if source_type == "schema_doc":
@@ -429,13 +434,16 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         )
         queue_item.source_hash = source_hash
 
-        latest_hash = read_svc.find_latest_current_hash(
+        distinct_current = read_svc.current_chunk_hashes_distinct(
             queue_item.source_type,
             queue_item.source_id,
             settings.embedding_model_name,
             settings.embedding_model_version,
         )
-        if latest_hash == source_hash:
+        # Skip only when a single current generation exists and it already matches this payload.
+        # If multiple distinct source_hash values are current (duplicate batches), re-embed so
+        # mark_previous_non_current + insert can consolidate.
+        if len(distinct_current) == 1 and source_hash in distinct_current:
             queue_item.status = "skipped"
             queue_item.processed_at = datetime.utcnow()
             db.commit()
@@ -484,6 +492,7 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
             settings.embedding_model_name,
             settings.embedding_model_version,
         )
+        db.flush()
 
         for idx, (chunk_text, vector) in enumerate(zip(chunks, vectors)):
             db.add(

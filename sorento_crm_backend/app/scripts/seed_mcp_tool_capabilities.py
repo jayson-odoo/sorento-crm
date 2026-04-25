@@ -16,6 +16,9 @@ Typical usage:
 
   # Full rebuild: mark existing mcp_tool chunks as non-current and re-embed everything
   python -m app.scripts.seed_mcp_tool_capabilities --rebuild
+
+  # Rebuild + process queue in one shot (supersedes prior mcp_tool chunks; same as upsert for RAG)
+  python -m app.scripts.seed_mcp_tool_capabilities --include-planned --rebuild --drain
 """
 from __future__ import annotations
 
@@ -82,6 +85,14 @@ def main() -> None:
     parser.add_argument("--only", default=None, help="Seed only tools whose source_key exactly matches this value")
     parser.add_argument("--rebuild", action="store_true", help="Mark existing mcp_tool chunks non-current before seeding so every tool is fully re-embedded")
     parser.add_argument("--dry-run", action="store_true", help="Print payload summary without enqueueing")
+    parser.add_argument(
+        "--drain",
+        action="store_true",
+        help="After enqueueing, drain Redis + DB embedding queue until idle (writes embedding_documents / embedding_chunks)",
+    )
+    parser.add_argument("--redis-batch", type=int, default=50, help="With --drain: max RQ jobs per inner step")
+    parser.add_argument("--db-batch", type=int, default=50, help="With --drain: max DB pending rows per inner step")
+    parser.add_argument("--idle-exit-rounds", type=int, default=2, help="With --drain: stop after N idle rounds")
     parser.add_argument("--triggered-by", default="cli-mcp-tool-seed")
     args = parser.parse_args()
 
@@ -132,21 +143,28 @@ def main() -> None:
             except Exception:
                 failed += 1
         sync_report = _sync_enabled_tools(db)
-        print(
-            json.dumps(
-                {
-                    "queued": queued,
-                    "failed": failed,
-                    "total": len(docs),
-                    "invalidated_chunks": invalidated,
-                    "enabled_tools_sync": [
-                        {"config_id": cid, "before": before, "added": added}
-                        for (cid, before, added) in sync_report
-                    ],
-                },
-                indent=2,
+        summary = {
+            "queued": queued,
+            "failed": failed,
+            "total": len(docs),
+            "invalidated_chunks": invalidated,
+            "enabled_tools_sync": [
+                {"config_id": cid, "before": before, "added": added}
+                for (cid, before, added) in sync_report
+            ],
+        }
+        print(json.dumps(summary, indent=2))
+
+        if args.drain:
+            from app.scripts.drain_embedding_queue import drain_embedding_queue_until_idle
+
+            # Logs progress to stdout; returns final counts (embedding worker supersedes old chunks).
+            drain_embedding_queue_until_idle(
+                redis_batch=args.redis_batch,
+                db_batch=args.db_batch,
+                idle_exit_rounds=args.idle_exit_rounds,
+                log=True,
             )
-        )
     finally:
         db.close()
 

@@ -18,7 +18,17 @@ class FormService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_forms(self, page: int = 1, limit: int = 50, query: Optional[str] = None, language: Optional[str] = None, status: Optional[str] = None, sort_field: str = "updated_at", sort_dir: str = "desc"):
+    def list_forms(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        language: Optional[str] = None,
+        status: Optional[str] = None,
+        form_type: Optional[str] = None,
+        sort_field: str = "updated_at",
+        sort_dir: str = "desc",
+    ):
         """List forms."""
         from sqlalchemy import or_, and_
         from sqlalchemy.orm import joinedload
@@ -27,11 +37,16 @@ class FormService:
         )
         
         filters = []
+        if form_type and str(form_type).strip().lower() not in ("", "all"):
+            filters.append(Form.form_type == str(form_type).strip().lower())
         if query:
+            ql = query.strip()
             filters.append(
                 or_(
-                    Form.code.ilike(f"%{query}%"),
-                    Form.name.ilike(f"%{query}%")
+                    Form.code.ilike(f"%{ql}%"),
+                    Form.name.ilike(f"%{ql}%"),
+                    Form.purpose.ilike(f"%{ql}%"),
+                    Form.form_type.ilike(f"%{ql}%"),
                 )
             )
         if language:
@@ -57,6 +72,7 @@ class FormService:
             "id": Form.id,
             "code": Form.code,
             "name": Form.name,
+            "form_type": Form.form_type,
             "created_at": Form.created_at,
             "updated_at": Form.updated_at,
             "version": Form.version,
@@ -114,7 +130,7 @@ class FormService:
             source_key=form.code,
             source_updated_at=form.updated_at or form.created_at,
             event_type="form.created",
-            changed_fields=["code", "name", "purpose", "language", "is_active"],
+            changed_fields=["code", "name", "form_type", "purpose", "language", "is_active"],
             triggered_by=created_by,
         )
         return form

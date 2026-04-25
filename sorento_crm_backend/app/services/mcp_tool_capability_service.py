@@ -3,7 +3,7 @@
 The RAG retrieves MCP tools using pgvector cosine similarity over `embedding_chunks`.
 For every MCP tool we emit:
   - a rich `body_text` (tool name, category, intent, description, path, params),
-  - a set of disjoint `typical_user_questions` modelled after the legacy n8n
+  - a set of disjoint `typical_user_questions` modelled after the n8n
     `next_agents/*` prompts (general enquiries, order status, incoming stock,
     marketing/forms, stock inquiries, purchase request/sponsorship, complaint),
   - alias phrases derived from the tool name.
@@ -55,7 +55,7 @@ class ToolIntent:
 # ---------------------------------------------------------------------------
 # Prompt-aligned intent catalog (next_agents/*)
 # ---------------------------------------------------------------------------
-# Categories mirror the legacy sub-prompts:
+# Categories mirror the sub-prompts:
 #   general_enquiries.product          → crm_master_products_*
 #   general_enquiries.promotion        → crm_marketing_promotions_* / campaign_*
 #   general_enquiries.attachment       → crm_resource_* / crm_master_product_attachments_*
@@ -63,7 +63,7 @@ class ToolIntent:
 #   general_enquiries.lead_time        → product supplier lead time (see note below)
 #   general_enquiries.incoming_stock   → crm_procurement_packing_lists_* / spo_allocations_*
 #   order_enquiries                    → crm_order_management_*
-#   marketing_agent.form_lookup        → crm_forms_management_* / crm_workflow_forms_*
+#   marketing_agent.marketing_assets   → crm_forms_management_* / crm_workflow_forms_*
 #   stock_inquiries.form_submission    → crm_forms_stock_inquiries_*
 #   purchase_request.form_submission   → crm_forms_purchase_requests_*
 #   complaint.form_submission          → crm_forms_complaints_* / entity_attachments
@@ -315,8 +315,9 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="general_enquiries.promotion",
         intent="Paged promotion product lines (which SKUs are under which promo).",
         description=(
-            "Promotion product lines, paginated. REQUIRED PATTERN: set promotion_id to ONE promotion "
-            "(UUID or promo_code). Optional query filters by SKU/name/promo code. Use when the user "
+            "Promotion product lines, paginated. Optional promotion_id scopes to one promotion "
+            "(UUID or promo_code). Optional query filters by SKU/name/promo code and can run without "
+            "promotion_id to discover which promotions a product participates in. Use when the user "
             "asks for the SKUs included in a promotion, or which promotions a product participates in."
         ),
         typical_user_questions=(
@@ -906,15 +907,16 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         aliases=("admin raw picking lines",),
     ),
     # ==================================================================
-    # FORMS (marketing agent — application form lookup)
+    # FORMS (marketing agent — marketing assets / application form lookup)
     # ==================================================================
     "crm_forms_management_forms_list": ToolIntent(
-        category="marketing_agent.form_lookup",
+        category="marketing_agent.marketing_assets",
         intent="Find application / marketing forms (flower stand, sponsorship, exhibition, renovation).",
         description=(
-            "List legacy application forms with query + language + status filters. Use for "
-            "'flower stand form', 'sponsorship form', 'exhibition form', 'renovation form in "
-            "Chinese'. Returns forms that can be attached via their attachment_id."
+            "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
+            "List application forms with optional query, language, status, and form_type filter. "
+            "Free-text query matches code, name, purpose, and form_type. Each row includes form_type. "
+            "Returns forms that can be attached via their attachment_id."
         ),
         typical_user_questions=(
             "What forms do you have?",
@@ -927,17 +929,21 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         aliases=("application form", "sponsorship form lookup", "flower stand form"),
     ),
     "crm_forms_management_forms_get": ToolIntent(
-        category="marketing_agent.form_lookup",
-        intent="Get one legacy form by id.",
-        description="Single legacy form record.",
-        typical_user_questions=("Open this legacy form by id.",),
+        category="marketing_agent.marketing_assets",
+        intent="Get one form by id.",
+        description=(
+            "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
+            "Single form record."
+        ),
+        typical_user_questions=("Open this form by id.",),
     ),
     "crm_workflow_forms_definitions_list": ToolIntent(
-        category="marketing_agent.form_lookup",
+        category="marketing_agent.marketing_assets",
         intent="List workflow form definitions.",
         description=(
+            "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
             "List workflow form definitions. Use q for search (alias `query` is also accepted and "
-            "mapped to q). Different from legacy forms — these drive workflow submissions."
+            "mapped to q). Different from forms — these drive workflow submissions."
         ),
         typical_user_questions=(
             "List workflow form definitions.",
@@ -946,60 +952,84 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         ),
     ),
     "crm_workflow_forms_definitions_published_for_submission": ToolIntent(
-        category="marketing_agent.form_lookup",
+        category="marketing_agent.marketing_assets",
         intent="List workflow forms currently published for user submission.",
-        description="Published workflow form definitions visible to submitters.",
+        description=(
+            "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
+            "Published workflow form definitions visible to submitters."
+        ),
         typical_user_questions=(
             "What workflow forms can I submit right now?",
             "List active forms I'm allowed to submit.",
         ),
     ),
     "crm_workflow_forms_definitions_get": ToolIntent(
-        category="marketing_agent.form_lookup",
+        category="marketing_agent.marketing_assets",
         intent="Get a workflow form definition by id.",
-        description="Single workflow form definition record.",
+        description=(
+            "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
+            "Single workflow form definition record."
+        ),
         typical_user_questions=("Open this workflow form definition.",),
     ),
     "crm_workflow_forms_definitions_preview": ToolIntent(
-        category="marketing_agent.form_lookup",
+        category="marketing_agent.marketing_assets",
         intent="Preview a workflow form schema (draft or published).",
-        description="Preview draft or published workflow form schema (source=draft|published).",
+        description=(
+            "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
+            "Preview draft or published workflow form schema (source=draft|published)."
+        ),
         typical_user_questions=(
             "Preview this workflow form schema.",
             "Show me the draft version of this workflow form.",
         ),
     ),
     "crm_workflow_forms_definitions_published_schema": ToolIntent(
-        category="marketing_agent.form_lookup",
+        category="marketing_agent.marketing_assets",
         intent="Published schema for a workflow form (for building submissions).",
-        description="Published workflow form schema used to construct submissions.",
+        description=(
+            "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
+            "Published workflow form schema used to construct submissions."
+        ),
         typical_user_questions=("Published schema to build a submission for this form.",),
     ),
     "crm_workflow_forms_definitions_flow_graph": ToolIntent(
-        category="marketing_agent.form_lookup",
+        category="marketing_agent.marketing_assets",
         intent="Flow graph of a workflow form definition.",
-        description="Flow graph nodes/edges for a workflow form definition.",
+        description=(
+            "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
+            "Flow graph nodes/edges for a workflow form definition."
+        ),
         typical_user_questions=("Show the workflow flow graph.",),
     ),
     "crm_workflow_forms_submissions_list": ToolIntent(
-        category="marketing_agent.form_lookup",
+        category="marketing_agent.marketing_assets",
         intent="List workflow form submissions.",
-        description="List workflow submissions with definition_id / state_code filters.",
+        description=(
+            "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
+            "List workflow submissions with definition_id / state_code filters."
+        ),
         typical_user_questions=(
             "List workflow submissions.",
             "Show submissions for this workflow form.",
         ),
     ),
     "crm_workflow_forms_submissions_get": ToolIntent(
-        category="marketing_agent.form_lookup",
+        category="marketing_agent.marketing_assets",
         intent="Get a workflow form submission by id (with lines/logs).",
-        description="Workflow submission detail including lines and logs.",
+        description=(
+            "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
+            "Workflow submission detail including lines and logs."
+        ),
         typical_user_questions=("Open this workflow submission.",),
     ),
     "crm_workflow_forms_submissions_allowed_transitions": ToolIntent(
-        category="marketing_agent.form_lookup",
+        category="marketing_agent.marketing_assets",
         intent="Allowed workflow transitions for a submission.",
-        description="Allowed transitions for a submission for the current act-as user.",
+        description=(
+            "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
+            "Allowed transitions for a submission for the current act-as user."
+        ),
         typical_user_questions=("What transitions can I do on this workflow submission?",),
     ),
     # ==================================================================
@@ -1013,7 +1043,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "submit a NEW stock inquiry to purchasing (product, salesperson, item description, "
             "project customer, project name, quantity, delivery date), or resubmit an updated "
             "rejected stock inquiry. This is a WRITE action — only call after the user confirms. "
-            "Not for listing / viewing existing stock inquiries (use the list / get tools)."
+            "Not for listing / viewing existing stock inquiries (use the list / get tools). "
+            "DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments."
         ),
         typical_user_questions=(
             "Submit a new stock inquiry to purchasing.",
@@ -1028,6 +1059,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="stock_inquiries.form_submission",
         intent="List the current user's Stock Inquiry submissions.",
         description=(
+            "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for "
+            "downloadable templates, blank marketing forms, or attachments. "
             "List stock inquiries for the authenticated scope with pagination and query. Use for "
             "'show my stock inquiries', 'list my rejected stock inquiries', 'pending stock "
             "inquiries this month'. Not for submitting — use crm_forms_stock_inquiries_submit."
@@ -1045,6 +1078,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="stock_inquiries.form_submission",
         intent="View one Stock Inquiry submission (for VIEW or prepare UPDATE).",
         description=(
+            "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for "
+            "downloadable templates, blank marketing forms, or attachments. "
             "Get one stock inquiry by inquiry_id for view-only summary or to preload an update flow "
             "for a REJECTED stock inquiry. Not for submit — use crm_forms_stock_inquiries_submit."
         ),
@@ -1065,7 +1100,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "POST /api/v1/external/purchase-requests/ with payload_json. One tool handles BOTH "
             "request_type='purchase_request' AND request_type='sponsorship_form' creation, plus "
             "updates to rejected requests before resubmission. WRITE action — only call after "
-            "the user confirms the summary. Not for listing / viewing — use list / get tools."
+            "the user confirms the summary. Not for listing / viewing — use list / get tools. "
+            "DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments."
         ),
         typical_user_questions=(
             "Create a purchase request for customer Alpha with three items.",
@@ -1088,6 +1124,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="purchase_request.form_submission",
         intent="List my purchase requests AND sponsorship forms with filters.",
         description=(
+            "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for "
+            "downloadable templates, blank marketing forms, or attachments. "
             "List purchase requests + sponsorship forms for the authenticated user. Supports "
             "request_type (purchase_request / sponsorship_form), approval_status, free-text query, "
             "and pagination. Use for 'list my requests', 'show my rejected sponsorship forms', "
@@ -1106,6 +1144,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="purchase_request.form_submission",
         intent="View ONE purchase request or sponsorship form in detail.",
         description=(
+            "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for "
+            "downloadable templates, blank marketing forms, or attachments. "
             "Get one purchase request or sponsorship form by request_id for a view-only summary "
             "(header + lines) or to preload an update flow for a REJECTED request."
         ),
@@ -1123,6 +1163,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="complaint.form_submission",
         intent="File a customer complaint about a delivered order (after DO identification).",
         description=(
+            "Complaint submission workflow tool. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. "
             "POST /api/v1/complaints-management/complaints/ with payload_json. Use after the "
             "user has identified the delivery order(s) and captured complaint details (complaint "
             "type, defect description, product code, quantity, customer contact). WRITE action — "
@@ -1142,6 +1183,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="complaint.form_submission",
         intent="Attach photos/videos/files to a complaint, stock inquiry, or purchase request.",
         description=(
+            "Complaint / submission evidence upload (not marketing form downloads). DO NOT use this tool if the user is looking for "
+            "downloadable templates, blank marketing forms, or marketing attachments. "
             "POST /api/v1/external/entity-attachments/ to create and link an attachment to an "
             "entity (complaint / stock_inquiry / purchase_request). Use AFTER the parent "
             "submission is confirmed — e.g. after a complaint is filed, to attach defect photos "
@@ -1385,8 +1428,8 @@ def build_capability_documents(include_planned: bool = True, definitions_file: s
 def _tool_type_for_category(category: str) -> str:
     if category.endswith("form_submission"):
         return "form_submission"
-    if category == "marketing_agent.form_lookup":
-        return "form_lookup"
+    if category in ("marketing_agent.form_lookup", "marketing_agent.marketing_assets"):
+        return "marketing_assets"
     if category == "order_enquiries":
         return "enquiry"
     if category.startswith("general_enquiries"):

@@ -32,6 +32,7 @@ async def get_forms(
     query: Optional[str] = Query(None),
     language: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    form_type: Optional[str] = Query(None, description="Filter by form type (e.g. marketing)"),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -49,6 +50,7 @@ async def get_forms(
             query=query, 
             language=language, 
             status=status,
+            form_type=form_type,
             sort_field=sort_field,
             sort_dir=sort_dir
         )

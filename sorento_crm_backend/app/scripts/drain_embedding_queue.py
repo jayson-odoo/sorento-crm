@@ -73,36 +73,36 @@ def _queue_status_counts() -> dict[str, int]:
         db.close()
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Drain embedding Redis + DB queue until idle")
-    parser.add_argument("--queue-name", default=None, help="RQ queue name (default: settings.embedding_queue_name)")
-    parser.add_argument("--redis-batch", type=int, default=50, help="Max RQ jobs per inner step")
-    parser.add_argument("--db-batch", type=int, default=50, help="Max DB pending rows per inner step")
-    parser.add_argument("--max-rounds", type=int, default=500_000, help="Safety cap on outer iterations")
-    parser.add_argument("--idle-exit-rounds", type=int, default=2, help="Stop after N consecutive rounds with no work")
-    args = parser.parse_args()
-
-    qname = args.queue_name or settings.embedding_queue_name
-
+def drain_embedding_queue_until_idle(
+    *,
+    queue_name: str | None = None,
+    redis_batch: int = 50,
+    db_batch: int = 50,
+    max_rounds: int = 500_000,
+    idle_exit_rounds: int = 2,
+    log: bool = True,
+) -> dict:
+    """Run Redis RQ workers and DB fallback until no pending work. Callable from other scripts (e.g. seed)."""
+    qname = queue_name or settings.embedding_queue_name
     total_redis = 0
     total_db = 0
     idle_streak = 0
     round_no = 0
 
-    print(
-        json.dumps(
-            {"redis_url": settings.redis_url, "queue": qname, "embedding_queue_before": _queue_status_counts()},
-            indent=2,
-        ),
-        flush=True,
-    )
+    if log:
+        print(
+            json.dumps(
+                {"redis_url": settings.redis_url, "queue": qname, "embedding_queue_before": _queue_status_counts()},
+                indent=2,
+            ),
+            flush=True,
+        )
 
-    while round_no < args.max_rounds:
+    while round_no < max_rounds:
         round_no += 1
-        # One batch per phase so logs appear after Redis work without waiting for DB batch (and vice versa).
-        step_redis, _ = _drain_redis_batch(qname, args.redis_batch)
+        step_redis, _ = _drain_redis_batch(qname, redis_batch)
         total_redis += step_redis
-        if step_redis:
+        if step_redis and log:
             idle_streak = 0
             print(
                 json.dumps(
@@ -118,10 +118,12 @@ def main() -> None:
                 ),
                 flush=True,
             )
+        elif step_redis:
+            idle_streak = 0
 
-        step_db, _ = _drain_db_batch(args.db_batch)
+        step_db, _ = _drain_db_batch(db_batch)
         total_db += step_db
-        if step_db:
+        if step_db and log:
             idle_streak = 0
             print(
                 json.dumps(
@@ -137,24 +139,42 @@ def main() -> None:
                 ),
                 flush=True,
             )
+        elif step_db:
+            idle_streak = 0
 
         if step_redis == 0 and step_db == 0:
             idle_streak += 1
-            if idle_streak >= args.idle_exit_rounds:
+            if idle_streak >= idle_exit_rounds:
                 break
 
-    print(
-        json.dumps(
-            {
-                "done": True,
-                "rounds": round_no,
-                "total_redis": total_redis,
-                "total_db": total_db,
-                "embedding_queue_after": _queue_status_counts(),
-            },
-            indent=2,
-        ),
-        flush=True,
+    out = {
+        "done": True,
+        "rounds": round_no,
+        "total_redis": total_redis,
+        "total_db": total_db,
+        "embedding_queue_after": _queue_status_counts(),
+    }
+    if log:
+        print(json.dumps(out, indent=2), flush=True)
+    return out
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Drain embedding Redis + DB queue until idle")
+    parser.add_argument("--queue-name", default=None, help="RQ queue name (default: settings.embedding_queue_name)")
+    parser.add_argument("--redis-batch", type=int, default=50, help="Max RQ jobs per inner step")
+    parser.add_argument("--db-batch", type=int, default=50, help="Max DB pending rows per inner step")
+    parser.add_argument("--max-rounds", type=int, default=500_000, help="Safety cap on outer iterations")
+    parser.add_argument("--idle-exit-rounds", type=int, default=2, help="Stop after N consecutive rounds with no work")
+    args = parser.parse_args()
+
+    drain_embedding_queue_until_idle(
+        queue_name=args.queue_name,
+        redis_batch=args.redis_batch,
+        db_batch=args.db_batch,
+        max_rounds=args.max_rounds,
+        idle_exit_rounds=args.idle_exit_rounds,
+        log=True,
     )
 
 

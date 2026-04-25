@@ -52,6 +52,7 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
     defaultValues: {
       code: '',
       name: '',
+      form_type: 'marketing',
       purpose: null,
       language: 'en',
       is_active: false,
@@ -81,6 +82,7 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
         formHook.reset({
           code: form.code,
           name: form.name,
+          form_type: form.form_type || 'marketing',
           purpose: form.purpose || null,
           language: form.language,
           is_active: form.is_active,
@@ -112,6 +114,7 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
       const formData: FormFormData = {
         code: data.code,
         name: data.name,
+        form_type: data.form_type,
         purpose: data.purpose || undefined,
         language: data.language,
         is_active: data.is_active,
@@ -188,6 +191,23 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
                     <FormControl>
                       <Input placeholder="Customer Feedback Form" {...field} />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={formHook.control}
+                name="form_type"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Form type</FormLabel>
+                    <FormControl>
+                      <Input placeholder="marketing" {...field} />
+                    </FormControl>
+                    <FormDescription>
+                      Category for search and integrations (e.g. marketing for downloadable application forms)
+                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

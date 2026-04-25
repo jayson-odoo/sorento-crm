@@ -117,6 +117,18 @@ export default function FormsList() {
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
+        accessorKey: 'form_type',
+        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        cell: ({ row }) => (
+          <Badge variant="outline" appearance="ghost" className="font-normal">
+            {row.original.form_type || 'marketing'}
+          </Badge>
+        ),
+        size: 110,
+        minSize: 90,
+        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
+      },
+      {
         accessorKey: 'purpose',
         header: ({ column }) => <DataGridColumnHeader title="Purpose" column={column} />,
         cell: ({ row }) => {

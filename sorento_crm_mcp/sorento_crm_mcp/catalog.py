@@ -189,7 +189,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_marketing_promotion_products_list",
-        "Promotion product lines (paginated). REQUIRED PATTERN: set promotion_id to ONE promotion (UUID or promo_code). Do NOT put promotion UUIDs only inside query. Optional query = text search (SKU/name/promo code). If promotion_id is omitted: a single bare UUID or promotion_id='<uuid>' in query scopes to one promotion; comma-separated UUIDs in query scope to those promotions (combined rows).",
+        "Promotion product lines (paginated). Optional promotion_id (UUID or promo_code) scopes to one promotion. Optional query does text search by SKU/product name/promo code and can be used without promotion_id to find which promotions a product appears in.",
         "/api/v1/marketing/promotion-products",
         (),
         ("page", "limit", "sort", "dir", "query", "promotion_id"),
@@ -644,14 +644,14 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- forms ---
     ToolSpec(
         "crm_forms_management_forms_list",
-        "List legacy forms.",
+        "List forms. Each row includes form_type. Optional form_type query param filters by type; query searches code, name, purpose, and form_type.",
         "/api/v1/forms-management/forms",
         (),
-        ("page", "limit", "query", "language", "status", "sort", "dir"),
+        ("page", "limit", "query", "language", "status", "form_type", "sort", "dir"),
     ),
     ToolSpec(
         "crm_forms_management_forms_get",
-        "Get legacy form by id.",
+        "Get form by id.",
         "/api/v1/forms-management/forms/{form_id}",
         ("form_id",),
         (),

@@ -6,6 +6,7 @@ import hashlib
 import uuid
 import json
 import logging
+import re
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -124,6 +125,28 @@ class EmbeddingReadService:
         )
         return row[0] if row else None
 
+    def current_chunk_hashes_distinct(
+        self,
+        source_type: str,
+        source_id: str,
+        model_name: str,
+        model_version: str,
+    ) -> set[str]:
+        """Distinct source_hash values among *current* chunks (detects split-brain / duplicate batches)."""
+        rows = (
+            self.db.query(EmbeddingChunk.source_hash)
+            .filter(
+                EmbeddingChunk.source_type == source_type,
+                EmbeddingChunk.source_id == source_id,
+                EmbeddingChunk.is_current.is_(True),
+                EmbeddingChunk.model_name == model_name,
+                EmbeddingChunk.model_version == model_version,
+            )
+            .distinct()
+            .all()
+        )
+        return {str(r[0]) for r in rows if r[0]}
+
     def mark_previous_non_current(self, source_type: str, source_id: str, model_name: str, model_version: str) -> None:
         now = datetime.utcnow()
         (
@@ -228,6 +251,9 @@ class EmbeddingReadService:
         implementation_status: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         q_lower = (query or "").lower()
+        looks_like_product_code = bool(re.search(r"\b[a-z]{2,}\d{2,}[a-z0-9-]*\b", q_lower))
+        promo_intent_words = ("promo", "promotion", "discount", "campaign", "offer")
+        has_promo_intent = any(w in q_lower for w in promo_intent_words)
         initial = self.search_current(
             query_embedding,
             top_k=max(8, min(20, top_k * 3)),
@@ -351,7 +377,10 @@ class EmbeddingReadService:
                 score += 0.08
             if ("purchase request" in q_lower or "sponsorship" in q_lower) and cat == "purchase_request.form_submission":
                 score += 0.08
-            if ("application form" in q_lower or "flower stand" in q_lower or "renovation form" in q_lower) and cat == "marketing_agent.form_lookup":
+            if ("application form" in q_lower or "flower stand" in q_lower or "renovation form" in q_lower) and cat in (
+                "marketing_agent.marketing_assets",
+                "marketing_agent.form_lookup",
+            ):
                 score += 0.08
 
             # The resolver MCP tool is meta: the system already pre-resolves codes
@@ -422,6 +451,20 @@ class EmbeddingReadService:
                 score += 0.08
             if "is promotion" in q_lower and tool_name.startswith("crm_marketing_promotions"):
                 score += 0.15
+            # Product-code + promo questions should first discover promo headers,
+            # then drill into line items only when a specific promotion is known.
+            if has_promo_intent and looks_like_product_code:
+                if tool_name == "crm_marketing_promotions_list":
+                    score += 0.18
+                if tool_name == "crm_marketing_promotion_products_list":
+                    score += 0.08
+            # If we only have a product code token (e.g. "SRT7017-BL"), prefer
+            # promotion discovery over line-item tool that often needs narrowing.
+            if looks_like_product_code and not has_promo_intent:
+                if tool_name == "crm_marketing_promotions_list":
+                    score += 0.10
+                if tool_name == "crm_marketing_promotion_products_list":
+                    score -= 0.06
             if "is grn" in q_lower and tool_name == "crm_incoming_stock_grn":
                 score += 0.20
             if "is spo_allocation" in q_lower and tool_name.startswith("crm_procurement_spo"):

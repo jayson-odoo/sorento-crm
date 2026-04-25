@@ -134,7 +134,8 @@ export default function FormDetail({ formId }: FormDetailProps) {
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            Form Code: {form.code} • Version: {form.version} • Language: {form.language.toUpperCase()}
+            Form Code: {form.code} • Type: {form.form_type || 'marketing'} • Version: {form.version} • Language:{' '}
+            {form.language.toUpperCase()}
           </p>
         </div>
         <div className="flex gap-2">
@@ -174,6 +175,10 @@ export default function FormDetail({ formId }: FormDetailProps) {
             <div>
               <p className="text-sm text-muted-foreground">Form Name</p>
               <p className="font-medium">{form.name}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Form type</p>
+              <p className="font-medium">{form.form_type || 'marketing'}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Purpose</p>

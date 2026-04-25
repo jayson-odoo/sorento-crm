@@ -13,6 +13,8 @@ class Form(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     code = Column(String(100), unique=True, nullable=False)
     name = Column(String(255), nullable=False)
+    # Legacy / downloadable catalog forms (flower stand, sponsorship, etc.). Default marketing for current data.
+    form_type = Column(String(64), nullable=False, server_default="marketing", default="marketing")
     purpose = Column(Text, nullable=True)
     language = Column(String(10), default="en", nullable=False)
     version = Column(Integer, default=1, nullable=False)
@@ -31,6 +33,7 @@ class Form(Base):
     __table_args__ = (
         Index("ix_forms_is_active", "is_active"),
         Index("ix_forms_language", "language"),
+        Index("ix_forms_form_type", "form_type"),
         Index("ix_forms_access_levels", "access_levels", postgresql_using="gin"),
     )
 

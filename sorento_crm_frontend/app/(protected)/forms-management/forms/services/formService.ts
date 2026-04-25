@@ -2,8 +2,8 @@ import { apiFetch } from '@/lib/api';
 import type { Form, FormFormData, FormVersion } from '../types/form.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-export async function getForms(params: DataGridApiFetchParams & { language?: string; status?: string; purpose?: string }): Promise<DataGridApiResponse<Form>> {
-  const { pageIndex, pageSize, sorting, searchQuery, language, status, purpose } = params;
+export async function getForms(params: DataGridApiFetchParams & { language?: string; status?: string; purpose?: string; form_type?: string }): Promise<DataGridApiResponse<Form>> {
+  const { pageIndex, pageSize, sorting, searchQuery, language, status, purpose, form_type } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -14,6 +14,7 @@ export async function getForms(params: DataGridApiFetchParams & { language?: str
     ...(language ? { language } : {}),
     ...(status ? { status } : {}),
     ...(purpose ? { purpose } : {}),
+    ...(form_type ? { form_type } : {}),
   });
   const response = await apiFetch(`/api/v1/forms-management/forms?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch forms');

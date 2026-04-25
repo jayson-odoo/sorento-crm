@@ -23,8 +23,7 @@ TOOL_QUERY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
-    # Prevent broad, expensive query misuse and align with endpoint guidance.
-    "crm_marketing_promotion_products_list": ("promotion_id",),
+    # Intentionally empty: required query params should come from API spec only.
 }
 
 TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
