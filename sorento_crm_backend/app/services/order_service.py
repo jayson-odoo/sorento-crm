@@ -109,15 +109,14 @@ class OrderService:
         if actual_delivery_date_to is not None:
             filters.append(Order.actual_delivery_date <= actual_delivery_date_to)
         
+        query_filter = None
         if query and (query := (query or "").strip()):
-            filters.append(
-                or_(
-                    Order.order_number.ilike(f"%{query}%"),
-                    Order.debtor_name.ilike(f"%{query}%"),
-                    Order.debtor_code.ilike(f"%{query}%"),
-                    Order.customer.has(Customer.customer_name.ilike(f"%{query}%")),
-                    Order.customer.has(Customer.customer_code.ilike(f"%{query}%"))
-                )
+            query_filter = or_(
+                Order.order_number.ilike(f"%{query}%"),
+                Order.debtor_name.ilike(f"%{query}%"),
+                Order.debtor_code.ilike(f"%{query}%"),
+                Order.customer.has(Customer.customer_name.ilike(f"%{query}%")),
+                Order.customer.has(Customer.customer_code.ilike(f"%{query}%"))
             )
         if customer_query and (customer_query := (customer_query or "").strip()):
             term = f"%{customer_query}%"
@@ -146,10 +145,15 @@ class OrderService:
         if advanced_filter_clause is not None:
             filters.append(advanced_filter_clause)
 
-        if filters:
-            q = q.filter(and_(*filters))
+        base_q = q.filter(and_(*filters)) if filters else q
+        q = base_q.filter(query_filter) if query_filter is not None else base_q
         
         total = q.count()
+        if query_filter is not None and total == 0 and filters:
+            # General fallback: if text query yields nothing but structured filters exist,
+            # prioritize structured filters instead of returning a false empty result.
+            q = base_q
+            total = q.count()
 
         # Nullable columns: use nulls_last so NULLs don't break sort order
         nullable_sort_fields = {
@@ -296,16 +300,15 @@ class OrderService:
         if actual_delivery_date_to is not None:
             filters.append(Order.actual_delivery_date <= actual_delivery_date_to)
 
+        query_filter = None
         if query and (query := (query or "").strip()):
             term = f"%{query}%"
-            filters.append(
-                or_(
-                    Order.order_number.ilike(term),
-                    Order.debtor_name.ilike(term),
-                    Product.product_code.ilike(term),
-                    Product.product_name.ilike(term),
-                    Product.description.ilike(term),
-                )
+            query_filter = or_(
+                Order.order_number.ilike(term),
+                Order.debtor_name.ilike(term),
+                Product.product_code.ilike(term),
+                Product.product_name.ilike(term),
+                Product.description.ilike(term),
             )
         if customer_query and (customer_query := (customer_query or "").strip()):
             customer_term = f"%{customer_query}%"
@@ -327,8 +330,8 @@ class OrderService:
                 )
             )
 
-        if filters:
-            q = q.filter(and_(*filters))
+        base_q = q.filter(and_(*filters)) if filters else q
+        q = base_q.filter(query_filter) if query_filter is not None else base_q
 
         sort_map = {
             "order_number": Order.order_number,
@@ -345,6 +348,10 @@ class OrderService:
             q = q.order_by(sort_column.desc().nulls_last())
 
         total = q.count()
+        if query_filter is not None and total == 0 and filters:
+            # General fallback for noisy intent-like query text.
+            q = base_q
+            total = q.count()
         offset = (page - 1) * limit
         orders = q.offset(offset).limit(limit).all()
 
