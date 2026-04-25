@@ -67,11 +67,14 @@ async def get_forms(
 @router.get("/{form_id}", response_model=FormResponse)
 async def get_form(
     form_id: str,
+    contact_id: Optional[str] = Query(None, description="Optional caller contact scope"),
+    space_id: Optional[str] = Query(None, description="Optional caller space scope"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single form by ID."""
     try:
+        _ = contact_id, space_id  # accepted for cross-tool MCP compatibility
         service = FormService(db)
         form = service.get_form(form_id)
         return form

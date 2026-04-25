@@ -664,10 +664,10 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_forms_management_forms_get",
-        "Get form by id.",
+        "Get form by id. Supports optional `contact_id` and `space_id` query params for caller scope consistency across crm_forms_* tools.",
         "/api/v1/forms-management/forms/{form_id}",
         ("form_id",),
-        (),
+        ("contact_id", "space_id"),
     ),
     # --- workflow-forms ---
     ToolSpec(

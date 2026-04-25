@@ -948,7 +948,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="Get one form by id.",
         description=(
             "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
-            "Single form record."
+            "Single form record. Supports optional contact_id and space_id scope params for consistency "
+            "with other crm_forms_* tools."
         ),
         typical_user_questions=("Open this form by id.",),
     ),
