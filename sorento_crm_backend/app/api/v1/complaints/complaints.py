@@ -275,8 +275,11 @@ def _raise_do_lookup_guidance(
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
-def _enforce_delivery_order_first(service: ComplaintService, complaint_data: ComplaintCreate) -> None:
-    """Validate DO selection first; request customer+product+order_date filters when DO is missing."""
+def _enforce_delivery_order_first(service: ComplaintService, complaint_data: ComplaintCreate) -> dict[str, Any]:
+    """Validate DO selection first; request customer+product+order_date filters when DO is missing.
+
+    Returns inferred customer/product hints from the selected DO(s).
+    """
     resolved_do_numbers, invalid_do_numbers, provided_do_numbers = service.resolve_delivery_order_numbers(
         complaint_data.delivery_order_number
     )
@@ -308,6 +311,57 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
             invalid_do_numbers=invalid_do_numbers or provided_do_numbers,
         )
     complaint_data.delivery_order_number = ", ".join(resolved_do_numbers)
+    return service.infer_complaint_defaults_from_delivery_orders(resolved_do_numbers)
+
+
+def _prefill_complaint_fields_from_do(
+    complaint_data: ComplaintCreate,
+    do_context: dict[str, Any],
+    integration_payload: Optional[ComplaintIntegrationCreate] = None,
+) -> None:
+    """Reduce data entry by auto-filling customer_name/product_code from selected DO(s)."""
+    inferred_customer_name = str(do_context.get("customer_name") or "").strip()
+    inferred_product_code = str(do_context.get("product_code") or "").strip()
+    if not (complaint_data.customer_name or "").strip() and inferred_customer_name:
+        complaint_data.customer_name = inferred_customer_name
+        if integration_payload is not None:
+            integration_payload.customer_name = inferred_customer_name
+    if not (complaint_data.product_code or "").strip() and inferred_product_code:
+        complaint_data.product_code = inferred_product_code
+        if integration_payload is not None:
+            integration_payload.product_code = inferred_product_code
+
+
+def _raise_needs_more_fields_guidance(
+    *,
+    missing_fields: list[str],
+    do_context: dict[str, Any],
+) -> None:
+    """Structured response for incomplete complaint details after DO selection."""
+    detail: dict[str, Any] = {
+        "status": "needs_more_fields",
+        "next_action": "collect_complaint_details",
+        "message": "Complaint details are incomplete after DO selection.",
+        "missing_fields": missing_fields,
+    }
+    inferred_customer_name = do_context.get("customer_name")
+    inferred_product_code = do_context.get("product_code")
+    product_codes = do_context.get("product_codes") or []
+    product_names = do_context.get("product_names") or []
+    customer_candidates = do_context.get("customer_name_candidates") or []
+    detail["do_lookup_context"] = {
+        "delivery_order_numbers": do_context.get("delivery_order_numbers") or [],
+        "customer_name": inferred_customer_name,
+        "customer_name_candidates": customer_candidates,
+        "product_code": inferred_product_code,
+        "product_codes": product_codes,
+        "product_names": product_names,
+    }
+    detail["prefill_fields"] = {
+        "customer_name": inferred_customer_name,
+        "product_code": inferred_product_code,
+    }
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
 @router.post("/", response_model=ComplaintResponse, status_code=status.HTTP_201_CREATED)
@@ -345,13 +399,16 @@ async def create_complaint(
             complaint_data = ComplaintCreate.model_validate(raw)
 
         service = ComplaintService(db)
-        _enforce_delivery_order_first(service, complaint_data)
+        do_context = _enforce_delivery_order_first(service, complaint_data)
+        _prefill_complaint_fields_from_do(complaint_data, do_context, integration_payload)
         requires_user_confirm = is_integration_payload or _request_has_valid_external_api_key(request)
         if requires_user_confirm:
             if integration_payload is not None:
                 _validate_integration_payload_completeness(integration_payload)
             # Enforce missing-field validation before confirmation gating.
-            service.validate_submission_completeness(complaint_data)
+            missing_fields = service.get_submission_missing_fields(complaint_data)
+            if missing_fields:
+                _raise_needs_more_fields_guidance(missing_fields=missing_fields, do_context=do_context)
         if requires_user_confirm and user_confirmed is not True:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -404,10 +461,13 @@ async def create_complaint_integration(
             payload = body
         service = ComplaintService(db)
         complaint_data = payload.to_complaint_create()
-        _enforce_delivery_order_first(service, complaint_data)
+        do_context = _enforce_delivery_order_first(service, complaint_data)
+        _prefill_complaint_fields_from_do(complaint_data, do_context, payload)
         # Validate payload completeness after DO validation; only then enforce explicit confirmation.
         _validate_integration_payload_completeness(payload)
-        service.validate_submission_completeness(complaint_data)
+        missing_fields = service.get_submission_missing_fields(complaint_data)
+        if missing_fields:
+            _raise_needs_more_fields_guidance(missing_fields=missing_fields, do_context=do_context)
         if payload.user_confirmed is not True:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

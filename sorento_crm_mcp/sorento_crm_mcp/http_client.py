@@ -37,9 +37,10 @@ class CRMClient:
         *,
         path_params: Mapping[str, Any] | None = None,
         query: MutableMapping[str, Any] | None = None,
+        tool_name: str | None = None,
     ) -> str:
         """Perform GET; return JSON text or error message for the model."""
-        return await self.request("GET", path, path_params=path_params, query=query)
+        return await self.request("GET", path, path_params=path_params, query=query, tool_name=tool_name)
 
     async def post(
         self,
@@ -48,9 +49,10 @@ class CRMClient:
         path_params: Mapping[str, Any] | None = None,
         query: MutableMapping[str, Any] | None = None,
         body: Any = None,
+        tool_name: str | None = None,
     ) -> str:
         """Perform POST; return JSON text or error message for the model."""
-        return await self.request("POST", path, path_params=path_params, query=query, body=body)
+        return await self.request("POST", path, path_params=path_params, query=query, body=body, tool_name=tool_name)
 
     async def request(
         self,
@@ -60,8 +62,17 @@ class CRMClient:
         path_params: Mapping[str, Any] | None = None,
         query: MutableMapping[str, Any] | None = None,
         body: Any = None,
+        tool_name: str | None = None,
     ) -> str:
         """Perform HTTP request; return JSON text or error message for the model."""
+        def _preview(value: Any, *, limit: int = 1000) -> str:
+            try:
+                text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+            except Exception:
+                text = repr(value)
+            text = (text or "").replace("\n", " ")
+            return text if len(text) <= limit else (text[:limit] + "...<truncated>")
+
         rendered = path
         if path_params:
             for k, v in path_params.items():
@@ -70,10 +81,13 @@ class CRMClient:
         method_upper = method.upper()
         started = time.perf_counter()
         logger.info(
-            "CRM request start: %s %s params=%s timeout=%.1fs",
+            "CRM request start: tool=%s %s %s path_params=%s params=%s body=%s timeout=%.1fs",
+            tool_name or "-",
             method_upper,
             rendered,
+            _preview(path_params or {}),
             params,
+            _preview(body),
             float(self._settings.request_timeout_seconds),
         )
         try:
@@ -83,10 +97,12 @@ class CRMClient:
             detail = str(e) or repr(e)
             elapsed_ms = (time.perf_counter() - started) * 1000
             logger.warning(
-                "CRM request failed: %s %s params=%s elapsed_ms=%.1f — %s: %s",
+                "CRM request failed: tool=%s %s %s params=%s body=%s elapsed_ms=%.1f — %s: %s",
+                tool_name or "-",
                 method_upper,
                 rendered,
                 params,
+                _preview(body),
                 elapsed_ms,
                 err_type,
                 detail,
@@ -104,12 +120,14 @@ class CRMClient:
         body = r.content
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
-            "CRM request done: %s %s status=%s elapsed_ms=%.1f bytes=%s",
+            "CRM request done: tool=%s %s %s status=%s elapsed_ms=%.1f bytes=%s response_preview=%s",
+            tool_name or "-",
             method_upper,
             rendered,
             r.status_code,
             elapsed_ms,
             len(body),
+            _preview(body.decode("utf-8", errors="replace")),
         )
         if len(body) > self._settings.max_response_bytes:
             return json.dumps(
@@ -127,11 +145,12 @@ class CRMClient:
 
         if r.status_code >= 400:
             logger.info(
-                "CRM %s %s -> %s (first 200 chars: %s)",
+                "CRM tool=%s %s %s -> %s (first 400 chars: %s)",
+                tool_name or "-",
                 method.upper(),
                 rendered,
                 r.status_code,
-                text[:200].replace("\n", " "),
+                text[:400].replace("\n", " "),
             )
 
         return text

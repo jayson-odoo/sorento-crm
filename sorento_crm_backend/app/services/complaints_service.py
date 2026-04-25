@@ -14,7 +14,8 @@ from sqlalchemy import or_, inspect, func
 from typing import List, Optional
 from app.config import settings
 from app.models.complaints import Complaint
-from app.models.order import Order
+from app.models.order import Order, OrderLine
+from app.models.product import Product
 from app.models.procurement import ViewToken
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.error_handler import handle_not_found
@@ -45,8 +46,8 @@ class ComplaintService:
             "project_title",
         )
 
-    def validate_submission_completeness(self, complaint_data: ComplaintCreate) -> None:
-        """For external/MCP submission flow: require complete complaint payload before confirmation."""
+    def get_submission_missing_fields(self, complaint_data: ComplaintCreate) -> list[str]:
+        """Return missing/empty required complaint fields for submission."""
         payload = complaint_data.model_dump()
         missing: list[str] = []
         for key in self._complaint_submission_required_fields:
@@ -56,6 +57,11 @@ class ComplaintService:
                 continue
             if isinstance(value, str) and not value.strip():
                 missing.append(key)
+        return missing
+
+    def validate_submission_completeness(self, complaint_data: ComplaintCreate) -> None:
+        """For external/MCP submission flow: require complete complaint payload before confirmation."""
+        missing = self.get_submission_missing_fields(complaint_data)
         if missing:
             from app.services.error_handler import handle_validation_error
 
@@ -116,6 +122,83 @@ class ComplaintService:
             else:
                 missing.append(token)
         return resolved, missing, provided
+
+    def infer_complaint_defaults_from_delivery_orders(self, do_numbers: list[str]) -> dict[str, object]:
+        """Infer customer + product hints from selected delivery order numbers.
+
+        Returns a dict with:
+            - delivery_order_numbers
+            - customer_name (when exactly one unique debtor_name found)
+            - customer_name_candidates (all unique debtor names found)
+            - product_code (when exactly one unique product code found)
+            - product_codes (all unique product codes found)
+            - product_names (all unique product names found)
+        """
+        normalized = self.normalize_delivery_order_numbers(", ".join(do_numbers))
+        if not normalized:
+            return {
+                "delivery_order_numbers": [],
+                "customer_name": None,
+                "customer_name_candidates": [],
+                "product_code": None,
+                "product_codes": [],
+                "product_names": [],
+            }
+
+        lowered = [s.lower() for s in normalized]
+        orders = (
+            self.db.query(Order.order_number, Order.debtor_name)
+            .filter(Order.deleted_at.is_(None), func.lower(Order.order_number).in_(lowered))
+            .all()
+        )
+        products = (
+            self.db.query(Order.order_number, Product.product_code, Product.product_name)
+            .join(OrderLine, OrderLine.product_id == Product.id)
+            .join(Order, Order.id == OrderLine.order_id)
+            .filter(Order.deleted_at.is_(None), func.lower(Order.order_number).in_(lowered))
+            .all()
+        )
+
+        debtor_names: list[str] = []
+        debtor_seen: set[str] = set()
+        for _, debtor_name in orders:
+            name = (str(debtor_name or "")).strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key in debtor_seen:
+                continue
+            debtor_seen.add(key)
+            debtor_names.append(name)
+
+        product_codes: list[str] = []
+        product_names: list[str] = []
+        code_seen: set[str] = set()
+        name_seen: set[str] = set()
+        for _, product_code, product_name in products:
+            code = (str(product_code or "")).strip()
+            name = (str(product_name or "")).strip()
+            if code:
+                code_key = code.lower()
+                if code_key not in code_seen:
+                    code_seen.add(code_key)
+                    product_codes.append(code)
+            if name:
+                name_key = name.lower()
+                if name_key not in name_seen:
+                    name_seen.add(name_key)
+                    product_names.append(name)
+
+        inferred_customer_name = debtor_names[0] if len(debtor_names) == 1 else None
+        inferred_product_code = product_codes[0] if len(product_codes) == 1 else None
+        return {
+            "delivery_order_numbers": normalized,
+            "customer_name": inferred_customer_name,
+            "customer_name_candidates": debtor_names,
+            "product_code": inferred_product_code,
+            "product_codes": product_codes,
+            "product_names": product_names,
+        }
 
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
         """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""

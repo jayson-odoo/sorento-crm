@@ -1,6 +1,17 @@
 """System-level API routes."""
 from fastapi import APIRouter, Depends
-from app.api.v1.system import import_logs, jobs, calendar, outgoing_mails, scheduled_tasks, numbering_rules, embeddings, ai_assistant, references
+from app.api.v1.system import (
+    import_logs,
+    jobs,
+    calendar,
+    outgoing_mails,
+    scheduled_tasks,
+    numbering_rules,
+    embeddings,
+    ai_assistant,
+    references,
+    tool_capabilities,
+)
 from app.modules.runtime.guards import require_module_enabled_with_api_key
 
 router = APIRouter(dependencies=[Depends(require_module_enabled_with_api_key("base"))])
@@ -14,3 +25,4 @@ router.include_router(numbering_rules.router, tags=["numbering-rules"])
 router.include_router(embeddings.router, tags=["embeddings"])
 router.include_router(ai_assistant.router, tags=["ai-assistant"])
 router.include_router(references.router, tags=["references"])
+router.include_router(tool_capabilities.router, tags=["tool-capabilities"])

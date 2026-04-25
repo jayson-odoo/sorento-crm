@@ -122,3 +122,40 @@ jobs:
 
             docker system prune -f
 
+  notify-owner:
+    name: Notify owner by email
+    runs-on: ubuntu-latest
+    needs: [build-and-deploy]
+    if: always()
+    steps:
+      - name: Compute notification content
+        id: notify
+        run: |
+          RESULT="${{ needs.build-and-deploy.result }}"
+          if [ "$RESULT" = "success" ]; then
+            echo "subject=✅ Sorento deploy succeeded (${GITHUB_REF_NAME})" >> "$GITHUB_OUTPUT"
+            echo "status_text=SUCCEEDED" >> "$GITHUB_OUTPUT"
+          else
+            echo "subject=❌ Sorento deploy failed (${GITHUB_REF_NAME})" >> "$GITHUB_OUTPUT"
+            echo "status_text=FAILED" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Send deployment email
+        if: ${{ secrets.SMTP_SERVER != '' && secrets.SMTP_PORT != '' && secrets.SMTP_USERNAME != '' && secrets.SMTP_PASSWORD != '' && secrets.OWNER_EMAIL != '' }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: ${{ steps.notify.outputs.subject }}
+          to: ${{ secrets.OWNER_EMAIL }}
+          from: Sorento Deploy Bot <${{ secrets.SMTP_USERNAME }}>
+          body: |
+            https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Warn when email secrets are missing
+        if: ${{ !(secrets.SMTP_SERVER != '' && secrets.SMTP_PORT != '' && secrets.SMTP_USERNAME != '' && secrets.SMTP_PASSWORD != '' && secrets.OWNER_EMAIL != '') }}
+        run: |
+          echo "Email notification skipped: set SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, OWNER_EMAIL secrets."
+

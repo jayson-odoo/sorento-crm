@@ -794,6 +794,20 @@ CATALOG: tuple[ToolSpec, ...] = (
         ("tracking_id",),
         (),
     ),
+    # --- system capabilities ---
+    ToolSpec(
+        "crm_system_tool_capabilities_summary",
+        (
+            "Dynamic summary of everything this MCP can do right now, grouped into "
+            "general enquiries vs form submissions. Use this when users ask "
+            "'what can you do?', 'what features do you support?', or request capability overview. "
+            "This summary is live (derived from current tool catalog + intents), not hard-coded. "
+            "Optional query `include_tools` (true/false) controls whether full tool lists are returned."
+        ),
+        "/api/v1/system/tool-capabilities/summary",
+        (),
+        ("include_tools",),
+    ),
     # --- form-submission tools (callable) ---
     ToolSpec(
         "crm_forms_stock_inquiries_submit",

@@ -1266,6 +1266,23 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description="SLA event logs with filters.",
         typical_user_questions=("List SLA event logs.",),
     ),
+    "crm_system_tool_capabilities_summary": ToolIntent(
+        category="general_enquiries.capabilities",
+        intent="Summarize the MCP assistant's current capabilities dynamically.",
+        description=(
+            "Return a live capability overview of all currently available MCP tools, grouped into "
+            "general enquiries and form submissions, including category breakdown and (optionally) "
+            "tool-level details. Use when user asks what the assistant can do."
+        ),
+        typical_user_questions=(
+            "What can you do?",
+            "List your capabilities.",
+            "What features are available in this chatbot?",
+            "Show all available MCP tools and categories.",
+            "Can you summarize general enquiries and form submission capabilities?",
+        ),
+        aliases=("capability summary", "what can you do", "tool overview", "mcp capabilities"),
+    ),
 }
 
 
@@ -1444,6 +1461,69 @@ def build_capability_documents(include_planned: bool = True, definitions_file: s
     if include_planned:
         docs.extend(_planned_capabilities())
     return docs
+
+
+def build_live_capability_summary(*, include_tools: bool = True) -> dict[str, Any]:
+    """Build a dynamic summary of current MCP capabilities from live catalog + intents.
+
+    This is intentionally derived from runtime source-of-truth (`CATALOG`, `TOOL_INTENTS`)
+    so callers always see the latest capabilities without hard-coding.
+    """
+    specs = list(_load_catalog_specs())
+    groups: dict[str, dict[str, Any]] = {
+        "general_enquiries": {
+            "group": "general_enquiries",
+            "title": "General enquiries and information retrieval",
+            "categories": {},
+            "tool_count": 0,
+            "tools": [],
+        },
+        "form_submission": {
+            "group": "form_submission",
+            "title": "Form submissions and action workflows",
+            "categories": {},
+            "tool_count": 0,
+            "tools": [],
+        },
+    }
+
+    def _bucket(category: str) -> str:
+        return "form_submission" if ".form_submission" in category else "general_enquiries"
+
+    for spec in specs:
+        intent = _intent_for(spec.name) or _fallback_intent(spec.name, spec.path, list(spec.path_params), list(spec.query_params))
+        category = intent.category or _extract_category(spec.name)
+        bucket = _bucket(category)
+        group = groups[bucket]
+        group["tool_count"] += 1
+        group["categories"][category] = int(group["categories"].get(category, 0)) + 1
+        if include_tools:
+            group["tools"].append(
+                {
+                    "tool_name": spec.name,
+                    "category": category,
+                    "intent": intent.intent,
+                    "description": intent.description,
+                    "method": spec.method,
+                    "path": spec.path,
+                }
+            )
+
+    # Stable ordering improves deterministic UI responses / tests.
+    for g in groups.values():
+        g["categories"] = dict(sorted(g["categories"].items(), key=lambda kv: kv[0]))
+        if include_tools:
+            g["tools"] = sorted(g["tools"], key=lambda t: str(t.get("tool_name", "")))
+
+    return {
+        "summary": {
+            "total_tools": len(specs),
+            "general_enquiries_tool_count": groups["general_enquiries"]["tool_count"],
+            "form_submission_tool_count": groups["form_submission"]["tool_count"],
+        },
+        "groups": [groups["general_enquiries"], groups["form_submission"]],
+        "source": "live_catalog_and_tool_intents",
+    }
 
 
 def _tool_type_for_category(category: str) -> str:

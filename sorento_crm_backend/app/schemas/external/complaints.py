@@ -31,7 +31,7 @@ def _parse_complaint_date(v: Optional[str | date]) -> Optional[date]:
 
 
 class ComplaintIntegrationCreate(BaseModel):
-    delivery_order_numbers: Optional[str] = None
+    delivery_order_numbers: Optional[str | list[str]] = None
     date_of_complaint: Optional[str] = None
     defect_discovered_when: Optional[str] = None
     sales_person: Optional[str] = None
@@ -113,6 +113,31 @@ class ComplaintIntegrationCreate(BaseModel):
         if isinstance(v, (int, float, Decimal)):
             return str(v)
         return None
+
+    @field_validator("delivery_order_numbers", mode="before")
+    @classmethod
+    def coerce_delivery_order_numbers_to_string(cls, v: Any) -> Optional[str]:
+        """Accept string OR array and normalize to comma-separated DO numbers."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s else None
+        if isinstance(v, (list, tuple, set)):
+            values: list[str] = []
+            seen: set[str] = set()
+            for item in v:
+                token = str(item or "").strip()
+                if not token:
+                    continue
+                key = token.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                values.append(token)
+            return ", ".join(values) if values else None
+        token = str(v).strip()
+        return token or None
 
     def to_complaint_create(self):
         from app.schemas.complaints import ComplaintCreate

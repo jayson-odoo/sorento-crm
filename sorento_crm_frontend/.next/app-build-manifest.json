@@ -51,10 +51,10 @@
       "static/chunks/main-app.js",
       "static/chunks/app/(protected)/order-management/orders/[id]/page.js"
     ],
-    "/_not-found/page": [
+    "/(protected)/complaint-management/complaints/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/_not-found/page.js"
+      "static/chunks/app/(protected)/complaint-management/complaints/page.js"
     ]
   }
 }

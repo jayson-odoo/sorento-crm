@@ -161,7 +161,7 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
                     fallback_query.setdefault("page", "1")
                 # If sibling list endpoint has no free-text query, still return a bounded first page
                 # so callers get a useful response instead of a UUID cast failure.
-                return await client.get(list_spec.path, path_params={}, query=fallback_query)
+                return await client.get(list_spec.path, path_params={}, query=fallback_query, tool_name=spec.name)
             return json.dumps(
                 {
                     "message": f"Parameter '{p_name}' expects a UUID for tool '{spec.name}'.",
@@ -185,7 +185,13 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
         # on promotion activity precheck here; inactive rows are filtered from response payload.
         pass
 
-    response = await client.request(spec.method, spec.path, path_params=path_params, query=query)
+    response = await client.request(
+        spec.method,
+        spec.path,
+        path_params=path_params,
+        query=query,
+        tool_name=spec.name,
+    )
     return _filter_active_promotion_records(spec.name, response)
 
 
@@ -198,7 +204,14 @@ async def _execute_tool_request_with_body(
 ) -> str:
     if spec.method.upper() == "GET":
         return await _execute_tool_request(spec, client, path_params, query)
-    return await client.request(spec.method, spec.path, path_params=path_params, query=query, body=body)
+    return await client.request(
+        spec.method,
+        spec.path,
+        path_params=path_params,
+        query=query,
+        body=body,
+        tool_name=spec.name,
+    )
 
 
 def _compile_tool(spec: ToolSpec):
