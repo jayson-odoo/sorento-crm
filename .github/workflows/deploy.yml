@@ -23,57 +23,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Detect changed paths
-        uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            backend:
-              - 'sorento_crm_backend/**'
-            frontend:
-              - 'sorento_crm_frontend/**'
-            mcp:
-              - 'sorento_crm_mcp/**'
-            infra:
-              - 'sorento_crm/docker-compose.yml'
-              - 'sorento_crm_backend/docker-compose.yml'
-              - '.github/workflows/deploy.yml'
-
       - name: Compute deploy targets
         id: targets
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_DEPLOY_ALL: ${{ github.event.inputs.deploy_all }}
         run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_DEPLOY_ALL" = "true" ]; then
-            echo "backend=true" >> "$GITHUB_OUTPUT"
-            echo "frontend=true" >> "$GITHUB_OUTPUT"
-            echo "mcp=true" >> "$GITHUB_OUTPUT"
-            echo "mode=full" >> "$GITHUB_OUTPUT"
-            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          BE='${{ steps.filter.outputs.backend }}'
-          FE='${{ steps.filter.outputs.frontend }}'
-          MCP='${{ steps.filter.outputs.mcp }}'
-          INFRA='${{ steps.filter.outputs.infra }}'
-          if [ "$INFRA" = "true" ]; then
-            echo "backend=true" >> "$GITHUB_OUTPUT"
-            echo "frontend=true" >> "$GITHUB_OUTPUT"
-            echo "mcp=true" >> "$GITHUB_OUTPUT"
-            echo "mode=full" >> "$GITHUB_OUTPUT"
-            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "backend=$BE" >> "$GITHUB_OUTPUT"
-          echo "frontend=$FE" >> "$GITHUB_OUTPUT"
-          echo "mcp=$MCP" >> "$GITHUB_OUTPUT"
-          echo "mode=partial" >> "$GITHUB_OUTPUT"
-          if [ "$BE" = "true" ] || [ "$FE" = "true" ] || [ "$MCP" = "true" ]; then
-            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "backend=true" >> "$GITHUB_OUTPUT"
+          echo "frontend=true" >> "$GITHUB_OUTPUT"
+          echo "mcp=true" >> "$GITHUB_OUTPUT"
+          echo "mode=full" >> "$GITHUB_OUTPUT"
+          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
 
       - name: Login to Docker Hub
         if: steps.targets.outputs.should_deploy == 'true'
@@ -165,8 +122,3 @@ jobs:
 
             docker system prune -f
 
-      - name: Skip notice (no matching paths)
-        if: steps.targets.outputs.should_deploy != 'true'
-        run: |
-          echo "No deploy: push did not touch sorento_crm_backend/, sorento_crm_frontend/, sorento_crm_mcp/, docker-compose.yml, or .github/workflows/deploy.yml"
-          echo "Run workflow manually with deploy_all=true to build and deploy everything."
