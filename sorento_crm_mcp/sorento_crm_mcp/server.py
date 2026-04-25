@@ -156,6 +156,11 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
             list_spec = _list_spec_by_path(base_path)
             if list_spec:
                 fallback_query: dict[str, Any] = {}
+                # Preserve overlapping query filters (e.g. contact_id/space_id scope)
+                # when auto-falling back from *_get(non-UUID id) to sibling list endpoint.
+                for qk, qv in (query or {}).items():
+                    if qk in list_spec.query_params and qv not in (None, ""):
+                        fallback_query[qk] = qv
                 if "query" in list_spec.query_params:
                     fallback_query["query"] = p_val
                 elif "q" in list_spec.query_params:

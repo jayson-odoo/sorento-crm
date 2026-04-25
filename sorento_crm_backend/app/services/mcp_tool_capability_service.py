@@ -1356,9 +1356,21 @@ def _load_catalog_specs():
     mcp_root = repo_root / "sorento_crm_mcp"
     if str(mcp_root) not in sys.path:
         sys.path.append(str(mcp_root))
-    from sorento_crm_mcp.catalog import CATALOG  # type: ignore
+    try:
+        from sorento_crm_mcp.catalog import CATALOG  # type: ignore
+        return CATALOG
+    except ModuleNotFoundError:
+        # Fallback for environments where package import paths differ
+        # (e.g. backend runtime without editable install of sorento_crm_mcp).
+        import importlib.util
 
-    return CATALOG
+        catalog_file = mcp_root / "sorento_crm_mcp" / "catalog.py"
+        spec = importlib.util.spec_from_file_location("sorento_crm_mcp_catalog_runtime", catalog_file)
+        if spec is None or spec.loader is None:
+            raise
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return getattr(module, "CATALOG")
 
 
 def _intent_for(tool_name: str) -> ToolIntent | None:
