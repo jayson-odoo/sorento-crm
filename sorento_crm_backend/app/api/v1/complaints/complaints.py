@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_COMPLAINT_DO_LOOKUP_FIELDS: tuple[str, ...] = ("customer_name", "product_code", "order_date_from", "order_date_to")
+
 
 def _request_has_valid_external_api_key(request: Optional[Request]) -> bool:
     """True when X-API-Key header matches configured external API key (same as get_current_user_or_api_key)."""
@@ -252,6 +254,62 @@ def _validate_integration_payload_completeness(payload: ComplaintIntegrationCrea
         )
 
 
+def _raise_do_lookup_guidance(
+    *,
+    status_value: str,
+    message: str,
+    invalid_do_numbers: Optional[list[str]] = None,
+    valid_do_numbers: Optional[list[str]] = None,
+) -> None:
+    detail: dict[str, Any] = {
+        "status": status_value,
+        "next_action": "collect_do_lookup_filters",
+        "message": message,
+        "required_filters": list(_COMPLAINT_DO_LOOKUP_FIELDS),
+        "missing_fields": list(_COMPLAINT_DO_LOOKUP_FIELDS),
+    }
+    if invalid_do_numbers:
+        detail["invalid_delivery_order_numbers"] = invalid_do_numbers
+    if valid_do_numbers:
+        detail["valid_delivery_order_numbers"] = valid_do_numbers
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+def _enforce_delivery_order_first(service: ComplaintService, complaint_data: ComplaintCreate) -> None:
+    """Validate DO selection first; request customer+product+order_date filters when DO is missing."""
+    resolved_do_numbers, invalid_do_numbers, provided_do_numbers = service.resolve_delivery_order_numbers(
+        complaint_data.delivery_order_number
+    )
+    if not provided_do_numbers:
+        _raise_do_lookup_guidance(
+            status_value="needs_do_lookup",
+            message=(
+                "Delivery order number is required before complaint details. "
+                "Please provide customer name, product, and order date range so we can search DO numbers."
+            ),
+        )
+    if resolved_do_numbers and invalid_do_numbers:
+        _raise_do_lookup_guidance(
+            status_value="needs_do_selection",
+            message=(
+                "Some delivery order numbers could not be matched. Please choose only valid DO number(s) "
+                "from order search results, then continue complaint submission."
+            ),
+            invalid_do_numbers=invalid_do_numbers,
+            valid_do_numbers=resolved_do_numbers,
+        )
+    if not resolved_do_numbers:
+        _raise_do_lookup_guidance(
+            status_value="needs_do_lookup",
+            message=(
+                "No matching delivery order found. Please provide customer name, product, and order date range "
+                "to search for valid DO number(s)."
+            ),
+            invalid_do_numbers=invalid_do_numbers or provided_do_numbers,
+        )
+    complaint_data.delivery_order_number = ", ".join(resolved_do_numbers)
+
+
 @router.post("/", response_model=ComplaintResponse, status_code=status.HTTP_201_CREATED)
 async def create_complaint(
     request: Request,
@@ -267,17 +325,16 @@ async def create_complaint(
     try:
         is_integration_payload = False
         user_confirmed: Optional[bool] = None
+        integration_payload: Optional[ComplaintIntegrationCreate] = None
         if isinstance(body, list) and body and _is_integration_payload(body):
-            payload = ComplaintIntegrationCreate.model_validate(body[0])
-            _validate_integration_payload_completeness(payload)
-            user_confirmed = payload.user_confirmed
-            complaint_data = payload.to_complaint_create()
+            integration_payload = ComplaintIntegrationCreate.model_validate(body[0])
+            user_confirmed = integration_payload.user_confirmed
+            complaint_data = integration_payload.to_complaint_create()
             is_integration_payload = True
         elif isinstance(body, dict) and _is_integration_payload(body):
-            payload = ComplaintIntegrationCreate.model_validate(body)
-            _validate_integration_payload_completeness(payload)
-            user_confirmed = payload.user_confirmed
-            complaint_data = payload.to_complaint_create()
+            integration_payload = ComplaintIntegrationCreate.model_validate(body)
+            user_confirmed = integration_payload.user_confirmed
+            complaint_data = integration_payload.to_complaint_create()
             is_integration_payload = True
         else:
             raw = body[0] if isinstance(body, list) and body else body
@@ -288,8 +345,11 @@ async def create_complaint(
             complaint_data = ComplaintCreate.model_validate(raw)
 
         service = ComplaintService(db)
+        _enforce_delivery_order_first(service, complaint_data)
         requires_user_confirm = is_integration_payload or _request_has_valid_external_api_key(request)
         if requires_user_confirm:
+            if integration_payload is not None:
+                _validate_integration_payload_completeness(integration_payload)
             # Enforce missing-field validation before confirmation gating.
             service.validate_submission_completeness(complaint_data)
         if requires_user_confirm and user_confirmed is not True:
@@ -342,10 +402,11 @@ async def create_complaint_integration(
             payload = body[0]
         else:
             payload = body
-        _validate_integration_payload_completeness(payload)
         service = ComplaintService(db)
-        # Validate payload completeness first; only then enforce explicit confirmation.
         complaint_data = payload.to_complaint_create()
+        _enforce_delivery_order_first(service, complaint_data)
+        # Validate payload completeness after DO validation; only then enforce explicit confirmation.
+        _validate_integration_payload_completeness(payload)
         service.validate_submission_completeness(complaint_data)
         if payload.user_confirmed is not True:
             raise HTTPException(

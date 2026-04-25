@@ -10,10 +10,11 @@ import logging
 import secrets
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, inspect
+from sqlalchemy import or_, inspect, func
 from typing import List, Optional
 from app.config import settings
 from app.models.complaints import Complaint
+from app.models.order import Order
 from app.models.procurement import ViewToken
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.error_handler import handle_not_found
@@ -63,6 +64,58 @@ class ComplaintService:
                 + ", ".join(self._complaint_submission_required_fields)
                 + f". Missing or empty: {', '.join(missing)}."
             )
+
+    def normalize_delivery_order_numbers(self, raw_value: Optional[str]) -> list[str]:
+        """Normalize comma/semicolon/newline separated DO entries into unique tokens."""
+        if raw_value is None:
+            return []
+        text = str(raw_value).strip()
+        if not text:
+            return []
+        for sep in (";", "\n", "|"):
+            text = text.replace(sep, ",")
+        out: list[str] = []
+        seen: set[str] = set()
+        for part in text.split(","):
+            token = (part or "").strip()
+            if not token:
+                continue
+            key = token.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(token)
+        return out
+
+    def resolve_delivery_order_numbers(
+        self, raw_value: Optional[str]
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Resolve supplied DO numbers against orders.order_number.
+
+        Returns:
+            - resolved: canonical order numbers found in DB (preserve user order),
+            - missing: user-provided tokens not found,
+            - provided: normalized user-provided tokens.
+        """
+        provided = self.normalize_delivery_order_numbers(raw_value)
+        if not provided:
+            return [], [], []
+        lowered = [s.lower() for s in provided]
+        rows = (
+            self.db.query(Order.order_number)
+            .filter(Order.deleted_at.is_(None), func.lower(Order.order_number).in_(lowered))
+            .all()
+        )
+        canonical_by_lower = {str(order_number).lower(): str(order_number) for (order_number,) in rows if order_number}
+        resolved: list[str] = []
+        missing: list[str] = []
+        for token in provided:
+            canonical = canonical_by_lower.get(token.lower())
+            if canonical:
+                resolved.append(canonical)
+            else:
+                missing.append(token)
+        return resolved, missing, provided
 
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
         """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""

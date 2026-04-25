@@ -194,6 +194,14 @@ async def get_orders(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
+    customer_query: Optional[str] = Query(
+        None,
+        description="Partial customer/debtor filter (matches debtor_name/debtor_code/customer name/code, case-insensitive).",
+    ),
+    product_query: Optional[str] = Query(
+        None,
+        description="Partial product filter (matches product code/name/description across order lines, case-insensitive).",
+    ),
     customer_id: Optional[str] = Query(None),
     order_status_id: Optional[str] = Query(None),
     has_order_lines: Optional[str] = Query(
@@ -240,6 +248,8 @@ async def get_orders(
             page=page,
             limit=limit,
             query=query,
+            customer_query=customer_query,
+            product_query=product_query,
             customer_id=customer_id,
             order_status_id=order_status_id,
             has_order_lines=has_order_lines,
@@ -263,6 +273,14 @@ async def get_orders_by_product(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None, description="Matches product code, name, description, order number, or debtor name"),
+    customer_query: Optional[str] = Query(
+        None,
+        description="Partial customer/debtor filter for complaint DO discovery (debtor_name/debtor_code/customer name/code).",
+    ),
+    product_query: Optional[str] = Query(
+        None,
+        description="Partial product filter (product code/name/description). Useful when product_id is not exact.",
+    ),
     product_id: Optional[str] = Query(None),
     has_actual_delivery_date: Optional[str] = Query(
         None,
@@ -304,6 +322,8 @@ async def get_orders_by_product(
             page=page,
             limit=limit,
             query=query,
+            customer_query=customer_query,
+            product_query=product_query,
             product_id=product_id,
             has_actual_delivery_date=has_actual_delivery_date,
             order_date_from=_parse_flex_date(order_date_from),

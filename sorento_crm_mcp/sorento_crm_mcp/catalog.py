@@ -423,6 +423,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "the user EXPLICITLY mentions the delivery date (e.g. 'delivered last week'). "
             "Both date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO datetime, "
             "'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
+            "For complaint DO filtering, pass customer + product + order date range together: "
+            "`customer_query` (debtor/customer partial match), `product_query` (product code/name partial match), and "
+            "`order_date_from`/`order_date_to`. "
             "Parameter `query` matches order number, debtor name/code, and customer name/code (case-insensitive partial match — pass partial debtor / customer names). "
             "`customer_id` accepts UUID or customer_code/name. `order_status_id` accepts UUID or status_code/name."
         ),
@@ -432,6 +435,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "page",
             "limit",
             "query",
+            "customer_query",
+            "product_query",
             "customer_id",
             "order_status_id",
             "has_order_lines",
@@ -464,6 +469,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "numbers for a complaint via product+customer+date range. "
             "DO NOT use for 'any incoming for product X' / 'is product X arriving' — that is procurement, use "
             "crm_procurement_spo_allocations_grouped_by_shipment instead. "
+            "Use explicit filters for complaint DO lookup when available: `customer_query` (debtor/customer partial), "
+            "`product_query` (product code/name partial), plus `order_date_from`/`order_date_to`. "
             "Parameter `query` matches product code, name, description, order number, and debtor name (case-insensitive partial match). "
             "`product_id` accepts UUID or product_code (SKU)."
         ),
@@ -473,6 +480,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "page",
             "limit",
             "query",
+            "customer_query",
+            "product_query",
             "product_id",
             "has_actual_delivery_date",
             "order_date_from",

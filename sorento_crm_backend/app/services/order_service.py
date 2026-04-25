@@ -36,6 +36,8 @@ class OrderService:
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
+        customer_query: Optional[str] = None,
+        product_query: Optional[str] = None,
         customer_id: Optional[str] = None,
         order_status_id: Optional[str] = None,
         has_order_lines: Optional[str] = None,
@@ -115,6 +117,29 @@ class OrderService:
                     Order.debtor_code.ilike(f"%{query}%"),
                     Order.customer.has(Customer.customer_name.ilike(f"%{query}%")),
                     Order.customer.has(Customer.customer_code.ilike(f"%{query}%"))
+                )
+            )
+        if customer_query and (customer_query := (customer_query or "").strip()):
+            term = f"%{customer_query}%"
+            filters.append(
+                or_(
+                    Order.debtor_name.ilike(term),
+                    Order.debtor_code.ilike(term),
+                    Order.customer.has(Customer.customer_name.ilike(term)),
+                    Order.customer.has(Customer.customer_code.ilike(term)),
+                )
+            )
+        if product_query and (product_query := (product_query or "").strip()):
+            term = f"%{product_query}%"
+            filters.append(
+                Order.lines.any(
+                    OrderLine.product.has(
+                        or_(
+                            Product.product_code.ilike(term),
+                            Product.product_name.ilike(term),
+                            Product.description.ilike(term),
+                        )
+                    )
                 )
             )
 
@@ -216,6 +241,8 @@ class OrderService:
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
+        customer_query: Optional[str] = None,
+        product_query: Optional[str] = None,
         product_id: Optional[str] = None,
         has_actual_delivery_date: Optional[str] = None,
         order_date_from: Optional[datetime] = None,
@@ -278,6 +305,25 @@ class OrderService:
                     Product.product_code.ilike(term),
                     Product.product_name.ilike(term),
                     Product.description.ilike(term),
+                )
+            )
+        if customer_query and (customer_query := (customer_query or "").strip()):
+            customer_term = f"%{customer_query}%"
+            filters.append(
+                or_(
+                    Order.debtor_name.ilike(customer_term),
+                    Order.debtor_code.ilike(customer_term),
+                    Order.customer.has(Customer.customer_name.ilike(customer_term)),
+                    Order.customer.has(Customer.customer_code.ilike(customer_term)),
+                )
+            )
+        if product_query and (product_query := (product_query or "").strip()):
+            product_term = f"%{product_query}%"
+            filters.append(
+                or_(
+                    Product.product_code.ilike(product_term),
+                    Product.product_name.ilike(product_term),
+                    Product.description.ilike(product_term),
                 )
             )
 
