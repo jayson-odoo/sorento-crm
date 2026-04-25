@@ -28,7 +28,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useCreateForm, useUpdateForm, useForm as useFormQuery } from '../hooks/useForms';
-import { FormSchema, type FormSchemaType } from '../forms/form-schema';
+import { FormSchema, type FormSchemaInput, type FormSchemaType } from '../forms/form-schema';
 import type { FormFormData } from '../types/form.types';
 import { useAttachments } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
@@ -47,7 +47,7 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
   const createMutation = useCreateForm();
   const updateMutation = useUpdateForm();
 
-  const formHook = useForm<FormSchemaType>({
+  const formHook = useForm<FormSchemaInput, unknown, FormSchemaType>({
     resolver: zodResolver(FormSchema),
     defaultValues: {
       code: '',

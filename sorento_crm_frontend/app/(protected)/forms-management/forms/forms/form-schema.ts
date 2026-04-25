@@ -23,4 +23,5 @@ export const FormSchema = z.object({
   attachment_id: z.string().uuid().optional().nullable(),
 });
 
-export type FormSchemaType = z.infer<typeof FormSchema>;
+export type FormSchemaInput = z.input<typeof FormSchema>;
+export type FormSchemaType = z.output<typeof FormSchema>;
