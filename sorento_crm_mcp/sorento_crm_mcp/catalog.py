@@ -948,7 +948,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (),
         method="POST",
-        body_params=("payload_json",),
+        body_params=("payload_json", "contact_id", "space_id", "access_level", "user_confirmed"),
     ),
     ToolSpec(
         "crm_forms_entity_attachments_link",
