@@ -928,6 +928,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
             "List application forms with optional query, language, status, and form_type filter. "
+            "Supported form_type value now: `marketing` (not `marketing_form`). "
+            "Use `all` or omit form_type to avoid type filtering. "
             "Free-text query matches code, name, purpose, and form_type. Each row includes form_type. "
             "Returns forms that can be attached via their attachment_id."
         ),

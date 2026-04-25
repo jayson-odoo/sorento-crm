@@ -657,7 +657,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- forms ---
     ToolSpec(
         "crm_forms_management_forms_list",
-        "List forms. Each row includes form_type. Optional form_type query param filters by type; query searches code, name, purpose, and form_type.",
+        "List forms. Each row includes form_type. Optional form_type query param filters by exact type. Supported value now: `marketing` (do not pass `marketing_form`). Use `all` or omit form_type to avoid type filtering. Query searches code, name, purpose, and form_type.",
         "/api/v1/forms-management/forms",
         (),
         ("page", "limit", "query", "language", "status", "form_type", "sort", "dir"),
