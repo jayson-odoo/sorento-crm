@@ -1,10 +1,10 @@
 {
   "/api/auth/token/route": "app/api/auth/token/route.js",
   "/api/auth/[...nextauth]/route": "app/api/auth/[...nextauth]/route.js",
-  "/(protected)/procurement-management/grn/[id]/page": "app/(protected)/procurement-management/grn/[id]/page.js",
-  "/(protected)/procurement-management/packing-lists/[id]/page": "app/(protected)/procurement-management/packing-lists/[id]/page.js",
   "/(protected)/procurement-management/spo-allocations/[id]/page": "app/(protected)/procurement-management/spo-allocations/[id]/page.js",
-  "/(protected)/order-management/orders/page": "app/(protected)/order-management/orders/page.js",
+  "/(protected)/procurement-management/packing-lists/[id]/page": "app/(protected)/procurement-management/packing-lists/[id]/page.js",
   "/(protected)/procurement-management/purchase-requests/page": "app/(protected)/procurement-management/purchase-requests/page.js",
-  "/(protected)/order-management/orders/[id]/page": "app/(protected)/order-management/orders/[id]/page.js"
+  "/(protected)/system-management/ai-assistant/page": "app/(protected)/system-management/ai-assistant/page.js",
+  "/(protected)/order-management/orders/[id]/page": "app/(protected)/order-management/orders/[id]/page.js",
+  "/(protected)/order-management/orders/page": "app/(protected)/order-management/orders/page.js"
 }

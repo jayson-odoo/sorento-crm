@@ -35,7 +35,7 @@ from app.schemas.procurement import (
     StockInquiryCreate, StockInquiryUpdate,
     PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate, PurchaseRequestUpdateAndReply,
 )
-from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -2303,14 +2303,47 @@ class StockInquiryService:
     # Allowed initial statuses when creating via API (e.g. external flow can start in pending_project_sales).
     _CREATE_ALLOWED_STATUSES = ("new", "pending_project_sales", "pending_purchasing")
 
+    # Integration / MCP / external submit: must match tool spec and agent prompts.
+    _STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS: tuple[str, ...] = (
+        "product_code",
+        "salesperson",
+        "item_description",
+        "project_customer",
+        "project_name",
+        "quantity",
+        "delivery_date",
+    )
+
+    def _missing_stock_inquiry_submission_fields(self, values: Dict[str, Any]) -> list[str]:
+        missing: list[str] = []
+        for key in self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS:
+            raw = values.get(key)
+            if raw is None:
+                missing.append(key)
+                continue
+            if isinstance(raw, str) and not raw.strip():
+                missing.append(key)
+        return missing
+
+    def _require_complete_stock_inquiry_submission(self, values: Dict[str, Any]) -> None:
+        missing = self._missing_stock_inquiry_submission_fields(values)
+        if missing:
+            raise handle_validation_error(
+                "Stock inquiry submission is incomplete. Required fields: "
+                + ", ".join(self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS)
+                + f". Missing or empty: {', '.join(missing)}."
+            )
+
+    def _stock_inquiry_row_as_submission_dict(self, inquiry: StockInquiry) -> Dict[str, Any]:
+        return {k: getattr(inquiry, k, None) for k in self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS}
+
     def _resubmit_rejected_inquiry(
         self, inquiry: StockInquiry, inquiry_data: StockInquiryCreate
     ) -> StockInquiry:
         """Apply create payload to an existing rejected inquiry; audit logs via ORM UPDATE tracking."""
-        from app.services.error_handler import handle_validation_error
-
         data = inquiry_data.model_dump(exclude_unset=True)
         data.pop("inquiry_number", None)
+        data.pop("user_confirmed", None)
 
         new_status = data.pop("status", None)
         if new_status is not None and new_status not in self._CREATE_ALLOWED_STATUSES:
@@ -2349,9 +2382,15 @@ class StockInquiryService:
 
         self.db.commit()
         self.db.refresh(inquiry)
+        self._require_complete_stock_inquiry_submission(self._stock_inquiry_row_as_submission_dict(inquiry))
         return inquiry
 
-    def create_inquiry(self, inquiry_data: StockInquiryCreate):
+    def create_inquiry(
+        self,
+        inquiry_data: StockInquiryCreate,
+        *,
+        require_user_confirmation: bool = False,
+    ):
         """
         Create a new stock inquiry, or resubmit a rejected one.
 
@@ -2362,7 +2401,14 @@ class StockInquiryService:
         Otherwise a new row is inserted and this returns ``(inquiry, "created")``.
         """
         from datetime import date as date_cls
-        from app.services.error_handler import handle_validation_error
+
+        if require_user_confirmation:
+            if inquiry_data.user_confirmed is not True:
+                raise handle_validation_error(
+                    "Explicit user confirmation is required before submission. "
+                    "Set user_confirmed=true only after the user explicitly confirms the final summary "
+                    "(e.g. OK, YES, CONFIRM)."
+                )
 
         full = inquiry_data.model_dump()
         lookup_raw = full.get("inquiry_number")
@@ -2384,6 +2430,10 @@ class StockInquiryService:
 
         data = inquiry_data.model_dump()
         data.pop("inquiry_number", None)
+        data.pop("user_confirmed", None)
+        self._require_complete_stock_inquiry_submission(
+            {k: data.get(k) for k in self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS}
+        )
         contact_id = data.get("contact_id")
         space_id = data.get("space_id")
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -3587,6 +3637,13 @@ class PurchaseRequestService:
 
         Returns ``(header, "created" | "updated")``.
         """
+        if getattr(payload, "user_confirmed", None) is not True:
+            raise handle_validation_error(
+                "Explicit user confirmation is required before submission. "
+                "Set user_confirmed=true only after the user explicitly confirms the final summary "
+                "(e.g. OK, YES, CONFIRM)."
+            )
+
         rn_raw = getattr(payload, "request_number", None)
         if rn_raw is None:
             lookup = ""

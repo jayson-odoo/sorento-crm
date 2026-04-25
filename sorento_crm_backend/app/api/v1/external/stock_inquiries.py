@@ -29,7 +29,10 @@ async def create_stock_inquiry_external(
     """Create stock inquiry via external API and notify Project Sales team (in-app + email to all)."""
     try:
         service = StockInquiryService(db)
-        inquiry, outcome = service.create_inquiry(inquiry_data)
+        inquiry, outcome = service.create_inquiry(
+            inquiry_data,
+            require_user_confirmation=True,
+        )
         if outcome == "resubmitted":
             response.status_code = status.HTTP_200_OK
         try:

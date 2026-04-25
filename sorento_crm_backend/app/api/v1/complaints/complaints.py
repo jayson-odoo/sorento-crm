@@ -233,17 +233,36 @@ async def create_complaint(
     """
     try:
         is_integration_payload = False
+        user_confirmed: Optional[bool] = None
         if isinstance(body, list) and body and _is_integration_payload(body):
             payload = ComplaintIntegrationCreate.model_validate(body[0])
+            user_confirmed = payload.user_confirmed
             complaint_data = payload.to_complaint_create()
             is_integration_payload = True
         elif isinstance(body, dict) and _is_integration_payload(body):
             payload = ComplaintIntegrationCreate.model_validate(body)
+            user_confirmed = payload.user_confirmed
             complaint_data = payload.to_complaint_create()
             is_integration_payload = True
         else:
             raw = body[0] if isinstance(body, list) and body else body
+            if isinstance(raw, dict):
+                _uc = raw.get("user_confirmed")
+                user_confirmed = _uc if isinstance(_uc, bool) else None
+                raw = {k: v for k, v in raw.items() if k != "user_confirmed"}
             complaint_data = ComplaintCreate.model_validate(raw)
+
+        requires_user_confirm = is_integration_payload or _request_has_valid_external_api_key(request)
+        if requires_user_confirm and user_confirmed is not True:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Explicit user confirmation is required before submission. "
+                    "Set user_confirmed to true only after the user explicitly confirms the final summary "
+                    "(e.g. OK, YES, CONFIRM)."
+                ),
+            )
+
         service = ComplaintService(db)
         complaint = service.create_complaint(complaint_data)
         db.commit()
@@ -285,6 +304,15 @@ async def create_complaint_integration(
             payload = body[0]
         else:
             payload = body
+        if payload.user_confirmed is not True:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Explicit user confirmation is required before submission. "
+                    "Set user_confirmed to true only after the user explicitly confirms the final summary "
+                    "(e.g. OK, YES, CONFIRM)."
+                ),
+            )
         complaint_data = payload.to_complaint_create()
         service = ComplaintService(db)
         complaint = service.create_complaint(complaint_data)

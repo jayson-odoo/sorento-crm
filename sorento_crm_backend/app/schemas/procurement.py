@@ -520,6 +520,13 @@ class StockInquiryCreate(StockInquiryBase):
         default=None,
         description="When set, if a rejected inquiry with this number exists it is updated with the rest of the payload and status; otherwise 409 if the number exists and is not rejected.",
     )
+    user_confirmed: Optional[bool] = Field(
+        default=None,
+        description=(
+            "External/MCP submissions only: must be true after the end user explicitly confirms "
+            "the final summary (e.g. OK, YES, CONFIRM). Not required for in-app CRM creates."
+        ),
+    )
 
 
 class StockInquiryUpdate(BaseModel):

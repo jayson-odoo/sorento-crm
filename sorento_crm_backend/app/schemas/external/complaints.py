@@ -55,6 +55,7 @@ class ComplaintIntegrationCreate(BaseModel):
     missing_mandatory_fields: Optional[List[Any]] = None
     human_intervention: Optional[bool] = None
     team: Optional[str] = None
+    user_confirmed: Optional[bool] = None
 
     def to_complaint_create(self):
         from app.schemas.complaints import ComplaintCreate

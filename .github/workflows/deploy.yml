@@ -35,7 +35,8 @@ jobs:
             mcp:
               - 'sorento_crm_mcp/**'
             infra:
-              - 'docker-compose.yml'
+              - 'sorento_crm/docker-compose.yml'
+              - 'sorento_crm_backend/docker-compose.yml'
               - '.github/workflows/deploy.yml'
 
       - name: Compute deploy targets
@@ -130,28 +131,35 @@ jobs:
 
             IMAGE_REPO="${{ env.IMAGE_REPO }}"
             TAG="${{ env.RELEASE_TAG }}"
+            SHA_TAG="${{ github.sha }}"
             MODE="${{ steps.targets.outputs.mode }}"
             BE="${{ steps.targets.outputs.backend }}"
             FE="${{ steps.targets.outputs.frontend }}"
             MCP="${{ steps.targets.outputs.mcp }}"
 
             if [ "$MODE" = "full" ]; then
-              docker pull "$IMAGE_REPO:frontend-$TAG"
-              docker pull "$IMAGE_REPO:backend-$TAG"
-              docker pull "$IMAGE_REPO:mcp-$TAG"
-              docker compose up -d --remove-orphans
+              docker pull "$IMAGE_REPO:frontend-$SHA_TAG"
+              docker pull "$IMAGE_REPO:backend-$SHA_TAG"
+              docker pull "$IMAGE_REPO:mcp-$SHA_TAG"
+              docker tag "$IMAGE_REPO:frontend-$SHA_TAG" "$IMAGE_REPO:frontend-$TAG"
+              docker tag "$IMAGE_REPO:backend-$SHA_TAG" "$IMAGE_REPO:backend-$TAG"
+              docker tag "$IMAGE_REPO:mcp-$SHA_TAG" "$IMAGE_REPO:mcp-$TAG"
+              docker compose up -d --remove-orphans --force-recreate
             else
               if [ "$BE" = "true" ]; then
-                docker pull "$IMAGE_REPO:backend-$TAG"
-                docker compose up -d --no-deps backend
+                docker pull "$IMAGE_REPO:backend-$SHA_TAG"
+                docker tag "$IMAGE_REPO:backend-$SHA_TAG" "$IMAGE_REPO:backend-$TAG"
+                docker compose up -d --no-deps --force-recreate backend
               fi
               if [ "$FE" = "true" ]; then
-                docker pull "$IMAGE_REPO:frontend-$TAG"
-                docker compose up -d --no-deps frontend
+                docker pull "$IMAGE_REPO:frontend-$SHA_TAG"
+                docker tag "$IMAGE_REPO:frontend-$SHA_TAG" "$IMAGE_REPO:frontend-$TAG"
+                docker compose up -d --no-deps --force-recreate frontend
               fi
               if [ "$MCP" = "true" ]; then
-                docker pull "$IMAGE_REPO:mcp-$TAG"
-                docker compose up -d --no-deps mcp
+                docker pull "$IMAGE_REPO:mcp-$SHA_TAG"
+                docker tag "$IMAGE_REPO:mcp-$SHA_TAG" "$IMAGE_REPO:mcp-$TAG"
+                docker compose up -d --no-deps --force-recreate mcp
               fi
             fi
 

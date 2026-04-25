@@ -167,6 +167,13 @@ class PurchaseRequestExternalCreate(BaseModel):
     space_id: Optional[str] = None
     base_url: Optional[str] = None
     approval_status: Optional[str] = None
+    user_confirmed: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Must be true after the end user explicitly confirms the final summary "
+            "(e.g. OK, YES, CONFIRM) before this request is submitted."
+        ),
+    )
 
     @field_validator("request_type")
     @classmethod
