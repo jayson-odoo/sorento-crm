@@ -1,5 +1,7 @@
 """Orders API routes."""
-from datetime import datetime
+import calendar
+import re
+from datetime import datetime, time
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Body
 from fastapi.responses import JSONResponse
@@ -8,6 +10,166 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.order_service import OrderService
+
+
+# --------------------------------------------------------------------------- #
+# Flexible date parsing for query parameters
+# --------------------------------------------------------------------------- #
+# n8n / LLM tool callers commonly send dates in any of these forms:
+#   - ISO datetime   2026-02-01T00:00:00
+#   - ISO date       2026-02-01
+#   - DD/MM/YYYY     01/02/2026   (Malaysia/Singapore default; preferred)
+#   - DD-MM-YYYY     01-02-2026
+#   - YYYY/MM/DD     2026/02/01
+#   - Month-only     "2026-02", "02/2026", "February 2026", "Feb 2026"
+# We accept all of them at the API layer so business logic stays in MCP/CRM.
+_MONTH_NAMES = {name.lower(): idx for idx, name in enumerate(calendar.month_name) if name}
+_MONTH_NAMES.update({name.lower(): idx for idx, name in enumerate(calendar.month_abbr) if name})
+
+_DATE_FORMATS = (
+    "%Y-%m-%dT%H:%M:%S.%f",
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d",
+    "%d/%m/%Y",
+    "%d-%m-%Y",
+    "%d.%m.%Y",
+    "%Y/%m/%d",
+)
+
+
+def _end_of_day(dt: datetime) -> datetime:
+    """Return the same day at 23:59:59.999999 — used for inclusive `_to` filters."""
+    return datetime.combine(dt.date(), time(23, 59, 59, 999999))
+
+
+def _last_day_of_month(year: int, month: int) -> int:
+    return calendar.monthrange(year, month)[1]
+
+
+def _safe_construct(year: int, month: int, day: int) -> datetime:
+    """Build a datetime, clamping `day` to the month's last valid day if necessary.
+
+    LLM agents commonly send "29/02/2026" for "end of February 2026" without checking
+    leap years. Clamping (rather than erroring) keeps the user flow smooth.
+    """
+    last = _last_day_of_month(year, month)
+    return datetime(year, month, min(max(day, 1), last))
+
+
+def _is_day_out_of_range(exc: ValueError) -> bool:
+    """Detect 'day out of range' across CPython versions.
+
+    CPython <3.12 message:  "day is out of range for month"
+    CPython 3.12+ message:  "day NN must be in range 1..NN for month M in year YYYY"
+    """
+    msg = str(exc).lower()
+    return "out of range" in msg or "must be in range" in msg
+
+
+def _try_strptime(value: str, fmt: str) -> Optional[datetime]:
+    try:
+        return datetime.strptime(value, fmt)
+    except ValueError as exc:
+        # Day-out-of-range is the common leap-year case — try clamping for D/M/Y formats.
+        if not _is_day_out_of_range(exc):
+            return None
+        parts: list[str] = []
+        ymd: Optional[tuple[int, int, int]] = None  # (year, month, day)
+        if fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y"):
+            sep = fmt[2]
+            parts = value.split(sep)
+            if len(parts) == 3:
+                try:
+                    ymd = (int(parts[2]), int(parts[1]), int(parts[0]))
+                except ValueError:
+                    return None
+        elif fmt == "%Y/%m/%d":
+            parts = value.split("/")
+            if len(parts) == 3:
+                try:
+                    ymd = (int(parts[0]), int(parts[1]), int(parts[2]))
+                except ValueError:
+                    return None
+        elif fmt == "%Y-%m-%d":
+            parts = value.split("-")
+            if len(parts) == 3:
+                try:
+                    ymd = (int(parts[0]), int(parts[1]), int(parts[2]))
+                except ValueError:
+                    return None
+        if ymd is None:
+            return None
+        year, month, day = ymd
+        if 1 <= month <= 12 and year >= 1900:
+            return _safe_construct(year, month, day)
+        return None
+
+
+def _parse_flex_date(value: Optional[str], *, end_of_day: bool = False) -> Optional[datetime]:
+    """Parse a date string in any of the supported formats. Returns None if value is empty.
+
+    Raises HTTPException(422) with a clear message if the format is unrecognised, so the
+    LLM/agent gets actionable feedback instead of an opaque pydantic error.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+
+    for fmt in _DATE_FORMATS:
+        dt = _try_strptime(s, fmt)
+        if dt is not None:
+            return _end_of_day(dt) if end_of_day else dt
+
+    # Try ISO 8601 (handles trailing Z, timezone offsets).
+    try:
+        iso_clean = s.rstrip("Z")
+        dt = datetime.fromisoformat(iso_clean)
+        if dt.tzinfo:
+            dt = dt.replace(tzinfo=None)
+        return _end_of_day(dt) if end_of_day else dt
+    except ValueError:
+        pass
+
+    # Month-only forms.
+    # "YYYY-MM" or "YYYY/MM"
+    m = re.fullmatch(r"(\d{4})[-/](\d{1,2})", s)
+    if m:
+        year, month = int(m.group(1)), int(m.group(2))
+        if 1 <= month <= 12:
+            day = _last_day_of_month(year, month) if end_of_day else 1
+            dt = datetime(year, month, day)
+            return _end_of_day(dt) if end_of_day else dt
+
+    # "MM/YYYY" or "MM-YYYY"
+    m = re.fullmatch(r"(\d{1,2})[-/](\d{4})", s)
+    if m:
+        month, year = int(m.group(1)), int(m.group(2))
+        if 1 <= month <= 12:
+            day = _last_day_of_month(year, month) if end_of_day else 1
+            dt = datetime(year, month, day)
+            return _end_of_day(dt) if end_of_day else dt
+
+    # "Month YYYY" / "Mon YYYY" — e.g. "February 2026", "Feb 2026"
+    m = re.fullmatch(r"([A-Za-z]+)\s+(\d{4})", s)
+    if m:
+        month = _MONTH_NAMES.get(m.group(1).lower())
+        if month:
+            year = int(m.group(2))
+            day = _last_day_of_month(year, month) if end_of_day else 1
+            dt = datetime(year, month, day)
+            return _end_of_day(dt) if end_of_day else dt
+
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=(
+            f"Unrecognised date '{value}'. Accepted formats: YYYY-MM-DD, DD/MM/YYYY, "
+            "DD-MM-YYYY, YYYY/MM/DD, ISO datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY' "
+            "(e.g. 'February 2026')."
+        ),
+    )
 from app.schemas.order import (
     OrderCreate,
     OrderUpdate,
@@ -42,10 +204,30 @@ async def get_orders(
         None,
         description="Filter by actual delivery date: 'yes' = has date, 'no' = missing date, omit = all",
     ),
-    order_date_from: Optional[datetime] = Query(None, description="Filter by order date from (inclusive)"),
-    order_date_to: Optional[datetime] = Query(None, description="Filter by order date to (inclusive)"),
-    actual_delivery_date_from: Optional[datetime] = Query(None),
-    actual_delivery_date_to: Optional[datetime] = Query(None),
+    order_date_from: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by order date from (inclusive). Accepts YYYY-MM-DD, DD/MM/YYYY, "
+            "DD-MM-YYYY, YYYY/MM/DD, ISO datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY'. "
+            "Use this for any 'orders in [month/period]' or complaint DO discovery filtering."
+        ),
+    ),
+    order_date_to: Optional[str] = Query(
+        None,
+        description="Filter by order date to (inclusive). Same flexible formats as order_date_from.",
+    ),
+    actual_delivery_date_from: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by actual delivery date from (inclusive). Same flexible formats as "
+            "order_date_from. Only use when the user EXPLICITLY asks about the delivery date — "
+            "for general 'orders in [period]' / complaint DO discovery, use order_date_from instead."
+        ),
+    ),
+    actual_delivery_date_to: Optional[str] = Query(
+        None,
+        description="Filter by actual delivery date to (inclusive). Same flexible formats.",
+    ),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -62,14 +244,16 @@ async def get_orders(
             order_status_id=order_status_id,
             has_order_lines=has_order_lines,
             has_actual_delivery_date=has_actual_delivery_date,
-            order_date_from=order_date_from,
-            order_date_to=order_date_to,
-            actual_delivery_date_from=actual_delivery_date_from,
-            actual_delivery_date_to=actual_delivery_date_to,
+            order_date_from=_parse_flex_date(order_date_from),
+            order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
+            actual_delivery_date_from=_parse_flex_date(actual_delivery_date_from),
+            actual_delivery_date_to=_parse_flex_date(actual_delivery_date_to, end_of_day=True),
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
         )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -84,10 +268,30 @@ async def get_orders_by_product(
         None,
         description="Filter by actual delivery date: 'yes' = has date, 'no' = missing date, omit = all",
     ),
-    order_date_from: Optional[datetime] = Query(None, description="Filter by order date from (inclusive)"),
-    order_date_to: Optional[datetime] = Query(None, description="Filter by order date to (inclusive)"),
-    actual_delivery_date_from: Optional[datetime] = Query(None),
-    actual_delivery_date_to: Optional[datetime] = Query(None),
+    order_date_from: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by order date from (inclusive). Accepts YYYY-MM-DD, DD/MM/YYYY, "
+            "DD-MM-YYYY, YYYY/MM/DD, ISO datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY'. "
+            "Use this for complaint DO discovery — the relevant date is when the order was placed."
+        ),
+    ),
+    order_date_to: Optional[str] = Query(
+        None,
+        description="Filter by order date to (inclusive). Same flexible formats as order_date_from.",
+    ),
+    actual_delivery_date_from: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by actual delivery date from (inclusive). Same flexible formats. "
+            "Only use when the user EXPLICITLY asks about the delivery date — for complaint "
+            "DO discovery / 'orders in [period]', use order_date_from instead."
+        ),
+    ),
+    actual_delivery_date_to: Optional[str] = Query(
+        None,
+        description="Filter by actual delivery date to (inclusive). Same flexible formats.",
+    ),
     sort: Optional[str] = Query("order_date"),
     dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -102,13 +306,15 @@ async def get_orders_by_product(
             query=query,
             product_id=product_id,
             has_actual_delivery_date=has_actual_delivery_date,
-            order_date_from=order_date_from,
-            order_date_to=order_date_to,
-            actual_delivery_date_from=actual_delivery_date_from,
-            actual_delivery_date_to=actual_delivery_date_to,
+            order_date_from=_parse_flex_date(order_date_from),
+            order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
+            actual_delivery_date_from=_parse_flex_date(actual_delivery_date_from),
+            actual_delivery_date_to=_parse_flex_date(actual_delivery_date_to, end_of_day=True),
             sort_field=sort or "order_date",
             sort_dir=dir or "desc",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 

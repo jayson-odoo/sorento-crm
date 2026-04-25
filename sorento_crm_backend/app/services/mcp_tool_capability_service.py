@@ -595,13 +595,22 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     "crm_order_management_orders_list": ToolIntent(
         category="order_enquiries",
-        intent="Find and track customer orders by number, debtor, status, or delivery date.",
+        intent="Find and track customer orders by number, debtor, status, or order date — including the FIRST step of complaint delivery-order discovery (customer + date range).",
         description=(
             "List orders with filters (customer_id / order_status_id / has_order_lines / order_date "
-            "range / optional actual delivery date / free-text query over order_number, debtor_code, debtor_name, customer "
-            "name/code). For complaint delivery-order discovery, use order_date range first. Use for 'order status', 'track my order', 'delivery date', 'lorry / "
-            "transporter / driver', and customer-based order searches. NOT for orders filtered by "
-            "a specific product — use crm_order_management_orders_by_product_list."
+            "range / optional actual delivery date / free-text `query` over order_number, debtor_code, "
+            "debtor_name, customer name/code). "
+            "DATE FILTER RULE: For complaint DO discovery and any 'orders in [month/period/date range]' "
+            "question, ALWAYS use order_date_from/order_date_to. NEVER use actual_delivery_date_from/to "
+            "unless the user EXPLICITLY mentions the delivery date. "
+            "Date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO "
+            "datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
+            "Use this tool BEFORE crm_forms_complaints_submit when the user wants to file a complaint "
+            "and you still need to find the Delivery Order numbers — gather customer name + optional "
+            "product + date range, then list orders so the user can pick the DO number(s). "
+            "Use for 'order status', 'track my order', 'delivery date', 'lorry / transporter / driver', "
+            "and customer-based order searches. NOT for orders filtered by a specific product — use "
+            "crm_order_management_orders_by_product_list for that."
         ),
         typical_user_questions=(
             "What is the status of order ORD-12345?",
@@ -611,8 +620,18 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Which lorry / transporter / driver is handling this order?",
             "List recent orders for this customer.",
             "Any delayed orders for this account?",
+            "I want to file a complaint — find the delivery orders for customer X in February 2026.",
+            "Find delivery order number for debtor jayson in Feb 2026 so I can file a complaint.",
         ),
-        aliases=("order status", "order tracking", "delivery date"),
+        aliases=(
+            "order status",
+            "order tracking",
+            "find delivery order",
+            "find DO",
+            "DO lookup",
+            "complaint DO discovery",
+            "orders in month",
+        ),
     ),
     "crm_order_management_orders_get": ToolIntent(
         category="order_enquiries",
@@ -636,24 +655,43 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_order_management_orders_by_product_list": ToolIntent(
         category="order_enquiries",
-        intent="Find CUSTOMER SALES orders that contain a specific PRODUCT (outgoing / sold, NOT incoming stock).",
+        intent=(
+            "Find CUSTOMER SALES orders that contain a specific PRODUCT — including the FIRST step of "
+            "complaint Delivery-Order discovery when the user has a product in mind."
+        ),
         description=(
-            "Distinct CUSTOMER SALES orders matched by product. Call this ONLY when the resolver has "
+            "Distinct CUSTOMER SALES orders matched by product. Call this when the resolver has "
             "classified the code as entity_type=product AND the user is asking who bought / which "
-            "sales orders contain this product. Pass the canonical_code (product_code / SKU) as "
-            "`product_id`. For complaint DO discovery, use order_date range filters for the requested date window. "
-            "This is about OUTGOING orders sold to customers — it is NOT about "
-            "incoming stock, inbound shipments, SPO, PO, GRN, or procurement. For 'any incoming for "
-            "product X' / 'when is product X arriving' use crm_incoming_stock_by_product. For a "
-            "single order lookup by order_number, use crm_order_management_orders_get."
+            "sales orders contain this product, OR the user is filing a complaint and you still need "
+            "to find their Delivery Order number(s). Pass the canonical_code (product_code / SKU) as "
+            "`product_id`, optionally combined with a customer/debtor partial match in `query` and a "
+            "date range. "
+            "DATE FILTER RULE: For complaint DO discovery and any 'orders in [month/period/date "
+            "range]' question, ALWAYS use order_date_from/order_date_to. NEVER use "
+            "actual_delivery_date_from/to unless the user EXPLICITLY mentions the delivery date. "
+            "Date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, "
+            "ISO datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
+            "This is about OUTGOING orders sold to customers — it is NOT about incoming stock, "
+            "inbound shipments, SPO, PO, GRN, or procurement. For 'any incoming for product X' / "
+            "'when is product X arriving' use crm_incoming_stock_by_product. For a single order "
+            "lookup by order_number, use crm_order_management_orders_get."
         ),
         typical_user_questions=(
             "Which customers bought / ordered this product?",
             "Pending customer sales orders containing this product.",
             "Sales orders / outgoing orders for this SKU.",
             "Delayed customer deliveries for this product.",
+            "I want to file a complaint about product CWC7601 ordered in February 2026 — find the DO numbers.",
+            "Find the delivery order for customer X who bought product Y last month.",
         ),
-        aliases=("customer orders by product", "sales orders with a product", "who bought this SKU"),
+        aliases=(
+            "customer orders by product",
+            "sales orders with a product",
+            "who bought this SKU",
+            "find delivery order by product",
+            "complaint DO discovery by product",
+            "DO lookup with product",
+        ),
     ),
     # ==================================================================
     # INCOMING STOCK — user-facing tools (redacted, business-rule compliant).

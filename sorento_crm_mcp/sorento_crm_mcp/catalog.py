@@ -416,7 +416,16 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- order-management ---
     ToolSpec(
         "crm_order_management_orders_list",
-        "List orders (customer, status, has_order_lines, ORDER DATE filters, optional actual delivery date filters, search). For complaint DO discovery, prefer `order_date_from`/`order_date_to` (order date range) together with customer/product hints. Parameter `query` matches order number, debtor name/code, and customer name/code. `customer_id` accepts UUID or customer_code/name. `order_status_id` accepts UUID or status_code/name.",
+        (
+            "List orders (customer, status, has_order_lines, ORDER DATE filters, optional actual delivery date filters, search). "
+            "DATE FILTER RULE: For complaint Delivery-Order discovery and any 'orders in [month/period/date range]' question, "
+            "ALWAYS use `order_date_from`/`order_date_to`. NEVER use `actual_delivery_date_from`/`actual_delivery_date_to` unless "
+            "the user EXPLICITLY mentions the delivery date (e.g. 'delivered last week'). "
+            "Both date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO datetime, "
+            "'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
+            "Parameter `query` matches order number, debtor name/code, and customer name/code (case-insensitive partial match — pass partial debtor / customer names). "
+            "`customer_id` accepts UUID or customer_code/name. `order_status_id` accepts UUID or status_code/name."
+        ),
         "/api/v1/order-management/orders",
         (),
         (
@@ -444,7 +453,20 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_order_management_orders_by_product_list",
-        "List distinct CUSTOMER SALES orders containing a specific product (outgoing / sold, NOT incoming stock). For complaint DO discovery, prefer `order_date_from`/`order_date_to` (ORDER DATE range), not delivery date range. Use when asked 'which customers bought SKU X' or 'pending customer orders for product X'. DO NOT use for 'any incoming for product X' / 'is product X arriving' — that is procurement, use crm_procurement_spo_allocations_grouped_by_shipment instead. Parameter `query` matches product code, name, description, order number, and debtor name. `product_id` accepts UUID or product_code (SKU).",
+        (
+            "List distinct CUSTOMER SALES orders containing a specific product (outgoing / sold, NOT incoming stock). "
+            "DATE FILTER RULE: For complaint Delivery-Order discovery and any 'orders in [month/period/date range]' question, "
+            "ALWAYS use `order_date_from`/`order_date_to`. NEVER use `actual_delivery_date_from`/`actual_delivery_date_to` "
+            "unless the user EXPLICITLY mentions the delivery date. "
+            "Both date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO datetime, "
+            "'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
+            "Use when asked 'which customers bought SKU X', 'pending customer orders for product X', or to find DO "
+            "numbers for a complaint via product+customer+date range. "
+            "DO NOT use for 'any incoming for product X' / 'is product X arriving' — that is procurement, use "
+            "crm_procurement_spo_allocations_grouped_by_shipment instead. "
+            "Parameter `query` matches product code, name, description, order number, and debtor name (case-insensitive partial match). "
+            "`product_id` accepts UUID or product_code (SKU)."
+        ),
         "/api/v1/order-management/orders/by-product",
         (),
         (

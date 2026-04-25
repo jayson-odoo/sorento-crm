@@ -90,10 +90,190 @@ _STOPWORDS: frozenset[str] = frozenset(
 )
 
 
+# Marker-driven name capture. We only run this when the user/agent has explicitly
+# tagged the value with a customer/debtor/client/account marker, to avoid pulling
+# every random capitalised word as a "name".
+#   - "customer is Jayson", "customer: Jayson Lim", "customer name IJM Land"
+#   - "debtor jayson", "debtor name IJM Land Sdn Bhd"
+#   - "client: ABC Corp", "account name Pang Holdings"
+# The lookahead stops the (non-greedy) capture before common verbs / connectors so
+# "client: ABC Corp ordered RF2601-025" yields just "ABC Corp" rather than the rest.
+_NAME_STOP_WORDS_RE = (
+    r"(?:and|with|for|of|the|a|an|is|was|has|have|had|who|that|"
+    r"order(?:ed|ing|s)?|buy(?:s|ing)?|bought|"
+    r"want(?:s|ed|ing)?|need(?:s|ed|ing)?|file(?:d|s)?|filing|"
+    r"product|sku|date|do|delivery|complaint|complain(?:t|ing|s|ed)?|"
+    r"quantity|qty|in|on|at|by|to|from)"
+)
+_NAME_MARKER_RE = re.compile(
+    r"(?:customer(?:\s+name)?|debtor(?:\s+name)?|client(?:\s+name)?|account(?:\s+name)?|company)"
+    r"\s*(?:is|are|:|=|->|→|—|-)?\s*"
+    r"([A-Za-z][A-Za-z0-9&'.\- ]{1,60}?)"
+    r"(?=$|[,;.\n!?]|\s+" + _NAME_STOP_WORDS_RE + r"\b)",
+    re.IGNORECASE,
+)
+
+
+# Free-word scan for names that lack an explicit marker. We extract alphabetic
+# words/phrases (>=3 chars, not a stopword) so the resolver's Tier-1 debtor probe can
+# do a single bulk `LOWER(debtor_name) IN (...)` lookup. This stays cheap because the
+# probe runs ONE indexed query regardless of how many candidate words we feed it, and
+# everything that doesn't match a real debtor name is dropped.
+_FREEWORD_STOPWORDS: frozenset[str] = frozenset(
+    {
+        # functional / common English noise
+        "the", "and", "for", "with", "from", "into", "onto", "this", "that", "those",
+        "these", "their", "there", "then", "than", "what", "when", "where", "which",
+        "who", "whom", "whose", "want", "wants", "wanted", "need", "needs", "needed",
+        "have", "has", "had", "having", "is", "are", "was", "were", "been", "being",
+        "do", "does", "did", "doing", "done",
+        # CRM domain words that should never be matched as a customer name
+        "complaint", "complaints", "complain", "complaining", "defect", "defects",
+        "defective", "broken", "leak", "leaking", "warranty", "salesperson",
+        "delivery", "deliveries", "delivered", "delivering", "ordered", "ordering",
+        "order", "orders", "product", "products", "sku", "skus", "quantity", "qty",
+        "customer", "customers", "debtor", "debtors", "client", "clients", "company",
+        "companies", "account", "accounts", "invoice", "invoices", "shipment",
+        "shipments", "stock", "incoming", "outgoing", "pending", "cancelled",
+        "category", "brand", "promotion", "supplier", "suppliers", "warehouse",
+        "warehouses", "discount", "price", "prices",
+        # date words
+        "today", "tomorrow", "yesterday", "morning", "afternoon", "evening", "night",
+        "week", "weeks", "month", "months", "year", "years", "day", "days",
+        "january", "february", "march", "april", "may", "june", "july", "august",
+        "september", "october", "november", "december",
+        "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        # short fillers
+        "find", "look", "looking", "search", "searching", "show", "list", "lookup",
+        "file", "filed", "files", "filing", "submit", "submits", "submitted",
+        "submitting", "create", "created", "creating", "raise", "raised", "raising",
+        "report", "reported", "reporting", "please", "thanks", "thank", "ok",
+        "okay", "yes", "yeah", "no", "not",
+        "all", "any", "some", "more", "less", "new", "old", "in", "on", "at", "to",
+        "by", "of", "or", "if", "as", "be", "it", "i", "me", "my", "we", "us", "our",
+        "you", "your", "he", "she", "him", "her", "they", "them",
+        # form fields commonly mentioned
+        "warranty", "type", "types", "address", "phone", "email", "name", "names",
+        "person", "title", "project",
+    }
+)
+_FREEWORD_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z'.\-&]+")
+
+
+def _extract_name_tokens(query: str, *, max_candidates: int) -> list[str]:
+    """Pull name-like phrases that follow `customer`/`debtor`/`client` markers.
+
+    Conservative: only fires on explicit markers, so "the customer is Jayson" yields
+    `["Jayson"]` but "I am Jayson today" does not.
+    """
+    if not query:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for match in _NAME_MARKER_RE.finditer(query):
+        raw = (match.group(1) or "").strip(" ,.;:-_'")
+        if not raw or len(raw) < 2:
+            continue
+        # Strip trailing filler that slipped past the lookahead (defensive).
+        cleaned = re.sub(
+            r"\s+(?:has|who|that|with|for|of|the|order(?:ed|ing|s)?|bought|buy(?:s|ing)?)\s*.*$",
+            "",
+            raw,
+            flags=re.IGNORECASE,
+        ).strip()
+        if not cleaned or cleaned.lower() in _STOPWORDS:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(cleaned)
+        if len(out) >= max_candidates:
+            break
+    return out
+
+
+def _extract_freeword_tokens(query: str, *, max_candidates: int) -> list[str]:
+    """Pull alphabetic word/phrase candidates that may be customer (debtor) names.
+
+    Algorithm:
+        1. Tokenise into individual alphabetic words.
+        2. Drop stopwords / short fragments / month names / etc.
+        3. Group consecutive non-stopword survivors into phrases (max 4 words each)
+           so multi-word debtors like "IJM Land Sdn Bhd" stay together.
+        4. Also emit each survivor as a single-word candidate so 1-word debtors
+           ("Jayson") still resolve when the multi-word group misses.
+
+    Used as a free-text fallback when the user just writes "Find DO for jayson Feb
+    2026" with no explicit `customer:` marker. The resolver's debtor probe runs in
+    a single bulk query so feeding it a handful of words is cheap; everything that
+    doesn't hit a real `Order.debtor_name` is silently dropped.
+    """
+    if not query:
+        return []
+    surviving: list[str] = []  # words that pass stopword filtering, in order
+    is_separator: list[bool] = []  # parallel flag: True when we crossed a stopword
+    last_end = 0
+    for match in _FREEWORD_TOKEN_RE.finditer(query):
+        raw = (match.group(0) or "").strip(" ,.;:-_'")
+        if not raw:
+            continue
+        lower = raw.lower()
+        if lower in _FREEWORD_STOPWORDS or lower in _STOPWORDS:
+            # Mark the next survivor as a phrase boundary.
+            if surviving:
+                is_separator[-1] = True
+            last_end = match.end()
+            continue
+        if len(raw) < 3:
+            if surviving:
+                is_separator[-1] = True
+            last_end = match.end()
+            continue
+        # Detect punctuation / digit / boundary between this word and the last
+        # survivor — also treat as a phrase boundary.
+        if surviving:
+            gap = query[last_end : match.start()]
+            if any(c in gap for c in (",", ";", ":", "\n", "!", "?", "(", ")", "/", "|")) or any(
+                c.isdigit() for c in gap
+            ):
+                is_separator[-1] = True
+        surviving.append(raw)
+        is_separator.append(False)
+        last_end = match.end()
+
+    # Build phrases by grouping survivors until a separator flag.
+    phrases: list[str] = []
+    current: list[str] = []
+    for word, sep in zip(surviving, is_separator):
+        current.append(word)
+        if sep or len(current) >= 4:
+            phrases.append(" ".join(current))
+            current = []
+    if current:
+        phrases.append(" ".join(current))
+
+    out: list[str] = []
+    seen: set[str] = set()
+    # Emit phrases first (more specific), then individual words.
+    for candidate in phrases + surviving:
+        key = candidate.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(candidate)
+        if len(out) >= max_candidates:
+            break
+    return out
+
+
 def extract_candidate_tokens(query: str, *, max_candidates: int = 8) -> list[str]:
     """Pull code-like tokens from the user's free-text query.
 
     Returns at most `max_candidates` unique tokens, preserving order of first appearance.
+    Also includes name-like phrases that follow customer/debtor/client markers, so
+    free-text customer references can be resolved against `Order.debtor_name`.
     """
     if not query:
         return []
@@ -119,7 +299,30 @@ def extract_candidate_tokens(query: str, *, max_candidates: int = 8) -> list[str
         out.append(t)
         if len(out) >= max_candidates:
             break
+
+    # Append name-marker tokens (e.g. "customer is Jayson" → "Jayson"). These are
+    # alphabetic and won't pass the code-token filter, so we add them here. They get
+    # routed to `_probe_customer_debtor_name` and `_prefix_probe_customer_debtor_name`.
+    remaining = max_candidates - len(out)
+    if remaining > 0:
+        for name_tok in _extract_name_tokens(query, max_candidates=remaining):
+            key = name_tok.upper()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(name_tok)
+            if len(out) >= max_candidates:
+                break
     return out
+
+
+def extract_freeword_candidates(query: str, *, max_candidates: int = 6) -> list[str]:
+    """Public helper exposing free-word debtor candidates (used by the resolver).
+
+    Kept separate from `extract_candidate_tokens` so the regular code-token list
+    stays small; these candidates are only fed to the `Order.debtor_name` probe.
+    """
+    return _extract_freeword_tokens(query, max_candidates=max_candidates)
 
 
 # --------------------------------------------------------------------------- #
@@ -430,6 +633,48 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
                     display={"customer_name": name, "phone_number": phone, "email": email},
                 )
             )
+    return result
+
+
+def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Resolve a token against the unique `Order.debtor_name` set.
+
+    Customers are stored as denormalised `debtor_name` on `orders`, so a complaint flow
+    that asks the user "which customer?" may receive a free-text name (e.g. "Jayson",
+    "IJM Land"). We treat any matching debtor as `entity_type=customer` and surface the
+    debtor_name as the canonical code so downstream tools can pass it via `query`.
+    """
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+
+    # Tier 1 — exact case-insensitive match.
+    lowered = [t.lower() for t in tokens if t]
+    rows = (
+        db.query(Order.debtor_name, Order.debtor_code)
+        .filter(
+            Order.deleted_at.is_(None),
+            Order.debtor_name.isnot(None),
+            func.lower(Order.debtor_name).in_(lowered),
+        )
+        .distinct()
+        .all()
+    )
+    name_to_token = {t.lower(): t for t in tokens if t}
+    for debtor_name, debtor_code in rows:
+        token = name_to_token.get(str(debtor_name).lower())
+        if not token:
+            continue
+        if any(m.canonical_code == debtor_name for m in result[token]):
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="customer",
+                canonical_code=debtor_name,
+                match_field="debtor_name",
+                display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
+            )
+        )
     return result
 
 
@@ -792,6 +1037,60 @@ def _prefix_probe_customer(db: Session, token: str) -> list[ResolvedEntity]:
     ]
 
 
+def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[ResolvedEntity]:
+    """Prefix → substring ILIKE on `Order.debtor_name` (distinct).
+
+    Returns at most PREFIX_LIMIT distinct debtors. The caller treats >1 result as
+    ambiguous and asks the user to pick.
+    """
+    if not token or len(token) < 3:
+        return []
+    prefix = f"{token}%"
+    substr = f"%{token}%"
+    rows = (
+        db.query(Order.debtor_name, Order.debtor_code)
+        .filter(
+            Order.deleted_at.is_(None),
+            Order.debtor_name.isnot(None),
+            Order.debtor_name.ilike(prefix),
+        )
+        .distinct()
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    tier = "prefix"
+    if not rows:
+        rows = (
+            db.query(Order.debtor_name, Order.debtor_code)
+            .filter(
+                Order.deleted_at.is_(None),
+                Order.debtor_name.isnot(None),
+                Order.debtor_name.ilike(substr),
+            )
+            .distinct()
+            .limit(PREFIX_LIMIT)
+            .all()
+        )
+        tier = "substring"
+    seen: set[str] = set()
+    out: list[ResolvedEntity] = []
+    for debtor_name, debtor_code in rows:
+        key = (debtor_name or "").lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            ResolvedEntity(
+                entity_type="customer",
+                canonical_code=debtor_name,
+                match_field="debtor_name",
+                match_tier=tier,
+                display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
+            )
+        )
+    return out
+
+
 def _prefix_probe_warehouse(db: Session, token: str) -> list[ResolvedEntity]:
     prefix = f"{token}%"
     rows = (
@@ -909,6 +1208,7 @@ _TIER2_PROBES = (
     _prefix_probe_customer_order,
     _prefix_probe_inbound_shipment,
     _prefix_probe_customer,
+    _prefix_probe_customer_debtor_name,
     _prefix_probe_warehouse,
     _prefix_probe_supplier,
     _prefix_probe_spo,
@@ -1021,6 +1321,7 @@ _TIER1_PROBES = (
     _probe_supplier,
     _probe_promotion,
     _probe_customer,
+    _probe_customer_debtor_name,
 )
 
 
@@ -1044,10 +1345,12 @@ def resolve_references(
     flagged `ambiguous=True` so the LLM asks the user to pick rather than guessing.
     """
     t0 = time.perf_counter()
+    raw_query: Optional[str] = None
     if isinstance(query_or_tokens, list):
         tokens = [t for t in (s.strip() for s in query_or_tokens) if t][:max_candidates]
     else:
-        tokens = extract_candidate_tokens(query_or_tokens or "", max_candidates=max_candidates)
+        raw_query = query_or_tokens or ""
+        tokens = extract_candidate_tokens(raw_query, max_candidates=max_candidates)
 
     # ----- Tier 1: exact -----
     per_token: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
@@ -1086,9 +1389,33 @@ def resolve_references(
             if hits:
                 per_token[tok] = hits
 
+    # ----- Free-text debtor scan (only when the caller passed a raw query string) -----
+    # Lets "Find DO for jayson Feb 2026" resolve "jayson" → entity_type=customer even
+    # though no `customer:` marker is present. Single bulk query, cheap.
+    freeword_resolutions: list[TokenResolution] = []
+    if raw_query:
+        existing_lower = {t.lower() for t in tokens}
+        freeword_candidates = [
+            w
+            for w in extract_freeword_candidates(raw_query, max_candidates=max_candidates)
+            if w.lower() not in existing_lower
+        ]
+        if freeword_candidates:
+            try:
+                hits = _probe_customer_debtor_name(db, freeword_candidates)
+            except Exception:
+                logger.exception("Free-word debtor probe failed")
+                hits = {t: [] for t in freeword_candidates}
+            for tok in freeword_candidates:
+                matches = hits.get(tok) or []
+                if matches:
+                    freeword_resolutions.append(TokenResolution(token=tok, matches=matches))
+
     resolutions = [
         TokenResolution(token=t, matches=per_token[t], ambiguous=(t in ambiguous_tokens))
         for t in tokens
     ]
+    resolutions.extend(freeword_resolutions)
+    final_tokens = list(tokens) + [r.token for r in freeword_resolutions]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    return ResolutionResult(tokens=tokens, resolutions=resolutions, elapsed_ms=elapsed_ms)
+    return ResolutionResult(tokens=final_tokens, resolutions=resolutions, elapsed_ms=elapsed_ms)

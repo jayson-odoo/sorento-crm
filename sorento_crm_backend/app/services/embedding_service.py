@@ -389,6 +389,39 @@ class EmbeddingReadService:
                     score -= 0.06
                 if tool_name == "crm_forms_complaints_submit":
                     score -= 0.16
+            # DO discovery intent (common in n8n "general" inquiry stage): prioritize
+            # order lookup tools even when complaint keywords are absent.
+            _do_lookup_words = (
+                "delivery order",
+                "do number",
+                "find do",
+                "search do",
+                "locate do",
+                "looking for do",
+                "find delivery order",
+                "search delivery order",
+                "locate delivery order",
+            )
+            _do_lookup_intent = any(w in q_lower for w in _do_lookup_words)
+            _explicit_submit_intent = any(w in q_lower for w in ("submit complaint", "file complaint", "confirm submission", "user_confirmed"))
+            if _do_lookup_intent and not _has_do_number:
+                if tool_name in ("crm_order_management_orders_list", "crm_order_management_orders_by_product_list"):
+                    score += 0.20
+                if tool_name == "crm_order_management_orders_by_product_list" and (
+                    "product" in q_lower
+                    or "sku" in q_lower
+                    or "code" in q_lower
+                    or bool(re.search(r"\b[A-Z]{2,}\d{2,}(?:-[A-Z0-9]+)?\b", query))
+                ):
+                    score += 0.10
+                if tool_name == "crm_forms_complaints_submit" and not _explicit_submit_intent:
+                    score -= 0.30
+            # n8n often sends inquiry_type hints in rewritten text/json strings.
+            if "inquiry_type" in q_lower and "general" in q_lower and _do_lookup_intent and not _has_do_number:
+                if cat == "order_enquiries":
+                    score += 0.08
+                if tool_name == "crm_forms_complaints_submit":
+                    score -= 0.12
             # Complaint submissions should not route to attachment linking unless
             # user explicitly mentions adding files/photos/videos.
             _attachment_intent = any(
