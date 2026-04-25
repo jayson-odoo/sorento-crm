@@ -1174,18 +1174,23 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     "crm_forms_complaints_submit": ToolIntent(
         category="complaint.form_submission",
-        intent="File a customer complaint about a delivered order (after DO identification).",
+        intent="Start or continue a customer complaint draft; validates DO first and only performs final submit after completion/confirmation.",
         description=(
-            "Complaint submission workflow tool. DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. "
-            "POST /api/v1/complaints-management/complaints/ with payload_json. REQUIRED FLOW: first discover matching "
-            "delivery orders by asking for customer name (debtor), product (order line), and date range (order date), "
-            "then let the user pick DO number(s). Only after DO selection and complete complaint fields are captured "
-            "should this WRITE tool be called. Required fields include complaint core fields plus defect_discovered_when, "
-            "sales_person, address, customer_type, within_warranty, product_type, quantity, contact_person, and project_title. "
-            "Server validates required fields first; explicit confirmation is only required after all required fields are complete. Attachments (photos/videos) are linked via "
-            "crm_forms_entity_attachments_link."
+            "Complaint filing draft/validator and final submission tool. DO NOT use this tool if the user is looking "
+            "for downloadable templates, blank marketing forms, or attachments. Call this tool as soon as the user "
+            "says they want to file a complaint, even if no details are captured yet; pass payload_json as `{}` or "
+            "with any partial fields you have. The API validates delivery_order_numbers first. If no valid DO is "
+            "supplied, it returns status `needs_do_lookup` and next_action `collect_do_lookup_filters`, asking only "
+            "for customer_name, product_code/product, and order_date_from/order_date_to. Relay that DO lookup request; "
+            "do not ask for all final complaint fields yet. After a valid DO is supplied, the same tool validates "
+            "remaining required complaint fields and confirmation. Final submit requires user_confirmed=true only "
+            "after all required fields are complete and the user explicitly confirms. Attachments are optional and "
+            "are linked via crm_forms_entity_attachments_link only when explicitly requested."
         ),
         typical_user_questions=(
+            "I want to file a complaint.",
+            "I need to complain about a damaged product.",
+            "Start a complaint case.",
             "Find my delivery orders for customer ABC and product SRT7017-BL between 1 Apr and 20 Apr, then file complaint.",
             "File a complaint for delivery order DO-500123.",
             "Submit this complaint with cracked basin defect.",
