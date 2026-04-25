@@ -2064,9 +2064,22 @@ class StockInquiryService:
             except Exception as e:
                 logger.warning("Failed to create in-app notification for user %s: %s", uid, e)
     
-    def list_inquiries(self, page: int = 1, limit: int = 50, query: Optional[str] = None, sort_field: str = "created_at", sort_dir: str = "desc"):
+    def list_inquiries(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        sort_field: str = "created_at",
+        sort_dir: str = "desc",
+        contact_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+    ):
         """List stock inquiries."""
         q = self.db.query(StockInquiry)
+        if contact_id is not None:
+            q = q.filter(StockInquiry.contact_id == str(contact_id).strip())
+        if space_id is not None:
+            q = q.filter(StockInquiry.space_id == str(space_id).strip())
         
         if query:
             q = q.filter(
@@ -2126,9 +2139,20 @@ class StockInquiryService:
             "empty": total == 0
         }
     
-    def get_inquiry(self, inquiry_id: str):
+    def get_inquiry(
+        self,
+        inquiry_id: str,
+        *,
+        contact_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+    ):
         """Get a stock inquiry by ID."""
-        inquiry = self.db.query(StockInquiry).filter(StockInquiry.id == inquiry_id).first()
+        q = self.db.query(StockInquiry).filter(StockInquiry.id == inquiry_id)
+        if contact_id is not None:
+            q = q.filter(StockInquiry.contact_id == str(contact_id).strip())
+        if space_id is not None:
+            q = q.filter(StockInquiry.space_id == str(space_id).strip())
+        inquiry = q.first()
         if not inquiry:
             raise handle_not_found("Stock Inquiry", inquiry_id)
         return inquiry
@@ -2147,9 +2171,15 @@ class StockInquiryService:
             return None
         return user.name or user.email or None
 
-    def get_inquiry_for_response(self, inquiry_id: str) -> dict:
+    def get_inquiry_for_response(
+        self,
+        inquiry_id: str,
+        *,
+        contact_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+    ) -> dict:
         """Get stock inquiry as dict with last_responded_by_name resolved for API response."""
-        inquiry = self.get_inquiry(inquiry_id)
+        inquiry = self.get_inquiry(inquiry_id, contact_id=contact_id, space_id=space_id)
         data = {attr.key: getattr(inquiry, attr.key) for attr in inspect(inquiry).mapper.column_attrs}
         data["view_url"] = self._build_stock_inquiry_view_url(str(inquiry.id))
         data["last_responded_by_name"] = (
@@ -2312,11 +2342,20 @@ class StockInquiryService:
         "project_name",
         "quantity",
         "delivery_date",
+        "contact_id",
+        "space_id",
     )
 
-    def _missing_stock_inquiry_submission_fields(self, values: Dict[str, Any]) -> list[str]:
+    def _missing_stock_inquiry_submission_fields(
+        self,
+        values: Dict[str, Any],
+        *,
+        require_contact_scope: bool = True,
+    ) -> list[str]:
         missing: list[str] = []
         for key in self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS:
+            if not require_contact_scope and key in {"contact_id", "space_id"}:
+                continue
             raw = values.get(key)
             if raw is None:
                 missing.append(key)
@@ -2325,12 +2364,25 @@ class StockInquiryService:
                 missing.append(key)
         return missing
 
-    def _require_complete_stock_inquiry_submission(self, values: Dict[str, Any]) -> None:
-        missing = self._missing_stock_inquiry_submission_fields(values)
+    def _require_complete_stock_inquiry_submission(
+        self,
+        values: Dict[str, Any],
+        *,
+        require_contact_scope: bool = True,
+    ) -> None:
+        missing = self._missing_stock_inquiry_submission_fields(
+            values,
+            require_contact_scope=require_contact_scope,
+        )
         if missing:
+            required_fields = [
+                f
+                for f in self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS
+                if require_contact_scope or f not in {"contact_id", "space_id"}
+            ]
             raise handle_validation_error(
                 "Stock inquiry submission is incomplete. Required fields: "
-                + ", ".join(self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS)
+                + ", ".join(required_fields)
                 + f". Missing or empty: {', '.join(missing)}."
             )
 
@@ -2349,7 +2401,11 @@ class StockInquiryService:
         return merged
 
     def _resubmit_rejected_inquiry(
-        self, inquiry: StockInquiry, inquiry_data: StockInquiryCreate
+        self,
+        inquiry: StockInquiry,
+        inquiry_data: StockInquiryCreate,
+        *,
+        require_contact_scope: bool = True,
     ) -> StockInquiry:
         """Apply create payload to an existing rejected inquiry; audit logs via ORM UPDATE tracking."""
         data = inquiry_data.model_dump(exclude_unset=True)
@@ -2393,7 +2449,10 @@ class StockInquiryService:
 
         self.db.commit()
         self.db.refresh(inquiry)
-        self._require_complete_stock_inquiry_submission(self._stock_inquiry_row_as_submission_dict(inquiry))
+        self._require_complete_stock_inquiry_submission(
+            self._stock_inquiry_row_as_submission_dict(inquiry),
+            require_contact_scope=require_contact_scope,
+        )
         return inquiry
 
     def create_inquiry(
@@ -2431,7 +2490,8 @@ class StockInquiryService:
                 # For resubmission, enforce completion against merged existing+incoming values
                 # BEFORE asking for explicit confirmation.
                 self._require_complete_stock_inquiry_submission(
-                    self._merged_stock_inquiry_submission_for_resubmit(existing, inquiry_data)
+                    self._merged_stock_inquiry_submission_for_resubmit(existing, inquiry_data),
+                    require_contact_scope=require_user_confirmation,
                 )
                 if require_user_confirmation and inquiry_data.user_confirmed is not True:
                     raise handle_validation_error(
@@ -2439,14 +2499,19 @@ class StockInquiryService:
                         "Set user_confirmed=true only after the user explicitly confirms the final summary "
                         "(e.g. OK, YES, CONFIRM)."
                     )
-                updated = self._resubmit_rejected_inquiry(existing, inquiry_data)
+                updated = self._resubmit_rejected_inquiry(
+                    existing,
+                    inquiry_data,
+                    require_contact_scope=require_user_confirmation,
+                )
                 return updated, "resubmitted"
 
         data = inquiry_data.model_dump()
         data.pop("inquiry_number", None)
         data.pop("user_confirmed", None)
         self._require_complete_stock_inquiry_submission(
-            {k: data.get(k) for k in self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS}
+            {k: data.get(k) for k in self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS},
+            require_contact_scope=require_user_confirmation,
         )
         if require_user_confirmation and inquiry_data.user_confirmed is not True:
             raise handle_validation_error(
@@ -3655,6 +3720,8 @@ class PurchaseRequestService:
             "purpose",
             "expected_delivery_date",
             "requested_by",
+            "contact_id",
+            "space_id",
             "products",
         ),
         "sponsorship_form": (
@@ -3662,6 +3729,8 @@ class PurchaseRequestService:
             "customer_name",
             "date_of_delivery",
             "requested_by",
+            "contact_id",
+            "space_id",
             "products",
         ),
     }
@@ -4331,11 +4400,17 @@ class PurchaseRequestService:
         approval_status: Optional[str] = None,
         sort_field: str = "request_date",
         sort_dir: str = "desc",
+        contact_id: Optional[str] = None,
+        space_id: Optional[str] = None,
     ):
         """List purchase requests / sponsorship forms with pagination."""
         from sqlalchemy.orm import joinedload
 
         q = self.db.query(PurchaseRequestHeader)
+        if contact_id is not None:
+            q = q.filter(PurchaseRequestHeader.contact_id == str(contact_id).strip())
+        if space_id is not None:
+            q = q.filter(PurchaseRequestHeader.space_id == str(space_id).strip())
         if query:
             q = q.filter(
                 or_(
@@ -4381,16 +4456,26 @@ class PurchaseRequestService:
             "empty": total == 0,
         }
 
-    def get_request(self, request_id: str):
+    def get_request(
+        self,
+        request_id: str,
+        *,
+        contact_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+    ):
         """Get a purchase request by ID with lines."""
         from sqlalchemy.orm import joinedload
 
-        header = (
+        q = (
             self.db.query(PurchaseRequestHeader)
             .options(joinedload(PurchaseRequestHeader.lines))
             .filter(PurchaseRequestHeader.id == request_id)
-            .first()
         )
+        if contact_id is not None:
+            q = q.filter(PurchaseRequestHeader.contact_id == str(contact_id).strip())
+        if space_id is not None:
+            q = q.filter(PurchaseRequestHeader.space_id == str(space_id).strip())
+        header = q.first()
         if not header:
             raise handle_not_found("Purchase request", request_id)
         return header

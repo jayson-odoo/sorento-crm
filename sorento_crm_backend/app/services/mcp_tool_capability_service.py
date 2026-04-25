@@ -1055,7 +1055,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "POST /api/v1/external/stock-inquiries/ with payload_json. Use when the user wants to "
             "submit a NEW stock inquiry to purchasing (product, salesperson, item description, "
             "project customer, project name, quantity, delivery date), or resubmit an updated "
-            "rejected stock inquiry. This is a WRITE action — only call after the user confirms. "
+            "rejected stock inquiry. contact_id and space_id are required. This is a WRITE action — only call after the user confirms. "
             "Not for listing / viewing existing stock inquiries (use the list / get tools). "
             "DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments."
         ),
@@ -1074,7 +1074,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for "
             "downloadable templates, blank marketing forms, or attachments. "
-            "List stock inquiries for the authenticated scope with pagination and query. Use for "
+            "List stock inquiries for the authenticated scope with pagination and query. For external/API-key usage, always include contact_id and space_id filters. Use for "
             "'show my stock inquiries', 'list my rejected stock inquiries', 'pending stock "
             "inquiries this month'. Not for submitting — use crm_forms_stock_inquiries_submit."
         ),
@@ -1094,7 +1094,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for "
             "downloadable templates, blank marketing forms, or attachments. "
             "Get one stock inquiry by inquiry_id for view-only summary or to preload an update flow "
-            "for a REJECTED stock inquiry. Not for submit — use crm_forms_stock_inquiries_submit."
+            "for a REJECTED stock inquiry. For external/API-key usage, contact_id and space_id are required filters. "
+            "Not for submit — use crm_forms_stock_inquiries_submit."
         ),
         typical_user_questions=(
             "Show details for stock inquiry SI-2026-00123.",
@@ -1113,7 +1114,9 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "POST /api/v1/external/purchase-requests/ with payload_json. One tool handles BOTH "
             "request_type='purchase_request' AND request_type='sponsorship_form' creation, plus "
             "updates to rejected requests before resubmission. WRITE action — only call after "
-            "the user confirms the summary. Not for listing / viewing — use list / get tools. "
+            "all required fields are complete and the user confirms the summary. The API validates "
+            "required fields first, and requires user_confirmed=true only after explicit user "
+            "confirmation (e.g. OK / YES / CONFIRM). contact_id and space_id are required. Not for listing / viewing — use list / get tools. "
             "DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments."
         ),
         typical_user_questions=(
@@ -1139,7 +1142,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for "
             "downloadable templates, blank marketing forms, or attachments. "
-            "List purchase requests + sponsorship forms for the authenticated user. Supports "
+            "List purchase requests + sponsorship forms for the authenticated user. For external/API-key usage, always include contact_id and space_id filters. Supports "
             "request_type (purchase_request / sponsorship_form), approval_status, free-text query, "
             "and pagination. Use for 'list my requests', 'show my rejected sponsorship forms', "
             "'pending requests this month'."
@@ -1160,7 +1163,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for "
             "downloadable templates, blank marketing forms, or attachments. "
             "Get one purchase request or sponsorship form by request_id for a view-only summary "
-            "(header + lines) or to preload an update flow for a REJECTED request."
+            "(header + lines) or to preload an update flow for a REJECTED request. For external/API-key usage, contact_id and space_id are required filters."
         ),
         typical_user_questions=(
             "Show details for request PR-2026-00231.",
@@ -1185,7 +1188,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "do not ask for all final complaint fields yet. After a valid DO is supplied, the same tool validates "
             "remaining required complaint fields and confirmation. Final submit requires user_confirmed=true only "
             "after all required fields are complete and the user explicitly confirms. Attachments are optional and "
-            "are linked via crm_forms_entity_attachments_link only when explicitly requested."
+            "are linked via crm_forms_entity_attachments_link only when explicitly requested. contact_id and space_id are required for final complaint submission."
         ),
         typical_user_questions=(
             "I want to file a complaint.",

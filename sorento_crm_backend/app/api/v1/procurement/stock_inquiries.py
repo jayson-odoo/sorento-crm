@@ -46,11 +46,40 @@ def _respond_user_id_from_current_user(current_user: dict) -> str:
     raise HTTPException(status_code=400, detail="User respond_user_id or id is required for Update & Reply.")
 
 
+def _is_external_api_key_request(request: Optional[Request]) -> bool:
+    if request is None:
+        return False
+    key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
+    valid = getattr(app_settings, "external_api_key", None)
+    if not key or not valid:
+        return False
+    return key.strip() == str(valid).strip()
+
+
+def _require_contact_scope_for_external(
+    *,
+    request: Optional[Request],
+    contact_id: Optional[str],
+    space_id: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    c = (contact_id or "").strip() or None
+    s = (space_id or "").strip() or None
+    if _is_external_api_key_request(request) and (not c or not s):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="contact_id and space_id are required for external stock inquiry list/get requests.",
+        )
+    return c, s
+
+
 @router.get("/", response_model=ListResponse[StockInquiryResponse])
 async def get_stock_inquiries(
+    request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
+    contact_id: Optional[str] = Query(None),
+    space_id: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -62,7 +91,20 @@ async def get_stock_inquiries(
         # Handle empty strings or None values
         sort_field = (sort and sort.strip()) or "created_at"
         sort_dir = (dir and dir.strip()) or "desc"
-        result = service.list_inquiries(page=page, limit=limit, query=query, sort_field=sort_field, sort_dir=sort_dir)
+        filter_contact_id, filter_space_id = _require_contact_scope_for_external(
+            request=request,
+            contact_id=contact_id,
+            space_id=space_id,
+        )
+        result = service.list_inquiries(
+            page=page,
+            limit=limit,
+            query=query,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            contact_id=filter_contact_id,
+            space_id=filter_space_id,
+        )
         return result
     except Exception as e:
         import logging
@@ -76,13 +118,25 @@ async def get_stock_inquiries(
 @router.get("/{inquiry_id}", response_model=StockInquiryResponse)
 async def get_stock_inquiry(
     inquiry_id: str,
+    request: Request,
+    contact_id: Optional[str] = Query(None),
+    space_id: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get a single stock inquiry by ID."""
     try:
         service = StockInquiryService(db)
-        return service.get_inquiry_for_response(inquiry_id)
+        filter_contact_id, filter_space_id = _require_contact_scope_for_external(
+            request=request,
+            contact_id=contact_id,
+            space_id=space_id,
+        )
+        return service.get_inquiry_for_response(
+            inquiry_id,
+            contact_id=filter_contact_id,
+            space_id=filter_space_id,
+        )
     except HTTPException:
         raise
     except Exception as e:

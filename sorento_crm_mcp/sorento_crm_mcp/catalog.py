@@ -827,6 +827,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  - project_customer (string, end customer / company name)\n"
             "  - project_name (string)\n"
             "  - salesperson (string)\n"
+            "  - contact_id (string)\n"
+            "  - space_id (string)\n"
             "OPTIONAL:\n"
             "  - remark (string)\n"
             "  - additional_remark (string)\n"
@@ -844,7 +846,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "List stock inquiries for current authenticated scope. Supports pagination and query.",
         "/api/v1/procurement/stock-inquiries",
         (),
-        ("page", "limit", "query", "sort", "dir"),
+        ("page", "limit", "query", "contact_id", "space_id", "sort", "dir"),
         method="GET",
     ),
     ToolSpec(
@@ -852,7 +854,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "Get one stock inquiry by inquiry_id for view/update preparation.",
         "/api/v1/procurement/stock-inquiries/{inquiry_id}",
         ("inquiry_id",),
-        (),
+        ("contact_id", "space_id"),
         method="GET",
     ),
     ToolSpec(
@@ -861,8 +863,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Submit a Purchase Request OR Sponsorship Form. CALL ONLY AFTER all required "
             "header fields AND at least one complete product line are collected AND the "
             "user has explicitly confirmed (CONFIRM / OK / YES / CORRECT).\n"
-            "The API enforces this: include `\"user_confirmed\": true` in payload_json only "
-            "after that confirmation.\n"
+            "The API enforces this sequence strictly: required-field validation runs first, "
+            "then explicit confirmation is required. Include `\"user_confirmed\": true` in "
+            "payload_json only after that confirmation.\n"
             "First ask the user whether it is a PURCHASE REQUEST or SPONSORSHIP FORM; "
             "required fields differ.\n"
             "`payload_json` must be a JSON object with these fields:\n"
@@ -872,6 +875,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  - customer_name (string)\n"
             "  - purpose (string, short reason)\n"
             "  - requested_by (string, user's own name)\n"
+            "  - contact_id (string)\n"
+            "  - space_id (string)\n"
             "  - products (array; at least 1 item, see LINE FIELDS)\n"
             "HEADER REQUIRED for purchase_request:\n"
             "  - project_title (string)\n"
@@ -902,7 +907,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "List purchase requests and sponsorship forms. Supports request_type, approval_status, query, and pagination.",
         "/api/v1/procurement/purchase-requests",
         (),
-        ("page", "limit", "query", "request_type", "approval_status", "sort", "dir"),
+        ("page", "limit", "query", "contact_id", "space_id", "request_type", "approval_status", "sort", "dir"),
         method="GET",
     ),
     ToolSpec(
@@ -910,7 +915,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "Get one purchase request or sponsorship form by request_id.",
         "/api/v1/procurement/purchase-requests/{request_id}",
         ("request_id",),
-        (),
+        ("contact_id", "space_id"),
         method="GET",
     ),
     ToolSpec(
@@ -935,7 +940,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Final required fields are: delivery_order_numbers, date_of_complaint, customer_name, "
             "contact_number, product_code, quantity, complaint_type, defect_description, "
             "defect_discovered_when, sales_person, address, customer_type, within_warranty, product_type, "
-            "contact_person, and project_title. Optional: customer_type_other, contact_id, space_id, attachments. "
+            "contact_person, project_title, contact_id, and space_id. Optional: customer_type_other, attachments. "
             "Attachments are optional and should only be linked when the user explicitly wants to attach files."
         ),
         "/api/v1/complaints-management/complaints/",

@@ -233,6 +233,8 @@ def _validate_integration_payload_completeness(payload: ComplaintIntegrationCrea
         "quantity",
         "contact_person",
         "project_title",
+        "contact_id",
+        "space_id",
     )
     payload_dict = payload.model_dump()
     missing: list[str] = []

@@ -44,6 +44,8 @@ class ComplaintService:
             "product_type",
             "contact_person",
             "project_title",
+            "contact_id",
+            "space_id",
         )
 
     def get_submission_missing_fields(self, complaint_data: ComplaintCreate) -> list[str]:

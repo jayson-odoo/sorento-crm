@@ -163,8 +163,8 @@ class PurchaseRequestExternalCreate(BaseModel):
     requested_by: Optional[str] = None
     requested_at: Optional[str | DateType] = None
     external_reference: Optional[str] = None
-    contact_id: Optional[str] = None
-    space_id: Optional[str] = None
+    contact_id: str
+    space_id: str
     base_url: Optional[str] = None
     approval_status: Optional[str] = None
     user_confirmed: Optional[bool] = Field(
@@ -182,6 +182,14 @@ class PurchaseRequestExternalCreate(BaseModel):
         if normalized not in {"purchase_request", "sponsorship_form"}:
             raise ValueError("request_type must be purchase_request or sponsorship_form")
         return normalized
+
+    @field_validator("contact_id", "space_id", mode="before")
+    @classmethod
+    def validate_non_empty_scope_ids(cls, v: Any, info) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError(f"{info.field_name} is required")
+        return s
 
     @field_validator("approval_status", mode="before")
     @classmethod

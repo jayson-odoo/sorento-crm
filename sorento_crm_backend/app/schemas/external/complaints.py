@@ -47,8 +47,8 @@ class ComplaintIntegrationCreate(BaseModel):
     contact_person: Optional[str] = None
     contact_number: Optional[str] = None
     project_title: Optional[str] = None
-    contact_id: Optional[str] = None
-    space_id: Optional[str] = None
+    contact_id: str
+    space_id: str
     response: Optional[str] = None
     attachments: Optional[List[Any]] = None
     complete: Optional[bool] = None
@@ -138,6 +138,14 @@ class ComplaintIntegrationCreate(BaseModel):
             return ", ".join(values) if values else None
         token = str(v).strip()
         return token or None
+
+    @field_validator("contact_id", "space_id", mode="before")
+    @classmethod
+    def validate_non_empty_scope_ids(cls, v: Any, info) -> str:
+        s = str(v or "").strip()
+        if not s:
+            raise ValueError(f"{info.field_name} is required")
+        return s
 
     def to_complaint_create(self):
         from app.schemas.complaints import ComplaintCreate
