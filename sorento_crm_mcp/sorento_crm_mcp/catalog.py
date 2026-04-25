@@ -832,7 +832,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "OPTIONAL:\n"
             "  - remark (string)\n"
             "  - additional_remark (string)\n"
-            "  - inquiry_number (string; set ONLY when resubmitting a rejected inquiry, "
+            "  - inquiry_number (string; set ONLY when editing a rejected inquiry, "
             "otherwise omit)"
         ),
         "/api/v1/external/stock-inquiries/",
@@ -894,7 +894,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  - unit_price (optional; required for sponsorship_form grand-total)\n"
             "  - total (optional; auto = quantity * unit_price)\n"
             "  - remark (optional string)\n"
-            "Include `request_number` ONLY when updating an existing rejected request."
+            "Include `request_number` ONLY when editing an existing rejected form (purchase request or sponsorship form)."
         ),
         "/api/v1/external/purchase-requests/",
         (),
@@ -942,6 +942,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "defect_discovered_when, sales_person, address, customer_type, within_warranty, product_type, "
             "contact_person, project_title, contact_id, and space_id. Optional: customer_type_other, attachments. "
             "Attachments are optional and should only be linked when the user explicitly wants to attach files. "
+            "For updates, include `system_id` (or `complaint_number` alias) only when editing a rejected complaint. "
             "If the user is only searching for DO numbers and has not asked to file/submit a complaint, use order-management DO search tools instead."
         ),
         "/api/v1/complaints-management/complaints/",

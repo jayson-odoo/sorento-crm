@@ -31,6 +31,8 @@ def _parse_complaint_date(v: Optional[str | date]) -> Optional[date]:
 
 
 class ComplaintIntegrationCreate(BaseModel):
+    complaint_number: Optional[str] = None
+    system_id: Optional[str] = None
     delivery_order_numbers: Optional[str | list[str]] = None
     date_of_complaint: Optional[str] = None
     defect_discovered_when: Optional[str] = None
@@ -72,6 +74,8 @@ class ComplaintIntegrationCreate(BaseModel):
             return re.sub(r"_+", "_", s).strip("_")
 
         alias_to_canonical = {
+            "complaint_id": "system_id",
+            "complaint_no": "complaint_number",
             "delivery_order_number": "delivery_order_numbers",
             "delivery_order_no": "delivery_order_numbers",
             "delivery_order_nos": "delivery_order_numbers",

@@ -2466,10 +2466,8 @@ class StockInquiryService:
         """
         Create a new stock inquiry, or resubmit a rejected one.
 
-        When ``inquiry_number`` is set in the payload: if a row with that number exists and
-        ``status == rejected``, that row is updated (same id / number) and this returns
-        ``(inquiry, "resubmitted")``. If the number exists with any other status, validation fails.
-
+        When ``inquiry_number`` is set and a row exists with ``status == rejected``,
+        that row is updated (same id / number) and this returns ``(inquiry, "resubmitted")``.
         Otherwise a new row is inserted and this returns ``(inquiry, "created")``.
         """
         from datetime import date as date_cls
@@ -2489,7 +2487,7 @@ class StockInquiryService:
                         f"Inquiry number {lookup!r} already exists with status {existing.status!r}. "
                         "Use inquiry_number only to resubmit a rejected inquiry."
                     )
-                # For resubmission, enforce completion against merged existing+incoming values
+                # For update, enforce completion against merged existing+incoming values
                 # BEFORE asking for explicit confirmation.
                 self._require_complete_stock_inquiry_submission(
                     self._merged_stock_inquiry_submission_for_resubmit(existing, inquiry_data),
@@ -3824,6 +3822,12 @@ class PurchaseRequestService:
                 .first()
             )
             if existing is not None:
+                if (str(getattr(existing, "approval_status", "") or "").strip().lower()) != "rejected":
+                    raise handle_validation_error(
+                        f"Request number {lookup!r} already exists with approval_status "
+                        f"{getattr(existing, 'approval_status', None)!r}. "
+                        "Use request_number only to resubmit a rejected request."
+                    )
                 self._require_complete_external_request_submission(payload, existing=existing)
                 if getattr(payload, "user_confirmed", None) is not True:
                     raise handle_validation_error(

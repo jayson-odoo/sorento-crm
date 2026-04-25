@@ -23,7 +23,12 @@ TOOL_QUERY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
-    # Intentionally empty: required query params should come from API spec only.
+    # Forms scope requirements for external API key flows.
+    "crm_forms_stock_inquiries_list": ("contact_id", "space_id"),
+    "crm_forms_stock_inquiries_get": ("contact_id", "space_id"),
+    "crm_forms_purchase_requests_list": ("contact_id", "space_id"),
+    "crm_forms_purchase_requests_get": ("contact_id", "space_id"),
+    "crm_forms_management_forms_get": ("contact_id", "space_id"),
 }
 
 TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {

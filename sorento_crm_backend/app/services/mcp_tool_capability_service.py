@@ -1053,11 +1053,11 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     "crm_forms_stock_inquiries_submit": ToolIntent(
         category="stock_inquiries.form_submission",
-        intent="Create or resubmit a Stock Inquiry to the purchasing team.",
+        intent="Create or edit a rejected Stock Inquiry for the purchasing team.",
         description=(
             "POST /api/v1/external/stock-inquiries/ with payload_json. Use when the user wants to "
             "submit a NEW stock inquiry to purchasing (product, salesperson, item description, "
-            "project customer, project name, quantity, delivery date), or resubmit an updated "
+            "project customer, project name, quantity, delivery date), or edit an existing "
             "rejected stock inquiry. contact_id and space_id are required. This is a WRITE action — only call after the user confirms. "
             "Not for listing / viewing existing stock inquiries (use the list / get tools). "
             "DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments."
@@ -1067,9 +1067,9 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Create stock inquiry for 50 units of SKU X by 15/05/2026.",
             "Send this stock inquiry with project customer ABC and project Tower B.",
             "File a stock inquiry for purchasing team review.",
-            "Resubmit my rejected stock inquiry with the updated quantity.",
+            "Edit my rejected stock inquiry with the updated quantity.",
         ),
-        aliases=("create stock inquiry", "submit stock inquiry", "resubmit stock inquiry"),
+        aliases=("create stock inquiry", "submit stock inquiry", "edit rejected stock inquiry"),
     ),
     "crm_forms_stock_inquiries_list": ToolIntent(
         category="stock_inquiries.form_submission",
@@ -1112,11 +1112,11 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     "crm_forms_purchase_requests_submit": ToolIntent(
         category="purchase_request.form_submission",
-        intent="Create or update a Purchase Request OR Sponsorship Form submission.",
+        intent="Create or edit a rejected Purchase Request OR Sponsorship Form submission.",
         description=(
             "POST /api/v1/external/purchase-requests/ with payload_json. One tool handles BOTH "
             "request_type='purchase_request' AND request_type='sponsorship_form' creation, plus "
-            "updates to rejected requests before resubmission. WRITE action — only call after "
+            "editing rejected forms by request_number. WRITE action — only call after "
             "all required fields are complete and the user confirms the summary. The API validates "
             "required fields first, and requires user_confirmed=true only after explicit user "
             "confirmation (e.g. OK / YES / CONFIRM). contact_id and space_id are required. Not for listing / viewing — use list / get tools. "
@@ -1127,16 +1127,16 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Submit a new sponsorship form for our dealer launch event.",
             "File a purchase request with these product lines and expected delivery date.",
             "Submit a sponsorship form under my name with this subject.",
-            "Resubmit my rejected purchase request with the updated quantities.",
-            "Update rejected sponsorship form and submit again.",
+            "Edit my rejected purchase request with updated quantities.",
+            "Edit rejected sponsorship form and submit again.",
         ),
         aliases=(
             "create purchase request",
             "submit purchase request",
             "create sponsorship form",
             "submit sponsorship form",
-            "update rejected purchase request",
-            "update rejected sponsorship form",
+            "edit rejected purchase request",
+            "edit rejected sponsorship form",
         ),
     ),
     "crm_forms_purchase_requests_list": ToolIntent(
@@ -1191,7 +1191,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "do not ask for all final complaint fields yet. After a valid DO is supplied, the same tool validates "
             "remaining required complaint fields and confirmation. Final submit requires user_confirmed=true only "
             "after all required fields are complete and the user explicitly confirms. Attachments are optional and "
-            "are linked via crm_forms_entity_attachments_link only when explicitly requested. contact_id and space_id are required for final complaint submission. "
+            "are linked via crm_forms_entity_attachments_link only when explicitly requested. For updates include system_id "
+            "(or complaint_number alias) in payload_json only when the complaint is rejected. contact_id and space_id are required for final complaint submission. "
             "If the user is only searching DO numbers and has NOT asked to file/submit a complaint, use order-management tools instead."
         ),
         typical_user_questions=(

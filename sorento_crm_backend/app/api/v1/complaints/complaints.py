@@ -218,7 +218,7 @@ def _is_integration_payload(body: Any) -> bool:
     return any(
         body.get(k) is not None
         for k in ("date_of_complaint", "sales_person", "delivery_order_numbers", "defect_discovered_when")
-    )
+    ) or any(body.get(k) is not None for k in ("complaint_number", "system_id"))
 
 
 def _validate_integration_payload_completeness(payload: ComplaintIntegrationCreate) -> None:
@@ -366,6 +366,32 @@ def _raise_needs_more_fields_guidance(
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
+def _resolve_complaint_update_identifier(payload: ComplaintIntegrationCreate) -> Optional[str]:
+    """Return complaint identifier from integration payload for submit-as-edit flow."""
+    system_id = str(payload.system_id or "").strip()
+    if system_id:
+        return system_id
+    complaint_number = str(payload.complaint_number or "").strip()
+    if complaint_number:
+        return complaint_number
+    return None
+
+
+def _build_merged_complaint_create_for_validation(
+    *,
+    existing: Any,
+    incoming: ComplaintCreate,
+) -> ComplaintCreate:
+    """Merge existing complaint row + incoming values to validate submit completeness on edit."""
+    merged: dict[str, Any] = {}
+    for field_name in ComplaintCreate.model_fields:
+        if field_name == "attachments":
+            continue
+        merged[field_name] = getattr(existing, field_name, None)
+    merged.update(incoming.model_dump(exclude_none=True))
+    return ComplaintCreate.model_validate(merged)
+
+
 @router.post("/", response_model=ComplaintResponse, status_code=status.HTTP_201_CREATED)
 async def create_complaint(
     request: Request,
@@ -401,9 +427,52 @@ async def create_complaint(
             complaint_data = ComplaintCreate.model_validate(raw)
 
         service = ComplaintService(db)
+        requires_user_confirm = is_integration_payload or _request_has_valid_external_api_key(request)
+        update_identifier = (
+            _resolve_complaint_update_identifier(integration_payload)
+            if integration_payload is not None
+            else None
+        )
+        if update_identifier:
+            existing = service.get_complaint(update_identifier)
+            if str(getattr(existing, "status", "") or "").strip().lower() != "rejected":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Complaint identifier {update_identifier!r} exists with status "
+                        f"{getattr(existing, 'status', None)!r}. "
+                        "Edit via submit is allowed only for rejected complaints."
+                    ),
+                )
+            merged_for_validation = _build_merged_complaint_create_for_validation(
+                existing=existing,
+                incoming=complaint_data,
+            )
+            do_context = _enforce_delivery_order_first(service, merged_for_validation)
+            _prefill_complaint_fields_from_do(merged_for_validation, do_context, integration_payload)
+            if requires_user_confirm:
+                missing_fields = service.get_submission_missing_fields(merged_for_validation)
+                if missing_fields:
+                    _raise_needs_more_fields_guidance(missing_fields=missing_fields, do_context=do_context)
+                if user_confirmed is not True:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            "Explicit user confirmation is required before submission. "
+                            "Set user_confirmed to true only after the user explicitly confirms the final summary "
+                            "(e.g. OK, YES, CONFIRM)."
+                        ),
+                    )
+
+            update_payload = ComplaintUpdate.model_validate(
+                complaint_data.model_dump(exclude_none=True, exclude={"attachments"})
+            )
+            service.update_complaint(str(existing.id), update_payload)
+            db.commit()
+            return service.get_complaint_with_attachments(str(existing.id))
+
         do_context = _enforce_delivery_order_first(service, complaint_data)
         _prefill_complaint_fields_from_do(complaint_data, do_context, integration_payload)
-        requires_user_confirm = is_integration_payload or _request_has_valid_external_api_key(request)
         if requires_user_confirm:
             if integration_payload is not None:
                 _validate_integration_payload_completeness(integration_payload)
