@@ -29,6 +29,10 @@ async def get_promotion_attachments(
         None,
         description="Promotion UUID or promo_code.",
     ),
+    query: Optional[str] = Query(
+        None,
+        description="Free-text search across promotion header, product code/name, promotion group name, and attachment metadata.",
+    ),
     attachment_id: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -42,7 +46,8 @@ async def get_promotion_attachments(
             sort_field=sort or "created_at",
             sort_dir=dir or "asc",
             promotion_id=promotion_id,
-            attachment_id=attachment_id
+            attachment_id=attachment_id,
+            query=query,
         )
         result["data"] = [_promotion_attachment_to_response(pa) for pa in result["data"]]
         return result

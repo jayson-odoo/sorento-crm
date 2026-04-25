@@ -1094,7 +1094,16 @@ class PromotionAttachmentService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_promotion_attachments(self, page: int = 1, limit: int = 50, sort_field: str = "created_at", sort_dir: str = "asc", promotion_id: Optional[str] = None, attachment_id: Optional[str] = None):
+    def list_promotion_attachments(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        sort_field: str = "created_at",
+        sort_dir: str = "asc",
+        promotion_id: Optional[str] = None,
+        attachment_id: Optional[str] = None,
+        query: Optional[str] = None,
+    ):
         """List promotion attachments with pagination and filtering."""
         from sqlalchemy.orm import joinedload
         from sqlalchemy import or_
@@ -1105,17 +1114,38 @@ class PromotionAttachmentService:
             joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
         )
         
+        fallback_query = query
         if promotion_id:
             resolved_pid = _resolve_promotion_id_for_filter(self.db, promotion_id)
             if resolved_pid is None:
-                return {
-                    "data": [],
-                    "pagination": PaginationResponse(total=0, page=page, limit=limit),
-                    "empty": True,
-                }
-            q = q.filter(PromotionAttachment.promotion_id == resolved_pid)
+                # If caller passed a product/promo search token in promotion_id by mistake,
+                # treat it as a text search instead of returning empty.
+                fallback_query = str(promotion_id).strip()
+            else:
+                q = q.filter(PromotionAttachment.promotion_id == resolved_pid)
         if attachment_id:
             q = q.filter(PromotionAttachment.attachment_id == attachment_id)
+        if fallback_query:
+            term = f"%{fallback_query.strip()}%"
+            q = (
+                q.join(Promotion, PromotionAttachment.promotion_id == Promotion.id)
+                .outerjoin(PromotionProduct, PromotionProduct.promotion_id == Promotion.id)
+                .outerjoin(Product, PromotionProduct.product_id == Product.id)
+                .outerjoin(PromotionGroup, PromotionProduct.promotion_group_id == PromotionGroup.id)
+                .outerjoin(Attachment, PromotionAttachment.attachment_id == Attachment.id)
+                .filter(
+                    or_(
+                        Promotion.promo_code.ilike(term),
+                        Promotion.name.ilike(term),
+                        Promotion.description.ilike(term),
+                        Product.product_code.ilike(term),
+                        Product.product_name.ilike(term),
+                        PromotionGroup.group_name.ilike(term),
+                        Attachment.original_filename.ilike(term),
+                        Attachment.description.ilike(term),
+                    )
+                )
+            )
         
         # Sorting
         sort_map = {

@@ -18,28 +18,6 @@ class ToolSpec:
 # Paths match [sorento_crm_backend/app/api/v1/__init__.py](sorento_crm_backend/app/api/v1/__init__.py) prefixes.
 # Comment to rebuild
 CATALOG: tuple[ToolSpec, ...] = (
-    # --- entity resolution (disambiguator) ---
-    ToolSpec(
-        "crm_resolve_reference",
-        (
-            "Disambiguate a free-text code or mid-turn reference into its canonical entity type. "
-            "Call this ONLY when you need to resolve a NEW code that was not already resolved by "
-            "the 'Resolved references' block in the user message (the system pre-resolves codes "
-            "on every turn; reuse that first). Accepts either `query` (free text, resolver extracts "
-            "codes) or `tokens` (comma-separated list of codes). Uses three tiers: (1) exact match "
-            "on business code fields; (2) prefix / substring match for partial codes like "
-            "'SRTWCX7604' matching 'SRTWCX7604-S-RL-NEW'; (3) embedding vector fallback with a "
-            "confidence gate. Returns, per token: `resolved` (single match), `ambiguous` (multiple "
-            "candidates \u2014 ask the user to pick), or in `unresolved_tokens` (no record). Each match "
-            "includes entity_type (product, customer_order, customer, inbound_shipment, "
-            "spo_allocation, grn, warehouse, supplier, promotion), canonical_code to pass to other "
-            "tools, match_tier (exact / prefix / substring / embedding), and a display payload. "
-            "Never call another tool with a code that came back unresolved or ambiguous."
-        ),
-        "/api/v1/system/references/resolve",
-        (),
-        ("query", "tokens"),
-    ),
     # --- master-data ---
     ToolSpec(
         "crm_master_products_list",
@@ -196,10 +174,10 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_marketing_promotion_attachments_list",
-        "List promotion–attachment links. promotion_id accepts UUID or promo_code.",
+        "List/search promotion–attachment links. Optional promotion_id scopes one promotion (UUID or promo_code). Optional query searches promotion header details, product code/name, promotion group name, and attachment metadata.",
         "/api/v1/marketing/promotion-attachments",
         (),
-        ("page", "limit", "sort", "dir", "promotion_id", "attachment_id"),
+        ("page", "limit", "sort", "dir", "query", "promotion_id", "attachment_id"),
     ),
     ToolSpec(
         "crm_marketing_promotion_attachments_get",

@@ -181,9 +181,9 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
         if inactive_msg is not None:
             return inactive_msg
     elif spec.name in {"crm_marketing_promotion_products_list", "crm_marketing_promotion_attachments_list"}:
-        inactive_msg = await _ensure_promotion_active(client, query.get("promotion_id"))
-        if inactive_msg is not None:
-            return inactive_msg
+        # List endpoints may be used as broad search (e.g., by SKU text). Do not hard-block
+        # on promotion activity precheck here; inactive rows are filtered from response payload.
+        pass
 
     response = await client.request(spec.method, spec.path, path_params=path_params, query=query)
     return _filter_active_promotion_records(spec.name, response)

@@ -34,28 +34,26 @@ from app.services.embedding_service import EmbeddingEventService
 from app.services.mcp_tool_capability_service import build_capability_documents, TOOL_INTENTS
 
 
-def _sync_enabled_tools(db) -> list[tuple[str, int, int]]:
-    """Ensure every catalogued tool (TOOL_INTENTS) is present in every
-    ai_assistant_configs.enabled_tools whitelist.
+def _sync_enabled_tools(db) -> list[tuple[str, int, int, int]]:
+    """Sync ai_assistant_configs.enabled_tools to current TOOL_INTENTS.
 
-    The RAG pipeline applies `enabled_tools` as a hard filter after reranking,
-    so a tool missing from the whitelist is invisible to the LLM no matter how
-    high its RAG score. Keep this in lockstep with the catalog to prevent
-    silently-dropped tools after catalog additions.
+    - Adds missing catalogued tools.
+    - Removes tools no longer present in TOOL_INTENTS (e.g. retired tools).
     """
-    catalog = sorted(TOOL_INTENTS.keys())
+    catalog_set = set(TOOL_INTENTS.keys())
     rows = db.execute(text("SELECT id, enabled_tools FROM ai_assistant_configs")).all()
-    report: list[tuple[str, int, int]] = []
+    report: list[tuple[str, int, int, int]] = []
     for r in rows:
         cur = set(r.enabled_tools or [])
-        merged = sorted(cur | set(catalog))
+        merged = sorted((cur & catalog_set) | catalog_set)
         added = len(set(merged) - cur)
-        if added:
+        removed = len(cur - set(merged))
+        if added or removed:
             db.execute(
                 text("UPDATE ai_assistant_configs SET enabled_tools = CAST(:t AS jsonb), updated_at = NOW() WHERE id = :i"),
                 {"t": json.dumps(merged), "i": r.id},
             )
-        report.append((str(r.id), len(cur), added))
+        report.append((str(r.id), len(cur), added, removed))
     db.commit()
     return report
 
@@ -149,8 +147,8 @@ def main() -> None:
             "total": len(docs),
             "invalidated_chunks": invalidated,
             "enabled_tools_sync": [
-                {"config_id": cid, "before": before, "added": added}
-                for (cid, before, added) in sync_report
+                        {"config_id": cid, "before": before, "added": added, "removed": removed}
+                        for (cid, before, added, removed) in sync_report
             ],
         }
         print(json.dumps(summary, indent=2))

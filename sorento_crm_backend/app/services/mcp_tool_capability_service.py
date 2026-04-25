@@ -73,37 +73,6 @@ class ToolIntent:
 
 TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
-    # ENTITY RESOLVER — disambiguates free-text codes into entity types.
-    # The AI assistant already pre-resolves codes on every turn (see "Resolved
-    # references" block in the user message). Use this MCP tool only when
-    # resolving a NEW code mid-conversation that was not pre-resolved.
-    # ==================================================================
-    "crm_resolve_reference": ToolIntent(
-        category="system.resolver",
-        intent="Disambiguate a free-text business code into its canonical entity type.",
-        description=(
-            "Three-tier resolver that maps a code (e.g. RF2601-025, ACC-SRT1024, FJ24041192, "
-            "MSCU5475129) to one of nine entity types: product, customer_order, customer, "
-            "inbound_shipment, spo_allocation, grn, warehouse, supplier, promotion. "
-            "Tier 1 does exact match on business code fields; Tier 2 does prefix / substring match "
-            "for partial codes (so 'SRTWCX7604' can match 'SRTWCX7604-S-RL-NEW'); Tier 3 is a "
-            "gated embedding vector fallback. Returns the canonical_code to pass to other tools "
-            "and a minimal display payload. Tokens with no deterministic match appear in "
-            "`unresolved_tokens` \u2014 in that case tell the user 'no record found for that code'. "
-            "Tokens with multiple candidates are marked `ambiguous` \u2014 ask the user to pick one "
-            "of the surfaced candidates before calling any other tool. The system already calls "
-            "this resolver automatically before each LLM turn; reuse the 'Resolved references' "
-            "block in the user message and only call this tool when a NEW code appears mid-answer."
-        ),
-        typical_user_questions=(
-            "What is RF2601-025 / ACC-SRT1024 / FJ24041192?",
-            "Is this code a product, an order, or a shipment?",
-            "Resolve this reference for me.",
-            "Which product / order does this partial code belong to?",
-        ),
-        aliases=("resolve code", "disambiguate reference", "what kind of code is this"),
-    ),
-    # ==================================================================
     # MASTER DATA — product catalog, brands, categories, UOMs, attachments
     # ==================================================================
     "crm_master_products_list": ToolIntent(
@@ -338,11 +307,13 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_marketing_promotion_attachments_list": ToolIntent(
         category="general_enquiries.attachment",
-        intent="Find promotion attachments (flyers, brochures, sales kits).",
+        intent="Find promotion attachments (flyers, brochures, sales kits) by promotion or product context.",
         description=(
-            "List promotion↔attachment links. Use for promo flyers, promotional brochures, "
-            "campaign collateral. Not for product datasheets (crm_master_product_attachments_*) "
-            "and not for global docs (crm_resource_attachments_*)."
+            "List/search promotion↔attachment links. Optional promotion_id scopes one promotion; "
+            "optional query searches promotion header details, product code/name, promotion group "
+            "name, and attachment metadata. Use for promo flyers, promotional brochures, campaign "
+            "collateral. Not for product datasheets (crm_master_product_attachments_*) and not for "
+            "global docs (crm_resource_attachments_*)."
         ),
         typical_user_questions=(
             "Send me the promotion flyer for MIX01.",

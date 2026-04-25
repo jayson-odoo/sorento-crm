@@ -375,6 +375,9 @@ class EmbeddingReadService:
                 score += 0.08
             if ("stock inquiry" in q_lower or "stock enquiry" in q_lower or "lead time" in q_lower) and cat == "stock_inquiries.form_submission":
                 score += 0.08
+            # Promotion questions should not rank stock inquiry form flows.
+            if any(w in q_lower for w in ("promo", "promotion", "campaign", "discount", "offer")) and cat == "stock_inquiries.form_submission":
+                score -= 0.20
             if ("purchase request" in q_lower or "sponsorship" in q_lower) and cat == "purchase_request.form_submission":
                 score += 0.08
             if ("application form" in q_lower or "flower stand" in q_lower or "renovation form" in q_lower) and cat in (
