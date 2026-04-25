@@ -128,6 +128,22 @@ jobs:
     needs: [build-and-deploy]
     if: always()
     steps:
+      - name: Check SMTP configuration
+        id: smtp
+        # secrets are not available in `if` expressions; resolve via env and expose a boolean output.
+        env:
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          OWNER_EMAIL: ${{ secrets.OWNER_EMAIL }}
+        run: |
+          if [ -n "$SMTP_SERVER" ] && [ -n "$SMTP_PORT" ] && [ -n "$SMTP_USERNAME" ] && [ -n "$SMTP_PASSWORD" ] && [ -n "$OWNER_EMAIL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Compute notification content
         id: notify
         run: |
@@ -141,7 +157,7 @@ jobs:
           fi
 
       - name: Send deployment email
-        if: ${{ secrets.SMTP_SERVER != '' && secrets.SMTP_PORT != '' && secrets.SMTP_USERNAME != '' && secrets.SMTP_PASSWORD != '' && secrets.OWNER_EMAIL != '' }}
+        if: steps.smtp.outputs.configured == 'true'
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
@@ -155,7 +171,7 @@ jobs:
             https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Warn when email secrets are missing
-        if: ${{ !(secrets.SMTP_SERVER != '' && secrets.SMTP_PORT != '' && secrets.SMTP_USERNAME != '' && secrets.SMTP_PASSWORD != '' && secrets.OWNER_EMAIL != '') }}
+        if: steps.smtp.outputs.configured != 'true'
         run: |
           echo "Email notification skipped: set SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, OWNER_EMAIL secrets."
 
