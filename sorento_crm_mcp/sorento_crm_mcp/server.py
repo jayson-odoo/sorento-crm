@@ -6,6 +6,7 @@ import json
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import date, datetime
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -50,6 +51,11 @@ UUID_REGEX = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
 )
 
+_INCOMING_SHIPMENT_DETAIL_TOOLS: set[str] = {
+    "crm_incoming_stock_shipment_products",
+    "crm_incoming_stock_shipment_attachment",
+}
+
 
 def _normalize_query_value(value: str | None) -> str | None:
     if value is None:
@@ -77,6 +83,114 @@ def _json_loads_safe(payload: str) -> Any:
         return json.loads(payload)
     except Exception:
         return None
+
+
+def _parse_iso_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        pass
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _extract_incoming_rows(raw: str) -> list[dict[str, Any]]:
+    data = _json_loads_safe(raw)
+    if not isinstance(data, dict):
+        return []
+    rows = data.get("data")
+    if not isinstance(rows, list):
+        return []
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def _shipment_row_ref(row: dict[str, Any]) -> str | None:
+    shipment_number = row.get("shipment_number")
+    if isinstance(shipment_number, str) and shipment_number.strip():
+        return shipment_number.strip()
+    return None
+
+
+def _match_incoming_shipment_candidates(rows: list[dict[str, Any]], identifier: str) -> list[dict[str, Any]]:
+    key = identifier.strip().lower()
+    if not key:
+        return []
+
+    eta = _parse_iso_date(identifier)
+    if eta is not None:
+        eta_str = eta.isoformat()
+        eta_matches = []
+        for row in rows:
+            eta_val = row.get("estimated_arrival_date")
+            if isinstance(eta_val, str) and eta_val.startswith(eta_str):
+                eta_matches.append(row)
+        if eta_matches:
+            return eta_matches
+
+    exact_matches = []
+    partial_matches = []
+    for row in rows:
+        fields = [
+            row.get("shipment_number"),
+            row.get("shipping_container_number"),
+        ]
+        normalized = [f.strip().lower() for f in fields if isinstance(f, str) and f.strip()]
+        if key in normalized:
+            exact_matches.append(row)
+            continue
+        if any(key in f for f in normalized):
+            partial_matches.append(row)
+    if exact_matches:
+        return exact_matches
+    return partial_matches
+
+
+async def _resolve_incoming_shipment_reference(client: Any, identifier: str) -> str | None:
+    candidate = identifier.strip()
+    if not candidate:
+        return None
+
+    list_raw = await client.get(
+        "/api/v1/incoming-stock/shipments",
+        path_params={},
+        query={"query": candidate, "page": "1", "limit": "20"},
+        tool_name="crm_incoming_stock_shipments",
+    )
+    rows = _extract_incoming_rows(list_raw)
+    matches = _match_incoming_shipment_candidates(rows, candidate)
+    if len(matches) == 1:
+        return _shipment_row_ref(matches[0])
+    if len(matches) > 1:
+        return None
+
+    parsed_eta = _parse_iso_date(candidate)
+    if parsed_eta is None:
+        return None
+
+    eta_raw = await client.get(
+        "/api/v1/incoming-stock/shipments",
+        path_params={},
+        query={
+            "eta_from": parsed_eta.isoformat(),
+            "eta_to": parsed_eta.isoformat(),
+            "page": "1",
+            "limit": "20",
+        },
+        tool_name="crm_incoming_stock_shipments",
+    )
+    eta_rows = _extract_incoming_rows(eta_raw)
+    if len(eta_rows) == 1:
+        return _shipment_row_ref(eta_rows[0])
+    return None
 
 
 def _is_active_promotion_obj(obj: Any) -> bool:
@@ -152,6 +266,14 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
     # route to sibling list endpoint with query search instead of throwing DB UUID errors.
     for p_name, p_val in path_params.items():
         if p_name.endswith("_id") and isinstance(p_val, str) and not _looks_like_uuid(p_val):
+            if spec.name in _INCOMING_SHIPMENT_DETAIL_TOOLS and p_name == "shipment_id":
+                resolved_ref = await _resolve_incoming_shipment_reference(client, p_val)
+                if resolved_ref:
+                    path_params[p_name] = resolved_ref
+                # Let backend resolver still try direct business identifiers
+                # (shipment number / container / BOL / invoice) even when MCP
+                # cannot resolve this input to one candidate.
+                continue
             base_path = spec.path.replace(f"/{{{p_name}}}", "")
             list_spec = _list_spec_by_path(base_path)
             if list_spec:
