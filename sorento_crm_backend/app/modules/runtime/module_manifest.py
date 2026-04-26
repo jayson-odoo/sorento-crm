@@ -135,3 +135,28 @@ def get_manifest(module_key: str) -> ModuleManifest:
     if module_key not in MODULE_MANIFEST:
         raise KeyError(f"Unknown module_key: {module_key}")
     return MODULE_MANIFEST[module_key]
+
+
+def merge_discovered_manifests() -> Dict[str, ModuleManifest]:
+    """
+    Merge file-based manifests (app/modules/<key>/manifest.py) into MODULE_MANIFEST.
+
+    Discovered manifests take precedence over _RAW entries with the same key so a module
+    that has been migrated to per-module package controls its own metadata.
+    """
+    try:
+        from app.modules.runtime.discovery import discover_manifests
+    except Exception:  # noqa: BLE001
+        return MODULE_MANIFEST
+    found = discover_manifests()
+    for key, mf in found.items():
+        MODULE_MANIFEST[key] = ModuleManifest(
+            module_key=mf.module_key,
+            display_name=mf.display_name,
+            description=mf.description,
+            dependencies=frozenset(mf.dependencies),
+        )
+    # Refresh ALL_MODULE_KEYS in place
+    ALL_MODULE_KEYS.clear()
+    ALL_MODULE_KEYS.extend(MODULE_MANIFEST.keys())
+    return MODULE_MANIFEST

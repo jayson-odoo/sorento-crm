@@ -4,7 +4,7 @@
 from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission, SystemLog, SystemSetting, UserQuickAccess, UserListColumnConfig
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
-from app.models.order import Order, OrderStatus, Customer, OrderLine
+from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, CampaignType, MarketingCampaign
@@ -21,6 +21,9 @@ from app.models.entity_attachment import EntityAttachmentLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog
 from app.models.resources import Attachment, AttachmentType
 from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondAccessTypeMapping, RespondContact
+from app.models.respond_workspace import RespondWorkspace
+from app.models.workflow_stage import WorkflowStage
+from app.models.entity_conversation import EntityConversationMessage
 from app.models.integration import IntegrationLog
 from app.models.import_log import ImportLog
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
@@ -57,6 +60,7 @@ __all__ = [
     "Order",
     "OrderStatus",
     "Customer",
+    "CustomerContact",
     "OrderLine",
     "Warehouse",
     "StorageZone",
@@ -103,6 +107,9 @@ __all__ = [
     "ContactAccessType",
     "RespondAccessTypeMapping",
     "RespondContact",
+    "RespondWorkspace",
+    "WorkflowStage",
+    "EntityConversationMessage",
     "IntegrationLog",
     "ImportLog",
     "ImportJob",
@@ -131,3 +138,8 @@ __all__ = [
     "AIAssistantGovernanceEvent",
     "ChatHistory",
 ]
+
+# Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy
+# see them. Safe with shimmed legacy paths above (re-imports are no-ops).
+from app.modules.runtime.discovery import discover_module_models  # noqa: E402
+discover_module_models()

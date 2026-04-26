@@ -1,5 +1,9 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import {
+  modulePurgeTables as discoveredPurgeTables,
+  modulesWithDataPurge as discoveredModulesWithPurge,
+} from '@/modules/registry';
 
 export interface TenantModuleState {
   module_key: string;
@@ -90,7 +94,7 @@ export async function disableModule(moduleKey: string): Promise<void> {
 }
 
 /** Modules with automated DB purge on uninstall (others: uninstall removes tenant binding only). */
-export const MODULES_WITH_DATA_PURGE: string[] = [
+const LEGACY_MODULES_WITH_DATA_PURGE: string[] = [
   'notifications',
   'audit',
   'sla',
@@ -101,11 +105,18 @@ export const MODULES_WITH_DATA_PURGE: string[] = [
   'public_view_links',
 ];
 
+export const MODULES_WITH_DATA_PURGE: string[] = Array.from(
+  new Set([...discoveredModulesWithPurge(), ...LEGACY_MODULES_WITH_DATA_PURGE]),
+);
+
 /**
  * Physical DB tables cleared when purge runs, in deletion order (FK-safe).
  * Keep in sync with `sorento_crm_backend/app/services/module_purge_service.py`.
+ *
+ * Legacy hardcoded entries below; migrated modules ship purge_tables.json under
+ * `modules/<key>/` and merge in via `discoveredPurgeTables()`. Discovered entries win.
  */
-export const MODULE_PURGE_TABLES: Record<
+const LEGACY_MODULE_PURGE_TABLES: Record<
   string,
   { tables: string[]; description?: string }
 > = {
@@ -171,6 +182,11 @@ export const MODULE_PURGE_TABLES: Record<
   },
 };
 
+export const MODULE_PURGE_TABLES: Record<
+  string,
+  { tables: string[]; description?: string }
+> = { ...LEGACY_MODULE_PURGE_TABLES, ...discoveredPurgeTables() };
+
 export async function uninstallModule(
   moduleKey: string,
   confirmation: string,
@@ -199,6 +215,90 @@ export async function uninstallModule(
     throw new Error(message);
   }
   return res.json();
+}
+
+export interface UploadModuleResult {
+  module_key: string;
+  version: string;
+  status: string;
+  needs_frontend_rebuild: boolean;
+  restart_required: boolean;
+  extracted_backend_files: string[];
+  extracted_frontend_files: string[];
+}
+
+export async function uploadModule(file: File): Promise<UploadModuleResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await apiFetch('/api/v1/system/modules/upload', {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, `Upload failed (${res.status})`));
+  }
+  return res.json();
+}
+
+export async function activateUploadedModule(
+  moduleKey: string,
+): Promise<{ installed: string[]; plan: string[] }> {
+  const res = await apiFetch(
+    `/api/v1/system/modules/${encodeURIComponent(moduleKey)}/activate`,
+    { method: 'POST' },
+  );
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, `Activate failed (${res.status})`));
+  }
+  return res.json();
+}
+
+export interface AvailableModule {
+  module_key: string;
+  display_name: string;
+  description: string;
+  dependencies: string[];
+}
+
+export async function fetchAvailableModules(): Promise<AvailableModule[]> {
+  const res = await apiFetch('/api/v1/system/modules/available');
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, `Failed to load available (${res.status})`));
+  }
+  return res.json();
+}
+
+export async function removeUploadedModule(moduleKey: string): Promise<void> {
+  const res = await apiFetch(
+    `/api/v1/system/modules/${encodeURIComponent(moduleKey)}/remove`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, `Remove failed (${res.status})`));
+  }
+}
+
+export async function downloadModuleZip(moduleKey: string): Promise<{ blob: Blob; filename: string }> {
+  const res = await apiFetch(`/api/v1/system/modules/${encodeURIComponent(moduleKey)}/export`);
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, `Export failed (${res.status})`));
+  }
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const match = /filename="([^"]+)"/.exec(disposition);
+  const filename = match?.[1] ?? `${moduleKey}.zip`;
+  const blob = await res.blob();
+  return { blob, filename };
+}
+
+export function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export async function fetchModuleInstallEvents(params?: {

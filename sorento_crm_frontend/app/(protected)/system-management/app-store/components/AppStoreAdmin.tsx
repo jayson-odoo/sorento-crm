@@ -36,11 +36,15 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { TENANT_MODULES_QUERY_KEY, useTenantModules } from '@/hooks/useTenantModules';
 import {
   disableModule,
+  downloadModuleZip,
   enableModule,
   fetchModuleInstallEvents,
   installModulesOrBundle,
   MODULES_WITH_DATA_PURGE,
+  triggerBlobDownload,
   uninstallModule,
+  uploadModule,
+  activateUploadedModule,
   MODULE_PURGE_TABLES,
   type TenantModuleState,
 } from '../services/appModulesService';
@@ -204,6 +208,14 @@ export default function AppStoreAdmin() {
         <Button type="button" variant="outline" size="sm" onClick={() => refetch()}>
           Refresh
         </Button>
+        {canManage && (
+          <ModuleUploadButton
+            onUploaded={() => {
+              invalidate();
+              refetch();
+            }}
+          />
+        )}
       </div>
 
       {!canManage && (
@@ -409,6 +421,28 @@ function ModuleCard({
                 Disable
               </Button>
             )}
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={busy || m.module_key === 'base'}
+              title={
+                m.module_key === 'base'
+                  ? 'Platform module cannot be exported'
+                  : 'Download this module as a zip you can drop into another deployment'
+              }
+              onClick={async () => {
+                try {
+                  const { blob, filename } = await downloadModuleZip(m.module_key);
+                  triggerBlobDownload(blob, filename);
+                  toast.success(`Downloaded ${filename}`);
+                } catch (e) {
+                  toast.error((e as Error).message);
+                }
+              }}
+            >
+              Download zip
+            </Button>
             {canUninstall && (
               <Button
                 type="button"
@@ -536,5 +570,89 @@ function ModuleCard({
         </AlertDialogContent>
       </AlertDialog>
     </Card>
+  );
+}
+
+function ModuleUploadButton({ onUploaded }: { onUploaded: () => void }) {
+  const [uploading, setUploading] = useState(false);
+  const [activating, setActivating] = useState(false);
+  const [pickedFile, setPickedFile] = useState<File | null>(null);
+  const [needsRebuild, setNeedsRebuild] = useState(false);
+
+  const inputId = 'app-store-module-zip-input';
+
+  const onPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setPickedFile(f);
+    void doUpload(f);
+    e.target.value = '';
+  };
+
+  const doUpload = async (file: File) => {
+    setUploading(true);
+    setNeedsRebuild(false);
+    try {
+      const result = await uploadModule(file);
+      toast.success(
+        `Uploaded ${result.module_key} v${result.version}. Activating…`,
+      );
+      setNeedsRebuild(result.needs_frontend_rebuild);
+      setActivating(true);
+      try {
+        await activateUploadedModule(result.module_key);
+        toast.success(`Activated ${result.module_key}`);
+      } catch (e) {
+        toast.error((e as Error).message);
+      } finally {
+        setActivating(false);
+      }
+      onUploaded();
+      if (result.restart_required) {
+        toast.info(
+          'Backend restart required for new routes to register.',
+          { duration: 8001 },
+        );
+      }
+      if (result.needs_frontend_rebuild) {
+        toast.info(
+          'New frontend pages added — rebuild the frontend to make them visible.',
+          { duration: 10000 },
+        );
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setUploading(false);
+      setPickedFile(null);
+    }
+  };
+
+  const busy = uploading || activating;
+
+  return (
+    <>
+      <input
+        id={inputId}
+        type="file"
+        accept=".zip,application/zip"
+        className="sr-only"
+        onChange={onPick}
+        disabled={busy}
+      />
+      <Label htmlFor={inputId} className="cursor-pointer">
+        <Button asChild type="button" size="sm" variant="outline" disabled={busy}>
+          <span>{busy ? (activating ? 'Activating…' : 'Uploading…') : 'Upload module'}</span>
+        </Button>
+      </Label>
+      {pickedFile && (
+        <span className="text-xs text-muted-foreground">{pickedFile.name}</span>
+      )}
+      {needsRebuild && (
+        <span className="text-xs text-amber-600 dark:text-amber-400">
+          Frontend rebuild required
+        </span>
+      )}
+    </>
   );
 }

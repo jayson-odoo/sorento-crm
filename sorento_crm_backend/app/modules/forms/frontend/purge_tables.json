@@ -1,0 +1,5 @@
+{
+  "moduleKey": "forms",
+  "tables": ["form_submissions", "form_versions", "form_fields", "form_sections", "forms"],
+  "description": "Form definitions, versions, fields, and submissions. Uploaded files in storage are not deleted."
+}

@@ -1,6 +1,19 @@
 """Order management models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Index, Integer, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    String,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Text,
+    Numeric,
+    Index,
+    Integer,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -32,7 +45,7 @@ class OrderStatus(Base):
 
 class Customer(Base):
     __tablename__ = "customers"
-    
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     customer_code = Column(String(50), unique=True, nullable=False)
     customer_name = Column(String(255), nullable=False)
@@ -42,12 +55,69 @@ class Customer(Base):
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
-    
+    # Extended profile (added by commercial_core to support lead/customer flows)
+    registered_name = Column(String(255), nullable=True)
+    trading_name = Column(String(255), nullable=True)
+    registration_number = Column(String(100), nullable=True)
+    industry = Column(String(120), nullable=True)
+    website = Column(String(500), nullable=True)
+    billing_address = Column(JSONB, nullable=True)
+    country = Column(String(100), nullable=True)
+    tax_id = Column(String(100), nullable=True)
+    notes = Column(Text, nullable=True)
+    account_owner_user_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    customer_type = Column(String(20), nullable=False, server_default="company")
+    salutation = Column(String(32), nullable=True)
+    first_name = Column(String(120), nullable=True)
+    last_name = Column(String(120), nullable=True)
+    mobile_number = Column(String(50), nullable=True)
+
     orders = relationship("Order", back_populates="customer")
-    
+    customer_contacts = relationship(
+        "CustomerContact",
+        back_populates="customer",
+        cascade="all, delete-orphan",
+    )
+
     __table_args__ = (
         Index("ix_customers_is_active", "is_active"),
         Index("ix_customers_customer_code", "customer_code"),
+        Index("ix_customers_account_owner_user_id", "account_owner_user_id"),
+    )
+
+
+class CustomerContact(Base):
+    """Main or stakeholder person linked to a business customer profile."""
+
+    __tablename__ = "customer_contacts"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    full_name = Column(String(255), nullable=False)
+    job_title = Column(String(120), nullable=True)
+    email = Column(String(150), nullable=True)
+    phone = Column(String(50), nullable=True)
+    mobile = Column(String(50), nullable=True)
+    sync_source = Column(String(32), nullable=False, default="manual")
+    contact_role = Column(String(20), nullable=False, default="stakeholder")
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    customer = relationship("Customer", back_populates="customer_contacts")
+
+    __table_args__ = (
+        CheckConstraint(
+            "contact_role IN ('main', 'stakeholder')",
+            name="ck_customer_contacts_contact_role",
+        ),
+        Index("ix_customer_contacts_customer_id", "customer_id"),
+        Index(
+            "uq_customer_contacts_one_main_per_customer",
+            "customer_id",
+            unique=True,
+            postgresql_where=text("contact_role = 'main'"),
+        ),
     )
 
 

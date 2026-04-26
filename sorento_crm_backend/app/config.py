@@ -19,8 +19,13 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     
-    # CORS - accept as string and parse
-    cors_origins: str = "http://localhost:3000"
+    # CORS - accept as string and parse.
+    # Default covers Next.js auto-bumped ports (3000 taken -> 3001 -> 3002 ...) so multiple
+    # local instances do not need to override CORS_ORIGINS just to load.
+    cors_origins: str = (
+        "http://localhost:3000,http://localhost:3001,http://localhost:3002,"
+        "http://localhost:3003,http://localhost:3004,http://localhost:3005"
+    )
     
     @field_validator('cors_origins', mode='before')
     @classmethod

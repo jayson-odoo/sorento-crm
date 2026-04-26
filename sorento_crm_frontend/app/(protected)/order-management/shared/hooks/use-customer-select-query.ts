@@ -8,7 +8,14 @@ export interface CustomerSelectOption {
   customer_name: string;
 }
 
-export const useCustomerSelectQuery = () => {
+export type UseCustomerSelectQueryOptions = {
+  /** When false, the query does not run (e.g. dialog closed). */
+  enabled?: boolean;
+};
+
+export const useCustomerSelectQuery = (options?: UseCustomerSelectQueryOptions) => {
+  const enabled = options?.enabled ?? true;
+
   const fetchCustomerList = async (): Promise<CustomerSelectOption[]> => {
     const response = await apiFetch('/api/v1/order-management/customers/select');
 
@@ -22,12 +29,16 @@ export const useCustomerSelectQuery = () => {
       return [];
     }
 
-    return response.json();
+    const json = await response.json();
+    if (Array.isArray(json)) return json as CustomerSelectOption[];
+    const rows = (json as { data?: CustomerSelectOption[] })?.data;
+    return Array.isArray(rows) ? rows : [];
   };
 
   return useQuery({
     queryKey: ['customer-select'],
     queryFn: fetchCustomerList,
+    enabled,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
     refetchOnWindowFocus: false,

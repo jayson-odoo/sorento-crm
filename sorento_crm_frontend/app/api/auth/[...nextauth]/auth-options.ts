@@ -256,6 +256,33 @@ const authOptions: NextAuthOptions = {
   pages: {
     signIn: '/signin',
   },
+  // Per-instance cookie names so two local instances on different ports
+  // (localhost:3000 vs localhost:3001) don't overwrite each other's session.
+  // Browsers scope cookies by host only — port is ignored — so without a
+  // suffix both instances share `next-auth.session-token` and clobber logins.
+  // Set NEXTAUTH_COOKIE_SUFFIX=instance-b in the second instance's .env.local.
+  cookies: (() => {
+    const suffix = process.env.NEXTAUTH_COOKIE_SUFFIX
+      ? `.${process.env.NEXTAUTH_COOKIE_SUFFIX}`
+      : '';
+    if (!suffix) return undefined;
+    const secure = (process.env.NEXTAUTH_URL ?? '').startsWith('https://');
+    const prefix = secure ? '__Secure-' : '';
+    return {
+      sessionToken: {
+        name: `${prefix}next-auth.session-token${suffix}`,
+        options: { httpOnly: true, sameSite: 'lax', path: '/', secure },
+      },
+      callbackUrl: {
+        name: `${prefix}next-auth.callback-url${suffix}`,
+        options: { sameSite: 'lax', path: '/', secure },
+      },
+      csrfToken: {
+        name: `${secure ? '__Host-' : ''}next-auth.csrf-token${suffix}`,
+        options: { httpOnly: true, sameSite: 'lax', path: '/', secure },
+      },
+    };
+  })(),
   logger: {
     error(code, metadata) {
       // Downgrade CLIENT_FETCH_ERROR to warning – usually means session refetch failed

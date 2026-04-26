@@ -601,14 +601,21 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "range / optional actual delivery date / free-text `query` over order_number, debtor_code, "
             "debtor_name, customer name/code). "
             "Also supports delivery-order lookup filters: `customer_query` (debtor/customer partial), "
-            "`product_query` (product code/name partial), and order_date range together. "
+            "`product_query` (product code/name partial), and order_date range. "
+            "FILTER REQUIREMENT: customer (customer_id / customer_query), product (product_query), and "
+            "order date range (order_date_from / order_date_to) are NOT all required together. ANY ONE "
+            "of them is enough — call the tool as soon as the user supplies at least one. Combine more "
+            "filters only when the user explicitly provides them. Do NOT block on missing filters. "
+            "DEFAULT SORT: results are returned latest order first (sort=order_date, dir=desc) so the "
+            "most recent matching order surfaces at the top — do not pass sort/dir unless the user "
+            "explicitly asks for a different order. "
             "DATE FILTER RULE: For DO discovery and any 'orders in [month/period/date range]' "
             "question, ALWAYS use order_date_from/order_date_to. NEVER use actual_delivery_date_from/to "
             "unless the user EXPLICITLY mentions the delivery date. "
             "Date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO "
             "datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
-            "Use this tool whenever the user asks to search/find DO numbers from customer + optional "
-            "product + date range filters. "
+            "Use this tool whenever the user asks to search/find DO numbers from customer OR product OR "
+            "date range filters (any one is sufficient). "
             "Use for 'order status', 'track my order', 'delivery date', 'lorry / transporter / driver', "
             "and customer-based order searches. NOT for orders filtered by a specific product — use "
             "crm_order_management_orders_by_product_list for that."
@@ -1289,6 +1296,103 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Can you summarize general enquiries and form submission capabilities?",
         ),
         aliases=("capability summary", "what can you do", "tool overview", "mcp capabilities"),
+    ),
+    # ==================================================================
+    # COMMERCIAL — projects, leads, tenders, quotations, customer fuzzy match
+    # ==================================================================
+    "crm_commercial_projects_list": ToolIntent(
+        category="commercial",
+        intent="List commercial projects with filters (developer/customer, status, free-text).",
+        description=(
+            "List commercial projects. Filters: customer_id (developer), status_id, query (free-text "
+            "over project title / brief / customer name / customer code). Default sort latest first."
+        ),
+        typical_user_questions=(
+            "Show all commercial projects.",
+            "List projects for developer ABC Construction.",
+            "What projects do we have in progress?",
+            "Find projects by name or developer.",
+        ),
+        aliases=("commercial projects list", "projects for developer", "list projects"),
+    ),
+    "crm_commercial_projects_get": ToolIntent(
+        category="commercial",
+        intent="Fetch full detail for one commercial project by id.",
+        description="Get one commercial project record by UUID with developer, owner, stages, customer contacts, address.",
+        typical_user_questions=(
+            "Show full detail for this project id.",
+            "Open this commercial project record.",
+        ),
+        aliases=("get project by id", "project detail"),
+    ),
+    "crm_commercial_projects_create_smart": ToolIntent(
+        category="commercial",
+        intent="Create a commercial project with smart developer (customer) resolution and fuzzy matching.",
+        description=(
+            "Create a project where the developer (Customer) is resolved by one of three modes: "
+            "(1) `developer_id` (existing customer UUID) — used directly; "
+            "(2) `developer_create` (full customer payload) — creates the customer + project in one call; "
+            "(3) `developer_query` (free-text name/code) — fuzzy-matches against existing customers. "
+            "WHEN fuzzy match returns multiple candidates OR a single low-confidence match, the endpoint "
+            "responds 409 with `{ near_matches: [...], needs_decision: true, missing_developer_fields: [...] }`. "
+            "The caller MUST then either re-call with `developer_id` set to one of the suggestions, OR re-call "
+            "with `force=true` + `developer_create` populated. "
+            "Use `crm_master_customers_list` first to cross-check what developers (clients) already exist before deciding "
+            "to create a new one — many developers differ by 1-2 characters, the fuzzy matcher catches close ones but "
+            "exact name confirmation should always come from the user."
+        ),
+        typical_user_questions=(
+            "Create a project for developer ABC Construction.",
+            "Add a new project — the developer is XYZ Holdings.",
+            "Set up a commercial project with this developer name.",
+            "Start a project for this client; check if they already exist first.",
+        ),
+        aliases=(
+            "create project",
+            "new commercial project",
+            "smart create project",
+            "add project with developer",
+        ),
+    ),
+    "crm_commercial_projects_edit": ToolIntent(
+        category="commercial",
+        intent="Update fields on an existing commercial project (title, brief, status, dates, address).",
+        description="PATCH /api/v1/commercial/projects/{id}. Supports partial updates of title, brief, notes, status, dates, project_stage_id, owner_user_id, address fields, and project customers.",
+        typical_user_questions=(
+            "Edit this project's title.",
+            "Update the project brief.",
+            "Change the project status / stage.",
+            "Set the start/end date on this project.",
+            "Update the project address.",
+        ),
+        aliases=("update project", "edit project", "patch project"),
+    ),
+    "crm_master_customers_list": ToolIntent(
+        category="commercial",
+        intent="List or search the customer (developer/client) catalog.",
+        description=(
+            "Browse and search customers (a.k.a. developers, clients) by free-text name/code. "
+            "Use this BEFORE calling `crm_commercial_projects_create_smart` to cross-check whether a developer "
+            "already exists in the system. Many client names differ by 1-2 characters; a manual check on this list "
+            "prevents accidental duplicate customers."
+        ),
+        typical_user_questions=(
+            "List all customers / developers / clients.",
+            "Find customer ABC Construction.",
+            "Do we already have this developer in the system?",
+            "Show clients by name or code.",
+        ),
+        aliases=("customer list", "developer list", "client catalog", "search customers"),
+    ),
+    "crm_master_customers_get": ToolIntent(
+        category="commercial",
+        intent="Fetch full detail for one customer (developer/client) by id.",
+        description="Get one customer record by UUID with code, name, contacts, billing address, profile fields.",
+        typical_user_questions=(
+            "Show full customer detail.",
+            "Open this developer record.",
+        ),
+        aliases=("get customer by id", "customer detail", "developer detail"),
     ),
 }
 

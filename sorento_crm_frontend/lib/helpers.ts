@@ -284,6 +284,42 @@ export function formatDateInMalaysia(input: Date | string | number): string {
   }).format(date);
 }
 
+/** Time only, Malaysia — for chat bubbles (e.g. 10:22 pm). */
+export function formatTimeShortMalaysia(input: Date | number): string {
+  const date = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: MALAYSIA_TZ,
+  }).format(date);
+}
+
+/** e.g. Fri, 10 Apr — for chat day headers, Malaysia date. */
+export function formatChatDayPillMalaysia(input: Date | number): string {
+  const date = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: MALAYSIA_TZ,
+  }).format(date);
+}
+
+/** YYYY-MM-DD in Malaysia, for grouping messages by day. */
+export function getMalaysiaDateKey(input: Date | number): string {
+  const date = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: MALAYSIA_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
 /**
  * Malaysia civil calendar YYYY-MM-DD for a promotion boundary from the API (no `Date` — avoids
  * local-timezone drift on save when paired with `<input type="date">`).

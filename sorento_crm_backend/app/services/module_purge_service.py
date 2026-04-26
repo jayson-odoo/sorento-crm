@@ -123,11 +123,27 @@ MODULE_PURGE_HANDLERS: Dict[str, PurgeFn] = {
 }
 
 
+def _merge_discovered_handlers() -> None:
+    """Merge handlers from app/modules/<key>/purge.py if present (additive)."""
+    try:
+        from app.modules.runtime.discovery import discover_module_purge_handlers
+    except Exception:  # noqa: BLE001
+        return
+    found = discover_module_purge_handlers()
+    for k, fn in found.items():
+        MODULE_PURGE_HANDLERS[k] = fn
+
+
+_merge_discovered_handlers()
+
+
 def purge_module_data(db: Session, module_key: str) -> Dict[str, int]:
     """
     Delete business data for this module. Caller must enforce dependency / tenant rules.
     Raises ValueError if no handler is registered.
     """
+    # Re-merge each call so modules dropped at runtime (Phase 8 upload) are picked up.
+    _merge_discovered_handlers()
     fn = MODULE_PURGE_HANDLERS.get(module_key)
     if not fn:
         raise ValueError(

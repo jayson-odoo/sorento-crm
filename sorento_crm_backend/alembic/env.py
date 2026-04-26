@@ -19,6 +19,26 @@ config = context.config
 # Override sqlalchemy.url with settings
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
+# Per-module migrations: append app/modules/<key>/migrations/ dirs to version_locations.
+# Uses os.pathsep so Alembic locates branch-labeled per-module heads alongside the
+# central alembic/versions tree.
+try:
+    from pathlib import Path as _Path
+    _modules_dir = _Path(__file__).resolve().parent.parent / "app" / "modules"
+    _extra = [
+        str(d / "migrations")
+        for d in _modules_dir.iterdir()
+        if d.is_dir() and (d / "migrations").is_dir()
+    ]
+    if _extra:
+        _existing = config.get_main_option("version_locations") or "alembic/versions"
+        config.set_main_option(
+            "version_locations",
+            os.pathsep.join([_existing, *_extra]),
+        )
+except Exception:  # noqa: BLE001
+    pass
+
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

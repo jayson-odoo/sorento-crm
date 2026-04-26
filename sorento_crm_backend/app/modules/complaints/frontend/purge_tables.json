@@ -1,0 +1,5 @@
+{
+  "moduleKey": "complaints",
+  "tables": ["complaint_manual_attachments", "complaint_attachments", "complaints"],
+  "description": "Complaint records and attachment link rows (not binary files in storage)."
+}

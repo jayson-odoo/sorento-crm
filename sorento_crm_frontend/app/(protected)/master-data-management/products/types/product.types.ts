@@ -37,7 +37,10 @@ export interface Product {
   updated_at: Date;
   created_by?: string | null;
   updated_by?: string | null;
-  
+  // Sales tolerance (commercial pricing rules)
+  sales_tolerance_type?: string | null;
+  sales_tolerance_value?: number | null;
+
   // Relations (populated from API)
   category?: ProductCategory;
   brand?: Brand;

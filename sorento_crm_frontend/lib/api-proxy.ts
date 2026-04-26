@@ -8,15 +8,20 @@ import jwt from 'jsonwebtoken';
 
 /**
  * Base URL for server-side calls from Next.js to FastAPI (not browser-facing).
+ *
+ * Fail fast when no env URL is configured. Silent fallback to `localhost:8000`
+ * causes wrong-backend hits when running multiple local instances on alt ports.
  */
 export function getBackendBaseUrl(): string {
-  return (
+  const url =
     process.env.FASTAPI_INTERNAL_URL?.replace(/\/$/, '') ||
-    process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') ||
-    (process.env.NODE_ENV === 'production'
-      ? 'http://backend:8000'
-      : 'http://localhost:8000')
-  );
+    process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '');
+  if (!url) {
+    throw new Error(
+      'Backend URL not configured. Set NEXT_PUBLIC_API_URL (or FASTAPI_INTERNAL_URL for server-side overrides).',
+    );
+  }
+  return url;
 }
 
 /**

@@ -14,6 +14,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from sorento_crm_mcp.catalog import CATALOG, ToolSpec
 from sorento_crm_mcp.http_client import CRMClient
+from sorento_crm_mcp.module_loader import merged_catalog
 from sorento_crm_mcp.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,9 @@ TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
 TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     # Promotion list must always return active promotions only.
     "crm_marketing_promotions_list": {"status": "active"},
+    # Orders list (DO discovery) should surface the latest order first by default.
+    # UI grid passes its own sort/dir, so this only affects MCP/agent calls that omit them.
+    "crm_order_management_orders_list": {"sort": "order_date", "dir": "desc"},
 }
 
 PROMOTION_TOOL_NAMES: set[str] = {
@@ -462,7 +466,7 @@ def create_mcp_app(settings: Settings) -> FastMCP:
         lifespan=lifespan,
     )
 
-    for spec in CATALOG:
+    for spec in merged_catalog(CATALOG):
         impl = _compile_tool(spec)
         mcp.add_tool(impl, name=spec.name, description=spec.description)
         logger.debug("Registered MCP tool %s", spec.name)

@@ -1,0 +1,45 @@
+"""Respond.io workspace configuration (multi-workspace per deployment).
+
+The `commercial_leads` reciprocal relationship is added at runtime by
+`app/modules/commercial_core/_base_patches.py` when the commercial_core
+module is enabled — keeps this base class commercial-free.
+"""
+from __future__ import annotations
+
+import uuid
+
+from sqlalchemy import Boolean, Column, DateTime, Index, String, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
+from app.database import Base
+
+
+def _uuid_str() -> str:
+    return str(uuid.uuid4())
+
+
+class RespondWorkspace(Base):
+    __tablename__ = "respond_workspaces"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    space_id = Column(String(64), nullable=False)
+    name = Column(String(255), nullable=True)
+    api_key_ciphertext = Column(Text, nullable=False)
+    base_url = Column(String(512), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default="true")
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    respond_contacts = relationship("RespondContact", back_populates="workspace")
+
+    __table_args__ = (
+        Index("ix_respond_workspaces_space_id", "space_id"),
+        Index("ix_respond_workspaces_is_active", "is_active"),
+    )
