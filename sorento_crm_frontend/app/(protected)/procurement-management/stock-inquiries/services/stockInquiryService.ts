@@ -256,9 +256,41 @@ export interface RespondMessageItem {
   contactId?: number;
   channelId?: number;
   traffic?: string;
-  message?: { type?: string; text?: string; messageTag?: string };
+  message?: {
+    type?: string;
+    text?: string;
+    title?: string;
+    messageTag?: string;
+    replies?: string[];
+    attachment?: {
+      ext?: string;
+      fileName?: string;
+      size?: string;
+      mime?: string;
+      mimeType?: string;
+      type?: string;
+      isPending?: boolean;
+      url?: string;
+    };
+  };
   status?: Array<{ value?: string; timestamp?: number; message?: string }>;
   sender?: { source?: string; userId?: number; teamId?: number };
+  replyTo?: {
+    messageId?: number;
+    channelMessageId?: string;
+    message?: {
+      type?: string;
+      text?: string;
+      title?: string;
+      attachment?: {
+        ext?: string;
+        fileName?: string;
+        type?: string;
+        mime?: string;
+        mimeType?: string;
+      };
+    };
+  };
 }
 
 export interface RespondConversationResponse {

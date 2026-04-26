@@ -1,0 +1,11 @@
+{
+  "moduleKey": "marketing",
+  "tables": [
+    "marketing_campaigns",
+    "promotion_attachments",
+    "promotion_products",
+    "promotions",
+    "campaign_types"
+  ],
+  "description": "Campaigns, promotions, and promotion link rows."
+}

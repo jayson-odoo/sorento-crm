@@ -1,8 +1,11 @@
 """App Store: list / install / enable / disable modules (per-tenant)."""
+import tempfile
 from datetime import datetime
+from pathlib import Path
 from typing import Any, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -258,4 +261,152 @@ async def uninstall_module_route(
         purge_data=result["purge_data"],
         rows_deleted=result.get("rows_deleted"),
         message=result.get("message"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — module upload + activate + remove (zip drop-in)
+# ---------------------------------------------------------------------------
+
+@router.post("/upload")
+async def upload_module_zip(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_permission("system.modules.manage")),
+    db: Session = Depends(get_db),
+):
+    """
+    Accept a zip exported by another deployment, extract, run migrations.
+    Caller must POST /{key}/activate afterward to install + enable for tenant.
+    """
+    from app.services.module_upload_service import (
+        ModuleUploadError,
+        install_uploaded_zip,
+    )
+
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Upload must be a .zip file")
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+    try:
+        tmp.write(await file.read())
+        tmp.flush()
+        tmp.close()
+        result = install_uploaded_zip(Path(tmp.name))
+    except ModuleUploadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        try:
+            Path(tmp.name).unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Re-merge manifests so the new catalog row appears via _ensure_catalog_rows on next call.
+    from app.modules.runtime.module_manifest import merge_discovered_manifests
+    merge_discovered_manifests()
+
+    return {
+        "module_key": result.module_key,
+        "version": result.version,
+        "status": result.status,
+        "needs_frontend_rebuild": result.needs_frontend_rebuild,
+        "restart_required": result.restart_required,
+        "extracted_backend_files": result.extracted_backend_files,
+        "extracted_frontend_files": result.extracted_frontend_files,
+    }
+
+
+@router.post("/{module_key}/activate", response_model=InstallModulesResponse)
+async def activate_uploaded_module(
+    module_key: str,
+    current_user: dict = Depends(require_permission("system.modules.manage")),
+    db: Session = Depends(get_db),
+):
+    """Install + enable a freshly uploaded module for the current tenant."""
+    plan = install_modules(db, _tenant_id(), [module_key], current_user.get("id"))
+    return InstallModulesResponse(installed=plan["installed"], plan=plan["plan"])
+
+
+@router.get("/available")
+async def list_available_modules(
+    current_user: dict = Depends(require_permission("system.modules.manage")),
+    db: Session = Depends(get_db),
+):
+    """Modules in catalog with no tenant install row (uploaded but not activated)."""
+    from app.models.app_modules import AppModuleCatalog, TenantModule
+
+    installed_keys = {
+        r[0]
+        for r in db.query(TenantModule.module_key)
+        .filter(TenantModule.tenant_id == _tenant_id())
+        .all()
+    }
+    rows = (
+        db.query(
+            AppModuleCatalog.module_key,
+            AppModuleCatalog.display_name,
+            AppModuleCatalog.description,
+            AppModuleCatalog.dependencies,
+        )
+        .filter(~AppModuleCatalog.module_key.in_(installed_keys or [""]))
+        .all()
+    )
+    return [
+        {
+            "module_key": r[0],
+            "display_name": r[1],
+            "description": r[2],
+            "dependencies": list(r[3] or []),
+        }
+        for r in rows
+    ]
+
+
+@router.delete("/{module_key}/remove")
+async def remove_module(
+    module_key: str,
+    current_user: dict = Depends(require_permission("system.modules.manage")),
+    db: Session = Depends(get_db),
+):
+    """Delete the on-disk module package. Refused while installed for any tenant."""
+    from app.models.app_modules import TenantModule
+    from app.services.module_upload_service import ModuleUploadError, remove_module_files
+
+    has_install = (
+        db.query(TenantModule).filter(TenantModule.module_key == module_key).first() is not None
+    )
+    if has_install:
+        raise HTTPException(
+            status_code=409,
+            detail="Module still installed for at least one tenant — uninstall first.",
+        )
+    try:
+        return remove_module_files(module_key)
+    except ModuleUploadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — module export (download as zip)
+# ---------------------------------------------------------------------------
+
+@router.get("/{module_key}/export")
+async def export_module(
+    module_key: str,
+    current_user: dict = Depends(require_permission("system.modules.manage")),
+):
+    """Stream a zip containing the module's backend + frontend assets + metadata."""
+    from app.services.module_export_service import (
+        ModuleExportError,
+        build_export_zip,
+    )
+
+    try:
+        data, filename = build_export_zip(module_key)
+    except ModuleExportError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

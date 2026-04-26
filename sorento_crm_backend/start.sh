@@ -27,11 +27,14 @@ echo "${DB_HOST}:${DB_PORT:-5432} - accepting connections"
 echo "Running database migrations..."
 # alembic upgrade head
 
-echo "Starting FastAPI server..."
+API_HOST="${API_HOST:-0.0.0.0}"
+API_PORT="${API_PORT:-8000}"
+
+echo "Starting FastAPI server on ${API_HOST}:${API_PORT}..."
 exec python -m gunicorn app.main:app \
   --workers ${WORKERS:-4} \
   --worker-class uvicorn.workers.UvicornWorker \
-  --bind 0.0.0.0:8000 \
+  --bind "${API_HOST}:${API_PORT}" \
   --timeout 120 \
   --keep-alive 5 \
   --access-logfile - \

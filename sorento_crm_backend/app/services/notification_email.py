@@ -2,9 +2,11 @@
 import os
 import smtplib
 import logging
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import Optional, Any
+from typing import Any, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,109 @@ def _smtp_config_from_settings(settings: Any) -> Optional[dict]:
         "password": getattr(settings, "smtp_password", None),
         "from_addr": (getattr(settings, "smtp_from", None) or getattr(settings, "smtp_username", None) or "noreply@localhost"),
     }
+
+
+def send_mime_email(
+    *,
+    to_list: List[str],
+    cc_list: Optional[List[str]] = None,
+    bcc_list: Optional[List[str]] = None,
+    subject: str,
+    body_text: str,
+    body_html: Optional[str] = None,
+    attachments: Optional[List[Tuple[str, str, bytes]]] = None,
+    smtp_config: Optional[dict] = None,
+    from_name: Optional[str] = None,
+) -> Optional[str]:
+    """Send multipart MIME email with optional file attachments and CC/BCC.
+
+    attachments: list of (filename, mime_type, bytes_content)
+    Returns None on success, or error message string on failure.
+    """
+    to_clean = [t.strip() for t in (to_list or []) if t and str(t).strip()]
+    cc_clean = [t.strip() for t in (cc_list or []) if t and str(t).strip()]
+    bcc_clean = [t.strip() for t in (bcc_list or []) if t and str(t).strip()]
+    if not to_clean:
+        return "No recipients"
+
+    if smtp_config:
+        host = smtp_config.get("host")
+        port = int(smtp_config.get("port", "587"))
+        secure = smtp_config.get("secure", True)
+        user = smtp_config.get("username")
+        password = smtp_config.get("password")
+        from_addr = smtp_config.get("from_addr") or user or "noreply@localhost"
+    else:
+        cfg = _smtp_config_from_env()
+        host = cfg["host"]
+        if not host:
+            return "SMTP not configured (SMTP_HOST missing)"
+        port = int(cfg["port"])
+        secure = cfg["secure"]
+        user = cfg["username"]
+        password = cfg["password"]
+        from_addr = cfg["from_addr"]
+
+    use_ssl = secure and port == 465
+    use_starttls = secure and port != 465
+
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"] = f'"{from_name}" <{from_addr}>' if from_name else from_addr
+    msg["To"] = ", ".join(to_clean)
+    if cc_clean:
+        msg["Cc"] = ", ".join(cc_clean)
+
+    alt = MIMEMultipart("alternative")
+    alt.attach(MIMEText(body_text or body_html or "", "plain", "utf-8"))
+    if body_html:
+        alt.attach(MIMEText(body_html, "html", "utf-8"))
+    msg.attach(alt)
+
+    for filename, ctype, content in attachments or []:
+        fn = filename or "attachment"
+        raw_ct = (ctype or "application/octet-stream").strip()
+        if "/" in raw_ct:
+            maintype, subtype = raw_ct.split("/", 1)
+        else:
+            maintype, subtype = "application", "octet-stream"
+        part = MIMEBase(maintype, subtype)
+        part.set_payload(content)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", "attachment", filename=fn)
+        msg.attach(part)
+
+    envelope = to_clean + cc_clean + bcc_clean
+    if not envelope:
+        return "No recipients"
+
+    def do_login(server: smtplib.SMTP) -> None:
+        if user and password:
+            try:
+                server.login(user, password)
+            except smtplib.SMTPNotSupportedError:
+                pass
+            except smtplib.SMTPException as e:
+                if "not supported" in str(e).lower() and "auth" in str(e).lower():
+                    pass
+                else:
+                    raise
+
+    try:
+        if use_ssl:
+            with smtplib.SMTP_SSL(host, port) as server:
+                do_login(server)
+                server.sendmail(from_addr, envelope, msg.as_string())
+        else:
+            with smtplib.SMTP(host, port) as server:
+                if use_starttls:
+                    server.starttls()
+                do_login(server)
+                server.sendmail(from_addr, envelope, msg.as_string())
+        return None
+    except Exception as e:
+        logger.warning("MIME email send failed: %s", e)
+        return str(e)
 
 
 def send_notification_email_multi(

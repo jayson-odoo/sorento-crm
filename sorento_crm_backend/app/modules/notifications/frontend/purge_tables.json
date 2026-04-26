@@ -1,0 +1,5 @@
+{
+  "moduleKey": "notifications",
+  "tables": ["notification_deliveries", "notifications", "push_subscriptions"],
+  "description": "In-app notifications, delivery rows, and web push subscriptions."
+}

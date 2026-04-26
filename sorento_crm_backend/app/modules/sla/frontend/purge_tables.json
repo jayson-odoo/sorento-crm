@@ -1,0 +1,10 @@
+{
+  "moduleKey": "sla",
+  "tables": [
+    "conversation_sla_event_log",
+    "conversation_sla_tracking",
+    "sla_policy_tiers",
+    "sla_policies"
+  ],
+  "description": "SLA policies, tiers, conversation tracking, and SLA event history."
+}

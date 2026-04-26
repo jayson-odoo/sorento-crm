@@ -13,6 +13,7 @@ class ToolSpec:
     query_params: tuple[str, ...] = ()
     method: str = "GET"
     body_params: tuple[str, ...] = ()
+    module: str = ""  # Module key (e.g. "order"); empty for legacy unbound tools
 
 
 # Paths match [sorento_crm_backend/app/api/v1/__init__.py](sorento_crm_backend/app/api/v1/__init__.py) prefixes.
@@ -959,5 +960,59 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         method="POST",
         body_params=("payload_json",),
+    ),
+    # --- commercial: customers (developer cross-check) ---
+    ToolSpec(
+        "crm_master_customers_list",
+        "List/search customers (developers/clients). Use BEFORE crm_commercial_projects_create_smart to cross-check for existing developers and prevent duplicates from 1-2 char typos.",
+        "/api/v1/order-management/customers",
+        (),
+        ("page", "limit", "query", "is_active", "sort", "dir"),
+        module="commercial_core",
+    ),
+    ToolSpec(
+        "crm_master_customers_get",
+        "Get one customer (developer/client) full detail by id.",
+        "/api/v1/order-management/customers/{customer_id}",
+        ("customer_id",),
+        (),
+        module="commercial_core",
+    ),
+    # --- commercial: projects ---
+    ToolSpec(
+        "crm_commercial_projects_list",
+        "List commercial projects. Filters: customer_id, status_id, query (free-text). Default sort latest first.",
+        "/api/v1/commercial/projects/",
+        (),
+        ("page", "limit", "query", "customer_id", "status_id", "sort", "dir"),
+        module="commercial_core",
+    ),
+    ToolSpec(
+        "crm_commercial_projects_get",
+        "Get one commercial project full detail by id.",
+        "/api/v1/commercial/projects/{project_id}",
+        ("project_id",),
+        (),
+        module="commercial_core",
+    ),
+    ToolSpec(
+        "crm_commercial_projects_create_smart",
+        "Create a project with smart developer (customer) resolution. Body fields: developer_query OR developer_id OR developer_create, plus project (CommercialProjectCreate; developer_customer_id may be omitted), and force (bool). Returns 409 with near_matches when fuzzy match is ambiguous — caller must re-call with developer_id from the suggestions OR force=true + developer_create.",
+        "/api/v1/commercial/projects/smart-create",
+        (),
+        (),
+        method="POST",
+        body_params=("payload_json",),
+        module="commercial_core",
+    ),
+    ToolSpec(
+        "crm_commercial_projects_edit",
+        "Update fields on an existing commercial project. PATCH body matches CommercialProjectUpdate (title, brief, notes, status, dates, project_stage_id, owner_user_id, address fields, etc).",
+        "/api/v1/commercial/projects/{project_id}",
+        ("project_id",),
+        (),
+        method="PATCH",
+        body_params=("payload_json",),
+        module="commercial_core",
     ),
 )

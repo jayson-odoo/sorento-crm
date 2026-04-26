@@ -6,7 +6,10 @@ export type ListQueryResourceKey =
   | 'suppliers'
   | 'promotions'
   | 'workflow_form_definitions'
-  | 'workflow_form_submissions';
+  | 'workflow_form_submissions'
+  | 'commercial_activities'
+  | 'commercial_activity_tasks'
+  | 'commercial_project_tasks';
 
 export type ListQueryFilterCondition = {
   field_key: string;

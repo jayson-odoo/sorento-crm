@@ -461,6 +461,411 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/commercial-core/process-configuration/activity-templates/[templateCode]/edit/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/activity-templates/[templateCode]/edit">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/activity-templates/[templateCode]/edit/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/activity-templates/new/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/activity-templates/new">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/activity-templates/new/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/activity-templates/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/activity-templates">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/activity-templates/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/lead-stages/[code]/edit/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/lead-stages/[code]/edit">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/lead-stages/[code]/edit/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/lead-stages/[code]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/lead-stages/[code]">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/lead-stages/[code]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/lead-stages/new/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/lead-stages/new">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/lead-stages/new/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/lead-stages/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/lead-stages">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/lead-stages/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/reminder-defaults/[context]/edit/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/reminder-defaults/[context]/edit">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/reminder-defaults/[context]/edit/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/reminder-defaults/new/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/reminder-defaults/new">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/reminder-defaults/new/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/reminder-defaults/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/reminder-defaults">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/reminder-defaults/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/settings/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/settings">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/settings/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/stages/[resource]/[code]/edit/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/stages/[resource]/[code]/edit">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/stages/[resource]/[code]/edit/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/stages/[resource]/[code]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/stages/[resource]/[code]">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/stages/[resource]/[code]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/stages/[resource]/new/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/stages/[resource]/new">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/stages/[resource]/new/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/stages/[resource]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/stages/[resource]">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/stages/[resource]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/tender-checkpoint-templates/[checkpointCode]/edit/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/tender-checkpoint-templates/[checkpointCode]/edit">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/tender-checkpoint-templates/[checkpointCode]/edit/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/tender-checkpoint-templates/new/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/tender-checkpoint-templates/new">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/tender-checkpoint-templates/new/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/tender-checkpoint-templates/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/tender-checkpoint-templates">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/tender-checkpoint-templates/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/workflow-stages/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-core/process-configuration/workflow-stages">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/workflow-stages/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/activities/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/activities">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/activities/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/activity-tasks/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/activity-tasks">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/activity-tasks/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/pipeline/dashboard/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/pipeline/dashboard">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/pipeline/dashboard/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/pipeline/leads/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/pipeline/leads">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/pipeline/leads/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/pipeline/master-quotations/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/pipeline/master-quotations">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/pipeline/master-quotations/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/pipeline/tasks/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/pipeline/tasks">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/pipeline/tasks/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/pipeline/tenders/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/pipeline/tenders">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/pipeline/tenders/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/project-tasks/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/project-tasks">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/project-tasks/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/projects/[id]/edit/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/projects/[id]/edit">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/projects/[id]/edit/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/projects/[id]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/projects/[id]">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/projects/[id]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/projects/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/projects">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/projects/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/quotation-email-templates/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/quotation-email-templates">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/quotation-email-templates/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/quotation-revisions/edit/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/quotation-revisions/edit">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/quotation-revisions/edit/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/quotation-revisions/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/quotation-revisions">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/quotation-revisions/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/quotations/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/quotations">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/quotations/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/sales-order-progression/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/sales-order-progression">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/sales-order-progression/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/tender-quotation-compare/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/tender-quotation-compare">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/tender-quotation-compare/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/tenders/[tenderCode]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/tenders/[tenderCode]">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/tenders/[tenderCode]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/tenders/new/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/tenders/new">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/tenders/new/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-management/tenders/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial-management/tenders">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-management/tenders/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial/lead-stages/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial/lead-stages">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial/lead-stages/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial/leads/[id]/edit/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial/leads/[id]/edit">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial/leads/[id]/edit/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial/leads/[id]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial/leads/[id]">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial/leads/[id]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial/leads/new/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial/leads/new">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial/leads/new/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial/leads/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/commercial/leads">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial/leads/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/(protected)/complaint-management/complaints/[id]/edit/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/complaint-management/complaints/[id]/edit">> = Specific
@@ -3700,6 +4105,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
 {
   type __IsExpected<Specific extends LayoutConfig<"/">> = Specific
   const handler = {} as typeof import("../../app/(auth)/layout.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/commercial-core/process-configuration/layout.tsx
+{
+  type __IsExpected<Specific extends LayoutConfig<"/commercial-core/process-configuration">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/commercial-core/process-configuration/layout.js")
   type __Check = __IsExpected<typeof handler>
   // @ts-ignore
   type __Unused = __Check

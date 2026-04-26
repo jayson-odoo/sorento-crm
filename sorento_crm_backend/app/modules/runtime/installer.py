@@ -23,6 +23,12 @@ DEFAULT_TENANT_ID = "__default__"
 
 def _ensure_catalog_rows(db: Session) -> None:
     """Idempotent: insert missing catalog rows from manifest defaults (bootstrap only)."""
+    # Pull in any per-module manifest.py before seeding so newly-dropped modules appear.
+    try:
+        from app.modules.runtime.module_manifest import merge_discovered_manifests
+        merge_discovered_manifests()
+    except Exception:  # noqa: BLE001
+        logger.warning("manifest discovery failed during catalog seed", exc_info=True)
     existing = {row[0] for row in db.query(AppModuleCatalog.module_key).all()}
     for idx, key in enumerate(ALL_MODULE_KEYS):
         if key in existing:

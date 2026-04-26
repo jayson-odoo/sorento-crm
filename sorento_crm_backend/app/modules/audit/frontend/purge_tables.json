@@ -1,0 +1,5 @@
+{
+  "moduleKey": "audit",
+  "tables": ["audit_logs"],
+  "description": "Audit log entries."
+}

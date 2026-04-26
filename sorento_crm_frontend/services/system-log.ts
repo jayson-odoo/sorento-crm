@@ -27,8 +27,12 @@ export async function systemLog(
   try {
     // Determine if we're in server or client context
     const isServer = typeof window === 'undefined';
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || (isServer ? 'http://localhost:8000' : '');
-    
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? '';
+    if (isServer && !apiUrl) {
+      console.error('[LOG] NEXT_PUBLIC_API_URL not set; cannot post system log from server context');
+      return;
+    }
+
     // Build the URL
     let url = '/api/v1/user-management/system-logs';
     if (isServer && apiUrl) {

@@ -1,0 +1,5 @@
+{
+  "moduleKey": "public_view_links",
+  "tables": ["view_tokens"],
+  "description": "Shareable public-view tokens only. Related records are not deleted."
+}

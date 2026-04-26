@@ -39,8 +39,8 @@ services:
       
       # API Server
       API_HOST: 0.0.0.0
-      API_PORT: 8000
-      
+      API_PORT: ${API_PORT:-8000}
+
       # CORS - Allow frontend origin
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:80,http://frontend}
       
@@ -57,7 +57,7 @@ services:
       AWS_REGION: ${AWS_REGION:-}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "${BACKEND_PORT:-8000}:${API_PORT:-8000}"
     depends_on:
       db:
         condition: service_healthy
@@ -84,7 +84,7 @@ services:
         exec gunicorn app.main:app \
           --workers $${WORKERS:-4} \
           --worker-class uvicorn.workers.UvicornWorker \
-          --bind 0.0.0.0:8000 \
+          --bind 0.0.0.0:$${API_PORT:-8000} \
           --timeout 120 \
           --keep-alive 5 \
           --access-logfile - \

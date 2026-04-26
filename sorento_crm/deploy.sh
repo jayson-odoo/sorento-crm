@@ -21,6 +21,15 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
+# Load .env so health checks honour BACKEND_PORT / FRONTEND_PORT overrides.
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
+
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+FRONTEND_PORT="${FRONTEND_PORT:-80}"
+
 echo -e "${GREEN}Step 1: Pulling latest code...${NC}"
 git pull || echo "Warning: Could not pull from git (not a git repo?)"
 
@@ -37,14 +46,14 @@ echo -e "${GREEN}Step 5: Checking service status...${NC}"
 docker compose ps
 
 echo -e "${GREEN}Step 6: Testing backend health...${NC}"
-if curl -f http://localhost:8000/health > /dev/null 2>&1; then
+if curl -f "http://localhost:${BACKEND_PORT}/health" > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Backend is healthy${NC}"
 else
     echo -e "${YELLOW}⚠ Backend health check failed (may still be starting)${NC}"
 fi
 
 echo -e "${GREEN}Step 7: Testing frontend...${NC}"
-if curl -f http://localhost/health > /dev/null 2>&1; then
+if curl -f "http://localhost:${FRONTEND_PORT}/health" > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Frontend is healthy${NC}"
 else
     echo -e "${YELLOW}⚠ Frontend health check failed (may still be starting)${NC}"
@@ -55,8 +64,8 @@ echo -e "${GREEN}Deployment complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 echo "Access your application:"
-echo "  Frontend:    http://localhost"
-echo "  Backend API: http://localhost:8000/docs"
+echo "  Frontend:    http://localhost:${FRONTEND_PORT}"
+echo "  Backend API: http://localhost:${BACKEND_PORT}/docs"
 echo ""
 echo "View logs:"
 echo "  docker compose logs -f"

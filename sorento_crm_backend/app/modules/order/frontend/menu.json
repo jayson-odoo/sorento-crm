@@ -1,0 +1,6 @@
+{
+  "moduleKey": "order",
+  "title": "Order management",
+  "iconName": "ShoppingCart",
+  "path": "/order-management"
+}

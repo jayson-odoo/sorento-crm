@@ -61,22 +61,25 @@ class RespondContact(Base):
     user_type = Column(Text, nullable=True)  # Raw value from Respond; kept for display/sync
     access_type_code = Column(String(50), ForeignKey("contact_access_types.code", ondelete="SET NULL"), nullable=True)  # Resolved catalog code (one per contact)
     respond_io_id = Column(Text, nullable=True)  # Respond.io contact id for inbox URL
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("respond_workspaces.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)
-    
+
     contact_accesses = relationship(
         "ContactAgentAccess",
         back_populates="contact",
         cascade="all, delete-orphan",
     )
     access_type = relationship("ContactAccessType", foreign_keys=[access_type_code])
+    workspace = relationship("RespondWorkspace", back_populates="respond_contacts")
 
     __table_args__ = (
         Index("ix_respond_contacts_phone_number", "phone_number"),
         Index("ix_respond_contacts_user_type", "user_type"),
         Index("ix_respond_contacts_access_type_code", "access_type_code"),
         Index("ix_respond_contacts_respond_io_id", "respond_io_id"),
+        Index("ix_respond_contacts_workspace_id", "workspace_id"),
     )
 
 
