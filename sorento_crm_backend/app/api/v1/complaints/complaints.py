@@ -30,6 +30,92 @@ router = APIRouter()
 _COMPLAINT_DO_LOOKUP_FIELDS: tuple[str, ...] = ("customer_name", "product_code", "order_date_from", "order_date_to")
 
 
+_COMPLAINT_FIELD_RECOMMENDED: dict[str, dict[str, Any]] = {
+    "complaint_type": {
+        "description": "What kind of issue. Free-text but the typical bucket is one of these.",
+        "recommended_values": ["Broken", "Damaged", "Scratch", "Wrong Item", "Missing Parts", "Defect", "Other"],
+    },
+    "customer_type": {
+        "description": "Who the complainant is.",
+        "recommended_values": ["dealer", "end_user", "project", "other"],
+        "note": "If 'other', also set customer_type_other with a short description.",
+    },
+    "within_warranty": {
+        "description": "Warranty status as known to the customer.",
+        "recommended_values": ["Yes", "No", "Not sure"],
+    },
+    "product_type": {
+        "description": "Generic product category. Free-text; use a short label such as the items below.",
+        "recommended_values": ["bathtub", "basin", "water closet", "kitchen sink", "faucet", "shower", "accessory"],
+    },
+    "defect_description": {
+        "description": "One- or two-line description of the defect. Free-text. Example: 'Cracked basin near drain hole, leaking on use.'",
+    },
+    "defects_discovered": {
+        "description": "When the defect was discovered (date YYYY-MM-DD or short phrase like 'on delivery', 'after 1 week of use').",
+    },
+    "quantity": {
+        "description": "Affected unit count. Integer >= 1.",
+    },
+    "sales_person": {
+        "description": "Sales rep handling this customer. Free-text name.",
+    },
+    "address": {
+        "description": "Site / delivery address relevant to the complaint. Free-text.",
+    },
+    "contact_person": {
+        "description": "Person to contact about this complaint at the customer side. Free-text.",
+    },
+    "project_title": {
+        "description": "Project name when the complaint is for a project order; otherwise customer label.",
+    },
+    "delivery_order_numbers": {
+        "description": "One or more DO numbers (comma-separated). MUST be supplied first; resolve via crm_order_management_orders_by_product_list.",
+    },
+}
+
+
+_COMPLAINT_FIELD_OBSERVED_COLUMNS: tuple[str, ...] = (
+    "complaint_type",
+    "customer_type",
+    "within_warranty",
+    "product_type",
+)
+
+
+def _query_observed_field_values(service: ComplaintService, column: str, limit: int = 8) -> list[str]:
+    """Return top distinct non-empty values for a column from existing complaints. Best-effort, swallows errors."""
+    from sqlalchemy import text as _text
+
+    try:
+        rows = service.db.execute(
+            _text(
+                f"SELECT {column} AS v, COUNT(*) AS c FROM complaints "
+                f"WHERE {column} IS NOT NULL AND {column} <> '' "
+                f"GROUP BY {column} ORDER BY c DESC LIMIT :lim"
+            ),
+            {"lim": limit},
+        ).all()
+        return [str(r._mapping["v"]) for r in rows]
+    except Exception:
+        return []
+
+
+def _build_complaint_field_guidance(service: ComplaintService) -> dict[str, dict[str, Any]]:
+    """Build per-field help: description + recommended values + observed examples from existing rows."""
+    guidance: dict[str, dict[str, Any]] = {}
+    for field, meta in _COMPLAINT_FIELD_RECOMMENDED.items():
+        entry: dict[str, Any] = {"description": meta.get("description")}
+        if "recommended_values" in meta:
+            entry["recommended_values"] = list(meta["recommended_values"])
+        if "note" in meta:
+            entry["note"] = meta["note"]
+        if field in _COMPLAINT_FIELD_OBSERVED_COLUMNS:
+            entry["observed_examples"] = _query_observed_field_values(service, field)
+        guidance[field] = entry
+    return guidance
+
+
 def _request_has_valid_external_api_key(request: Optional[Request]) -> bool:
     """True when X-API-Key header matches configured external API key (same as get_current_user_or_api_key)."""
     if request is None:
@@ -307,6 +393,7 @@ def _raise_do_lookup_guidance(
     valid_do_numbers: Optional[list[str]] = None,
     provided_filters: Optional[dict[str, str]] = None,
     next_action: str = "collect_do_lookup_filters",
+    field_guidance: Optional[dict[str, dict[str, Any]]] = None,
 ) -> None:
     detail: dict[str, Any] = {
         "status": status_value,
@@ -319,6 +406,14 @@ def _raise_do_lookup_guidance(
             f"{', '.join(_COMPLAINT_DO_LOOKUP_FIELDS)} to search DO numbers; combining filters narrows results."
         ),
     }
+    if field_guidance:
+        detail["field_guidance"] = field_guidance
+        detail["field_guidance_usage"] = (
+            "If the user is asking what values they can input for a specific complaint field "
+            "(e.g. 'what options for complaint_type', 'what can I put for customer_type'), answer from "
+            "field_guidance directly — do NOT insist on DO lookup or block the question. "
+            "Only proceed to DO lookup when the user actually wants to file the complaint."
+        )
     if provided_filters:
         detail["provided_filters"] = provided_filters
         detail["recommended_tools"] = [
@@ -360,6 +455,7 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
     )
     if not provided_do_numbers:
         provided_filters = _collect_provided_do_filters(complaint_data)
+        guidance = _build_complaint_field_guidance(service)
         if provided_filters:
             shown = ", ".join(f"{k}={v!r}" for k, v in provided_filters.items())
             _raise_do_lookup_guidance(
@@ -373,6 +469,7 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
                     "to the chosen DO(s). Do not ask the user again for filters they already gave."
                 ),
                 provided_filters=provided_filters,
+                field_guidance=guidance,
             )
         _raise_do_lookup_guidance(
             status_value="needs_do_lookup",
@@ -381,6 +478,7 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
                 "Please provide at least one of: customer name, product, or an order date range "
                 "(any one is enough to search DO numbers; more filters narrow results)."
             ),
+            field_guidance=guidance,
         )
     if resolved_do_numbers and invalid_do_numbers:
         _raise_do_lookup_guidance(
@@ -394,6 +492,7 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
         )
     if not resolved_do_numbers:
         provided_filters = _collect_provided_do_filters(complaint_data)
+        guidance = _build_complaint_field_guidance(service)
         if provided_filters:
             shown = ", ".join(f"{k}={v!r}" for k, v in provided_filters.items())
             _raise_do_lookup_guidance(
@@ -406,6 +505,7 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
                 ),
                 provided_filters=provided_filters,
                 invalid_do_numbers=invalid_do_numbers or provided_do_numbers,
+                field_guidance=guidance,
             )
         _raise_do_lookup_guidance(
             status_value="needs_do_lookup",
@@ -414,6 +514,7 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
                 "or an order date range to search for valid DO number(s) (any one is enough; combining narrows results)."
             ),
             invalid_do_numbers=invalid_do_numbers or provided_do_numbers,
+            field_guidance=guidance,
         )
     complaint_data.delivery_order_number = ", ".join(resolved_do_numbers)
     return service.infer_complaint_defaults_from_delivery_orders(resolved_do_numbers)

@@ -39,7 +39,7 @@ class ComplaintIntegrationCreate(BaseModel):
     sales_person: Optional[str] = None
     address: Optional[str] = None
     customer_type: Optional[str] = None
-    within_warranty: Optional[str] = None
+    within_warranty: Optional[Any] = None
     product_type: Optional[str] = None
     product_code: Optional[str] = None
     quantity: Optional[str | int | float | Decimal] = None
@@ -105,6 +105,19 @@ class ComplaintIntegrationCreate(BaseModel):
             normalized_items[canonical] = value
 
         return normalized_items
+
+    @field_validator("within_warranty", mode="before")
+    @classmethod
+    def coerce_within_warranty_to_string(cls, v: Any) -> Optional[str]:
+        """Accept bool, str, or None. Coerce bool -> 'Yes'/'No' so LLMs can pass either."""
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return "Yes" if v else "No"
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s else None
+        return str(v)
 
     @field_validator("quantity", mode="before")
     @classmethod

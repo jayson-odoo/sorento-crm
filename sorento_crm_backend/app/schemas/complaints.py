@@ -39,6 +39,18 @@ def _coerce_scope_id(v: Any) -> Optional[str]:
     return s if s else None
 
 
+def _coerce_within_warranty(v: Any) -> Optional[str]:
+    """Accept bool, str, or None for within_warranty. bool -> 'Yes'/'No'."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return "Yes" if v else "No"
+    if isinstance(v, str):
+        s = v.strip()
+        return s if s else None
+    return str(v)
+
+
 class ComplaintAttachmentBase(BaseModel):
     complaint_id: str
     file_name: Optional[str] = None
@@ -86,8 +98,13 @@ class ComplaintBase(BaseModel):
     @classmethod
     def coerce_scope_ids(cls, v: Any) -> Optional[str]:
         return _coerce_scope_id(v)
+
+    @field_validator("within_warranty", mode="before")
+    @classmethod
+    def coerce_within_warranty(cls, v: Any) -> Optional[str]:
+        return _coerce_within_warranty(v)
     customer_type_others: Optional[str] = None
-    within_warranty: Optional[str] = None
+    within_warranty: Optional[Any] = None
     product_type: Optional[str] = None
     defects_discovered: Optional[str] = None
     complaint_type: Optional[str] = None
@@ -128,8 +145,13 @@ class ComplaintUpdate(BaseModel):
     @classmethod
     def coerce_scope_ids(cls, v: Any) -> Optional[str]:
         return _coerce_scope_id(v)
+
+    @field_validator("within_warranty", mode="before")
+    @classmethod
+    def coerce_within_warranty(cls, v: Any) -> Optional[str]:
+        return _coerce_within_warranty(v)
     customer_type_others: Optional[str] = None
-    within_warranty: Optional[str] = None
+    within_warranty: Optional[Any] = None
     product_type: Optional[str] = None
     defects_discovered: Optional[str] = None
     complaint_type: Optional[str] = None
