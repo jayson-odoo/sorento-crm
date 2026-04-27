@@ -419,6 +419,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_order_management_orders_list",
         (
             "List orders (customer, status, has_order_lines, ORDER DATE filters, optional actual delivery date filters, search). "
+            "External/AI-agent callers are HARD-CAPPED at limit=10 server-side regardless of the value sent — "
+            "narrow with customer_query / product_query / order_date_from / order_date_to instead of asking for more rows. "
             "DATE FILTER RULE: For complaint Delivery-Order discovery and any 'orders in [month/period/date range]' question, "
             "ALWAYS use `order_date_from`/`order_date_to`. NEVER use `actual_delivery_date_from`/`actual_delivery_date_to` unless "
             "the user EXPLICITLY mentions the delivery date (e.g. 'delivered last week'). "
@@ -921,15 +923,27 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_forms_complaints_list",
-        "List complaints scoped to the current Respond.io contact_id and space_id. Supports pagination, query, status, and assigned_to filters. external API-key callers MUST pass contact_id and space_id.",
+        (
+            "List complaints scoped to the current Respond.io contact_id and space_id.\n"
+            "REQUIRED PARAMETERS: `contact_id` AND `space_id`. ALWAYS pass BOTH from the active session/context "
+            "— never omit. Calling without them returns 400 'contact_id and space_id are required for external "
+            "complaint list/get requests.' Do NOT try to substitute them with `query`; they are separate parameters.\n"
+            "Optional: page (default 1), limit (default 50), query (free-text over delivery_order_number, "
+            "customer_name, product_code, defect_description, project_title), status, assigned_to, sort, dir."
+        ),
         "/api/v1/complaints-management/complaints/",
         (),
-        ("page", "limit", "query", "contact_id", "space_id", "status", "assigned_to", "sort", "dir"),
+        ("contact_id", "space_id", "page", "limit", "query", "status", "assigned_to", "sort", "dir"),
         method="GET",
     ),
     ToolSpec(
         "crm_forms_complaints_get",
-        "Get one complaint by complaint_id for view/update preparation. external API-key callers MUST pass contact_id and space_id; the lookup 404s when the complaint is not in scope.",
+        (
+            "Get one complaint by complaint_id for view/update preparation.\n"
+            "REQUIRED PARAMETERS: `complaint_id` (path) AND `contact_id` AND `space_id` (query). ALWAYS pass "
+            "both contact_id and space_id from the active session/context — never omit. Calling without them "
+            "returns 400; the lookup also 404s when the complaint exists but is not in the supplied scope."
+        ),
         "/api/v1/complaints-management/complaints/{complaint_id}",
         ("complaint_id",),
         ("contact_id", "space_id"),

@@ -438,7 +438,9 @@ export default function StockInquiryDetail({
             <DialogDescription>Enter a reason for the rejection. This is required.</DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="reject-reason">Rejection reason</Label>
+            <Label htmlFor="reject-reason">
+              Rejection reason <span className="text-destructive">*</span>
+            </Label>
             <Textarea
               id="reject-reason"
               value={rejectReason}

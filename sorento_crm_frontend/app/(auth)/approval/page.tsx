@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -106,6 +106,8 @@ function ApprovalContent() {
   const [done, setDone] = useState<boolean | null>(null);
   const [approvedBy, setApprovedBy] = useState('');
   const [comments, setComments] = useState('');
+  const [commentsError, setCommentsError] = useState<string | null>(null);
+  const commentsRef = useRef<HTMLTextAreaElement | null>(null);
 
   const fetchSummary = useCallback(async () => {
     if (!token) {
@@ -139,9 +141,14 @@ function ApprovalContent() {
     if (!token) return;
     const trimmedComments = comments.trim();
     if (action === 'rejected' && !trimmedComments) {
-      toast.error('Please enter a reason for rejection.');
+      const msg = 'Please enter a reason for rejection before clicking Reject.';
+      setCommentsError(msg);
+      toast.error(msg);
+      commentsRef.current?.focus();
+      commentsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
+    setCommentsError(null);
     setSubmitting(true);
     try {
       const res = await fetch(
@@ -440,20 +447,31 @@ function ApprovalContent() {
           </div>
           <div>
             <Label htmlFor="comments" className="text-sm">
-              Comments
+              Comments <span className="text-destructive" aria-hidden>*</span>
+              <span className="ml-1 text-xs font-normal text-muted-foreground">(required when rejecting)</span>
             </Label>
             <p id="comments-hint" className="text-xs text-muted-foreground mt-1">
               Optional when approving. Required when rejecting.
             </p>
             <Textarea
+              ref={commentsRef}
               id="comments"
               value={comments}
-              onChange={(e) => setComments(e.target.value)}
+              onChange={(e) => {
+                setComments(e.target.value);
+                if (commentsError && e.target.value.trim()) setCommentsError(null);
+              }}
               placeholder="Add notes, or your reason if rejecting"
-              className="mt-1.5 resize-none"
+              className={`mt-1.5 resize-none ${commentsError ? 'border-destructive ring-1 ring-destructive' : ''}`}
               rows={3}
-              aria-describedby="comments-hint"
+              aria-describedby="comments-hint comments-error"
+              aria-invalid={commentsError ? true : undefined}
             />
+            {commentsError && (
+              <p id="comments-error" className="mt-1 text-xs text-destructive">
+                {commentsError}
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:gap-3">
             <Button
@@ -467,7 +485,7 @@ function ApprovalContent() {
             <Button
               variant="destructive"
               onClick={() => handleSubmit('rejected')}
-              disabled={submitting || !comments.trim()}
+              disabled={submitting}
               className="flex-1 sm:flex-none min-h-11 sm:min-h-10 text-base sm:text-sm font-semibold"
             >
               Reject

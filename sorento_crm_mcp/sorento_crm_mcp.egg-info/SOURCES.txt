@@ -4,6 +4,7 @@ sorento_crm_mcp/__init__.py
 sorento_crm_mcp/__main__.py
 sorento_crm_mcp/catalog.py
 sorento_crm_mcp/http_client.py
+sorento_crm_mcp/module_loader.py
 sorento_crm_mcp/server.py
 sorento_crm_mcp/settings.py
 sorento_crm_mcp.egg-info/PKG-INFO

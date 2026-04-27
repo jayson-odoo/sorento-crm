@@ -605,6 +605,9 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "List orders with filters (customer_id / order_status_id / has_order_lines / order_date "
             "range / optional actual delivery date / free-text `query` over order_number, debtor_code, "
             "debtor_name, customer name/code). "
+            "External/AI-agent callers are HARD-CAPPED at limit=10 server-side regardless of the value "
+            "sent — narrow with customer_query / product_query / order_date_from / order_date_to instead "
+            "of asking for more rows. "
             "Also supports delivery-order lookup filters: `customer_query` (debtor/customer partial), "
             "`product_query` (product code/name partial), and order_date range. "
             "FILTER REQUIREMENT: customer (customer_id / customer_query), product (product_query), and "
@@ -1196,8 +1199,11 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "Searches previously submitted complaint records. DO NOT use this tool if the user is looking for "
             "downloadable templates, blank marketing forms, or attachments. "
-            "List complaints for the authenticated user. For external/API-key usage, always include contact_id and space_id filters. "
-            "Supports free-text query, status filter, assigned_to filter, and pagination. "
+            "REQUIRED PARAMETERS: contact_id AND space_id. ALWAYS pass BOTH from the active session/context — "
+            "never omit. Calling without them returns 400 'contact_id and space_id are required for external "
+            "complaint list/get requests.' These are SEPARATE parameters — do NOT try to stuff them into `query`. "
+            "Optional: free-text query (over delivery_order_number / customer_name / product_code / "
+            "defect_description / project_title), status, assigned_to, page, limit, sort, dir. "
             "Use for 'list my complaints', 'show my open complaints', 'rejected complaints this month'."
         ),
         typical_user_questions=(

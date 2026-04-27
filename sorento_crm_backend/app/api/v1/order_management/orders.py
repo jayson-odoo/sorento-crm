@@ -3,13 +3,28 @@ import calendar
 import re
 from datetime import datetime, time
 
-from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Body
+from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Body, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.order_service import OrderService
+from app.config import settings as app_settings
+
+
+_EXTERNAL_ORDERS_LIST_LIMIT_CAP = 10
+
+
+def _request_has_valid_external_api_key(request: Optional[Request]) -> bool:
+    """True when X-API-Key header matches configured external API key."""
+    if request is None:
+        return False
+    key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
+    valid = getattr(app_settings, "external_api_key", None)
+    if not key or not valid:
+        return False
+    return key.strip() == str(valid).strip()
 
 
 # --------------------------------------------------------------------------- #
@@ -191,6 +206,7 @@ router = APIRouter()
 
 @router.get("/", response_model=ListResponse[OrderResponse])
 async def get_orders(
+    request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
@@ -241,8 +257,14 @@ async def get_orders(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get orders with pagination, filtering, and sorting."""
+    """Get orders with pagination, filtering, and sorting.
+
+    External API-key callers (e.g. AI agent / MCP) are capped at limit=10 to keep tool
+    responses small enough to reason over.
+    """
     try:
+        if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_LIST_LIMIT_CAP:
+            limit = _EXTERNAL_ORDERS_LIST_LIMIT_CAP
         service = OrderService(db)
         result = service.list_orders(
             page=page,

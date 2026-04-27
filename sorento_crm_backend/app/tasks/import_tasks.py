@@ -1572,6 +1572,38 @@ def _decimal_or_none(value: Any) -> Optional[Decimal]:
         return None
 
 
+def _decimal_or_none_pct(value: Any) -> Optional[Decimal]:
+    """Decimal parser that also accepts trailing '%'. Returns the percent value as a Decimal
+    (e.g. '45%' -> Decimal('45')). Empty / unparseable -> None."""
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return value
+    s = str(value).strip()
+    if not s:
+        return None
+    if s.endswith("%"):
+        s = s[:-1].strip()
+        if not s:
+            return None
+    try:
+        return Decimal(s)
+    except Exception:
+        return None
+
+
+def _norm_decimal_for_key(v: Any) -> Decimal:
+    """Normalize a Decimal-or-None for composite-key equality. None -> 0."""
+    if v is None:
+        return Decimal("0")
+    if isinstance(v, Decimal):
+        return v
+    try:
+        return Decimal(str(v))
+    except Exception:
+        return Decimal("0")
+
+
 def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
     """Process delivery order detail Excel: one new order line per spreadsheet row.
     Columns: doc no -> order (order_number), item code -> product, location -> warehouse,
@@ -1641,7 +1673,7 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
 
             qty = _decimal_or_none(_find(row_data, "qty", "quantity"))
             unit_price = _decimal_or_none(_find(row_data, "unit price", "unit price "))
-            discount = _decimal_or_none(_find(row_data, "discount"))
+            discount = _decimal_or_none_pct(_find(row_data, "discount"))
             total = _decimal_or_none(_find(row_data, "total"))
             tax = _decimal_or_none(_find(row_data, "tax"))
             total_excl = _decimal_or_none(_find(row_data, "total excluding tax", "total excluding tax "))
@@ -1715,23 +1747,29 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
             order_id: str,
             product_id: str,
             warehouse_id: str,
-            unit_price: Optional[Decimal],
-            discount: Optional[Decimal],
-        ) -> tuple[str, str, str, Optional[Decimal], Optional[Decimal]]:
-            return (order_id, product_id, warehouse_id, unit_price, discount)
+            quantity: Any,
+            unit_price: Any,
+            discount: Any,
+            total: Any,
+        ) -> tuple[str, str, str, Decimal, Decimal, Decimal, Decimal]:
+            """Composite identity for an order line within an order. Same product+warehouse with
+            different quantity/unit_price/discount/total are SEPARATE lines (no aggregation).
+            Used both to deduplicate against existing rows on re-upload and to keep import
+            rows distinct when source data has same product/warehouse repeated."""
+            return (
+                str(order_id),
+                str(product_id),
+                str(warehouse_id),
+                _norm_decimal_for_key(quantity),
+                _norm_decimal_for_key(unit_price),
+                _norm_decimal_for_key(discount),
+                _norm_decimal_for_key(total),
+            )
 
-        def _sum_or_none(current: Optional[Decimal], incoming: Optional[Decimal]) -> Optional[Decimal]:
-            if current is None and incoming is None:
-                return None
-            return (current or Decimal("0")) + (incoming or Decimal("0"))
-
-        # Aggregate import rows by dedupe key:
-        # (order, product, warehouse, unit_price, discount)
-        grouped_rows: Dict[
-            tuple[str, str, str, Optional[Decimal], Optional[Decimal]],
-            Dict[str, Optional[Decimal]],
-        ] = {}
-
+        # Resolve each import row to a per-row entry. NO pre-aggregation — every row stays distinct
+        # so two source rows with same product/warehouse but different price/discount produce two
+        # separate order lines, matching the source spreadsheet.
+        resolved_rows: List[Dict[str, Any]] = []
         successful = 0
         failed = 0
         skipped = 0
@@ -1772,42 +1810,19 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                     errors.append({"row": row_idx, "error": f"Warehouse not found: {location}"})
                     continue
 
-                try:
-                    key = _line_key(
-                        order.id,
-                        str(product.id),
-                        str(warehouse.id),
-                        row_data.get("unit_price"),
-                        row_data.get("discount"),
-                    )
-                    bucket = grouped_rows.get(key)
-                    if bucket is None:
-                        bucket = {
-                            "quantity": Decimal("0"),
-                            "unit_price": row_data.get("unit_price"),
-                            "discount": row_data.get("discount"),
-                            "total": None,
-                            "tax": None,
-                            "total_excluding_tax": None,
-                            "total_including_tax": None,
-                        }
-                        grouped_rows[key] = bucket
-                    bucket["quantity"] = (bucket["quantity"] or Decimal("0")) + (
-                        row_data.get("quantity") or Decimal("0")
-                    )
-                    bucket["total"] = _sum_or_none(bucket.get("total"), row_data.get("total"))
-                    bucket["tax"] = _sum_or_none(bucket.get("tax"), row_data.get("tax"))
-                    bucket["total_excluding_tax"] = _sum_or_none(
-                        bucket.get("total_excluding_tax"),
-                        row_data.get("total_excluding_tax"),
-                    )
-                    bucket["total_including_tax"] = _sum_or_none(
-                        bucket.get("total_including_tax"),
-                        row_data.get("total_including_tax"),
-                    )
-                except Exception as e:
-                    failed += 1
-                    errors.append({"row": row_idx, "error": str(e)})
+                resolved_rows.append({
+                    "row_idx": row_idx,
+                    "order_id": str(order.id),
+                    "product_id": str(product.id),
+                    "warehouse_id": str(warehouse.id),
+                    "quantity": row_data.get("quantity"),
+                    "unit_price": row_data.get("unit_price"),
+                    "discount": row_data.get("discount"),
+                    "total": row_data.get("total"),
+                    "tax": row_data.get("tax"),
+                    "total_excluding_tax": row_data.get("total_excluding_tax"),
+                    "total_including_tax": row_data.get("total_including_tax"),
+                })
             finally:
                 cur = row_idx - 1
                 if cur % progress_every == 0 or cur == total_data_rows:
@@ -1819,11 +1834,14 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                         skipped_rows=skipped,
                     )
 
-        # Load existing lines for relevant orders and group by the same dedupe key.
-        order_ids = list({k[0] for k in grouped_rows.keys()})
-        existing_by_key: Dict[
-            tuple[str, str, str, Optional[Decimal], Optional[Decimal]],
-            List[OrderLine],
+        # Load existing lines for the involved orders and count multiplicity per composite key.
+        # Re-uploading an incremental file should NOT create duplicates: for each incoming row,
+        # if an unmatched existing line with the identical composite key remains, we consume it
+        # (skip insert); only the surplus (new rows in the file) becomes new OrderLine inserts.
+        order_ids = list({r["order_id"] for r in resolved_rows})
+        existing_remaining: Dict[
+            tuple[str, str, str, Decimal, Decimal, Decimal, Decimal],
+            int,
         ] = {}
         if order_ids:
             existing_lines = (
@@ -1836,48 +1854,48 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                     str(line.order_id),
                     str(line.product_id),
                     str(line.warehouse_id),
-                    cast(Optional[Decimal], getattr(line, "unit_price", None)),
-                    cast(Optional[Decimal], getattr(line, "discount", None)),
+                    getattr(line, "quantity", None),
+                    getattr(line, "unit_price", None),
+                    getattr(line, "discount", None),
+                    getattr(line, "total", None),
                 )
-                existing_by_key.setdefault(ex_key, []).append(line)
+                existing_remaining[ex_key] = existing_remaining.get(ex_key, 0) + 1
 
-        # Upsert grouped rows:
-        # - if key exists, update first line and delete duplicates
-        # - else create a new line
-        for key, payload in grouped_rows.items():
+        for entry in resolved_rows:
             try:
-                order_id, product_id, warehouse_id, unit_price, discount = key
-                matches = existing_by_key.get(key, [])
-                target_line: Optional[OrderLine] = None
-                if matches:
-                    matches_sorted = sorted(
-                        matches,
-                        key=lambda l: (int(getattr(l, "line_sequence", 0) or 0), str(l.id)),
-                    )
-                    target_line = matches_sorted[0]
-                    for dup in matches_sorted[1:]:
-                        db.delete(dup)
-                if target_line is None:
-                    seq_next[order_id] += 1
-                    target_line = OrderLine(
-                        order_id=order_id,
-                        product_id=product_id,
-                        warehouse_id=warehouse_id,
-                        line_sequence=seq_next[order_id],
-                    )
-                    db.add(target_line)
+                key = _line_key(
+                    entry["order_id"],
+                    entry["product_id"],
+                    entry["warehouse_id"],
+                    entry["quantity"],
+                    entry["unit_price"],
+                    entry["discount"],
+                    entry["total"],
+                )
+                if existing_remaining.get(key, 0) > 0:
+                    existing_remaining[key] -= 1
+                    skipped += 1
+                    continue
 
-                setattr(target_line, "quantity", payload.get("quantity") or Decimal("0"))
-                setattr(target_line, "unit_price", unit_price)
-                setattr(target_line, "discount", discount)
-                setattr(target_line, "total", payload.get("total"))
-                setattr(target_line, "tax", payload.get("tax"))
-                setattr(target_line, "total_excluding_tax", payload.get("total_excluding_tax"))
-                setattr(target_line, "total_including_tax", payload.get("total_including_tax"))
+                seq_next[entry["order_id"]] += 1
+                new_line = OrderLine(
+                    order_id=entry["order_id"],
+                    product_id=entry["product_id"],
+                    warehouse_id=entry["warehouse_id"],
+                    line_sequence=seq_next[entry["order_id"]],
+                    quantity=entry.get("quantity") or Decimal("0"),
+                    unit_price=entry.get("unit_price"),
+                    discount=entry.get("discount"),
+                    total=entry.get("total"),
+                    tax=entry.get("tax"),
+                    total_excluding_tax=entry.get("total_excluding_tax"),
+                    total_including_tax=entry.get("total_including_tax"),
+                )
+                db.add(new_line)
                 successful += 1
             except Exception as e:
                 failed += 1
-                errors.append({"row": None, "error": str(e)})
+                errors.append({"row": entry.get("row_idx"), "error": str(e)})
 
         db.commit()
         job_service.complete_job(

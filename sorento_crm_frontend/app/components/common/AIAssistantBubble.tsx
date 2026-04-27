@@ -73,7 +73,7 @@ export default function AIAssistantBubble() {
       </Button>
 
       {open ? (
-        <div className="absolute bottom-16 right-0 flex h-[72vh] w-[min(900px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm">
+        <div className="absolute bottom-16 right-0 flex h-[min(60vh,420px)] w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm sm:h-[min(65vh,520px)] sm:w-[22rem] md:h-[min(70vh,600px)] md:w-[26rem] lg:h-[min(72vh,680px)] lg:w-[30rem] xl:h-[min(75vh,720px)] xl:w-[34rem] 2xl:w-[40rem]">
           <div className="flex items-center justify-between border-b border-border/70 bg-background/80 px-4 py-3">
             <h3 className="text-base font-semibold">AI assistant</h3>
             <Button
