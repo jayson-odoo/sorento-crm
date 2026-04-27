@@ -9,19 +9,24 @@ import jwt from 'jsonwebtoken';
 /**
  * Base URL for server-side calls from Next.js to FastAPI (not browser-facing).
  *
- * Fail fast when no env URL is configured. Silent fallback to `localhost:8000`
- * causes wrong-backend hits when running multiple local instances on alt ports.
+ * Resolution order:
+ *   1. FASTAPI_INTERNAL_URL  — runtime override for server-side calls
+ *   2. NEXT_PUBLIC_API_URL   — baked at build time
+ *   3. production            → http://backend:8000  (Docker compose service name)
+ *   4. development           → throw (avoid silent localhost:8000 fallback that breaks
+ *                              multi-instance dev where alt ports are in use)
  */
 export function getBackendBaseUrl(): string {
   const url =
     process.env.FASTAPI_INTERNAL_URL?.replace(/\/$/, '') ||
     process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '');
-  if (!url) {
-    throw new Error(
-      'Backend URL not configured. Set NEXT_PUBLIC_API_URL (or FASTAPI_INTERNAL_URL for server-side overrides).',
-    );
+  if (url) return url;
+  if (process.env.NODE_ENV === 'production') {
+    return 'http://backend:8000';
   }
-  return url;
+  throw new Error(
+    'Backend URL not configured. Set NEXT_PUBLIC_API_URL (or FASTAPI_INTERNAL_URL for server-side overrides).',
+  );
 }
 
 /**
@@ -79,9 +84,18 @@ export async function proxyToFastAPI(
     requireAuth?: boolean; // If false, allows requests without NextAuth token
   } = {}
 ): Promise<NextResponse> {
-  const apiUrl = getBackendBaseUrl();
+  let apiUrl: string;
+  try {
+    apiUrl = getBackendBaseUrl();
+  } catch (e) {
+    console.error('FastAPI proxy: backend URL not configured', e);
+    return NextResponse.json(
+      { message: 'Backend URL not configured on this deployment' },
+      { status: 500 },
+    );
+  }
   const method = options.method || request.method;
-  
+
   // Build URL with query params
   const url = new URL(`${apiUrl}${fastApiPath}`);
   if (options.queryParams) {

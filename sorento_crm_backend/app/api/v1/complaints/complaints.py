@@ -267,8 +267,12 @@ def _raise_do_lookup_guidance(
         "status": status_value,
         "next_action": "collect_do_lookup_filters",
         "message": message,
-        "required_filters": list(_COMPLAINT_DO_LOOKUP_FIELDS),
-        "missing_fields": list(_COMPLAINT_DO_LOOKUP_FIELDS),
+        "available_filters": list(_COMPLAINT_DO_LOOKUP_FIELDS),
+        "filter_requirement": "any_one_of",
+        "filter_hint": (
+            "All filters are optional. Provide at least one of "
+            f"{', '.join(_COMPLAINT_DO_LOOKUP_FIELDS)} to search DO numbers; combining filters narrows results."
+        ),
     }
     if invalid_do_numbers:
         detail["invalid_delivery_order_numbers"] = invalid_do_numbers
@@ -290,7 +294,8 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
             status_value="needs_do_lookup",
             message=(
                 "Delivery order number is required before complaint details. "
-                "Please provide customer name, product, and order date range so we can search DO numbers."
+                "Please provide at least one of: customer name, product, or an order date range "
+                "(any one is enough to search DO numbers; more filters narrow results)."
             ),
         )
     if resolved_do_numbers and invalid_do_numbers:
@@ -307,8 +312,8 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
         _raise_do_lookup_guidance(
             status_value="needs_do_lookup",
             message=(
-                "No matching delivery order found. Please provide customer name, product, and order date range "
-                "to search for valid DO number(s)."
+                "No matching delivery order found. Provide at least one of: customer name, product, "
+                "or an order date range to search for valid DO number(s) (any one is enough; combining narrows results)."
             ),
             invalid_do_numbers=invalid_do_numbers or provided_do_numbers,
         )
