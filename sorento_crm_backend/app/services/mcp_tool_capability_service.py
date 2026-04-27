@@ -1185,6 +1185,42 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     # FORM SUBMISSIONS — complaint + entity attachments
     # ==================================================================
+    "crm_forms_complaints_list": ToolIntent(
+        category="complaint.form_submission",
+        intent="List my complaints with filters scoped to the current Respond.io contact_id and space_id.",
+        description=(
+            "Searches previously submitted complaint records. DO NOT use this tool if the user is looking for "
+            "downloadable templates, blank marketing forms, or attachments. "
+            "List complaints for the authenticated user. For external/API-key usage, always include contact_id and space_id filters. "
+            "Supports free-text query, status filter, assigned_to filter, and pagination. "
+            "Use for 'list my complaints', 'show my open complaints', 'rejected complaints this month'."
+        ),
+        typical_user_questions=(
+            "List my latest complaints.",
+            "Show my open complaints.",
+            "Pending complaints this month.",
+            "Find my complaints for customer BATH IDEA BATHROOM.",
+            "Show the last 5 complaints I filed.",
+            "Rejected complaints I can edit.",
+        ),
+        aliases=("list my complaints", "show my complaints"),
+    ),
+    "crm_forms_complaints_get": ToolIntent(
+        category="complaint.form_submission",
+        intent="View ONE complaint in detail.",
+        description=(
+            "Searches previously submitted complaint records. DO NOT use this tool if the user is looking for "
+            "downloadable templates, blank marketing forms, or attachments. "
+            "Get one complaint by complaint_id for a view-only summary, or to preload an update flow for a REJECTED complaint. "
+            "For external/API-key usage, contact_id and space_id are required filters and the lookup 404s when the complaint is not in scope."
+        ),
+        typical_user_questions=(
+            "Show details for complaint CMP-2026-00081.",
+            "Open my complaint about cracked basin.",
+            "View the full summary of this complaint.",
+            "Load this rejected complaint so I can edit it.",
+        ),
+    ),
     "crm_forms_complaints_submit": ToolIntent(
         category="complaint.form_submission",
         intent="Start or continue a customer complaint draft; validates DO first and only performs final submit after completion/confirmation.",

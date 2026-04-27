@@ -41,6 +41,23 @@ def _request_has_valid_external_api_key(request: Optional[Request]) -> bool:
     return key.strip() == str(valid).strip()
 
 
+def _require_contact_scope_for_external(
+    *,
+    request: Optional[Request],
+    contact_id: Optional[str],
+    space_id: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """For external API key callers, require both contact_id and space_id to scope the result."""
+    c = (contact_id or "").strip() or None
+    s = (space_id or "").strip() or None
+    if _request_has_valid_external_api_key(request) and (not c or not s):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="contact_id and space_id are required for external complaint list/get requests.",
+        )
+    return c, s
+
+
 def _respond_user_id_from_current_user(current_user: dict) -> str:
     """Get respond_user_id for SLA/response tracking; fallback to user id."""
     rid = (current_user or {}).get("respond_user_id") or (current_user or {}).get("respondUserId")
@@ -54,19 +71,30 @@ def _respond_user_id_from_current_user(current_user: dict) -> str:
 
 @router.get("/", response_model=ListResponse[ComplaintResponse])
 async def get_complaints(
+    request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    contact_id: Optional[str] = Query(None),
+    space_id: Optional[str] = Query(None),
     sort: Optional[str] = Query("complaint_date"),
     dir: Optional[str] = Query("asc"),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get complaints with pagination, search, assignee/status filters, and sorting."""
+    """Get complaints with pagination, search, assignee/status filters, and sorting.
+
+    External API-key callers MUST pass contact_id and space_id to scope the result.
+    """
     try:
         service = ComplaintService(db)
+        filter_contact_id, filter_space_id = _require_contact_scope_for_external(
+            request=request,
+            contact_id=contact_id,
+            space_id=space_id,
+        )
         result = service.list_complaints(
             page=page,
             limit=limit,
@@ -74,9 +102,13 @@ async def get_complaints(
             assigned_to=assigned_to,
             status=status,
             sort_field=sort or "complaint_date",
-            sort_dir=dir or "asc"
+            sort_dir=dir or "asc",
+            contact_id=filter_contact_id,
+            space_id=filter_space_id,
         )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -169,14 +201,25 @@ async def get_complaint_conversation(
 @router.get("/{complaint_id}", response_model=ComplaintResponse)
 async def get_complaint(
     complaint_id: str,
-    current_user: dict = Depends(get_current_user),
+    request: Request,
+    contact_id: Optional[str] = Query(None),
+    space_id: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get a single complaint by ID."""
+    """Get a single complaint by ID. External API-key callers MUST pass contact_id and space_id to scope the lookup."""
     try:
         service = ComplaintService(db)
-        complaint = service.get_complaint_with_attachments(complaint_id)
-        return complaint
+        filter_contact_id, filter_space_id = _require_contact_scope_for_external(
+            request=request,
+            contact_id=contact_id,
+            space_id=space_id,
+        )
+        return service.get_complaint_for_response(
+            complaint_id,
+            contact_id=filter_contact_id,
+            space_id=filter_space_id,
+        )
     except HTTPException:
         raise
     except Exception as e:

@@ -2223,7 +2223,12 @@ class StockInquiryService:
         return {"prev_id": prev_id, "next_id": next_id}
 
     def get_or_create_view_token(self, inquiry_id: str) -> str:
-        """Get or create a reusable view token for this stock inquiry. Returns the token string."""
+        """Get or create a reusable view token for this stock inquiry.
+
+        New tokens are committed via an isolated session so this can safely be called
+        from a serializer/read path without piggybacking the caller's pending writes
+        into a premature commit.
+        """
         self.get_inquiry(inquiry_id)  # ensure exists
         row = (
             self.db.query(ViewToken)
@@ -2235,14 +2240,34 @@ class StockInquiryService:
         )
         if row:
             return row.token
+        from app.database import SessionLocal
+
         token_value = secrets.token_urlsafe(32)
-        view_token = ViewToken(
-            entity_type="stock_inquiry",
-            entity_id=inquiry_id,
-            token=token_value,
-        )
-        self.db.add(view_token)
-        self.db.flush()
+        isolated = SessionLocal()
+        try:
+            existing = (
+                isolated.query(ViewToken)
+                .filter(
+                    ViewToken.entity_type == "stock_inquiry",
+                    ViewToken.entity_id == inquiry_id,
+                )
+                .first()
+            )
+            if existing:
+                return existing.token
+            isolated.add(
+                ViewToken(
+                    entity_type="stock_inquiry",
+                    entity_id=inquiry_id,
+                    token=token_value,
+                )
+            )
+            isolated.commit()
+        except Exception:
+            isolated.rollback()
+            raise
+        finally:
+            isolated.close()
         return token_value
 
     def get_inquiry_summary_by_token(self, token_value: str) -> dict:
@@ -4928,7 +4953,12 @@ class PurchaseRequestService:
         }
 
     def get_or_create_view_token(self, entity_id: str) -> str:
-        """Get or create a reusable view token for this purchase request. Returns the token string."""
+        """Get or create a reusable view token for this purchase request.
+
+        New tokens are committed via an isolated session so this can safely be called
+        from a serializer/read path without piggybacking the caller's pending writes
+        into a premature commit.
+        """
         row = (
             self.db.query(ViewToken)
             .filter(
@@ -4939,14 +4969,34 @@ class PurchaseRequestService:
         )
         if row:
             return row.token
+        from app.database import SessionLocal
+
         token_value = secrets.token_urlsafe(32)
-        view_token = ViewToken(
-            entity_type="purchase_request",
-            entity_id=entity_id,
-            token=token_value,
-        )
-        self.db.add(view_token)
-        self.db.flush()
+        isolated = SessionLocal()
+        try:
+            existing = (
+                isolated.query(ViewToken)
+                .filter(
+                    ViewToken.entity_type == "purchase_request",
+                    ViewToken.entity_id == entity_id,
+                )
+                .first()
+            )
+            if existing:
+                return existing.token
+            isolated.add(
+                ViewToken(
+                    entity_type="purchase_request",
+                    entity_id=entity_id,
+                    token=token_value,
+                )
+            )
+            isolated.commit()
+        except Exception:
+            isolated.rollback()
+            raise
+        finally:
+            isolated.close()
         return token_value
 
     def get_view_summary_by_token(self, token_value: str) -> dict:

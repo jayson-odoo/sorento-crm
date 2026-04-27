@@ -920,6 +920,22 @@ CATALOG: tuple[ToolSpec, ...] = (
         method="GET",
     ),
     ToolSpec(
+        "crm_forms_complaints_list",
+        "List complaints scoped to the current Respond.io contact_id and space_id. Supports pagination, query, status, and assigned_to filters. external API-key callers MUST pass contact_id and space_id.",
+        "/api/v1/complaints-management/complaints/",
+        (),
+        ("page", "limit", "query", "contact_id", "space_id", "status", "assigned_to", "sort", "dir"),
+        method="GET",
+    ),
+    ToolSpec(
+        "crm_forms_complaints_get",
+        "Get one complaint by complaint_id for view/update preparation. external API-key callers MUST pass contact_id and space_id; the lookup 404s when the complaint is not in scope.",
+        "/api/v1/complaints-management/complaints/{complaint_id}",
+        ("complaint_id",),
+        ("contact_id", "space_id"),
+        method="GET",
+    ),
+    ToolSpec(
         "crm_forms_complaints_submit",
         (
             "Complaint filing draft/validator and final submit tool. CALL THIS TOOL as soon as "

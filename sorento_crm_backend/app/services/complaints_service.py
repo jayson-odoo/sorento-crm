@@ -284,11 +284,16 @@ class ComplaintService:
         assigned_to: Optional[str] = None,
         status: Optional[str] = None,
         sort_field: str = "complaint_date",
-        sort_dir: str = "asc"
+        sort_dir: str = "asc",
+        contact_id: Optional[str] = None,
+        space_id: Optional[str] = None,
     ):
-        """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status."""
+        """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status.
+
+        contact_id/space_id scope the result set to a single Respond.io contact/space (used by external callers).
+        """
         q = self.db.query(Complaint)
-        
+
         if query:
             q = q.filter(
                 or_(
@@ -308,6 +313,12 @@ class ComplaintService:
                 q = q.filter(Complaint.assigned_to == assigned_to.strip())
         if status and str(status).strip():
             q = q.filter(Complaint.status == status.strip())
+        contact_filter = (contact_id or "").strip()
+        if contact_filter:
+            q = q.filter(Complaint.contact_id == contact_filter)
+        space_filter = (space_id or "").strip()
+        if space_filter:
+            q = q.filter(Complaint.space_id == space_filter)
         
         sort_map = {
             "complaint_date": Complaint.complaint_date,
@@ -358,8 +369,30 @@ class ComplaintService:
         complaint = self.get_complaint(complaint_id)
         return self._serialize_complaint(complaint)
 
+    def get_complaint_for_response(
+        self,
+        complaint_id: str,
+        *,
+        contact_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+    ) -> dict:
+        """Get serialized complaint, optionally enforcing contact_id/space_id scope (external callers)."""
+        complaint = self.get_complaint(complaint_id)
+        c = (contact_id or "").strip()
+        s = (space_id or "").strip()
+        if c and (getattr(complaint, "contact_id", None) or "") != c:
+            raise handle_not_found("Complaint", complaint_id)
+        if s and (getattr(complaint, "space_id", None) or "") != s:
+            raise handle_not_found("Complaint", complaint_id)
+        return self._serialize_complaint(complaint)
+
     def get_or_create_view_token(self, complaint_id: str) -> str:
-        """Get or create a reusable view token for this complaint. Returns the token string."""
+        """Get or create a reusable view token for this complaint. Returns the token string.
+
+        The token row is persisted via an isolated session so that calling this from a
+        serializer (read or mutation path) never piggybacks the caller's pending writes
+        into a premature commit.
+        """
         self.get_complaint(complaint_id)  # ensure exists
         row = (
             self.db.query(ViewToken)
@@ -371,14 +404,34 @@ class ComplaintService:
         )
         if row:
             return row.token
+        from app.database import SessionLocal
+
         token_value = secrets.token_urlsafe(32)
-        view_token = ViewToken(
-            entity_type="complaint",
-            entity_id=complaint_id,
-            token=token_value,
-        )
-        self.db.add(view_token)
-        self.db.flush()
+        isolated = SessionLocal()
+        try:
+            existing = (
+                isolated.query(ViewToken)
+                .filter(
+                    ViewToken.entity_type == "complaint",
+                    ViewToken.entity_id == complaint_id,
+                )
+                .first()
+            )
+            if existing:
+                return existing.token
+            isolated.add(
+                ViewToken(
+                    entity_type="complaint",
+                    entity_id=complaint_id,
+                    token=token_value,
+                )
+            )
+            isolated.commit()
+        except Exception:
+            isolated.rollback()
+            raise
+        finally:
+            isolated.close()
         return token_value
 
     def _get_complaint_handler_user_ids(self) -> List[str]:

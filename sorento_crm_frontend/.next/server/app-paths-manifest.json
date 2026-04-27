@@ -1,3 +1,6 @@
 {
+  "/api/auth/token/route": "app/api/auth/token/route.js",
+  "/(auth)/signin/page": "app/(auth)/signin/page.js",
+  "/(protected)/resource-management/attachment-directories/page": "app/(protected)/resource-management/attachment-directories/page.js",
   "/(auth)/reset-password/page": "app/(auth)/reset-password/page.js"
 }

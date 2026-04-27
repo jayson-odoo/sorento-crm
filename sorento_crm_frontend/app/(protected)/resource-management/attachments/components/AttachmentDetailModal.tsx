@@ -416,12 +416,25 @@ function LinkProductForm({
   isPending: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const { data } = useQuery({
-    queryKey: ['products-for-link', attachmentId],
-    queryFn: () => getProducts({ pageIndex: 0, pageSize: 500, sorting: [], searchQuery: '' }),
+  const [search, setSearch] = useState('');
+  const [debounced, setDebounced] = useState('');
+  const [pickedLabel, setPickedLabel] = useState<string | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search.trim()), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+  useEffect(() => {
+    if (!selectedId) setPickedLabel(null);
+  }, [selectedId]);
+  const { data, isFetching } = useQuery({
+    queryKey: ['products-for-link', attachmentId, debounced],
+    queryFn: () => getProducts({ pageIndex: 0, pageSize: 25, sorting: [], searchQuery: debounced }),
   });
   const products = (data?.data ?? []).filter((p) => !linkedProductIds.includes(p.id));
-  const selected = products.find((p) => p.id === selectedId);
+  const selectedFromList = products.find((p) => p.id === selectedId);
+  const selectedLabel = selectedFromList
+    ? (selectedFromList.product_name || selectedFromList.product_code || selectedFromList.id)
+    : pickedLabel;
 
   return (
     <div className="space-y-4">
@@ -433,41 +446,41 @@ function LinkProductForm({
               variant="outline"
               role="combobox"
               mode="input"
-              placeholder={!selected}
+              placeholder={!selectedLabel}
               aria-expanded={open}
               className="w-full justify-between"
             >
-              {selected ? (selected.product_name || selected.product_code || selected.id) : 'Select a product...'}
+              {selectedLabel ?? 'Select a product...'}
               <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
-            <Command
-              filter={(value, search) => {
-                if (!search.trim()) return 1;
-                const item = products.find((p) => p.id === value);
-                if (!item) return 0;
-                const text = `${item.product_code || ''} ${item.product_name || ''}`.toLowerCase();
-                return text.includes(search.toLowerCase()) ? 1 : 0;
-              }}
-            >
-              <CommandInput placeholder="Search product..." />
+            <Command shouldFilter={false}>
+              <CommandInput
+                placeholder="Search product..."
+                value={search}
+                onValueChange={setSearch}
+              />
               <CommandList>
-                <CommandEmpty>No product found.</CommandEmpty>
+                <CommandEmpty>{isFetching ? 'Searching…' : 'No product found.'}</CommandEmpty>
                 <CommandGroup>
-                  {products.map((p) => (
-                    <CommandItem
-                      key={p.id}
-                      value={p.id}
-                      onSelect={() => {
-                        onSelect(p.id);
-                        setOpen(false);
-                      }}
-                    >
-                      {p.product_name || p.product_code || p.id}
-                      {selectedId === p.id && <CommandCheck />}
-                    </CommandItem>
-                  ))}
+                  {products.map((p) => {
+                    const label = p.product_name || p.product_code || p.id;
+                    return (
+                      <CommandItem
+                        key={p.id}
+                        value={p.id}
+                        onSelect={() => {
+                          onSelect(p.id);
+                          setPickedLabel(label);
+                          setOpen(false);
+                        }}
+                      >
+                        {label}
+                        {selectedId === p.id && <CommandCheck />}
+                      </CommandItem>
+                    );
+                  })}
                 </CommandGroup>
               </CommandList>
             </Command>
@@ -505,12 +518,25 @@ function LinkPromotionForm({
   isPending: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const { data } = useQuery({
-    queryKey: ['promotions-for-link', attachmentId],
-    queryFn: () => getPromotions({ pageIndex: 0, pageSize: 500, sorting: [], searchQuery: '' }),
+  const [search, setSearch] = useState('');
+  const [debounced, setDebounced] = useState('');
+  const [pickedLabel, setPickedLabel] = useState<string | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search.trim()), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+  useEffect(() => {
+    if (!selectedId) setPickedLabel(null);
+  }, [selectedId]);
+  const { data, isFetching } = useQuery({
+    queryKey: ['promotions-for-link', attachmentId, debounced],
+    queryFn: () => getPromotions({ pageIndex: 0, pageSize: 25, sorting: [], searchQuery: debounced }),
   });
   const promotions = (data?.data ?? []).filter((p) => !linkedPromotionIds.includes(p.id));
-  const selected = promotions.find((p) => p.id === selectedId);
+  const selectedFromList = promotions.find((p) => p.id === selectedId);
+  const selectedLabel = selectedFromList
+    ? (selectedFromList.name || selectedFromList.id)
+    : pickedLabel;
 
   return (
     <div className="space-y-4">
@@ -522,41 +548,41 @@ function LinkPromotionForm({
               variant="outline"
               role="combobox"
               mode="input"
-              placeholder={!selected}
+              placeholder={!selectedLabel}
               aria-expanded={open}
               className="w-full justify-between"
             >
-              {selected ? (selected.name || selected.id) : 'Select a promotion...'}
+              {selectedLabel ?? 'Select a promotion...'}
               <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
-            <Command
-              filter={(value, search) => {
-                if (!search.trim()) return 1;
-                const item = promotions.find((p) => p.id === value);
-                if (!item) return 0;
-                const text = (item.name || item.id || '').toLowerCase();
-                return text.includes(search.toLowerCase()) ? 1 : 0;
-              }}
-            >
-              <CommandInput placeholder="Search promotion..." />
+            <Command shouldFilter={false}>
+              <CommandInput
+                placeholder="Search promotion..."
+                value={search}
+                onValueChange={setSearch}
+              />
               <CommandList>
-                <CommandEmpty>No promotion found.</CommandEmpty>
+                <CommandEmpty>{isFetching ? 'Searching…' : 'No promotion found.'}</CommandEmpty>
                 <CommandGroup>
-                  {promotions.map((p) => (
-                    <CommandItem
-                      key={p.id}
-                      value={p.id}
-                      onSelect={() => {
-                        onSelect(p.id);
-                        setOpen(false);
-                      }}
-                    >
-                      {p.name || p.id}
-                      {selectedId === p.id && <CommandCheck />}
-                    </CommandItem>
-                  ))}
+                  {promotions.map((p) => {
+                    const label = p.name || p.id;
+                    return (
+                      <CommandItem
+                        key={p.id}
+                        value={p.id}
+                        onSelect={() => {
+                          onSelect(p.id);
+                          setPickedLabel(label);
+                          setOpen(false);
+                        }}
+                      >
+                        {label}
+                        {selectedId === p.id && <CommandCheck />}
+                      </CommandItem>
+                    );
+                  })}
                 </CommandGroup>
               </CommandList>
             </Command>
@@ -592,9 +618,22 @@ function LinkFormForm({
   isPending: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const { data } = useForms({ pageIndex: 0, pageSize: 500, sorting: [], searchQuery: '' });
+  const [search, setSearch] = useState('');
+  const [debounced, setDebounced] = useState('');
+  const [pickedLabel, setPickedLabel] = useState<string | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search.trim()), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+  useEffect(() => {
+    if (!selectedId) setPickedLabel(null);
+  }, [selectedId]);
+  const { data, isFetching } = useForms({ pageIndex: 0, pageSize: 25, sorting: [], searchQuery: debounced });
   const forms = (data?.data ?? []).filter((f) => f.attachment_id !== attachmentId);
-  const selected = forms.find((f) => f.id === selectedId);
+  const selectedFromList = forms.find((f) => f.id === selectedId);
+  const selectedLabel = selectedFromList
+    ? (selectedFromList.name || selectedFromList.code || selectedFromList.id)
+    : pickedLabel;
 
   return (
     <div className="space-y-4">
@@ -606,41 +645,41 @@ function LinkFormForm({
               variant="outline"
               role="combobox"
               mode="input"
-              placeholder={!selected}
+              placeholder={!selectedLabel}
               aria-expanded={open}
               className="w-full justify-between"
             >
-              {selected ? (selected.name || selected.code || selected.id) : 'Select a form...'}
+              {selectedLabel ?? 'Select a form...'}
               <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
-            <Command
-              filter={(value, search) => {
-                if (!search.trim()) return 1;
-                const item = forms.find((f) => f.id === value);
-                if (!item) return 0;
-                const text = `${item.name || ''} ${item.code || ''}`.toLowerCase();
-                return text.includes(search.toLowerCase()) ? 1 : 0;
-              }}
-            >
-              <CommandInput placeholder="Search form..." />
+            <Command shouldFilter={false}>
+              <CommandInput
+                placeholder="Search form..."
+                value={search}
+                onValueChange={setSearch}
+              />
               <CommandList>
-                <CommandEmpty>No form found.</CommandEmpty>
+                <CommandEmpty>{isFetching ? 'Searching…' : 'No form found.'}</CommandEmpty>
                 <CommandGroup>
-                  {forms.map((f) => (
-                    <CommandItem
-                      key={f.id}
-                      value={f.id}
-                      onSelect={() => {
-                        onSelect(f.id);
-                        setOpen(false);
-                      }}
-                    >
-                      {f.name || f.code || f.id}
-                      {selectedId === f.id && <CommandCheck />}
-                    </CommandItem>
-                  ))}
+                  {forms.map((f) => {
+                    const label = f.name || f.code || f.id;
+                    return (
+                      <CommandItem
+                        key={f.id}
+                        value={f.id}
+                        onSelect={() => {
+                          onSelect(f.id);
+                          setPickedLabel(label);
+                          setOpen(false);
+                        }}
+                      >
+                        {label}
+                        {selectedId === f.id && <CommandCheck />}
+                      </CommandItem>
+                    );
+                  })}
                 </CommandGroup>
               </CommandList>
             </Command>
@@ -678,12 +717,25 @@ function LinkPackingListForm({
   isPending: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const { data } = useQuery({
-    queryKey: ['packing-lists-for-link', attachmentId],
-    queryFn: () => getPackingLists({ pageIndex: 0, pageSize: 200, sorting: [], searchQuery: '' }),
+  const [search, setSearch] = useState('');
+  const [debounced, setDebounced] = useState('');
+  const [pickedLabel, setPickedLabel] = useState<string | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search.trim()), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+  useEffect(() => {
+    if (!selectedId) setPickedLabel(null);
+  }, [selectedId]);
+  const { data, isFetching } = useQuery({
+    queryKey: ['packing-lists-for-link', attachmentId, debounced],
+    queryFn: () => getPackingLists({ pageIndex: 0, pageSize: 25, sorting: [], searchQuery: debounced }),
   });
   const packingLists = (data?.data ?? []).filter((p) => !linkedPackingListIds.includes(p.id));
-  const selected = packingLists.find((p) => p.id === selectedId);
+  const selectedFromList = packingLists.find((p) => p.id === selectedId);
+  const selectedLabel = selectedFromList
+    ? (selectedFromList.shipment_number || selectedFromList.id)
+    : pickedLabel;
 
   return (
     <div className="space-y-4">
@@ -695,41 +747,41 @@ function LinkPackingListForm({
               variant="outline"
               role="combobox"
               mode="input"
-              placeholder={!selected}
+              placeholder={!selectedLabel}
               aria-expanded={open}
               className="w-full justify-between"
             >
-              {selected ? (selected.shipment_number || selected.id) : 'Select a packing list...'}
+              {selectedLabel ?? 'Select a packing list...'}
               <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
-            <Command
-              filter={(value, search) => {
-                if (!search.trim()) return 1;
-                const item = packingLists.find((p) => p.id === value);
-                if (!item) return 0;
-                const text = (item.shipment_number || item.id || '').toLowerCase();
-                return text.includes(search.toLowerCase()) ? 1 : 0;
-              }}
-            >
-              <CommandInput placeholder="Search packing list..." />
+            <Command shouldFilter={false}>
+              <CommandInput
+                placeholder="Search packing list..."
+                value={search}
+                onValueChange={setSearch}
+              />
               <CommandList>
-                <CommandEmpty>No packing list found.</CommandEmpty>
+                <CommandEmpty>{isFetching ? 'Searching…' : 'No packing list found.'}</CommandEmpty>
                 <CommandGroup>
-                  {packingLists.map((p) => (
-                    <CommandItem
-                      key={p.id}
-                      value={p.id}
-                      onSelect={() => {
-                        onSelect(p.id);
-                        setOpen(false);
-                      }}
-                    >
-                      {p.shipment_number || p.id}
-                      {selectedId === p.id && <CommandCheck />}
-                    </CommandItem>
-                  ))}
+                  {packingLists.map((p) => {
+                    const label = p.shipment_number || p.id;
+                    return (
+                      <CommandItem
+                        key={p.id}
+                        value={p.id}
+                        onSelect={() => {
+                          onSelect(p.id);
+                          setPickedLabel(label);
+                          setOpen(false);
+                        }}
+                      >
+                        {label}
+                        {selectedId === p.id && <CommandCheck />}
+                      </CommandItem>
+                    );
+                  })}
                 </CommandGroup>
               </CommandList>
             </Command>
