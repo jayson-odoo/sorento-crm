@@ -22,7 +22,17 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- master-data ---
     ToolSpec(
         "crm_master_products_list",
-        "List products with filters and pagination. `query` filters by code/name/description; omit it for a general paged list. `category_id` accepts UUID or category_code/name. `brand_id` accepts UUID or brand_code/name.",
+        (
+            "List products with filters and pagination. `query` is a free-text LIKE search over product_code, "
+            "product_name, description ONLY — DO NOT pass numeric/range expressions like 'price > 100' or "
+            "'dimensions > 300mm' as `query`; use the dedicated numeric filter parameters below instead. "
+            "`category_id` accepts UUID or category_code/name. `brand_id` accepts UUID or brand_code/name. "
+            "PRICE: price_min, price_max (MYR). "
+            "DIMENSIONS (all in millimetres): per-axis length_min/length_max, width_min/width_max, "
+            "height_min/height_max. For axis-agnostic 'any side > X' queries (e.g. 'products with dimensions "
+            "over 300mm'), use any_dimension_min / any_dimension_max — these match when ANY of L/W/H falls "
+            "in range. Each row also returns `currency` (default MYR) — render prices using that code, never $."
+        ),
         "/api/v1/master-data/products",
         (),
         (
@@ -35,6 +45,14 @@ CATALOG: tuple[ToolSpec, ...] = (
             "price_min",
             "price_max",
             "item_type",
+            "length_min",
+            "length_max",
+            "width_min",
+            "width_max",
+            "height_min",
+            "height_max",
+            "any_dimension_min",
+            "any_dimension_max",
             "sort",
             "dir",
         ),

@@ -1,11 +1,54 @@
 """Product service for business logic."""
 from datetime import datetime
+import re
 import uuid
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func
-from typing import Any, Optional, List, Callable
+from typing import Any, Optional, List, Callable, Tuple
 from decimal import Decimal
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
+
+
+# Match three numbers separated by 'x' / 'X' / '×' (with optional spaces) and optional unit (mm/cm/m).
+# Examples matched: '650x450x210MM', '650 x 450 x 210mm', '(650X450X210)', '12.5x10x5 cm'.
+# The negative-lookahead (?<!\d) avoids stitching onto a longer numeric run from a product code.
+_DIMENSION_LXWXH_PATTERN = re.compile(
+    r"(?<!\d)(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)"
+    r"(?:\s*(mm|cm|m|MM|CM|M)\b|(?![0-9]))",
+)
+_UNIT_TO_MM: dict[str, Decimal] = {
+    "": Decimal("1"),
+    "mm": Decimal("1"),
+    "cm": Decimal("10"),
+    "m": Decimal("1000"),
+}
+
+
+def parse_dimensions_from_description(
+    description: Optional[str],
+) -> Tuple[Optional[Decimal], Optional[Decimal], Optional[Decimal]]:
+    """Extract LxWxH (in mm) from a product description.
+
+    Returns (length_mm, width_mm, height_mm). All None if no LxWxH triplet is found.
+    Unit is normalized to mm: 'cm' -> x10, 'm' -> x1000, otherwise mm assumed.
+    Convention: dimensions are written length × width × height in the source description.
+    """
+    if not description:
+        return (None, None, None)
+    m = _DIMENSION_LXWXH_PATTERN.search(description)
+    if not m:
+        return (None, None, None)
+    raw_l, raw_w, raw_h, unit = m.groups()
+    factor = _UNIT_TO_MM.get((unit or "").lower(), Decimal("1"))
+    try:
+        q = Decimal("0.01")
+        return (
+            (Decimal(raw_l) * factor).quantize(q),
+            (Decimal(raw_w) * factor).quantize(q),
+            (Decimal(raw_h) * factor).quantize(q),
+        )
+    except Exception:
+        return (None, None, None)
 from app.models.procurement import ProductSupplier, Supplier
 from app.models.resources import Attachment, AttachmentType
 from app.schemas.product import (
@@ -37,6 +80,14 @@ class ProductService:
         price_min: Optional[float] = None,
         price_max: Optional[float] = None,
         item_type: Optional[str] = None,
+        length_min: Optional[float] = None,
+        length_max: Optional[float] = None,
+        width_min: Optional[float] = None,
+        width_max: Optional[float] = None,
+        height_min: Optional[float] = None,
+        height_max: Optional[float] = None,
+        any_dimension_min: Optional[float] = None,
+        any_dimension_max: Optional[float] = None,
         sort_field: str = "created_at",
         sort_dir: str = "asc",
         advanced_filter_clause: Optional[Any] = None,
@@ -91,6 +142,41 @@ class ProductService:
             if price_max:
                 price_filters.append(Product.list_price <= Decimal(str(price_max)))
             filters.append(and_(*price_filters))
+
+        # Per-axis dimension filters (mm). Length/width/height map to dimensions_length/width/height.
+        if length_min is not None:
+            filters.append(Product.dimensions_length >= Decimal(str(length_min)))
+        if length_max is not None:
+            filters.append(Product.dimensions_length <= Decimal(str(length_max)))
+        if width_min is not None:
+            filters.append(Product.dimensions_width >= Decimal(str(width_min)))
+        if width_max is not None:
+            filters.append(Product.dimensions_width <= Decimal(str(width_max)))
+        if height_min is not None:
+            filters.append(Product.dimensions_height >= Decimal(str(height_min)))
+        if height_max is not None:
+            filters.append(Product.dimensions_height <= Decimal(str(height_max)))
+
+        # Generic "any dimension" filter: matches when ANY of L/W/H is in the range.
+        # Use this when the user does not care which axis (e.g. 'dimensions > 300mm').
+        if any_dimension_min is not None:
+            v = Decimal(str(any_dimension_min))
+            filters.append(
+                or_(
+                    Product.dimensions_length >= v,
+                    Product.dimensions_width >= v,
+                    Product.dimensions_height >= v,
+                )
+            )
+        if any_dimension_max is not None:
+            v = Decimal(str(any_dimension_max))
+            filters.append(
+                or_(
+                    Product.dimensions_length <= v,
+                    Product.dimensions_width <= v,
+                    Product.dimensions_height <= v,
+                )
+            )
         
         if query:
             term = f"%{query.strip()}%"
@@ -235,6 +321,14 @@ class ProductService:
         
         data = product_data.model_dump()
         data["product_code"] = product_code
+        # Auto-populate dimensions from description LxWxH pattern when caller did not supply them.
+        parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(data.get("description"))
+        if parsed_l is not None and data.get("dimensions_length") is None:
+            data["dimensions_length"] = parsed_l
+        if parsed_w is not None and data.get("dimensions_width") is None:
+            data["dimensions_width"] = parsed_w
+        if parsed_h is not None and data.get("dimensions_height") is None:
+            data["dimensions_height"] = parsed_h
         product = Product(**data, created_by=created_by)
         self.db.add(product)
         self.db.commit()
@@ -262,6 +356,16 @@ class ProductService:
         if update_data:
             update_data["updated_by"] = updated_by
             update_data["updated_at"] = datetime.utcnow()
+            # When description is being updated, re-parse LxWxH and populate dimension columns
+            # that the caller did NOT explicitly set in the same payload (explicit user value wins).
+            if "description" in update_data:
+                parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(update_data.get("description"))
+                if parsed_l is not None and "dimensions_length" not in update_data:
+                    update_data["dimensions_length"] = parsed_l
+                if parsed_w is not None and "dimensions_width" not in update_data:
+                    update_data["dimensions_width"] = parsed_w
+                if parsed_h is not None and "dimensions_height" not in update_data:
+                    update_data["dimensions_height"] = parsed_h
             for key, value in update_data.items():
                 setattr(product, key, value)
             
@@ -495,6 +599,8 @@ class ProductService:
                     errors.append(f"Row {idx} ({product_code}): no brand found for item_brand '{item_brand}'")
                     continue
 
+                parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(description)
+
                 existing = existing_by_code.get(product_code)
                 if existing:
                     existing.product_name = product_name
@@ -505,6 +611,12 @@ class ProductService:
                     existing.is_active = is_active
                     existing.updated_by = user_id
                     existing.updated_at = datetime.utcnow()
+                    if parsed_l is not None:
+                        existing.dimensions_length = parsed_l
+                    if parsed_w is not None:
+                        existing.dimensions_width = parsed_w
+                    if parsed_h is not None:
+                        existing.dimensions_height = parsed_h
                     if existing.id not in products_with_lead_time:
                         self._ensure_default_supplier_lead_time(existing.id)
                         products_with_lead_time.add(existing.id)
@@ -519,6 +631,9 @@ class ProductService:
                         base_uom_id=default_uom_id,
                         list_price=list_price,
                         is_active=is_active,
+                        dimensions_length=parsed_l,
+                        dimensions_width=parsed_w,
+                        dimensions_height=parsed_h,
                         created_by=user_id,
                     )
                     self.db.add(product)
