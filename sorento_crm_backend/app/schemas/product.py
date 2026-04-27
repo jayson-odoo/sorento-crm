@@ -129,6 +129,7 @@ class ProductBase(BaseModel):
     list_price: Decimal
     cost_price: Optional[Decimal] = None
     invoice_price: Optional[Decimal] = None
+    currency: str = "MYR"
     weight: Optional[Decimal] = None
     dimensions_length: Optional[Decimal] = None
     dimensions_width: Optional[Decimal] = None
@@ -139,6 +140,15 @@ class ProductBase(BaseModel):
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
     is_active: bool = True
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def normalize_currency(cls, v):
+        """Normalize ISO 4217 currency: trim, uppercase, default MYR when empty."""
+        if v is None:
+            return "MYR"
+        s = str(v).strip().upper()
+        return s or "MYR"
 
 
 class ProductCreate(ProductBase):
@@ -155,6 +165,7 @@ class ProductUpdate(BaseModel):
     list_price: Optional[Decimal] = None
     cost_price: Optional[Decimal] = None
     invoice_price: Optional[Decimal] = None
+    currency: Optional[str] = None
     weight: Optional[Decimal] = None
     dimensions_length: Optional[Decimal] = None
     dimensions_width: Optional[Decimal] = None
@@ -165,6 +176,15 @@ class ProductUpdate(BaseModel):
     reorder_level: Optional[int] = None
     reorder_quantity: Optional[int] = None
     is_active: Optional[bool] = None
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def normalize_currency(cls, v):
+        """Normalize ISO 4217 currency when provided: trim + uppercase. None means 'no change'."""
+        if v is None:
+            return None
+        s = str(v).strip().upper()
+        return s or None
 
     @field_validator("product_name", "description", mode="before")
     @classmethod

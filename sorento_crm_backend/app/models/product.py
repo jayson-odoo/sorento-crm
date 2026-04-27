@@ -101,6 +101,7 @@ class Product(Base):
     list_price = Column(Numeric(12, 2), nullable=False)
     cost_price = Column(Numeric(12, 2), nullable=True)
     invoice_price = Column(Numeric(12, 2), nullable=True)
+    currency = Column(String(3), nullable=False, server_default="MYR", default="MYR")
     weight = Column(Numeric(10, 3), nullable=True)
     dimensions_length = Column(Numeric(10, 2), nullable=True)
     dimensions_width = Column(Numeric(10, 2), nullable=True)

@@ -118,6 +118,9 @@ class ProductService:
             "product_code": Product.product_code,
             "product_name": Product.product_name,
             "list_price": Product.list_price,
+            "price": Product.list_price,
+            "cost_price": Product.cost_price,
+            "invoice_price": Product.invoice_price,
             "is_active": Product.is_active,
         }
         sort_column = sort_map.get(sort_field, Product.created_at)

@@ -305,10 +305,12 @@ def _raise_do_lookup_guidance(
     message: str,
     invalid_do_numbers: Optional[list[str]] = None,
     valid_do_numbers: Optional[list[str]] = None,
+    provided_filters: Optional[dict[str, str]] = None,
+    next_action: str = "collect_do_lookup_filters",
 ) -> None:
     detail: dict[str, Any] = {
         "status": status_value,
-        "next_action": "collect_do_lookup_filters",
+        "next_action": next_action,
         "message": message,
         "available_filters": list(_COMPLAINT_DO_LOOKUP_FIELDS),
         "filter_requirement": "any_one_of",
@@ -317,11 +319,35 @@ def _raise_do_lookup_guidance(
             f"{', '.join(_COMPLAINT_DO_LOOKUP_FIELDS)} to search DO numbers; combining filters narrows results."
         ),
     }
+    if provided_filters:
+        detail["provided_filters"] = provided_filters
+        detail["recommended_tools"] = [
+            "crm_order_management_orders_by_product_list",
+            "crm_order_management_orders_list",
+        ]
+        detail["recommended_tool_arg_mapping"] = {
+            "customer_name": "customer_query",
+            "product_code": "product_query",
+            "order_date_from": "order_date_from",
+            "order_date_to": "order_date_to",
+        }
     if invalid_do_numbers:
         detail["invalid_delivery_order_numbers"] = invalid_do_numbers
     if valid_do_numbers:
         detail["valid_delivery_order_numbers"] = valid_do_numbers
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+def _collect_provided_do_filters(complaint_data: ComplaintCreate) -> dict[str, str]:
+    """Collect already-supplied DO lookup filters from the complaint payload."""
+    provided: dict[str, str] = {}
+    customer = (getattr(complaint_data, "customer_name", None) or "").strip()
+    if customer:
+        provided["customer_name"] = customer
+    product = (getattr(complaint_data, "product_code", None) or "").strip()
+    if product:
+        provided["product_code"] = product
+    return provided
 
 
 def _enforce_delivery_order_first(service: ComplaintService, complaint_data: ComplaintCreate) -> dict[str, Any]:
@@ -333,6 +359,21 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
         complaint_data.delivery_order_number
     )
     if not provided_do_numbers:
+        provided_filters = _collect_provided_do_filters(complaint_data)
+        if provided_filters:
+            shown = ", ".join(f"{k}={v!r}" for k, v in provided_filters.items())
+            _raise_do_lookup_guidance(
+                status_value="needs_do_lookup",
+                next_action="search_delivery_orders",
+                message=(
+                    f"Delivery order number is required before complaint details. You already supplied {shown}; "
+                    "use that to search DO numbers via crm_order_management_orders_by_product_list "
+                    "(or crm_order_management_orders_list) — pass customer_name -> customer_query, "
+                    "product_code -> product_query. Then resubmit this tool with delivery_order_numbers set "
+                    "to the chosen DO(s). Do not ask the user again for filters they already gave."
+                ),
+                provided_filters=provided_filters,
+            )
         _raise_do_lookup_guidance(
             status_value="needs_do_lookup",
             message=(
@@ -352,6 +393,20 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
             valid_do_numbers=resolved_do_numbers,
         )
     if not resolved_do_numbers:
+        provided_filters = _collect_provided_do_filters(complaint_data)
+        if provided_filters:
+            shown = ", ".join(f"{k}={v!r}" for k, v in provided_filters.items())
+            _raise_do_lookup_guidance(
+                status_value="needs_do_lookup",
+                next_action="search_delivery_orders",
+                message=(
+                    f"No matching delivery order found for the supplied DO number(s). You already supplied {shown}; "
+                    "use those filters with crm_order_management_orders_by_product_list "
+                    "(or crm_order_management_orders_list) to find valid DO number(s), then resubmit."
+                ),
+                provided_filters=provided_filters,
+                invalid_do_numbers=invalid_do_numbers or provided_do_numbers,
+            )
         _raise_do_lookup_guidance(
             status_value="needs_do_lookup",
             message=(
