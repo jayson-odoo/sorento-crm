@@ -31,7 +31,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "DIMENSIONS (all in millimetres): per-axis length_min/length_max, width_min/width_max, "
             "height_min/height_max. For axis-agnostic 'any side > X' queries (e.g. 'products with dimensions "
             "over 300mm'), use any_dimension_min / any_dimension_max — these match when ANY of L/W/H falls "
-            "in range. Each row also returns `currency` (default MYR) — render prices using that code, never $."
+            "in range. These are FILTERS only — NOT valid `sort` values. "
+            "SORT KEYS for `sort=`: created_at, updated_at, product_code, product_name, list_price (alias: "
+            "price), cost_price, invoice_price, is_active, dimensions_length (alias: length), "
+            "dimensions_width (alias: width), dimensions_height (alias: height), largest_dimension "
+            "(GREATEST of L/W/H — use for 'biggest product on any side'), smallest_dimension. "
+            "Combine with dir=asc|desc. NULL dimensions sort to the bottom either way. "
+            "Each row also returns `currency` (default MYR) — render prices using that code, never $."
         ),
         "/api/v1/master-data/products",
         (),

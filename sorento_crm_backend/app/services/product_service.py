@@ -198,6 +198,19 @@ class ProductService:
         total = q.count()
         
         # Apply sorting
+        # GREATEST / LEAST give us a virtual "max axis" / "min axis" per row so the LLM can ask
+        # for the biggest or smallest product in one call (sort=largest_dimension dir=desc).
+        # NULL dimensions sort to the bottom on desc and top on asc — handled with NULLS LAST/FIRST.
+        largest_dim = func.greatest(
+            Product.dimensions_length,
+            Product.dimensions_width,
+            Product.dimensions_height,
+        )
+        smallest_dim = func.least(
+            Product.dimensions_length,
+            Product.dimensions_width,
+            Product.dimensions_height,
+        )
         sort_map = {
             "created_at": Product.created_at,
             "updated_at": Product.updated_at,
@@ -208,12 +221,20 @@ class ProductService:
             "cost_price": Product.cost_price,
             "invoice_price": Product.invoice_price,
             "is_active": Product.is_active,
+            "dimensions_length": Product.dimensions_length,
+            "length": Product.dimensions_length,
+            "dimensions_width": Product.dimensions_width,
+            "width": Product.dimensions_width,
+            "dimensions_height": Product.dimensions_height,
+            "height": Product.dimensions_height,
+            "largest_dimension": largest_dim,
+            "smallest_dimension": smallest_dim,
         }
         sort_column = sort_map.get(sort_field, Product.created_at)
         if sort_dir == "desc":
-            q = q.order_by(sort_column.desc())
+            q = q.order_by(sort_column.desc().nulls_last())
         else:
-            q = q.order_by(sort_column.asc())
+            q = q.order_by(sort_column.asc().nulls_last())
         
         # Apply pagination
         offset = (page - 1) * limit

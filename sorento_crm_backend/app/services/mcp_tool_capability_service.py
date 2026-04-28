@@ -92,8 +92,14 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "length_min/length_max, width_min/width_max, height_min/height_max. For axis-agnostic asks like "
             "'products with dimensions over 300mm' or 'anything bigger than 1m on any side', use "
             "any_dimension_min / any_dimension_max — these match when ANY of L/W/H is in range. "
+            "FILTERS vs SORT — keep these separate: any_dimension_min/max, length_min/max, width_min/max, "
+            "height_min/max, price_min/max are FILTERS (range caps), NOT valid sort keys; passing them as "
+            "`sort` falls back to created_at silently. "
             "Sortable fields: created_at, updated_at, product_code, product_name, list_price (alias: price), "
-            "cost_price, invoice_price, is_active. Combine with dir=asc|desc. "
+            "cost_price, invoice_price, is_active, dimensions_length (alias: length), dimensions_width "
+            "(alias: width), dimensions_height (alias: height), largest_dimension (GREATEST(L,W,H) per row — "
+            "use sort=largest_dimension&dir=desc for 'biggest product on any side'), smallest_dimension "
+            "(LEAST(L,W,H) per row). Combine with dir=asc|desc. NULL dimensions sort to the bottom either way. "
             "Each row carries an ISO 4217 `currency` (default MYR for all Sorento catalog rows). "
             "When showing prices to a user, ALWAYS render the currency code from the row "
             "(e.g. 'RM 1,250.00' or 'MYR 1,250.00'). Never assume USD/$."
@@ -108,8 +114,35 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Find products by brand or category.",
             "Browse the Sorento product list with pricing.",
             "I want to see product information and list price in MYR.",
+            "Do you have any products with length between 300 and 500 mm?",
+            "Show products with width over 500mm.",
+            "Find products with height under 200mm.",
+            "Any products with dimensions larger than 1 metre on any side?",
+            "Products that are at least 600mm long.",
+            "List products by size — anything between 400 and 800mm.",
+            "Which products fit within 500mm x 500mm x 500mm?",
+            "Show me products under MYR 100.",
+            "Products priced between RM500 and RM2000.",
+            "Find catalog items by L W H dimensions.",
+            "What is the biggest bathtub we have?",
+            "Show me the largest product in our catalog.",
+            "Smallest faucet by dimension.",
+            "Top 5 products by length.",
+            "Sort products by largest side, descending.",
+            "Which product has the biggest height?",
         ),
-        aliases=("master products list", "product catalog", "products we sell", "browse catalog"),
+        aliases=(
+            "master products list",
+            "product catalog",
+            "products we sell",
+            "browse catalog",
+            "products by size",
+            "products by dimensions",
+            "products by length",
+            "products by width",
+            "products by height",
+            "filter products by price",
+        ),
     ),
     "crm_master_products_get": ToolIntent(
         category="general_enquiries.product",
