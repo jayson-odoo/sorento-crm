@@ -73,6 +73,7 @@ PERMISSION_REGISTRY.append({"slug": "master_data.products.bulk_delete", "name": 
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_attachments", "Product Attachments"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product Categories"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
+PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
 
 # Procurement
