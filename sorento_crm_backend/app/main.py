@@ -84,6 +84,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # Triggers eligibility registrations side-effects.
 from app.services import lookup_eligibility_registrations as _lookup_eligibility_registrations  # noqa: F401
 
+from app.services.lookup_write_listener import register_lookup_write_listeners
+register_lookup_write_listeners()
+
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
 
