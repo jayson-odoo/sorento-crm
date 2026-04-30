@@ -235,7 +235,7 @@ Both gated by `EXTERNAL_API_KEY` per existing MCP pattern. n8n agent fetches opt
 
 Order of attempts (first hit wins, returns score):
 
-1. `value` exact (case-insensitive) → score 1.0, type `exact_value`
+1. `value` exact (**case-sensitive** — value is a canonical key) → score 1.0, type `exact_value`
 2. `label` exact (case-insensitive) → 0.95, `exact_label`
 3. `keyword` exact (case-insensitive, optional locale match) → 0.9, `exact_keyword`
 4. Normalized (strip punctuation, collapse whitespace, lowercase) match against value/label/keywords → 0.8, `normalized`
