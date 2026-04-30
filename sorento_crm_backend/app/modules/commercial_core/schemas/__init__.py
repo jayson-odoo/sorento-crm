@@ -1,1 +1,0 @@
-"""Commercial core schemas package."""

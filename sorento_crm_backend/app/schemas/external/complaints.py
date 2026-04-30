@@ -49,6 +49,9 @@ class ComplaintIntegrationCreate(BaseModel):
     contact_person: Optional[str] = None
     contact_number: Optional[str] = None
     project_title: Optional[str] = None
+    order_year: Optional[str] = None
+    order_date_from: Optional[str] = None
+    order_date_to: Optional[str] = None
     contact_id: str
     space_id: str
     response: Optional[str] = None
@@ -96,6 +99,12 @@ class ComplaintIntegrationCreate(BaseModel):
             "contact_name": "contact_person",
             "person_in_charge": "contact_person",
             "project_name": "project_title",
+            "year_of_order": "order_year",
+            "order_yr": "order_year",
+            "order_date_start": "order_date_from",
+            "order_date_end": "order_date_to",
+            "from_date": "order_date_from",
+            "to_date": "order_date_to",
         }
 
         normalized_items: dict[str, Any] = {}
@@ -155,6 +164,18 @@ class ComplaintIntegrationCreate(BaseModel):
             return ", ".join(values) if values else None
         token = str(v).strip()
         return token or None
+
+    @field_validator("order_year", mode="before")
+    @classmethod
+    def coerce_order_year_to_string(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return str(v)
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s else None
+        return str(v).strip() or None
 
     @field_validator("contact_id", "space_id", mode="before")
     @classmethod

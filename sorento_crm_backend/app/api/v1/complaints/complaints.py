@@ -8,6 +8,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.complaints_service import ComplaintService
 from app.services.integration_service import IntegrationLogService
+from app.services.order_service import OrderService
 from app.schemas.complaints import (
     ComplaintCreate,
     ComplaintUpdate,
@@ -27,7 +28,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_COMPLAINT_DO_LOOKUP_FIELDS: tuple[str, ...] = ("customer_name", "product_code", "order_date_from", "order_date_to")
+_COMPLAINT_DO_LOOKUP_FIELDS: tuple[str, ...] = (
+    "customer_name",
+    "product_code",
+    "order_year",
+    "order_date_from",
+    "order_date_to",
+)
 
 
 _COMPLAINT_FIELD_RECOMMENDED: dict[str, dict[str, Any]] = {
@@ -70,7 +77,11 @@ _COMPLAINT_FIELD_RECOMMENDED: dict[str, dict[str, Any]] = {
         "description": "Project name when the complaint is for a project order; otherwise customer label.",
     },
     "delivery_order_numbers": {
-        "description": "One or more DO numbers (comma-separated). MUST be supplied first; resolve via crm_order_management_orders_by_product_list.",
+        "description": (
+            "One or more DO numbers (comma-separated). MUST be supplied first. "
+            "If not known, submit any combination of customer_name / product_code / order_year / "
+            "order_date_from / order_date_to and this tool returns candidate_delivery_orders for selection."
+        ),
     },
 }
 
@@ -450,6 +461,7 @@ def _raise_do_lookup_guidance(
     provided_filters: Optional[dict[str, str]] = None,
     next_action: str = "collect_do_lookup_filters",
     field_guidance: Optional[dict[str, dict[str, Any]]] = None,
+    candidate_delivery_orders: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     detail: dict[str, Any] = {
         "status": status_value,
@@ -472,6 +484,16 @@ def _raise_do_lookup_guidance(
         )
     if provided_filters:
         detail["provided_filters"] = provided_filters
+    if candidate_delivery_orders is not None:
+        detail["candidate_delivery_orders"] = candidate_delivery_orders
+        detail["candidate_count"] = len(candidate_delivery_orders)
+        detail["resubmit_hint"] = (
+            "Pick one (or more) delivery_order_number(s) from candidate_delivery_orders and resubmit "
+            "this tool with delivery_order_numbers set to the chosen DO(s). Do NOT call any other tool — "
+            "this submit tool already searched for you."
+        )
+    elif provided_filters:
+        # Back-compat fallback — kept only when inline search was not run (e.g., search disabled).
         detail["recommended_tools"] = [
             "crm_order_management_orders_by_product_list",
             "crm_order_management_orders_list",
@@ -489,7 +511,10 @@ def _raise_do_lookup_guidance(
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
-def _collect_provided_do_filters(complaint_data: ComplaintCreate) -> dict[str, str]:
+def _collect_provided_do_filters(
+    complaint_data: ComplaintCreate,
+    integration_payload: Optional[ComplaintIntegrationCreate] = None,
+) -> dict[str, str]:
     """Collect already-supplied DO lookup filters from the complaint payload."""
     provided: dict[str, str] = {}
     customer = (getattr(complaint_data, "customer_name", None) or "").strip()
@@ -498,11 +523,107 @@ def _collect_provided_do_filters(complaint_data: ComplaintCreate) -> dict[str, s
     product = (getattr(complaint_data, "product_code", None) or "").strip()
     if product:
         provided["product_code"] = product
+    if integration_payload is not None:
+        order_year = (getattr(integration_payload, "order_year", None) or "").strip()
+        if order_year:
+            provided["order_year"] = order_year
+        order_date_from = (getattr(integration_payload, "order_date_from", None) or "").strip()
+        if order_date_from:
+            provided["order_date_from"] = order_date_from
+        order_date_to = (getattr(integration_payload, "order_date_to", None) or "").strip()
+        if order_date_to:
+            provided["order_date_to"] = order_date_to
     return provided
 
 
-def _enforce_delivery_order_first(service: ComplaintService, complaint_data: ComplaintCreate) -> dict[str, Any]:
+def _resolve_do_lookup_date_range(
+    provided_filters: dict[str, str],
+) -> tuple[Optional["datetime"], Optional["datetime"]]:
+    """Translate order_year / order_date_from / order_date_to filters into datetime range."""
+    from datetime import datetime as _dt
+
+    def _parse(s: str) -> Optional["datetime"]:
+        s = (s or "").strip()
+        if not s:
+            return None
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                return _dt.strptime(s, fmt)
+            except ValueError:
+                continue
+        return None
+
+    date_from = _parse(provided_filters.get("order_date_from", ""))
+    date_to = _parse(provided_filters.get("order_date_to", ""))
+    order_year = (provided_filters.get("order_year") or "").strip()
+    if order_year and (date_from is None and date_to is None):
+        try:
+            yr = int(order_year)
+            if 1900 <= yr <= 9999:
+                date_from = _dt(yr, 1, 1)
+                date_to = _dt(yr, 12, 31, 23, 59, 59)
+        except ValueError:
+            pass
+    return date_from, date_to
+
+
+_DO_INLINE_SEARCH_LIMIT = 25
+
+
+def _serialize_candidate_order(order: Any) -> dict[str, Any]:
+    """Compact candidate DO row for LLM consumption."""
+    products: list[str] = []
+    seen: set[str] = set()
+    for line in getattr(order, "lines", None) or []:
+        product = getattr(line, "product", None)
+        code = (getattr(product, "product_code", None) or "").strip() if product else ""
+        if code and code not in seen:
+            seen.add(code)
+            products.append(code)
+    order_date_value = getattr(order, "order_date", None)
+    return {
+        "delivery_order_number": getattr(order, "order_number", None),
+        "order_date": order_date_value.isoformat() if order_date_value else None,
+        "debtor_name": getattr(order, "debtor_name", None),
+        "debtor_code": getattr(order, "debtor_code", None),
+        "products": products,
+    }
+
+
+def _run_inline_do_search(
+    db: "Session",
+    provided_filters: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Search delivery orders matching supplied filters; return compact candidate list."""
+    if not provided_filters:
+        return []
+    customer_query = provided_filters.get("customer_name") or None
+    product_query = provided_filters.get("product_code") or None
+    date_from, date_to = _resolve_do_lookup_date_range(provided_filters)
+    order_service = OrderService(db)
+    result = order_service.list_orders_by_product(
+        page=1,
+        limit=_DO_INLINE_SEARCH_LIMIT,
+        customer_query=customer_query,
+        product_query=product_query,
+        order_date_from=date_from,
+        order_date_to=date_to,
+        sort_field="order_date",
+        sort_dir="desc",
+    )
+    orders = result.get("data") or []
+    return [_serialize_candidate_order(o) for o in orders]
+
+
+def _enforce_delivery_order_first(
+    service: ComplaintService,
+    complaint_data: ComplaintCreate,
+    integration_payload: Optional[ComplaintIntegrationCreate] = None,
+) -> dict[str, Any]:
     """Validate DO selection first; request customer+product+order_date filters when DO is missing.
+
+    When filters are supplied but no DO is chosen, search delivery orders inline and return
+    candidate_delivery_orders so the caller can pick one without invoking another tool.
 
     Returns inferred customer/product hints from the selected DO(s).
     """
@@ -510,21 +631,34 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
         complaint_data.delivery_order_number
     )
     if not provided_do_numbers:
-        provided_filters = _collect_provided_do_filters(complaint_data)
+        provided_filters = _collect_provided_do_filters(complaint_data, integration_payload)
         guidance = _build_complaint_field_guidance(service)
         if provided_filters:
             shown = ", ".join(f"{k}={v!r}" for k, v in provided_filters.items())
+            candidates = _run_inline_do_search(service.db, provided_filters)
+            if candidates:
+                _raise_do_lookup_guidance(
+                    status_value="needs_do_selection",
+                    next_action="select_delivery_order",
+                    message=(
+                        f"Found {len(candidates)} matching delivery order(s) for filters: {shown}. "
+                        "Pick one (or more) delivery_order_number(s) from candidate_delivery_orders "
+                        "and resubmit this tool with delivery_order_numbers set to the chosen DO(s)."
+                    ),
+                    provided_filters=provided_filters,
+                    candidate_delivery_orders=candidates,
+                    field_guidance=guidance,
+                )
             _raise_do_lookup_guidance(
                 status_value="needs_do_lookup",
-                next_action="search_delivery_orders",
+                next_action="refine_do_lookup_filters",
                 message=(
-                    f"Delivery order number is required before complaint details. You already supplied {shown}; "
-                    "use that to search DO numbers via crm_order_management_orders_by_product_list "
-                    "(or crm_order_management_orders_list) — pass customer_name -> customer_query, "
-                    "product_code -> product_query. Then resubmit this tool with delivery_order_numbers set "
-                    "to the chosen DO(s). Do not ask the user again for filters they already gave."
+                    f"No delivery orders matched the supplied filters: {shown}. "
+                    "Ask the user to refine filters (different customer name, product code, or order date range) "
+                    "and resubmit. Do NOT call any other tool."
                 ),
                 provided_filters=provided_filters,
+                candidate_delivery_orders=[],
                 field_guidance=guidance,
             )
         _raise_do_lookup_guidance(
@@ -547,20 +681,35 @@ def _enforce_delivery_order_first(service: ComplaintService, complaint_data: Com
             valid_do_numbers=resolved_do_numbers,
         )
     if not resolved_do_numbers:
-        provided_filters = _collect_provided_do_filters(complaint_data)
+        provided_filters = _collect_provided_do_filters(complaint_data, integration_payload)
         guidance = _build_complaint_field_guidance(service)
         if provided_filters:
             shown = ", ".join(f"{k}={v!r}" for k, v in provided_filters.items())
+            candidates = _run_inline_do_search(service.db, provided_filters)
+            if candidates:
+                _raise_do_lookup_guidance(
+                    status_value="needs_do_selection",
+                    next_action="select_delivery_order",
+                    message=(
+                        f"The supplied DO number(s) did not match. Found {len(candidates)} other matching "
+                        f"delivery order(s) for filters: {shown}. Pick valid DO(s) from candidate_delivery_orders "
+                        "and resubmit."
+                    ),
+                    provided_filters=provided_filters,
+                    invalid_do_numbers=invalid_do_numbers or provided_do_numbers,
+                    candidate_delivery_orders=candidates,
+                    field_guidance=guidance,
+                )
             _raise_do_lookup_guidance(
                 status_value="needs_do_lookup",
-                next_action="search_delivery_orders",
+                next_action="refine_do_lookup_filters",
                 message=(
-                    f"No matching delivery order found for the supplied DO number(s). You already supplied {shown}; "
-                    "use those filters with crm_order_management_orders_by_product_list "
-                    "(or crm_order_management_orders_list) to find valid DO number(s), then resubmit."
+                    f"No matching delivery order found for the supplied DO(s) or filters: {shown}. "
+                    "Ask the user to refine filters and resubmit."
                 ),
                 provided_filters=provided_filters,
                 invalid_do_numbers=invalid_do_numbers or provided_do_numbers,
+                candidate_delivery_orders=[],
                 field_guidance=guidance,
             )
         _raise_do_lookup_guidance(
@@ -721,7 +870,7 @@ async def create_complaint(
                 existing=existing,
                 incoming=complaint_data,
             )
-            do_context = _enforce_delivery_order_first(service, merged_for_validation)
+            do_context = _enforce_delivery_order_first(service, merged_for_validation, integration_payload)
             _prefill_complaint_fields_from_do(merged_for_validation, do_context, integration_payload)
             if requires_user_confirm:
                 missing_fields = service.get_submission_missing_fields(merged_for_validation)
@@ -748,7 +897,7 @@ async def create_complaint(
             db.commit()
             return service.get_complaint_with_attachments(str(existing.id))
 
-        do_context = _enforce_delivery_order_first(service, complaint_data)
+        do_context = _enforce_delivery_order_first(service, complaint_data, integration_payload)
         _prefill_complaint_fields_from_do(complaint_data, do_context, integration_payload)
         if requires_user_confirm:
             if integration_payload is not None:
@@ -813,7 +962,7 @@ async def create_complaint_integration(
             payload = body
         service = ComplaintService(db)
         complaint_data = payload.to_complaint_create()
-        do_context = _enforce_delivery_order_first(service, complaint_data)
+        do_context = _enforce_delivery_order_first(service, complaint_data, payload)
         _prefill_complaint_fields_from_do(complaint_data, do_context, payload)
         # Validate payload completeness after DO validation; only then enforce explicit confirmation.
         _validate_integration_payload_completeness(payload)

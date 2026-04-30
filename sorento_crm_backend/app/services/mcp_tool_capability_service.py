@@ -1275,30 +1275,33 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_forms_complaints_submit": ToolIntent(
         category="complaint.form_submission",
-        intent="Start or continue a customer complaint draft; validates DO first and only performs final submit after completion/confirmation.",
+        intent="Start or continue a customer complaint draft; validates and searches DO first, then performs final submit after completion/confirmation.",
         description=(
-            "Complaint filing draft/validator and final submission tool. DO NOT use this tool if the user is looking "
-            "for downloadable templates, blank marketing forms, or attachments. Call this tool as soon as the user "
-            "says they want to file a complaint, even if no details are captured yet; pass payload_json as `{}` or "
-            "with any partial fields you have. The API validates delivery_order_numbers first. If no valid DO is "
-            "supplied, it returns status `needs_do_lookup`. Lookup filters (customer_name, product_code/product, "
-            "order_date_from, order_date_to) are ALL OPTIONAL — ANY ONE is enough; do not demand all four. "
+            "Complaint filing draft/validator, DO searcher, and final submission tool — ONE TOOL FOR THE WHOLE FLOW. "
+            "DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. "
+            "Call this tool as soon as the user says they want to file a complaint, even if no details are captured yet; "
+            "pass payload_json as `{}` or with any partial fields you have. "
+            "The API validates delivery_order_numbers first. If no valid DO is supplied, it returns status "
+            "`needs_do_lookup` (no filters yet) or `needs_do_selection` (filters supplied — candidates returned inline). "
+            "Lookup filters (customer_name, product_code/product, order_year, order_date_from, order_date_to) are ALL "
+            "OPTIONAL — ANY ONE is enough; do not demand all of them. "
             "If the user has not supplied any filter yet, next_action will be `collect_do_lookup_filters` (ask the user). "
-            "If the API echoes back `provided_filters` and next_action `search_delivery_orders`, the user already "
-            "supplied filters — DO NOT ask them again. Instead call crm_order_management_orders_by_product_list "
-            "(or crm_order_management_orders_list) with those filters mapped per `recommended_tool_arg_mapping` "
-            "(customer_name -> customer_query, product_code -> product_query, order_date_from/to as-is), then resubmit "
-            "this tool with delivery_order_numbers. The same `needs_do_lookup` response also carries a `field_guidance` "
-            "block (per-field description, recommended_values, observed_examples). When the user asks 'what can I input "
-            "for X?' / 'what options for complaint_type?' / 'what values are valid for customer_type?', answer DIRECTLY "
-            "from `field_guidance` — do NOT push them to provide a DO or filters first. Only proceed to DO lookup once "
-            "the user actually wants to file. Relay that DO lookup request; "
-            "do not ask for all final complaint fields yet. After a valid DO is supplied, the same tool validates "
-            "remaining required complaint fields and confirmation. Final submit requires user_confirmed=true only "
-            "after all required fields are complete and the user explicitly confirms. Attachments are optional and "
-            "are linked via crm_forms_entity_attachments_link only when explicitly requested. For updates include system_id "
-            "(or complaint_number alias) in payload_json only when the complaint is rejected. contact_id and space_id are required for final complaint submission. "
-            "If the user is only searching DO numbers and has NOT asked to file/submit a complaint, use order-management tools instead."
+            "If the user supplies filters, this tool runs the DO search internally and returns "
+            "`candidate_delivery_orders` (a list of `{delivery_order_number, order_date, debtor_name, products}`) with "
+            "next_action `select_delivery_order`. DO NOT call any other tool to search DOs — this tool already did it. "
+            "Pick a DO from `candidate_delivery_orders` and resubmit this tool with delivery_order_numbers set to the "
+            "chosen DO(s). If candidates are empty, next_action is `refine_do_lookup_filters` — ask the user for "
+            "different filters and resubmit. The same response carries a `field_guidance` block (per-field description, "
+            "recommended_values, observed_examples). When the user asks 'what can I input for X?' / 'what options for "
+            "complaint_type?' / 'what values are valid for customer_type?', answer DIRECTLY from `field_guidance` — do "
+            "NOT push them to provide a DO or filters first. Only proceed to DO lookup once the user actually wants to "
+            "file. After a valid DO is supplied, the same tool validates remaining required complaint fields and "
+            "confirmation. Final submit requires user_confirmed=true only after all required fields are complete and "
+            "the user explicitly confirms. Attachments are optional and are linked via crm_forms_entity_attachments_link "
+            "only when explicitly requested. For updates include system_id (or complaint_number alias) in payload_json "
+            "only when the complaint is rejected. contact_id and space_id are required for final complaint submission. "
+            "If the user is only searching DO numbers and has NOT asked to file/submit a complaint, use order-management "
+            "tools instead."
         ),
         typical_user_questions=(
             "I want to file a complaint.",
@@ -1309,8 +1312,19 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Record this complaint about damaged product on my order.",
             "Create a complaint case after I confirm the summary.",
             "Log this customer complaint for the selected delivery orders.",
+            "Find delivery orders for my complaint by product code and customer.",
+            "Look up DO numbers for this complaint — I have customer name and product.",
+            "Yes, proceed with finding the delivery order number(s) for this complaint.",
+            "Confirm: search delivery orders for the complaint using these filters.",
+            "Which delivery orders match for the complaint about product X for customer Y in 2026?",
         ),
-        aliases=("create complaint", "submit complaint", "file complaint"),
+        aliases=(
+            "create complaint",
+            "submit complaint",
+            "file complaint",
+            "find delivery orders for complaint",
+            "search DO for complaint",
+        ),
     ),
     "crm_forms_entity_attachments_link": ToolIntent(
         category="complaint.form_submission",
