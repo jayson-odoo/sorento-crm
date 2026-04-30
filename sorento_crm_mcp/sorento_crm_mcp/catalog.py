@@ -168,6 +168,28 @@ CATALOG: tuple[ToolSpec, ...] = (
         ("product_id",),
         ("user_type",),
     ),
+    # --- lookup sets ---
+    ToolSpec(
+        "crm_lookup_options",
+        "List active options + keywords for a dropdown configured in CRM. "
+        "Use this to learn the canonical values and synonyms before sending a write. "
+        "Returns [{value,label,keywords:[..],is_active}].",
+        "/api/v1/lookup/{set_key}/options",
+        path_params=("set_key",),
+        query_params=("include_inactive",),
+        module="master_data",
+    ),
+    ToolSpec(
+        "crm_lookup_resolve",
+        "Resolve a raw user keyword into the canonical option value for a set. "
+        "Body: {set_key, raw, locale?}. Returns {value,label,matched_keyword,match_type,score} or 404. "
+        "Use this whenever a user gives a free-text value for a CRM dropdown field — translate first, "
+        "then send the canonical value to the matching write API.",
+        "/api/v1/lookup/resolve",
+        method="POST",
+        body_params=("set_key", "raw", "locale"),
+        module="master_data",
+    ),
     # --- marketing ---
     ToolSpec(
         "crm_marketing_promotions_list",
