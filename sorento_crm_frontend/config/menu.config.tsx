@@ -659,6 +659,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/system-management/numbering-rules',
       },
       {
+        title: 'Lookup Sets',
+        path: '/master-data-management/lookup-sets',
+        permission: 'master_data.lookup_sets.view',
+      },
+      {
         title: 'AI Assistant',
         path: '/system-management/ai-assistant',
         permission: 'system.ai_assistant_settings.view',
@@ -1391,6 +1396,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Running Numbers',
         path: '/system-management/numbering-rules',
+      },
+      {
+        title: 'Lookup Sets',
+        path: '/master-data-management/lookup-sets',
+        permission: 'master_data.lookup_sets.view',
       },
     ],
   },

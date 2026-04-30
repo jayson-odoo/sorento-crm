@@ -1,13 +1,7 @@
-"""Declare bindable (model, column) pairs here. Each must have a friendly label.
+"""Eligibility is now schema-driven (see ``app.services.lookup_eligibility``).
 
-Add new entries by importing the model and calling register_lookup_eligible.
-Admins cannot edit eligibility; ask a developer.
+This module is kept as a no-op import target for backwards compatibility with
+``app.main`` and any external consumers. Add a ``register_lookup_eligible``
+call here only if you need to override the metadata-derived label for a
+specific (table, column) pair.
 """
-from app.services.lookup_eligibility import register_lookup_eligible
-
-# Example (kept commented until a real model adopts it):
-# from app.models.order import Order
-# register_lookup_eligible(
-#     model=Order, column="priority",
-#     table_label="Order", column_label="Priority",
-# )

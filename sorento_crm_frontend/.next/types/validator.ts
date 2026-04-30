@@ -1163,6 +1163,24 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/master-data-management/lookup-sets/[id]/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/master-data-management/lookup-sets/[id]">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/master-data-management/lookup-sets/[id]/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/master-data-management/lookup-sets/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/master-data-management/lookup-sets">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/master-data-management/lookup-sets/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/(protected)/master-data-management/product-attachments/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/master-data-management/product-attachments">> = Specific

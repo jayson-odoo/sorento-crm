@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import LookupBoundField from '@/components/common/LookupBoundField';
 import { useCreateComplaint, useUpdateComplaint, useUpdateComplaintAndReply, useComplaint } from '../hooks/useComplaints';
 import {
   getOrCreateComplaintViewLink,
@@ -327,22 +328,31 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Customer Type</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value || ''}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select customer type" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="individual">Individual</SelectItem>
-                          <SelectItem value="corporate">Corporate</SelectItem>
-                          <SelectItem value="government">Government</SelectItem>
-                          <SelectItem value="other">Other</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <LookupBoundField
+                          table="complaints"
+                          column="customer_type"
+                          value={field.value}
+                          onChange={field.onChange}
+                          placeholder="Select customer type"
+                          renderFallback={() => (
+                            <Select
+                              onValueChange={field.onChange}
+                              value={field.value || ''}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select customer type" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="individual">Individual</SelectItem>
+                                <SelectItem value="corporate">Corporate</SelectItem>
+                                <SelectItem value="government">Government</SelectItem>
+                                <SelectItem value="other">Other</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          )}
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -401,10 +411,19 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <FormItem>
                       <FormLabel>Product Type</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder="Enter product type"
-                          {...field}
-                          value={field.value || ''}
+                        <LookupBoundField
+                          table="complaints"
+                          column="product_type"
+                          value={field.value}
+                          onChange={field.onChange}
+                          placeholder="Select product type"
+                          renderFallback={() => (
+                            <Input
+                              placeholder="Enter product type"
+                              {...field}
+                              value={field.value || ''}
+                            />
+                          )}
                         />
                       </FormControl>
                       <FormMessage />
@@ -419,10 +438,19 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <FormItem>
                       <FormLabel>Defects Discovered</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder="Enter defects discovered"
-                          {...field}
-                          value={field.value || ''}
+                        <LookupBoundField
+                          table="complaints"
+                          column="defects_discovered"
+                          value={field.value}
+                          onChange={field.onChange}
+                          placeholder="Select defect"
+                          renderFallback={() => (
+                            <Input
+                              placeholder="Enter defects discovered"
+                              {...field}
+                              value={field.value || ''}
+                            />
+                          )}
                         />
                       </FormControl>
                       <FormMessage />
@@ -437,10 +465,19 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     <FormItem>
                       <FormLabel>Complaint Type</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder="Enter complaint type"
-                          {...field}
-                          value={field.value || ''}
+                        <LookupBoundField
+                          table="complaints"
+                          column="complaint_type"
+                          value={field.value}
+                          onChange={field.onChange}
+                          placeholder="Select complaint type"
+                          renderFallback={() => (
+                            <Input
+                              placeholder="Enter complaint type"
+                              {...field}
+                              value={field.value || ''}
+                            />
+                          )}
                         />
                       </FormControl>
                       <FormMessage />
