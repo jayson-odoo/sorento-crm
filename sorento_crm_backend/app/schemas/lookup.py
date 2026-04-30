@@ -85,8 +85,8 @@ class LookupSetResponse(BaseModel):
     name: str
     description: Optional[str]
     is_active: bool
-    option_count: int = 0
-    binding_count: int = 0
+    option_count: int = 0   # populated by service via SQL count(); not an ORM column
+    binding_count: int = 0  # populated by service via SQL count(); not an ORM column
     created_at: datetime
     updated_at: Optional[datetime]
     model_config = ConfigDict(from_attributes=True)
@@ -103,8 +103,8 @@ class LookupBindingResponse(BaseModel):
     set_id: str
     table_name: str
     column_name: str
-    table_label: Optional[str] = None
-    column_label: Optional[str] = None
+    table_label: Optional[str] = None   # resolved from eligibility registry at query time
+    column_label: Optional[str] = None  # resolved from eligibility registry at query time
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
