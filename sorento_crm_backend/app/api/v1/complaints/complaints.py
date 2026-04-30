@@ -101,17 +101,73 @@ def _query_observed_field_values(service: ComplaintService, column: str, limit: 
         return []
 
 
+def _lookup_options_for_complaint_field(service: ComplaintService, column: str) -> Optional[dict[str, Any]]:
+    """If complaints.<column> is bound to a LookupSet, return strict option list + per-option keywords.
+
+    Returns None when no binding exists (field stays free-text).
+    Shape: {set_key, set_name, strict, options:[{value, label, keywords:[...]}], instruction}.
+    """
+    from app.models.lookup import LookupBinding, LookupOption, LookupOptionKeyword, LookupSet  # local: avoid cycle
+
+    binding = (
+        service.db.query(LookupBinding)
+        .filter(LookupBinding.table_name == "complaints", LookupBinding.column_name == column)
+        .first()
+    )
+    if binding is None:
+        return None
+    s = service.db.query(LookupSet).filter(LookupSet.id == binding.set_id).first()
+    if s is None or not s.is_active:
+        return None
+    rows = (
+        service.db.query(LookupOption)
+        .filter(LookupOption.set_id == s.id, LookupOption.is_active.is_(True))
+        .order_by(LookupOption.sort_order.asc(), LookupOption.label.asc())
+        .all()
+    )
+    options: list[dict[str, Any]] = []
+    for o in rows:
+        kws = (
+            service.db.query(LookupOptionKeyword)
+            .filter(LookupOptionKeyword.option_id == o.id)
+            .all()
+        )
+        options.append({
+            "value": o.value,
+            "label": o.label,
+            "keywords": [k.keyword for k in kws],
+        })
+    return {
+        "set_key": s.set_key,
+        "set_name": s.name,
+        "strict": True,
+        "options": options,
+        "instruction": (
+            "Strict dropdown. Submit ONLY one of the listed `value` strings exactly — do not invent or paraphrase. "
+            "Map the user's free text to a value via the per-option `keywords` (case-insensitive). "
+            "If no keyword matches, ask the user to pick from the listed `label`s. "
+            "Submitting an unlisted value will fail validation (HTTP 422 invalid_lookup_value)."
+        ),
+    }
+
+
 def _build_complaint_field_guidance(service: ComplaintService) -> dict[str, dict[str, Any]]:
-    """Build per-field help: description + recommended values + observed examples from existing rows."""
+    """Per-field help: description + (lookup options w/ keywords when bound) OR static recommended values + observed examples."""
     guidance: dict[str, dict[str, Any]] = {}
     for field, meta in _COMPLAINT_FIELD_RECOMMENDED.items():
         entry: dict[str, Any] = {"description": meta.get("description")}
-        if "recommended_values" in meta:
-            entry["recommended_values"] = list(meta["recommended_values"])
+        lookup_info = _lookup_options_for_complaint_field(service, field)
+        if lookup_info is not None:
+            entry["lookup"] = lookup_info
+            entry["strict"] = True
+            entry["recommended_values"] = [o["value"] for o in lookup_info["options"]]
+        else:
+            if "recommended_values" in meta:
+                entry["recommended_values"] = list(meta["recommended_values"])
+            if field in _COMPLAINT_FIELD_OBSERVED_COLUMNS:
+                entry["observed_examples"] = _query_observed_field_values(service, field)
         if "note" in meta:
             entry["note"] = meta["note"]
-        if field in _COMPLAINT_FIELD_OBSERVED_COLUMNS:
-            entry["observed_examples"] = _query_observed_field_values(service, field)
         guidance[field] = entry
     return guidance
 
@@ -542,8 +598,13 @@ def _raise_needs_more_fields_guidance(
     *,
     missing_fields: list[str],
     do_context: dict[str, Any],
+    field_guidance: Optional[dict[str, dict[str, Any]]] = None,
 ) -> None:
-    """Structured response for incomplete complaint details after DO selection."""
+    """Structured response for incomplete complaint details after DO selection.
+
+    When ``field_guidance`` is supplied, each lookup-bound field carries a strict
+    ``lookup`` block with options + keywords; the LLM must submit only ``value`` strings.
+    """
     detail: dict[str, Any] = {
         "status": "needs_more_fields",
         "next_action": "collect_complaint_details",
@@ -567,6 +628,14 @@ def _raise_needs_more_fields_guidance(
         "customer_name": inferred_customer_name,
         "product_code": inferred_product_code,
     }
+    if field_guidance:
+        detail["field_guidance"] = field_guidance
+        detail["field_guidance_usage"] = (
+            "For each missing field consult field_guidance[<field>]. If a `lookup` block is present (strict=true), "
+            "you MUST submit one of the exact `value` strings from `lookup.options` — map the user's free text to "
+            "a value via per-option `keywords`. Unlisted values are rejected. If a field has no `lookup` block, it "
+            "is free-text; use `recommended_values` / `observed_examples` as soft hints only."
+        )
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
@@ -657,7 +726,11 @@ async def create_complaint(
             if requires_user_confirm:
                 missing_fields = service.get_submission_missing_fields(merged_for_validation)
                 if missing_fields:
-                    _raise_needs_more_fields_guidance(missing_fields=missing_fields, do_context=do_context)
+                    _raise_needs_more_fields_guidance(
+                        missing_fields=missing_fields,
+                        do_context=do_context,
+                        field_guidance=_build_complaint_field_guidance(service),
+                    )
                 if user_confirmed is not True:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -683,7 +756,11 @@ async def create_complaint(
             # Enforce missing-field validation before confirmation gating.
             missing_fields = service.get_submission_missing_fields(complaint_data)
             if missing_fields:
-                _raise_needs_more_fields_guidance(missing_fields=missing_fields, do_context=do_context)
+                _raise_needs_more_fields_guidance(
+                    missing_fields=missing_fields,
+                    do_context=do_context,
+                    field_guidance=_build_complaint_field_guidance(service),
+                )
         if requires_user_confirm and user_confirmed is not True:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -742,7 +819,11 @@ async def create_complaint_integration(
         _validate_integration_payload_completeness(payload)
         missing_fields = service.get_submission_missing_fields(complaint_data)
         if missing_fields:
-            _raise_needs_more_fields_guidance(missing_fields=missing_fields, do_context=do_context)
+            _raise_needs_more_fields_guidance(
+                missing_fields=missing_fields,
+                do_context=do_context,
+                field_guidance=_build_complaint_field_guidance(service),
+            )
         if payload.user_confirmed is not True:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

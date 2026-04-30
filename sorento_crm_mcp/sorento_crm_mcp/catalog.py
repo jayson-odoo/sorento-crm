@@ -1023,6 +1023,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "defect_discovered_when, sales_person, address, customer_type, within_warranty, product_type, "
             "contact_person, project_title, contact_id, and space_id. Optional: customer_type_other, attachments. "
             "Attachments are optional and should only be linked when the user explicitly wants to attach files. "
+            "STRICT LOOKUP FIELDS: error responses include `field_guidance` per field. If a field has a `lookup` "
+            "block with `strict: true`, you MUST submit one of the exact `value` strings from `lookup.options` — "
+            "never paraphrase, translate, or invent. Map the user's free text to a value via per-option `keywords` "
+            "(case-insensitive). On no keyword match, ask the user to choose from the listed `label`s. Submitting "
+            "an unlisted value returns 422 invalid_lookup_value; you can also call POST /api/v1/lookup/resolve "
+            "(crm_lookup_resolve) with set_key + raw text to get the canonical value. Fields with no `lookup` "
+            "block are free-text — `recommended_values` / `observed_examples` are soft hints only. "
             "For updates, include `system_id` (or `complaint_number` alias) only when editing a rejected complaint. "
             "If the user is only searching for DO numbers and has not asked to file/submit a complaint, use order-management DO search tools instead."
         ),
