@@ -199,7 +199,13 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
 
 export async function updateAttachment(
   attachmentId: string,
-  data: { directory_id?: string | null; description?: string | null; access_levels?: string[] | null }
+  data: {
+    directory_id?: string | null;
+    description?: string | null;
+    access_levels?: string[] | null;
+    /** Display filename. S3 key is immutable; only the UI label + Content-Disposition change. */
+    original_filename?: string;
+  }
 ): Promise<Attachment> {
   const response = await apiFetch(`/api/v1/resource-management/attachments/${attachmentId}`, {
     method: 'PUT',

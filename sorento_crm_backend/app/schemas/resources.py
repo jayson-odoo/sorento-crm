@@ -100,6 +100,27 @@ class AttachmentUpdate(BaseModel):
     description: Optional[str] = None
     access_levels: Optional[list[str]] = None
     sort_order: Optional[int] = None
+    # Display name shown in the UI and used as Content-Disposition filename on download.
+    # Updating this does NOT touch S3 — the underlying object key (stored_filename / file_path)
+    # is immutable so existing CDN URLs keep resolving.
+    original_filename: Optional[str] = None
+
+    @field_validator("original_filename", mode="before")
+    @classmethod
+    def sanitize_original_filename(cls, v):
+        """Trim, reject path separators / control chars, cap at 255 chars. None means 'no change'."""
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            v = str(v)
+        s = v.strip()
+        if not s:
+            raise ValueError("original_filename cannot be empty.")
+        if any(ch in s for ch in ("/", "\\", "\x00")) or any(ord(ch) < 32 for ch in s):
+            raise ValueError("original_filename cannot contain path separators or control characters.")
+        if len(s) > 255:
+            raise ValueError("original_filename must not exceed 255 characters.")
+        return s
 
 
 class AttachmentBulkDeleteRequest(BaseModel):

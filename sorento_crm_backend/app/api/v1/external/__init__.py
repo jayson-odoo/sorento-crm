@@ -19,6 +19,7 @@ from app.api.v1.external import (
     presigned_url,
     respond_contacts,
     chat_history,
+    conversation_variables,
     view_link,
     rag,
 )
@@ -43,5 +44,6 @@ router.include_router(conversation_sla_tracking.router, prefix="/conversation-sl
 router.include_router(presigned_url.router, prefix="/presigned-url", tags=["external"])
 router.include_router(respond_contacts.router, prefix="/respond-contacts", tags=["external"])
 router.include_router(chat_history.router, prefix="/chat-history", tags=["external"])
+router.include_router(conversation_variables.router, prefix="/conversation-variables", tags=["external"])
 router.include_router(view_link.router, prefix="/view-link", tags=["external"])
 router.include_router(rag.router, prefix="/rag", tags=["external"])

@@ -290,6 +290,85 @@ async def get_orders(
         raise handle_internal_error(str(e))
 
 
+@router.get("/debtors")
+async def list_distinct_debtors(
+    request: Request,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    query: Optional[str] = Query(
+        None,
+        description="Free-text partial match on debtor_name or debtor_code (case-insensitive).",
+    ),
+    sort: str = Query("debtor_name", description="One of: debtor_name, debtor_code, order_count."),
+    dir: str = Query("asc", description="asc | desc."),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Distinct customers/debtors aggregated from orders.
+
+    The `customers` table is not used by the business — the real customer identity
+    lives in `orders.debtor_name` / `debtor_code`. This endpoint deduplicates by
+    debtor_name (case-insensitive trim) and returns each debtor with its code and
+    total order count, so AI tools can search 'who are our customers' without
+    relying on the underused customers master table.
+
+    External AI/MCP callers are capped at limit=10 to keep responses small enough
+    to reason over (matching the cap on the orders list).
+    """
+    from app.models.order import Order as _Order
+
+    if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_LIST_LIMIT_CAP:
+        limit = _EXTERNAL_ORDERS_LIST_LIMIT_CAP
+
+    # Group by lower(trim(debtor_name)) so 'V Bath  ' and 'v bath' collapse to one row.
+    name_key = func.lower(func.trim(_Order.debtor_name))
+    base = (
+        db.query(
+            func.min(_Order.debtor_name).label("debtor_name"),
+            func.min(_Order.debtor_code).label("debtor_code"),
+            func.count(_Order.id).label("order_count"),
+        )
+        .filter(_Order.debtor_name.isnot(None))
+        .filter(func.trim(_Order.debtor_name) != "")
+        .group_by(name_key)
+    )
+
+    q = (query or "").strip()
+    if q:
+        like = f"%{q.lower()}%"
+        base = base.having(
+            (func.lower(func.min(_Order.debtor_name)).like(like))
+            | (func.lower(func.coalesce(func.min(_Order.debtor_code), "")).like(like))
+        )
+
+    sort_field = (sort or "debtor_name").strip().lower()
+    desc = (dir or "asc").strip().lower() == "desc"
+    sort_expr_map = {
+        "debtor_name": func.min(_Order.debtor_name),
+        "debtor_code": func.min(_Order.debtor_code),
+        "order_count": func.count(_Order.id),
+    }
+    sort_expr = sort_expr_map.get(sort_field, func.min(_Order.debtor_name))
+    base = base.order_by(sort_expr.desc().nulls_last() if desc else sort_expr.asc().nulls_last())
+
+    # Count distinct debtor groups by wrapping the grouped query in a subquery.
+    total = db.query(func.count()).select_from(base.order_by(None).subquery()).scalar() or 0
+    rows = base.offset((page - 1) * limit).limit(limit).all()
+    data = [
+        {
+            "debtor_name": r.debtor_name,
+            "debtor_code": r.debtor_code,
+            "order_count": int(r.order_count or 0),
+        }
+        for r in rows
+    ]
+    return {
+        "data": data,
+        "pagination": {"total": int(total), "page": page, "limit": limit},
+        "empty": int(total) == 0,
+    }
+
+
 @router.get("/by-product", response_model=ListResponse[OrderSimpleRef])
 async def get_orders_by_product(
     page: int = Query(1, ge=1),

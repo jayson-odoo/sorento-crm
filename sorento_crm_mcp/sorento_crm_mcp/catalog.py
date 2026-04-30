@@ -1022,11 +1022,18 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- commercial: customers (developer cross-check) ---
     ToolSpec(
         "crm_master_customers_list",
-        "List/search customers (developers/clients). Use BEFORE crm_commercial_projects_create_smart to cross-check for existing developers and prevent duplicates from 1-2 char typos.",
-        "/api/v1/order-management/customers",
+        (
+            "List / search distinct customers, deduplicated by debtor_name aggregated from the orders table. "
+            "The customers master table is not used by the business — the real customer identity lives on "
+            "orders.debtor_name / debtor_code. Each row returns debtor_name, debtor_code, and order_count. "
+            "Use BEFORE crm_commercial_projects_create_smart to cross-check existing customers and prevent "
+            "duplicates from 1-2 char typos. `query` does case-insensitive partial match on debtor_name OR "
+            "debtor_code. Sort: debtor_name | debtor_code | order_count (default debtor_name asc). External "
+            "AI/MCP callers are HARD-CAPPED at limit=10 server-side."
+        ),
+        "/api/v1/order-management/orders/debtors",
         (),
-        ("page", "limit", "query", "is_active", "sort", "dir"),
-        module="commercial_core",
+        ("page", "limit", "query", "sort", "dir"),
     ),
     ToolSpec(
         "crm_master_customers_get",

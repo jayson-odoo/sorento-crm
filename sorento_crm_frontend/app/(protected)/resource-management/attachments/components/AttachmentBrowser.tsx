@@ -15,7 +15,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw, FolderOpen, RotateCcw, FileArchive } from 'lucide-react';
+import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw, FolderOpen, RotateCcw, FileArchive, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -32,7 +32,16 @@ import {
 } from '@/components/ui/select';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAttachments, useDeleteAttachment, useDownloadAttachment, useRestoreAttachment, useBulkRestoreAttachments, useDirectoryTree } from '../hooks/useAttachments';
+import { useAttachments, useDeleteAttachment, useDownloadAttachment, useRestoreAttachment, useBulkRestoreAttachments, useDirectoryTree, useUpdateAttachment } from '../hooks/useAttachments';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { getAttachmentPreviewUrl, resubmitAttachmentWebhook } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
 import type { AttachmentDirectoryTreeNode } from '../services/directoryService';
@@ -58,6 +67,9 @@ export default function AttachmentBrowser() {
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<Attachment | null>(null);
+  const [renameValue, setRenameValue] = useState('');
   const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [directoryId, setDirectoryId] = useState<string | null>(null);
@@ -80,6 +92,35 @@ export default function AttachmentBrowser() {
   const restoreMutation = useRestoreAttachment();
   const bulkRestoreMutation = useBulkRestoreAttachments();
   const downloadMutation = useDownloadAttachment();
+  const updateMutation = useUpdateAttachment();
+
+  const openRename = useCallback((attachment: Attachment) => {
+    setRenameTarget(attachment);
+    setRenameValue(attachment.original_filename || '');
+    setRenameDialogOpen(true);
+  }, []);
+
+  const submitRename = useCallback(async () => {
+    if (!renameTarget) return;
+    const next = renameValue.trim();
+    if (!next) {
+      toast.error('Filename cannot be empty.');
+      return;
+    }
+    if (next === renameTarget.original_filename) {
+      setRenameDialogOpen(false);
+      return;
+    }
+    try {
+      await updateMutation.mutateAsync({ attachmentId: renameTarget.id, data: { original_filename: next } });
+      toast.success('Renamed.');
+      setRenameDialogOpen(false);
+      setRenameTarget(null);
+      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Rename failed.');
+    }
+  }, [renameTarget, renameValue, updateMutation, queryClient]);
 
   const [isResubmittingBulk, setIsResubmittingBulk] = useState(false);
 
@@ -315,6 +356,18 @@ export default function AttachmentBrowser() {
                 <Button
                   variant="ghost"
                   size="sm"
+                  title="Rename"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openRename(row.original);
+                  }}
+                  disabled={row.original.is_deleted}
+                >
+                  <Pencil className="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   title="Resubmit to n8n"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -536,6 +589,43 @@ export default function AttachmentBrowser() {
       permanent={isTrashView}
       onSuccess={() => setRowSelection({})}
     />
+
+    <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Rename file</DialogTitle>
+          <DialogDescription>
+            Renames the display label and the filename used when downloading. The underlying storage object and CDN URL are not changed.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor="rename-input">
+            Filename <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            id="rename-input"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            placeholder="new-filename.ext"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !updateMutation.isPending) {
+                e.preventDefault();
+                submitRename();
+              }
+            }}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setRenameDialogOpen(false)} disabled={updateMutation.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={submitRename} disabled={updateMutation.isPending || !renameValue.trim()}>
+            {updateMutation.isPending ? 'Saving…' : 'Rename'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }

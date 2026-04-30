@@ -53,7 +53,7 @@ export default async function AttachmentDirectoriesPage({
         </Toolbar>
       </Container>
 
-      <Container className="flex flex-col flex-1 min-h-0">
+      <Container className="flex flex-col h-[calc(100vh-12rem)] min-h-[480px] overflow-hidden">
         <AttachmentDirectoriesView initialDirectoryId={initialDirectoryId} />
       </Container>
     </>

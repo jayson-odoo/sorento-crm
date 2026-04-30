@@ -1467,20 +1467,36 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_master_customers_list": ToolIntent(
         category="commercial",
-        intent="List or search the customer (developer/client) catalog.",
+        intent="List or search distinct customers/debtors aggregated from the orders table.",
         description=(
-            "Browse and search customers (a.k.a. developers, clients) by free-text name/code. "
-            "Use this BEFORE calling `crm_commercial_projects_create_smart` to cross-check whether a developer "
-            "already exists in the system. Many client names differ by 1-2 characters; a manual check on this list "
-            "prevents accidental duplicate customers."
+            "Distinct customers/debtors derived from orders.debtor_name (the customers master table is not "
+            "actively used by the business — the real customer identity is the debtor on each order). "
+            "Each row returns debtor_name, debtor_code, and order_count, deduplicated by debtor_name "
+            "(case-insensitive trim). `query` is a case-insensitive partial match on debtor_name OR debtor_code. "
+            "Sort options: debtor_name, debtor_code, order_count. Use this BEFORE calling "
+            "`crm_commercial_projects_create_smart` to cross-check whether a customer already exists and prevent "
+            "1-2 char typo duplicates. External AI/MCP callers are HARD-CAPPED at limit=10 server-side."
         ),
         typical_user_questions=(
             "List all customers / developers / clients.",
             "Find customer ABC Construction.",
             "Do we already have this developer in the system?",
             "Show clients by name or code.",
+            "Who are our customers?",
+            "Top customers by order count.",
+            "Search debtors by name.",
+            "Find customer V BATH MARKETING.",
         ),
-        aliases=("customer list", "developer list", "client catalog", "search customers"),
+        aliases=(
+            "customer list",
+            "developer list",
+            "client catalog",
+            "search customers",
+            "debtor list",
+            "search debtors",
+            "list debtors",
+            "who are our customers",
+        ),
     ),
     "crm_master_customers_get": ToolIntent(
         category="commercial",

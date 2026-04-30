@@ -27,6 +27,7 @@ import {
   FileArchive,
   RotateCcw,
   Shield,
+  Pencil,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -44,7 +45,17 @@ import {
   useRestoreAttachment,
   useBulkRestoreAttachments,
   useRestoreDirectory,
+  useUpdateAttachment,
 } from '../../attachments/hooks/useAttachments';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { getAttachmentPreviewUrl, resubmitAttachmentWebhook } from '../../attachments/services/attachmentService';
 import type { Attachment } from '../../attachments/types/attachment.types';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -142,6 +153,39 @@ export default function AttachmentsInFolderPanel({
   const bulkRestoreMutation = useBulkRestoreAttachments();
   const restoreDirectoryMutation = useRestoreDirectory();
   const downloadMutation = useDownloadAttachment();
+  const updateMutation = useUpdateAttachment();
+
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<Attachment | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  const openRename = useCallback((attachment: Attachment) => {
+    setRenameTarget(attachment);
+    setRenameValue(attachment.original_filename || '');
+    setRenameDialogOpen(true);
+  }, []);
+
+  const submitRename = useCallback(async () => {
+    if (!renameTarget) return;
+    const next = renameValue.trim();
+    if (!next) {
+      toast.error('Filename cannot be empty.');
+      return;
+    }
+    if (next === renameTarget.original_filename) {
+      setRenameDialogOpen(false);
+      return;
+    }
+    try {
+      await updateMutation.mutateAsync({ attachmentId: renameTarget.id, data: { original_filename: next } });
+      toast.success('Renamed.');
+      setRenameDialogOpen(false);
+      setRenameTarget(null);
+      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Rename failed.');
+    }
+  }, [renameTarget, renameValue, updateMutation, queryClient]);
 
   const [isResubmittingBulk, setIsResubmittingBulk] = useState(false);
 
@@ -387,6 +431,18 @@ export default function AttachmentsInFolderPanel({
                 <Button
                   variant="ghost"
                   size="sm"
+                  title="Rename"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openRename(row.original);
+                  }}
+                  disabled={row.original.is_deleted}
+                >
+                  <Pencil className="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   title="Resubmit to n8n"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -617,6 +673,43 @@ export default function AttachmentsInFolderPanel({
         neighbourItems={(data?.data ?? []).map((a) => ({ id: a.id }))}
         onAttachmentChange={setViewAttachmentId}
       />
+
+      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rename file</DialogTitle>
+            <DialogDescription>
+              Renames the display label and the filename used when downloading. The underlying storage object and CDN URL are not changed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="rename-input-folder">
+              Filename <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="rename-input-folder"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              placeholder="new-filename.ext"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !updateMutation.isPending) {
+                  e.preventDefault();
+                  submitRename();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameDialogOpen(false)} disabled={updateMutation.isPending}>
+              Cancel
+            </Button>
+            <Button onClick={submitRename} disabled={updateMutation.isPending || !renameValue.trim()}>
+              {updateMutation.isPending ? 'Saving…' : 'Rename'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

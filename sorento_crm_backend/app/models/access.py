@@ -1,6 +1,6 @@
 """Access control models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index, Integer
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index, Integer, text
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
@@ -62,6 +62,9 @@ class RespondContact(Base):
     access_type_code = Column(String(50), ForeignKey("contact_access_types.code", ondelete="SET NULL"), nullable=True)  # Resolved catalog code (one per contact)
     respond_io_id = Column(Text, nullable=True)  # Respond.io contact id for inbox URL
     workspace_id = Column(UUID(as_uuid=False), ForeignKey("respond_workspaces.id", ondelete="SET NULL"), nullable=True)
+    # Per-conversation variables collected from n8n turns: {"turns":[{ts,inquiry_type,vars}], "merged":{<inquiry_type>:{...}}}.
+    # Maintained by /api/v1/external/conversation-variables/upsert; sliding window capped per call.
+    session_vars = Column(JSONB(astext_type=Text()), nullable=False, server_default=text("'{}'::jsonb"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)
