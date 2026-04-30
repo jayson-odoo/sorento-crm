@@ -22,6 +22,7 @@ from app.api.v1 import (
     notifications,
     list_query,
     workflow_forms,
+    lookup,
 )
 from app.api.v1.system import modules_runtime
 from app.modules.runtime.guards import require_module_enabled, require_module_enabled_with_api_key
@@ -143,6 +144,7 @@ api_router.include_router(
     prefix="/list-query",
     tags=["list-query"],
 )
+api_router.include_router(lookup.router, prefix="/lookup", tags=["lookup"])
 
 # Public quoting customer-approval endpoint — unauthenticated, must be mounted
 # OUTSIDE the commercial_core module guard.
