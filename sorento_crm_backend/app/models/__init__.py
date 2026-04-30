@@ -42,6 +42,7 @@ from app.models.ai_assistant import (
     AIAssistantGovernanceEvent,
 )
 from app.models.chat_history import ChatHistory
+from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
 
 __all__ = [
     "User",
@@ -137,6 +138,10 @@ __all__ = [
     "AIAssistantMessage",
     "AIAssistantGovernanceEvent",
     "ChatHistory",
+    "LookupSet",
+    "LookupOption",
+    "LookupOptionKeyword",
+    "LookupBinding",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy
