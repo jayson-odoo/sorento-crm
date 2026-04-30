@@ -47,3 +47,14 @@ class ConversationVariablesUpsertResponse(BaseModel):
     turn_count_total: int
     turn_count_for_inquiry_type: int
     max_turns: int
+
+
+class ConversationVariableKeysResponse(BaseModel):
+    """Distinct variable keys ever recorded across all respond_contacts.session_vars.
+
+    Returned to n8n so the LLM can reuse known keys instead of inventing new ones
+    (e.g. avoid 'product' vs 'product_code' duplicates for the same concept).
+    """
+
+    keys: list[str]
+    count: int

@@ -1,5 +1,5 @@
 {
-  "/api/v1/external/[...path]/route": "app/api/v1/external/[...path]/route.js",
-  "/(protected)/page": "app/(protected)/page.js",
-  "/(protected)/resource-management/attachment-directories/page": "app/(protected)/resource-management/attachment-directories/page.js"
+  "/api/auth/token/route": "app/api/auth/token/route.js",
+  "/(protected)/resource-management/attachment-directories/page": "app/(protected)/resource-management/attachment-directories/page.js",
+  "/(protected)/page": "app/(protected)/page.js"
 }

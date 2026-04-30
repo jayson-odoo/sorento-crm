@@ -3,12 +3,14 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.schemas.external.conversation_variables import (
+    ConversationVariableKeysResponse,
     ConversationVariablesUpsertRequest,
     ConversationVariablesUpsertResponse,
 )
@@ -113,3 +115,72 @@ def upsert_conversation_variables(
 
     assert response_payload is not None  # for type-checkers; success path always sets this
     return response_payload
+
+
+@router.get(
+    "/keys",
+    response_model=ConversationVariableKeysResponse,
+    status_code=status.HTTP_200_OK,
+)
+def list_known_variable_keys(
+    inquiry_type: str | None = Query(
+        None,
+        description=(
+            "Optional filter: only return keys that have appeared under this inquiry_type. "
+            "Omit for the global cross-inquiry-type set (recommended; matches LLM bootstrap usage)."
+        ),
+    ),
+    current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """Distinct variable keys ever recorded across all `respond_contacts.session_vars`.
+
+    Sourced from `turns[].vars` (so keys evicted from `merged` by the sliding window are
+    still surfaced). n8n loads this list before each LLM call so the model reuses known
+    keys (`product_code`) instead of inventing variants (`product`, `productCode`, ...).
+    """
+    if inquiry_type is not None:
+        inquiry_type = inquiry_type.strip()
+        if not inquiry_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="inquiry_type, when supplied, must be a non-empty string.",
+            )
+
+    if inquiry_type:
+        sql = text(
+            """
+            SELECT DISTINCT k
+            FROM respond_contacts AS rc,
+                 LATERAL jsonb_array_elements(rc.session_vars -> 'turns') AS turn,
+                 LATERAL jsonb_object_keys(turn -> 'vars') AS k
+            WHERE jsonb_typeof(rc.session_vars -> 'turns') = 'array'
+              AND turn ->> 'inquiry_type' = :inquiry_type
+            ORDER BY k
+            """
+        )
+        params = {"inquiry_type": inquiry_type}
+    else:
+        sql = text(
+            """
+            SELECT DISTINCT k
+            FROM respond_contacts AS rc,
+                 LATERAL jsonb_array_elements(rc.session_vars -> 'turns') AS turn,
+                 LATERAL jsonb_object_keys(turn -> 'vars') AS k
+            WHERE jsonb_typeof(rc.session_vars -> 'turns') = 'array'
+            ORDER BY k
+            """
+        )
+        params = {}
+
+    try:
+        rows = db.execute(sql, params).fetchall()
+    except Exception as exc:
+        logger.exception("conversation-variables keys listing failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list known variable keys.",
+        )
+
+    keys = [r[0] for r in rows if r[0]]
+    return ConversationVariableKeysResponse(keys=keys, count=len(keys))
