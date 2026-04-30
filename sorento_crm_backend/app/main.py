@@ -81,6 +81,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": jsonable_encoder(exc.errors())}
     )
 
+# Triggers eligibility registrations side-effects.
+from app.services import lookup_eligibility_registrations as _lookup_eligibility_registrations  # noqa: F401
+
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
 
