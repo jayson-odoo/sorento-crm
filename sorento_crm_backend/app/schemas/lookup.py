@@ -11,6 +11,14 @@ class LookupKeywordIn(BaseModel):
     keyword: str = Field(min_length=1, max_length=150)
     locale: Optional[str] = Field(default=None, max_length=10)
 
+    @field_validator("keyword")
+    @classmethod
+    def _strip_keyword(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("keyword must not be blank")
+        return v
+
 
 class LookupKeywordOut(LookupKeywordIn):
     id: str
