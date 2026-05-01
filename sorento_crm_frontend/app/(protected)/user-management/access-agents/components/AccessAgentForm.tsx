@@ -28,8 +28,9 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useAccessAgents, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
+import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useAccessAgents, useAgentTeams, useTeams, useAgentMcpTools, useSetAgentMcpTools } from '../hooks/useAccessAgents';
 import { setAgentTeams } from '../services/accessAgentService';
+import { McpToolSelector } from './McpToolSelector';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
 import type { AccessAgentFormData } from '../types/accessAgent.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
@@ -64,6 +65,19 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
   const { data: agentTeamsData } = useAgentTeams(isEditMode ? accessAgentId ?? null : null);
   const { data: teamsList = [] } = useTeams();
   const [assignmentGroups, setAssignmentGroups] = useState<AssignmentGroup[]>([]);
+
+  const { data: agentMcpToolsData } = useAgentMcpTools(isEditMode ? accessAgentId ?? null : null);
+  const setAgentMcpToolsMutation = useSetAgentMcpTools();
+  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([]);
+  const [initialToolIds, setInitialToolIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (agentMcpToolsData) {
+      const ids = agentMcpToolsData.map((t) => t.id);
+      setSelectedToolIds(ids);
+      setInitialToolIds(ids);
+    }
+  }, [agentMcpToolsData]);
 
   useEffect(() => {
     const fromServer = agentTeamsData?.assignments;
@@ -152,6 +166,15 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
           .filter((a) => a.code && a.team_id);
         await setAgentTeams(accessAgentId, validAssignments);
         queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
+        const removedIds = initialToolIds.filter((id) => !selectedToolIds.includes(id));
+        const addedIds = selectedToolIds.filter((id) => !initialToolIds.includes(id));
+        if (addedIds.length > 0 || removedIds.length > 0) {
+          await setAgentMcpToolsMutation.mutateAsync({
+            agentId: accessAgentId,
+            toolIds: selectedToolIds,
+          });
+          setInitialToolIds(selectedToolIds);
+        }
         toast.success('Access agent updated successfully');
       } else {
         await createMutation.mutateAsync(formData);
@@ -177,7 +200,10 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
     );
   }
 
-  const isLoading = createMutation.isPending || updateMutation.isPending;
+  const isLoading =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    setAgentMcpToolsMutation.isPending;
 
   return (
     <Form {...form}>
@@ -447,6 +473,26 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                   </Button>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        )}
+
+        {isEditMode && accessAgentId && (
+          <Card>
+            <CardHeader>
+              <CardTitle>MCP Tools</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Tools selected here will require an authorised contact under this access agent
+                before they can be invoked.
+              </p>
+              <McpToolSelector
+                value={selectedToolIds}
+                onChange={setSelectedToolIds}
+                currentAgentId={accessAgentId}
+                disabled={isLoading}
+              />
             </CardContent>
           </Card>
         )}
