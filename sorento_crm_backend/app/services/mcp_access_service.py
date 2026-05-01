@@ -21,6 +21,7 @@ from app.models.access import (
     McpTool,
     RespondContact,
 )
+from app.models.respond_workspace import RespondWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +71,17 @@ def evaluate(
     """Decide whether `(tool_name, contact_id, space_id)` may proceed.
 
     `contact_id` is the respond.io contact id (`respond_contacts.respond_io_id`).
-    `space_id` is the respond workspace id (`respond_contacts.respond_workspace_id`).
+    `space_id` is the Respond.io external workspace id
+    (`respond_workspaces.space_id`, e.g. ``"364817"``). It is resolved here to
+    the internal workspace UUID before any FK comparison or log write.
     """
+    workspace = (
+        db.query(RespondWorkspace)
+        .filter(RespondWorkspace.space_id == space_id)
+        .one_or_none()
+    )
+    workspace_uuid = workspace.id if workspace is not None else None
+
     tool = (
         db.query(McpTool)
         .filter(McpTool.tool_name == tool_name, McpTool.is_active.is_(True))
@@ -83,7 +93,7 @@ def evaluate(
             tool_name=tool_name,
             contact_external_id=contact_id,
             respond_contact_id=None,
-            respond_workspace_id=space_id,
+            respond_workspace_id=workspace_uuid,
             decision="deny_unknown_tool",
             matched_agent_id=None,
         )
@@ -95,7 +105,7 @@ def evaluate(
             tool_name=tool_name,
             contact_external_id=contact_id,
             respond_contact_id=None,
-            respond_workspace_id=space_id,
+            respond_workspace_id=workspace_uuid,
             decision="deny_tool_unlinked",
             matched_agent_id=None,
         )
@@ -112,17 +122,29 @@ def evaluate(
             tool_name=tool_name,
             contact_external_id=contact_id,
             respond_contact_id=None,
-            respond_workspace_id=space_id,
+            respond_workspace_id=workspace_uuid,
             decision="deny_tool_unlinked",
             matched_agent_id=None,
         )
         return AccessDecision(allowed=False, decision="deny_tool_unlinked", agent_name=None)
 
+    if workspace_uuid is None:
+        _record_log(
+            db,
+            tool_name=tool_name,
+            contact_external_id=contact_id,
+            respond_contact_id=None,
+            respond_workspace_id=None,
+            decision="deny_unknown_contact",
+            matched_agent_id=None,
+        )
+        return AccessDecision(allowed=False, decision="deny_unknown_contact", agent_name=owner.name)
+
     contact = (
         db.query(RespondContact)
         .filter(
             RespondContact.respond_io_id == contact_id,
-            RespondContact.workspace_id == space_id,
+            RespondContact.workspace_id == workspace_uuid,
         )
         .one_or_none()
     )
@@ -132,7 +154,7 @@ def evaluate(
             tool_name=tool_name,
             contact_external_id=contact_id,
             respond_contact_id=None,
-            respond_workspace_id=space_id,
+            respond_workspace_id=workspace_uuid,
             decision="deny_unknown_contact",
             matched_agent_id=None,
         )
@@ -156,7 +178,7 @@ def evaluate(
             tool_name=tool_name,
             contact_external_id=contact_id,
             respond_contact_id=contact.id,
-            respond_workspace_id=space_id,
+            respond_workspace_id=workspace_uuid,
             decision="deny_no_access",
             matched_agent_id=None,
         )
@@ -167,7 +189,7 @@ def evaluate(
         tool_name=tool_name,
         contact_external_id=contact_id,
         respond_contact_id=contact.id,
-        respond_workspace_id=space_id,
+        respond_workspace_id=workspace_uuid,
         decision="allow",
         matched_agent_id=owner.id,
     )

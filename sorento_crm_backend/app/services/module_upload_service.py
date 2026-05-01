@@ -116,6 +116,66 @@ def _copy_tree(src: Path, dest: Path) -> list[str]:
     return copied
 
 
+def _purge_module_orm_state(module_path: str, Base) -> None:
+    """Remove tables + mapped classes the module previously declared so reload
+    can re-execute ``models.py`` against a clean ``Base.metadata`` /
+    ``Base.registry``.
+
+    Touches only in-memory SQLAlchemy registries — DB rows and on-disk schema
+    are untouched (Alembic already ran any forward migrations before this).
+
+    Caveat: dependent modules (anything that previously declared
+    ``relationship("ClassFromThisModule")``) keep cached Mapper references to
+    the now-disposed classes. After this purge + reload, their ORM access
+    paths are unsafe in this process. The upload flow returns
+    ``restart_required: True`` for that reason — this function is the
+    pre-restart verification step, not a hot-swap.
+    """
+    import sys
+
+    submodules = [
+        m for name, m in list(sys.modules.items())
+        if name == module_path or name.startswith(module_path + ".")
+    ]
+
+    classes_to_drop: list[type] = []
+    for sm in submodules:
+        sm_name = getattr(sm, "__name__", None)
+        if not sm_name:
+            continue
+        for attr in list(vars(sm).values()):
+            if not isinstance(attr, type):
+                continue
+            if attr is Base or not issubclass(attr, Base):
+                continue
+            if attr.__module__ != sm_name:
+                continue  # imported from elsewhere — not ours to drop
+            classes_to_drop.append(attr)
+
+    # 1) Remove tables from MetaData (by identity).
+    for cls in classes_to_drop:
+        tbl = getattr(cls, "__table__", None)
+        if tbl is not None and tbl.key in Base.metadata.tables:
+            if Base.metadata.tables[tbl.key] is tbl:
+                Base.metadata.remove(tbl)
+
+    # 2) Dispose mappers + drop classes from the declarative registry.
+    reg = Base.registry
+    class_registry = getattr(reg, "_class_registry", None)
+    for cls in classes_to_drop:
+        try:
+            mapper = getattr(cls, "__mapper__", None)
+            if mapper is not None:
+                mapper._dispose()
+        except Exception:
+            logger.exception("Failed to dispose mapper for %s", cls)
+        if isinstance(class_registry, dict):
+            for key in list(class_registry.keys()):
+                val = class_registry.get(key)
+                if val is cls:
+                    class_registry.pop(key, None)
+
+
 def _verify_module_mappers(module_key: str, backend_dest: Path) -> None:
     """Import the module's models and force SQLAlchemy mapper configuration.
 
@@ -126,20 +186,28 @@ def _verify_module_mappers(module_key: str, backend_dest: Path) -> None:
         return  # No ORM models to verify.
 
     import importlib
+    import sys
     from sqlalchemy.orm import configure_mappers
+    from app.database import Base
 
     module_path = f"app.modules.{module_key}.models"
     try:
-        # Reload if already imported to pick up just-extracted code.
-        if module_path in importlib.sys.modules:
-            importlib.reload(importlib.sys.modules[module_path])
+        old_mod = sys.modules.get(module_path)
+        if old_mod is not None:
+            # Module already loaded at startup. Strip its tables / mappers
+            # from the SQLAlchemy registries before reload so re-executing
+            # ``models.py`` does not raise "Table X is already defined for
+            # this MetaData instance". DB data is unaffected (Alembic ran
+            # forward migrations earlier in the upload flow).
+            _purge_module_orm_state(module_path, Base)
+            importlib.reload(old_mod)
         else:
             importlib.import_module(module_path)
+
         # Apply any deferred inverse relationships the module queued via
         # ``register_inverse``. Without this, configure_mappers() would fail
         # when the module's models declare ``back_populates="..."`` against
         # platform classes that haven't yet received the reciprocal property.
-        from app.database import Base
         from app.modules.runtime.relationship_registry import apply_pending
         apply_pending(Base.registry)
         configure_mappers()
@@ -147,7 +215,9 @@ def _verify_module_mappers(module_key: str, backend_dest: Path) -> None:
         raise ModuleUploadError(
             f"Module '{module_key}' models failed mapper configuration: {exc}. "
             f"Likely a relationship() points to a class or property not present "
-            f"in this deployment. Upload required upstream modules first."
+            f"in this deployment, or a schema change conflicts with already-loaded "
+            f"mappers. If upstream modules are missing, upload them first; "
+            f"otherwise restart the server and retry."
         ) from exc
 
 

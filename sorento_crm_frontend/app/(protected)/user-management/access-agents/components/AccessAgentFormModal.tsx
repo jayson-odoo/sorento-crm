@@ -39,8 +39,11 @@ import {
   useAccessAgent,
   useAgentTeams,
   useTeams,
+  useAgentMcpTools,
+  useSetAgentMcpTools,
 } from '../hooks/useAccessAgents';
 import { setAgentTeams } from '../services/accessAgentService';
+import { McpToolSelector } from './McpToolSelector';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
 import type { AccessAgentFormData } from '../types/accessAgent.types';
 
@@ -68,6 +71,19 @@ export default function AccessAgentFormModal({
   const { data: agentTeamsData } = useAgentTeams(isEditMode ? accessAgentId ?? null : null);
   const { data: teamsList = [] } = useTeams();
   const [assignmentGroups, setAssignmentGroups] = useState<AssignmentGroup[]>([]);
+
+  const { data: agentMcpToolsData } = useAgentMcpTools(isEditMode ? accessAgentId ?? null : null);
+  const setAgentMcpToolsMutation = useSetAgentMcpTools();
+  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([]);
+  const [initialToolIds, setInitialToolIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (agentMcpToolsData) {
+      const ids = agentMcpToolsData.map((t) => t.id);
+      setSelectedToolIds(ids);
+      setInitialToolIds(ids);
+    }
+  }, [agentMcpToolsData]);
 
   const form = useForm<AccessAgentSchemaType>({
     resolver: zodResolver(AccessAgentSchema),
@@ -147,6 +163,15 @@ export default function AccessAgentFormModal({
           .filter((a) => a.code && a.team_id);
         await setAgentTeams(accessAgentId, validAssignments);
         queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
+        const removedIds = initialToolIds.filter((id) => !selectedToolIds.includes(id));
+        const addedIds = selectedToolIds.filter((id) => !initialToolIds.includes(id));
+        if (addedIds.length > 0 || removedIds.length > 0) {
+          await setAgentMcpToolsMutation.mutateAsync({
+            agentId: accessAgentId,
+            toolIds: selectedToolIds,
+          });
+          setInitialToolIds(selectedToolIds);
+        }
         toast.success('Access agent updated successfully');
       } else {
         await createMutation.mutateAsync(formData);
@@ -161,7 +186,10 @@ export default function AccessAgentFormModal({
     }
   };
 
-  const isLoading = createMutation.isPending || updateMutation.isPending;
+  const isLoading =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    setAgentMcpToolsMutation.isPending;
   if (isEditMode && open && isLoadingAccessAgent) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -412,6 +440,22 @@ export default function AccessAgentFormModal({
                       </Button>
                     </>
                   )}
+                </div>
+              )}
+
+              {isEditMode && accessAgentId && (
+                <div className="space-y-3">
+                  <h4 className="font-medium">MCP Tools</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Tools selected here will require an authorised contact under this access agent
+                    before they can be invoked.
+                  </p>
+                  <McpToolSelector
+                    value={selectedToolIds}
+                    onChange={setSelectedToolIds}
+                    currentAgentId={accessAgentId}
+                    disabled={isLoading}
+                  />
                 </div>
               )}
             </form>

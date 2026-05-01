@@ -98,7 +98,7 @@ def test_check_endpoint_allow(client, db, cleanup):
         json={
             "tool_name": tool.tool_name,
             "contact_id": contact.respond_io_id,
-            "space_id": ws.id,
+            "space_id": ws.space_id,
         },
     )
     assert res.status_code == 200, res.text

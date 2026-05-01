@@ -19,7 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from 'sonner';
-import { useAccessAgent, useAccessAgents, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
+import { useAccessAgent, useAccessAgents, useAgentTeams, useTeams, useAgentMcpTools } from '../hooks/useAccessAgents';
 import { formatDate } from '@/lib/helpers';
 import AccessAgentDeleteDialog from './access-agent-delete-dialog';
 import ContactAccessAgentsTable from './ContactAccessAgentsTable';
@@ -129,6 +129,8 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
     isRefetching: isRefetchingAgentTeams,
   } = useAgentTeams(accessAgentId);
   const { data: teamsList = [] } = useTeams();
+  const { data: agentMcpToolsData } = useAgentMcpTools(accessAgentId);
+  const agentMcpTools = agentMcpToolsData ?? [];
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
 
@@ -430,6 +432,49 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                 </div>
               ))}
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* MCP Tools */}
+      <Card>
+        <CardHeader>
+          <CardTitle>MCP Tools</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {agentMcpTools.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground border rounded-lg border-dashed">
+              <p>No MCP tools assigned.</p>
+              <p className="text-sm mt-1">Edit agent to assign tools.</p>
+              <Button variant="outline" size="sm" className="mt-3" onClick={() => setEditModalOpen(true)}>
+                Edit Access Agent
+              </Button>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Tool</TableHead>
+                  <TableHead>Module</TableHead>
+                  <TableHead>Description</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {agentMcpTools.map((t) => (
+                  <TableRow key={t.id}>
+                    <TableCell className="font-mono text-sm">{t.tool_name}</TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="text-xs">
+                        {t.module_key || 'Unbound'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {t.description ?? '—'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </CardContent>
       </Card>

@@ -120,7 +120,7 @@ def test_evaluate_allow(db, cleanup):
     _grant(db, cleanup, contact, agent)
     db.commit()
 
-    out = evaluate(db, tool_name=tool.tool_name, contact_id=contact.respond_io_id, space_id=ws.id)
+    out = evaluate(db, tool_name=tool.tool_name, contact_id=contact.respond_io_id, space_id=ws.space_id)
     assert out.allowed is True
     assert out.decision == "allow"
     assert out.agent_name == "Sales"
@@ -173,7 +173,7 @@ def test_evaluate_deny_no_access(db, cleanup):
     _grant(db, cleanup, contact, other)  # contact under Support, not Sales
     db.commit()
 
-    out = evaluate(db, tool_name=tool.tool_name, contact_id=contact.respond_io_id, space_id=ws.id)
+    out = evaluate(db, tool_name=tool.tool_name, contact_id=contact.respond_io_id, space_id=ws.space_id)
     assert out.allowed is False
     assert out.decision == "deny_no_access"
     assert out.agent_name == "Sales"

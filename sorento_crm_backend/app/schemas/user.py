@@ -399,8 +399,8 @@ class AccessAgentMcpToolsUpdate(BaseModel):
 
 class McpAccessCheckIn(BaseModel):
     tool_name: str
-    contact_id: str        # respond_io_id
-    space_id: str          # respond_workspace_id (UUID-as-str)
+    contact_id: str        # respond_io_id (Respond.io external contact id)
+    space_id: str          # Respond.io external workspace id (matches respond_workspaces.space_id)
 
 
 class McpAccessCheckOut(BaseModel):
