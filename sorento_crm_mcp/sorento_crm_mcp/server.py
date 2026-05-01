@@ -351,6 +351,9 @@ async def _execute_tool_request_with_body(
     )
 
 
+_GUARD_PARAM_NAMES = ("contact_id", "space_id")
+
+
 def _compile_tool(spec: ToolSpec):
     """Build async (ctx, ...) -> str for one catalog entry; Context carries CRMClient from lifespan."""
     pp_sig = ", ".join(f"{p}: str" for p in spec.path_params)
@@ -360,8 +363,18 @@ def _compile_tool(spec: ToolSpec):
         for alias_name in alias_names:
             if alias_name not in query_params_with_aliases:
                 query_params_with_aliases.append(alias_name)
-    qp_sig = ", ".join(f"{q}: str | None = None" for q in query_params_with_aliases)
-    bp_sig = ", ".join(f"{b}: str" for b in spec.body_params)
+    # Strip guard param names from the generated signature — they're already
+    # required as guard inputs (contact_id, space_id). For tools whose backend
+    # endpoint accepts them as query filters, we re-inject the guard values
+    # into _qq below so the forwarded request still carries them.
+    qp_for_sig = [q for q in query_params_with_aliases if q not in _GUARD_PARAM_NAMES]
+    bp_for_sig = [b for b in spec.body_params if b not in _GUARD_PARAM_NAMES]
+    forward_contact_id_query = "contact_id" in query_params_with_aliases
+    forward_space_id_query = "space_id" in query_params_with_aliases
+    forward_contact_id_body = "contact_id" in spec.body_params
+    forward_space_id_body = "space_id" in spec.body_params
+    qp_sig = ", ".join(f"{q}: str | None = None" for q in qp_for_sig)
+    bp_sig = ", ".join(f"{b}: str" for b in bp_for_sig)
     guard_sig = "contact_id: str, space_id: str"
     if pp_sig and qp_sig:
         sig = f"{guard_sig}, {pp_sig}, {qp_sig}"
@@ -375,8 +388,8 @@ def _compile_tool(spec: ToolSpec):
         sig = f"{sig}, {bp_sig}"
 
     pp_dict = "{" + ", ".join(f'"{p}": {p}' for p in spec.path_params) + "}"
-    q_dict = "{" + ", ".join(f'"{q}": {q}' for q in query_params_with_aliases) + "}"
-    b_dict = "{" + ", ".join(f'"{b}": {b}' for b in spec.body_params) + "}"
+    q_dict = "{" + ", ".join(f'"{q}": {q}' for q in qp_for_sig) + "}"
+    b_dict = "{" + ", ".join(f'"{b}": {b}' for b in bp_for_sig) + "}"
     aliases_repr = repr(aliases)
     required_hints = repr(TOOL_REQUIRED_QUERY_HINTS.get(spec.name, ()))
     default_q = repr(TOOL_DEFAULT_QUERY_PARAMS.get(spec.name, {}))
@@ -391,7 +404,11 @@ def _compile_tool(spec: ToolSpec):
         f"        return _deny_payload(_decision)\n"
         f"    _pp = {pp_dict}\n"
         f"    _qq = {q_dict}\n"
+        f"    if {forward_contact_id_query!r}: _qq['contact_id'] = contact_id\n"
+        f"    if {forward_space_id_query!r}: _qq['space_id'] = space_id\n"
         f"    _bb = {b_dict}\n"
+        f"    if {forward_contact_id_body!r}: _bb['contact_id'] = contact_id\n"
+        f"    if {forward_space_id_body!r}: _bb['space_id'] = space_id\n"
         f"    _aliases = {aliases_repr}\n"
         f"    _required = {required_hints}\n"
         f"    _defaults = {default_q}\n"
