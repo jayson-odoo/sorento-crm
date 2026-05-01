@@ -115,6 +115,23 @@ async def startup_event():
         logging.info("Background scheduler started successfully")
     except Exception as e:
         logging.error(f"Failed to start scheduler: {str(e)}", exc_info=True)
+    try:
+        from app.database import SessionLocal
+        from app.services.mcp_tool_registry_service import sync_catalog
+        _db = SessionLocal()
+        try:
+            report = sync_catalog(_db)
+            _db.commit()
+            logging.info(
+                "MCP tool catalog synced at startup: added=%d updated=%d deactivated=%d",
+                report.added,
+                report.updated,
+                report.deactivated,
+            )
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Failed to sync MCP tool catalog at startup: {str(e)}", exc_info=True)
 
 @app.on_event("shutdown")
 async def shutdown_event():
