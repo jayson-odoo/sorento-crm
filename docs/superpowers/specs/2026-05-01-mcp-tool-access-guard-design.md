@@ -1,4 +1,4 @@
-# MCP Tool Catalog + AccessAgent Tool Linkage + Per-Call Guard — Design
+# MCP Tool Catalog + AccessAgent Tool Ownership + Per-Call Guard — Design
 
 **Status:** Draft for review
 **Date:** 2026-05-01
@@ -28,11 +28,13 @@ We need:
 
 1. A persisted catalog of MCP tools that mirrors the code catalog and stays
    in sync as modules are uploaded / removed.
-2. A many-to-many link between `access_agents` and tools, surfaced on the
-   AccessAgent edit form.
+2. An ownership link between `access_agents` and tools — **each tool belongs
+   to at most one agent** (N:1). Surfaced on the AccessAgent edit form as a
+   multi-select; selecting a tool already owned by another agent reassigns
+   it (with explicit warning in the picker label).
 3. A runtime guard at the MCP server that requires `contact_id` + `space_id`
    on every tool call, validates `(tool, contact, space)` against the
-   agent linkage, and refuses with a deterministic verbatim message when
+   agent ownership, and refuses with a deterministic verbatim message when
    denied.
 
 ## 2. Goals
@@ -69,9 +71,8 @@ We need:
 │   contact_id, space_id args  ├────────►│   check                      │
 │ Calls /mcp-access/check      │         │   { tool_name, contact_id,  │
 │   before forwarding tool req │◄────────┤     space_id }              │
-│ TTL 60s in-memory cache      │ allow/  │   → { allowed, agent_name,  │
-│                              │  deny   │       agents_for_tool[],    │
-│                              │         │       decision }            │
+│ TTL 60s in-memory cache      │ allow/  │   → { allowed, agent_name, │
+│                              │  deny   │       decision }            │
 └──────────────────────────────┘         │                              │
                                          │ Catalog sync (startup +     │
                                          │   module upload)             │
@@ -79,25 +80,25 @@ We need:
                                          │   per-module tools.json     │
                                          │   → upserts mcp_tools rows  │
                                          │                              │
-                                         │ Tables: mcp_tools,          │
-                                         │   access_agent_mcp_tools,   │
-                                         │   mcp_access_log            │
+                                         │ Tables: mcp_tools            │
+                                         │   (with owner agent_id FK), │
+                                         │   mcp_access_log             │
                                          └──────────────────────────────┘
 ```
 
-Key resolution chain:
+Key resolution chain (N:1 ownership):
 
 ```
 caller → contact_id (= respond_io_id), space_id (= respond_workspace_id)
        → respond_contacts.id (lookup by respond_io_id + respond_workspace_id)
-       → contact_agent_access.agent_id (allowed agents for this contact)
-       ∩ access_agent_mcp_tools.agent_id (agents linked to this tool)
-       → allow / deny
+       → contact_agent_access.agent_id (set of agents this contact may use)
+mcp_tools.agent_id  (single owner; NULL if unassigned)
+       → allow iff mcp_tools.agent_id ∈ contact's agent set
 ```
 
 ## 5. Data model
 
-Three new tables. All live in the platform `base` module (matches where
+Two new tables. All live in the platform `base` module (matches where
 `access_agents` already lives in `app/models/access.py`).
 
 ```sql
@@ -108,25 +109,18 @@ CREATE TABLE mcp_tools (
   module_key TEXT,                           -- empty for legacy / unbound tools
   http_path TEXT NOT NULL,
   http_method TEXT NOT NULL DEFAULT 'GET',
+  agent_id UUID NULL REFERENCES access_agents(id) ON DELETE SET NULL,
+                                              -- single owner agent; NULL = unassigned
   is_active BOOLEAN NOT NULL DEFAULT true,   -- false → tool removed from code catalog
   last_seen_at TIMESTAMP NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_mcp_tools_module_key ON mcp_tools(module_key);
 CREATE INDEX ix_mcp_tools_is_active ON mcp_tools(is_active);
+CREATE INDEX ix_mcp_tools_agent_id ON mcp_tools(agent_id);
 ```
 
-```sql
-CREATE TABLE access_agent_mcp_tools (
-  id UUID PRIMARY KEY,
-  agent_id UUID NOT NULL REFERENCES access_agents(id) ON DELETE CASCADE,
-  tool_id UUID NOT NULL REFERENCES mcp_tools(id) ON DELETE CASCADE,
-  created_at TIMESTAMP NOT NULL DEFAULT now(),
-  UNIQUE (agent_id, tool_id)
-);
-CREATE INDEX ix_aamt_agent_id ON access_agent_mcp_tools(agent_id);
-CREATE INDEX ix_aamt_tool_id ON access_agent_mcp_tools(tool_id);
-```
+(No separate link table — ownership is a single FK column on `mcp_tools`.)
 
 ```sql
 CREATE TABLE mcp_access_log (
@@ -147,9 +141,10 @@ CREATE INDEX ix_mcp_access_log_tool_name ON mcp_access_log(tool_name);
 ```
 
 SQLAlchemy models added to `app/models/access.py`:
-`McpTool`, `AccessAgentMcpTool`, `McpAccessLog`. `AccessAgent` grows a
-`mcp_tool_links = relationship("AccessAgentMcpTool", back_populates="agent",
-cascade="all, delete-orphan")`.
+`McpTool` (with `agent = relationship("AccessAgent", back_populates="mcp_tools")`)
+and `McpAccessLog`. `AccessAgent` grows
+`mcp_tools = relationship("McpTool", back_populates="agent")` (no cascade —
+deleting an agent sets its tools' `agent_id` to NULL via the FK rule).
 
 ## 6. Catalog sync
 
@@ -166,9 +161,11 @@ Algorithm:
    specs = merged_catalog(CATALOG)   # already overlays per-module tools.json
    ```
 3. For each `ToolSpec`: upsert by `tool_name` (Postgres
-   `ON CONFLICT (tool_name) DO UPDATE`). Fields: `description`,
-   `module_key` (defaults to `""`), `http_path`, `http_method`,
-   `is_active=true`, `last_seen_at=sync_started_at`.
+   `ON CONFLICT (tool_name) DO UPDATE`). Fields touched on update:
+   `description`, `module_key` (defaults to `""`), `http_path`,
+   `http_method`, `is_active=true`, `last_seen_at=sync_started_at`.
+   **Do NOT touch `agent_id` on update** — admin-set ownership must
+   survive every catalog sync.
 4. After the upsert pass, mark stragglers:
    `UPDATE mcp_tools SET is_active=false WHERE last_seen_at < :sync_started_at`.
 5. Return counts (`added`, `updated`, `deactivated`) for logging.
@@ -207,20 +204,20 @@ Modify `sorento_crm_mcp/server.py::_compile_tool`:
 Deny payloads — verbatim user phrasing, JSON-wrapped:
 
 ```json
-// Case 1: tool linked to one or more agents, contact not under any of them
+// Case 1: tool owned by an agent, but contact is not under that agent
 {
   "error": "ACCESS_DENIED",
   "code": "CONTACT_NOT_AUTHORIZED",
-  "message": "you are not allowed to access this function: <agent_a>, <agent_b>",
-  "agents_for_tool": ["<agent_a>", "<agent_b>"]
+  "message": "you are not allowed to access this function: <agent_name>",
+  "agent_name": "<agent_name>"
 }
 
-// Case 2: tool linked to zero agents
+// Case 2: tool exists but agent_id is NULL (unassigned)
 {
   "error": "ACCESS_DENIED",
   "code": "TOOL_NOT_LINKED",
   "message": "the required tools are not linked to any supported agents in the system",
-  "agents_for_tool": []
+  "agent_name": null
 }
 
 // Case 3: tool name not in mcp_tools or is_active=false
@@ -228,21 +225,20 @@ Deny payloads — verbatim user phrasing, JSON-wrapped:
   "error": "ACCESS_DENIED",
   "code": "UNKNOWN_TOOL",
   "message": "the required tools are not linked to any supported agents in the system",
-  "agents_for_tool": []
+  "agent_name": null
 }
 
 // Case 4: contact_id+space_id resolves to no respond_contacts row
 {
   "error": "ACCESS_DENIED",
   "code": "UNKNOWN_CONTACT",
-  "message": "you are not allowed to access this function: <agent_a>, <agent_b>",
-  "agents_for_tool": ["<agent_a>", "<agent_b>"]
+  "message": "you are not allowed to access this function: <agent_name>",
+  "agent_name": "<agent_name>"
 }
 ```
 
-The `<agent_*>` tokens in `message` are the comma-joined display names of
-every agent linked to the tool, sorted alphabetically. Same list also
-returned in `agents_for_tool` for programmatic use.
+`<agent_name>` is the single owning agent's display name (only one — N:1).
+Same value returned in `agent_name` for programmatic use.
 
 Allow path: tool runs as today, `contact_id`/`space_id` consumed by guard
 only (not forwarded unless the spec declares them as query params).
@@ -265,8 +261,7 @@ class McpAccessCheckOut(BaseModel):
         "allow", "deny_no_access", "deny_tool_unlinked",
         "deny_unknown_tool", "deny_unknown_contact",
     ]
-    agent_name: str | None              # set on allow (alphabetically first match)
-    agents_for_tool: list[str]          # display_name list, alphabetically sorted
+    agent_name: str | None              # owner agent display name; NULL when tool unassigned
 
 @router.post("/check", response_model=McpAccessCheckOut)
 def check(payload: McpAccessCheckIn, db: Session = Depends(get_db)) -> McpAccessCheckOut:
@@ -275,24 +270,26 @@ def check(payload: McpAccessCheckIn, db: Session = Depends(get_db)) -> McpAccess
 
 Decision logic in `app/services/mcp_access_service.py::evaluate(...)`:
 
-1. `tool = SELECT id FROM mcp_tools WHERE tool_name=:n AND is_active=true`.
-   Miss → log `deny_unknown_tool`, return with empty `agents_for_tool`.
-2. `linked = SELECT a.id, a.name FROM access_agent_mcp_tools l
-   JOIN access_agents a ON a.id=l.agent_id WHERE l.tool_id=tool.id
-   AND a.is_active=true`. Empty → log `deny_tool_unlinked`, return empty
-   `agents_for_tool`.
-3. `contact = SELECT id FROM respond_contacts WHERE respond_io_id=:c
-   AND respond_workspace_id=:s`. Miss → log `deny_unknown_contact`,
-   return `agents_for_tool=[a.name for a in linked]`.
-4. `granted = SELECT agent_id FROM contact_agent_access
-   WHERE respond_contact_id=contact.id AND is_allowed=true
+1. `tool = SELECT t.id, t.agent_id FROM mcp_tools t
+   WHERE t.tool_name=:n AND t.is_active=true`.
+   Miss → log `deny_unknown_tool`, return `agent_name=NULL`.
+2. If `tool.agent_id IS NULL` → log `deny_tool_unlinked`,
+   return `agent_name=NULL`.
+3. `owner = SELECT id, name FROM access_agents
+   WHERE id=tool.agent_id AND is_active=true`. Miss
+   (deactivated owner) → log `deny_tool_unlinked`,
+   return `agent_name=NULL`.
+4. `contact = SELECT id FROM respond_contacts
+   WHERE respond_io_id=:c AND respond_workspace_id=:s`. Miss →
+   log `deny_unknown_contact`, return `agent_name=owner.name`.
+5. `granted = EXISTS (SELECT 1 FROM contact_agent_access
+   WHERE respond_contact_id=contact.id AND agent_id=owner.id
+   AND is_allowed=true
    AND (valid_to IS NULL OR valid_to > now())
-   AND (valid_from IS NULL OR valid_from <= now())`.
-5. `match = sorted(linked ∩ granted, key=lambda a: a.name.lower())`.
-   Empty → log `deny_no_access`, return
-   `agents_for_tool=sorted(linked names)`.
-6. Non-empty → log `allow`, `matched_agent_id=match[0].id`, return
-   `agent_name=match[0].name`, `agents_for_tool=sorted(linked names)`.
+   AND (valid_from IS NULL OR valid_from <= now()))`.
+6. If granted → log `allow`, `matched_agent_id=owner.id`,
+   return `agent_name=owner.name`. Else → log `deny_no_access`,
+   return `agent_name=owner.name`.
 
 Every branch writes one `mcp_access_log` row in the same transaction as the
 read so audit cannot drift from the answer.
@@ -303,17 +300,25 @@ Two new routes under `/api/v1/access-agents/{agent_id}/mcp-tools`:
 
 | Method | Path | Body | Returns |
 |--------|------|------|---------|
-| GET    | `/{agent_id}/mcp-tools` | — | `[{tool_id, tool_name, description, module_key}]` |
-| PUT    | `/{agent_id}/mcp-tools` | `{tool_ids: [UUID]}` | `[{...}]` (full new set) |
+| GET    | `/{agent_id}/mcp-tools` | — | `[{tool_id, tool_name, description, module_key}]` (tools whose `agent_id = :agent_id`) |
+| PUT    | `/{agent_id}/mcp-tools` | `{tool_ids: [UUID]}` | `[{...}]` (full new set for this agent) |
 
-`PUT` is replace-semantics (delete rows not in `tool_ids`, insert missing) —
-parallels existing `setAgentTeams` pattern. Wrapped in a single transaction.
+`PUT` semantics — single transaction:
+
+1. `UPDATE mcp_tools SET agent_id = :agent_id WHERE id IN :tool_ids`
+   — claims every selected tool for this agent (reassigns from any prior
+   owner). Each reassignment is logged in a structured backend log
+   (`logger.info("mcp tool reassigned", tool_id, from_agent, to_agent)`)
+   so admins can trace ownership moves.
+2. `UPDATE mcp_tools SET agent_id = NULL WHERE agent_id = :agent_id
+   AND id NOT IN :tool_ids` — releases tools previously owned by this
+   agent that are no longer selected.
 
 Plus a list endpoint for the picker:
 
 | Method | Path | Returns |
 |--------|------|---------|
-| GET    | `/api/v1/system/mcp-tools?is_active=true&limit=500` | `[{id, tool_name, description, module_key}]` grouped by module_key client-side |
+| GET    | `/api/v1/system/mcp-tools?is_active=true&limit=500` | `[{id, tool_name, description, module_key, current_agent_id, current_agent_name}]` — `current_agent_*` populated when tool is owned by another agent so the UI can warn before reassignment. Grouped client-side by `module_key`. |
 
 ## 10. UI — AccessAgentForm
 
@@ -347,6 +352,11 @@ only** (parallels the team assignments treatment which is also edit-only):
 - Renders a searchable, grouped multi-select. Group header = `module_key`
   (or "Unbound" when empty); each row shows `tool_name` + truncated
   `description` with `title` tooltip.
+- For tools whose `current_agent_id` is set and != the agent being edited,
+  render a "currently owned by &lt;agent_name&gt; — selecting will reassign"
+  badge next to the tool name, and require a `confirm()` step before the
+  PUT submits if any reassignments are pending. This makes the N:1 move
+  explicit instead of silent.
 - On submit, after `updateMutation`, call
   `setAgentMcpTools(agentId, selectedToolIds)` (parallel to existing
   `setAgentTeams`).
@@ -363,27 +373,31 @@ plan — interface above is independent of that primitive.
 
 Single Alembic revision in `app/alembic/versions/` (matches where
 `access.py` tables were originally migrated — we don't move them into a
-per-module migration just for this change). Revision creates the three
-tables and indexes from §5. No data backfill (catalog sync seeds rows on
-first boot).
+per-module migration just for this change). Revision creates the two new
+tables (`mcp_tools`, `mcp_access_log`) and indexes from §5. No data
+backfill (catalog sync seeds rows on first boot).
 
-Down-revision drops the three tables in reverse order
-(`mcp_access_log`, `access_agent_mcp_tools`, `mcp_tools`).
+Down-revision drops the two tables in reverse order
+(`mcp_access_log`, `mcp_tools`).
 
 ## 12. Testing
 
 Backend:
 
 - `tests/services/test_mcp_tool_registry.py`
-  - First sync inserts every `ToolSpec` with `is_active=true`.
+  - First sync inserts every `ToolSpec` with `is_active=true`,
+    `agent_id=NULL`.
   - Second sync with one tool removed flips that row to `is_active=false`.
   - Re-adding a tool flips it back to `is_active=true`.
+  - Sync **preserves** `agent_id` set by an admin between runs.
 - `tests/services/test_mcp_access_service.py` covers all five decision
   branches with explicit fixtures.
 - `tests/api/test_mcp_access_check.py` integration: hits the FastAPI
   endpoint with X-API-Key, asserts response shape + `mcp_access_log` row.
-- `tests/api/test_access_agent_mcp_tools.py` for GET/PUT linkage routes
-  including replace-semantics.
+- `tests/api/test_access_agent_mcp_tools.py` for GET/PUT ownership routes:
+  - Selecting a tool currently owned by another agent reassigns it
+    (`agent_id` flips to the new owner; old agent's GET no longer lists it).
+  - Removing a tool from an agent's set sets its `agent_id` to NULL.
 
 MCP server:
 
@@ -406,7 +420,7 @@ Frontend:
 
 - Catalog drift if a tool exists in code but its module is removed
   mid-deployment. Mitigation: sync runs on startup and module upload; the
-  `is_active=false` flag and `agents_for_tool` deny payload make it
+  `is_active=false` flag and `agent_name` deny payload make it
   visible. If a tool is renamed in code without a migration, the old name
   stays in the table as `is_active=false`; any agent linkage on the old id
   becomes dead — accepted, since renames should be rare and the UI shows
@@ -415,10 +429,11 @@ Frontend:
   active MCP sessions. Acceptable for the current threat model. A
   `DELETE /system/mcp-access/cache` admin endpoint can be added later if
   needed; not in v1 scope.
-- The deny `message` for Case 1 / Case 4 contains a comma-joined agent
-  list. If a deployment has many agents linked to one tool the message
-  becomes long. Acceptable — calling LLM truncates if needed; structured
-  `agents_for_tool` is the canonical surface.
+- N:1 means a tool reassignment is destructive to the previous owner.
+  Mitigation: UI badge + `confirm()` on reassignment (§10) and structured
+  log on every reassignment (§9) so audits can reconstruct ownership
+  history. Owners can also be discovered via `current_agent_id` on the
+  picker endpoint before save.
 - Performance: each MCP call adds one round-trip to backend on cache miss.
   Backend access-check is a single short transaction (3 indexed lookups).
   Profiled budget: <5ms backend + <20ms HTTP. Acceptable for read-only
