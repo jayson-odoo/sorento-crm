@@ -26,6 +26,7 @@ import {
   PortalSubmissionKind,
   PortalUnauthorizedError,
   SUBMISSION_LABELS,
+  deleteDraftSubmission,
   fetchSubmission,
   saveDraft,
   submitDraft,
@@ -110,6 +111,8 @@ export function SubmissionForm({ kind, submissionId }: Props) {
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [detail, setDetail] = useState<PortalSubmissionDetail | null>(null);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [products, setProducts] = useState<ProductLine[]>([]);
@@ -223,6 +226,25 @@ export function SubmissionForm({ kind, submissionId }: Props) {
     } finally {
       setSubmitting(false);
       setConfirmOpen(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!submissionId) return;
+    setDeleting(true);
+    try {
+      await deleteDraftSubmission(kind, submissionId);
+      toast.success('Draft deleted.');
+      router.replace('/portal');
+    } catch (e) {
+      if (e instanceof PortalUnauthorizedError) {
+        router.replace('/portal/verify?reason=expired');
+        return;
+      }
+      toast.error(e instanceof Error ? e.message : 'Failed to delete draft.');
+    } finally {
+      setDeleting(false);
+      setConfirmDeleteOpen(false);
     }
   };
 
@@ -385,6 +407,17 @@ export function SubmissionForm({ kind, submissionId }: Props) {
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="flex flex-wrap gap-2 justify-end pt-2">
+        {submissionId && detail?.is_draft && (
+          <Button
+            variant="outline"
+            className="text-destructive border-destructive/50 hover:bg-destructive/10 mr-auto"
+            onClick={() => setConfirmDeleteOpen(true)}
+            disabled={saving || submitting || deleting}
+          >
+            <Trash2 className="size-4 mr-1" />
+            {deleting ? 'Deleting...' : 'Delete draft'}
+          </Button>
+        )}
         <Button variant="outline" onClick={handleSaveDraft} disabled={!isEditable || saving || submitting}>
           {saving ? 'Saving...' : 'Save as draft'}
         </Button>
@@ -405,6 +438,27 @@ export function SubmissionForm({ kind, submissionId }: Props) {
             <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleSubmit} disabled={submitting}>
               Submit
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. The draft will be permanently removed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

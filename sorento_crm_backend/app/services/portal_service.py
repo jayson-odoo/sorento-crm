@@ -451,6 +451,15 @@ class PortalService:
 
         return self.get_submission(token, kind, str(row.id))
 
+    def delete_draft(self, token: PortalToken, kind: str, submission_id: str) -> None:
+        """Hard-delete a draft submission. Only drafts (portal_draft_at IS NOT NULL) are deletable."""
+        kind = kind.strip().lower()
+        row = self._fetch_for_edit(kind, token, submission_id)
+        if row.portal_draft_at is None:
+            raise handle_validation_error("Only drafts can be deleted.")
+        self.db.delete(row)
+        self.db.commit()
+
     def _instantiate(self, kind: str, token: PortalToken, payload: dict) -> Any:
         if kind == "complaint":
             row = Complaint(

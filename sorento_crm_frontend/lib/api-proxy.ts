@@ -118,7 +118,13 @@ export async function proxyToFastAPI(
   if (apiKey) {
     headers['X-API-Key'] = apiKey;
   }
-  
+
+  // Forward X-Portal-Token header if present (for public user-submission portal)
+  const portalToken = request.headers.get('X-Portal-Token');
+  if (portalToken) {
+    headers['X-Portal-Token'] = portalToken;
+  }
+
   // Forward Authorization header if present (for API keys or Bearer tokens)
   const authHeader = request.headers.get('Authorization');
   if (authHeader) {
@@ -154,8 +160,11 @@ export async function proxyToFastAPI(
       ...(body !== undefined && body !== '' ? { body } : {}),
     });
 
+    if (response.status === 204) {
+      return new NextResponse(null, { status: 204 });
+    }
     const data = await response.json().catch(() => ({}));
-    
+
     return NextResponse.json(data, { status: response.status });
   } catch (error) {
     console.error('FastAPI proxy error:', error);

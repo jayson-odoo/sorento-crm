@@ -237,6 +237,17 @@ def portal_update_draft(
     )
 
 
+@router.delete("/submissions/{kind}/{submission_id}", status_code=204)
+def portal_delete_draft(
+    kind: str = Path(...),
+    submission_id: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    PortalService(db).delete_draft(token, _check_kind(kind), submission_id)
+    return None
+
+
 @router.post("/submissions/{kind}/{submission_id}/submit")
 def portal_submit(
     kind: str = Path(...),

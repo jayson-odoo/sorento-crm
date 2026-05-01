@@ -143,6 +143,20 @@ export async function submitDraft(
   return unwrap<PortalSubmissionDetail>(res, 'Failed to submit.');
 }
 
+export async function deleteDraftSubmission(
+  kind: PortalSubmissionKind,
+  id: string,
+): Promise<void> {
+  const res = await portalFetch(
+    `/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok && res.status !== 204) {
+    const message = await extractApiError(res, 'Failed to delete draft.');
+    throw new Error(message);
+  }
+}
+
 export async function uploadAttachment(
   kind: PortalSubmissionKind,
   submissionId: string,

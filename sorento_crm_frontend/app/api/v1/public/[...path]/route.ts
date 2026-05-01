@@ -25,3 +25,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ path?: string[] }> }) {
   return handleProxy(request, params, 'POST');
 }
+
+export async function PUT(request: NextRequest, { params }: { params: Promise<{ path?: string[] }> }) {
+  return handleProxy(request, params, 'PUT');
+}
+
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ path?: string[] }> }) {
+  return handleProxy(request, params, 'PATCH');
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ path?: string[] }> }) {
+  return handleProxy(request, params, 'DELETE');
+}
