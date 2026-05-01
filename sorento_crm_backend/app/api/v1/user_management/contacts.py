@@ -94,6 +94,14 @@ class PortalLinkResponse(BaseModel):
     reused: bool
 
 
+class PortalLinkSendResponse(BaseModel):
+    token: str
+    expires_at: str
+    portal_url: str
+    reused: bool
+    sent: bool
+
+
 @router.post("/bulk-sync", status_code=status.HTTP_200_OK)
 async def bulk_sync_contacts(
     body: BulkSyncContactsRequest = Body(...),
@@ -335,3 +343,33 @@ async def get_contact_portal_link(
         portal_url=service.build_portal_url(token.token, payload.base_url),
         reused=reused,
     )
+
+
+@router.post("/{contact_id}/portal-link/send", response_model=PortalLinkSendResponse)
+async def send_contact_portal_link(
+    contact_id: str,
+    payload: PortalLinkRequest = Body(default_factory=PortalLinkRequest),
+    current_user: dict = Depends(require_permission("user_management.contacts.portal_link")),
+    db: Session = Depends(get_db),
+):
+    """Mint or reuse a portal token and send the link to the contact via Respond.io."""
+    contact, space_id = _resolve_space_id(db, contact_id)
+    if not (contact.respond_io_id or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Contact has no Respond.io identifier; cannot send link.",
+        )
+    service = PortalService(db)
+    try:
+        result = service.send_link_via_respond_io(contact_id, space_id, payload.base_url)
+    except httpx.HTTPStatusError as exc:
+        upstream = ""
+        try:
+            upstream = exc.response.text[:500]
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=502,
+            detail=f"Respond.io upstream failure: {upstream or str(exc)}",
+        )
+    return PortalLinkSendResponse(**result)

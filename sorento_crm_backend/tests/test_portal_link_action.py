@@ -382,3 +382,84 @@ def test_portal_link_endpoint_422_when_no_workspace(client, db, cleanup):
     detail = body.get("detail")
     # detail may be a string or structured; coerce to string and lowercase.
     assert "workspace" in str(detail).lower()
+
+
+# ---------- POST /portal-link/send endpoint ----------
+
+
+def test_portal_link_send_endpoint_success(client, db, cleanup, monkeypatch):
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    monkeypatch.setattr(
+        "app.services.portal_service.RespondClient.send_message",
+        lambda self, identifier, text: {"ok": True},
+    )
+
+    res = client.post(
+        f"/api/v1/user-management/contacts/{contact.id}/portal-link/send"
+    )
+
+    # Track minted token(s) for teardown.
+    for tok in db.query(PortalToken).filter(PortalToken.contact_id == contact.id).all():
+        if tok.id not in cleanup["tokens"]:
+            cleanup["tokens"].append(tok.id)
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["sent"] is True
+    assert body["portal_url"]
+    assert body["reused"] is False
+
+
+def test_portal_link_send_endpoint_422_no_respond_io_id(client, db, cleanup):
+    ws = _workspace(db, cleanup)
+    c = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+6012{uuid.uuid4().hex[:8]}",
+        name="No RIO",
+        respond_io_id=None,
+        workspace_id=ws.id,
+    )
+    db.add(c)
+    db.commit()
+    cleanup["contacts"].append(c.id)
+
+    res = client.post(
+        f"/api/v1/user-management/contacts/{c.id}/portal-link/send"
+    )
+    assert res.status_code == 422, res.text
+    body = res.json()
+    detail = body.get("detail")
+    assert "respond.io" in str(detail).lower()
+
+
+def test_portal_link_send_endpoint_502_on_upstream_failure(
+    client, db, cleanup, monkeypatch
+):
+    import httpx
+
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    def boom(self, identifier, text):
+        request = httpx.Request("POST", "https://api.respond.io/x")
+        response = httpx.Response(500, request=request, text="upstream blew up")
+        raise httpx.HTTPStatusError("500", request=request, response=response)
+
+    monkeypatch.setattr(
+        "app.services.portal_service.RespondClient.send_message", boom
+    )
+
+    res = client.post(
+        f"/api/v1/user-management/contacts/{contact.id}/portal-link/send"
+    )
+
+    # Track minted token(s) for teardown (mint happens before send fails).
+    for tok in db.query(PortalToken).filter(PortalToken.contact_id == contact.id).all():
+        if tok.id not in cleanup["tokens"]:
+            cleanup["tokens"].append(tok.id)
+
+    assert res.status_code == 502, res.text
