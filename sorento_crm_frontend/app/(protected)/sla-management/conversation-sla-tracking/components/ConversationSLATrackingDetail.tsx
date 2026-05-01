@@ -59,6 +59,7 @@ import { toast } from 'sonner';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import SlaTrackingConversationPanel from './SlaTrackingConversationPanel';
+import PortalLinkButton from '@/components/contacts/PortalLinkButton';
 
 const RESPOND_IO_INBOX_BASE_URL = 'https://app.respond.io/space/364817/inbox';
 
@@ -267,6 +268,14 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
   };
 
   const respondIoId = tracking.respond_io_id ?? tracking.contact?.respond_io_id ?? null;
+  const contactId = tracking.contact?.id ?? tracking.respond_contact_id ?? null;
+  const contactLabel =
+    tracking.contact_name ??
+    tracking.contact?.name ??
+    tracking.contact_phone ??
+    tracking.contact?.phone_number ??
+    contactId ??
+    'contact';
   const respondInboxUrl = respondIoId ? `${RESPOND_IO_INBOX_BASE_URL}/${respondIoId}` : null;
   const messageIdText =
     tracking.message_id != null && tracking.message_id !== undefined
@@ -352,6 +361,14 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                   <ExternalLink className="size-4 mr-2" />
                   Open conversation
                 </DropdownMenuItem>
+              )}
+              {contactId && (
+                <PortalLinkButton
+                  contactId={contactId}
+                  contactLabel={contactLabel}
+                  canSendViaRespondIo={!!respondIoId}
+                  variant="menu-item"
+                />
               )}
               {canSlaTestOverride && (
                 <>
