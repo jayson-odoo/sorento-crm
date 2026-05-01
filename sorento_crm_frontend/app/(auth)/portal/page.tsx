@@ -8,6 +8,7 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -29,11 +30,19 @@ const TYPES: PortalSubmissionKind[] = [
   'sponsorship_form',
 ];
 
+type StatusFilter = 'all' | 'draft' | 'submitted' | 'rejected';
+
 function statusVariant(status: string): 'primary' | 'secondary' | 'destructive' | 'success' | 'warning' {
   if (status === 'rejected') return 'destructive';
   if (status === 'draft') return 'warning';
   if (status === 'approved' || status === 'completed') return 'success';
   return 'secondary';
+}
+
+function effectiveStatus(row: PortalSubmissionSummary): StatusFilter {
+  if (row.is_draft) return 'draft';
+  if (row.status === 'rejected') return 'rejected';
+  return 'submitted';
 }
 
 function PortalLandingContent() {
@@ -48,6 +57,8 @@ function PortalLandingContent() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   // Pull token from URL on first load and persist to sessionStorage so reloads
   // (and child pages) don't need to keep it in the URL.
@@ -180,10 +191,32 @@ function PortalLandingContent() {
         </CardContent>
       </Card>
 
+      <div className="flex flex-col sm:flex-row gap-2">
+        <Input
+          type="search"
+          placeholder="Search..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1"
+          aria-label="Search submissions"
+        />
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs shadow-black/5 outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 sm:w-40"
+          aria-label="Filter by status"
+        >
+          <option value="all">All statuses</option>
+          <option value="draft">Draft</option>
+          <option value="submitted">Submitted</option>
+          <option value="rejected">Rejected</option>
+        </select>
+      </div>
+
       <Tabs defaultValue="stock_inquiry">
-        <TabsList className="flex flex-wrap gap-2">
+        <TabsList className="flex flex-wrap gap-2 overflow-x-auto sm:flex-nowrap">
           {TYPES.map((t) => (
-            <TabsTrigger key={t} value={t} className="gap-2">
+            <TabsTrigger key={t} value={t} className="gap-2 whitespace-nowrap">
               {SUBMISSION_LABELS[t]}
               <Badge variant="secondary">{totals[t]}</Badge>
             </TabsTrigger>
@@ -191,7 +224,12 @@ function PortalLandingContent() {
         </TabsList>
         {TYPES.map((t) => (
           <TabsContent key={t} value={t} className="mt-4">
-            <SubmissionList kind={t} items={submissions[t] ?? []} />
+            <SubmissionList
+              kind={t}
+              items={submissions[t] ?? []}
+              search={search}
+              statusFilter={statusFilter}
+            />
           </TabsContent>
         ))}
       </Tabs>
@@ -199,7 +237,45 @@ function PortalLandingContent() {
   );
 }
 
-function SubmissionList({ kind, items }: { kind: PortalSubmissionKind; items: PortalSubmissionSummary[] }) {
+function SubmissionList({
+  kind,
+  items,
+  search,
+  statusFilter,
+}: {
+  kind: PortalSubmissionKind;
+  items: PortalSubmissionSummary[];
+  search: string;
+  statusFilter: StatusFilter;
+}) {
+  const filtered = useMemo(() => {
+    let rows = items;
+    // Apply status filter first (per spec).
+    if (statusFilter !== 'all') {
+      rows = rows.filter((r) => effectiveStatus(r) === statusFilter);
+    }
+    // Then substring search across visible-ish fields.
+    const q = search.trim().toLowerCase();
+    if (q) {
+      rows = rows.filter((r) => {
+        const created = r.created_at
+          ? new Date(r.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' })
+          : '';
+        const haystack = [
+          r.document_number ?? '',
+          r.title ?? '',
+          r.status ?? '',
+          r.reference ?? '',
+          created,
+        ]
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(q);
+      });
+    }
+    return rows;
+  }, [items, search, statusFilter]);
+
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
@@ -210,46 +286,66 @@ function SubmissionList({ kind, items }: { kind: PortalSubmissionKind; items: Po
           </Link>
         </Button>
       </div>
-      {items.length === 0 ? (
+      {filtered.length === 0 ? (
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground space-y-2">
             <FileText className="h-8 w-8 mx-auto" />
-            <p>No {SUBMISSION_LABELS[kind].toLowerCase()} submissions yet.</p>
+            {items.length === 0 ? (
+              <p>No {SUBMISSION_LABELS[kind].toLowerCase()} submissions yet.</p>
+            ) : (
+              <p>No submissions match your filters.</p>
+            )}
           </CardContent>
         </Card>
       ) : (
         <ul className="space-y-2">
-          {items.map((row) => (
-            <li key={row.id}>
-              <Link
-                href={`/portal/${kind}/${row.id}`}
-                className="flex items-center justify-between rounded-md border border-border bg-card px-3 py-3 hover:bg-accent transition"
-              >
-                <div className="min-w-0 space-y-1">
-                  <p className="truncate text-sm font-medium" title={row.title}>
-                    {row.title}
-                  </p>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {row.reference && <span>{row.reference}</span>}
-                    {row.created_at && (
-                      <span>
-                        {new Date(row.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' })}
-                      </span>
+          {filtered.map((row) => {
+            const primary = row.document_number ?? row.title;
+            const showSecondary = Boolean(row.document_number && row.title);
+            return (
+              <li key={row.id}>
+                <Link
+                  href={`/portal/${kind}/${row.id}`}
+                  className="flex items-center justify-between rounded-md border border-border bg-card px-3 py-3 hover:bg-accent transition gap-3"
+                >
+                  <div className="min-w-0 space-y-1 flex-1">
+                    <p className="truncate text-sm font-medium" title={primary}>
+                      {primary}
+                    </p>
+                    {showSecondary && (
+                      <p
+                        className="truncate text-xs text-muted-foreground"
+                        title={row.title}
+                      >
+                        {row.title}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      {row.reference && <span>{row.reference}</span>}
+                      {row.created_at && (
+                        <span>
+                          {new Date(row.created_at).toLocaleDateString(undefined, {
+                            dateStyle: 'medium',
+                          })}
+                        </span>
+                      )}
+                    </div>
+                    {row.rejection_reason && (
+                      <p className="text-xs text-destructive line-clamp-2">
+                        {row.rejection_reason}
+                      </p>
                     )}
                   </div>
-                  {row.rejection_reason && (
-                    <p className="text-xs text-destructive line-clamp-2">{row.rejection_reason}</p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Badge variant={statusVariant(row.is_draft ? 'draft' : row.status)}>
-                    {row.is_draft ? 'Draft' : row.status}
-                  </Badge>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                </div>
-              </Link>
-            </li>
-          ))}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Badge variant={statusVariant(row.is_draft ? 'draft' : row.status)}>
+                      {row.is_draft ? 'Draft' : row.status}
+                    </Badge>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

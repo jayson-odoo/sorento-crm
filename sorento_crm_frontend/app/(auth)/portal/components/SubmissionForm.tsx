@@ -21,17 +21,28 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  DOLookupItem,
+  DebtorLookupItem,
   PortalAttachment,
+  PortalContact,
   PortalSubmissionDetail,
   PortalSubmissionKind,
   PortalUnauthorizedError,
+  ProductLookupItem,
   SUBMISSION_LABELS,
   deleteDraftSubmission,
+  fetchMe,
   fetchSubmission,
+  lookupDebtors,
+  lookupDeliveryOrders,
+  lookupProducts,
   saveDraft,
   submitDraft,
 } from '../lib/portal-client';
 import { AttachmentDropzone } from './AttachmentDropzone';
+import { AsyncCombobox } from './AsyncCombobox';
+import { AsyncMultiCombobox } from './AsyncMultiCombobox';
+import { LookupSelect } from './LookupSelect';
 
 type ProductLine = {
   item_code?: string;
@@ -41,47 +52,104 @@ type ProductLine = {
   remark?: string;
 };
 
+type WidgetKind =
+  | 'text'
+  | 'textarea'
+  | 'date'
+  | 'number'
+  | 'lookup-select'
+  | 'product-async'
+  | 'debtor-async'
+  | 'do-multi-async';
+
 interface FieldDef {
   name: string;
   label: string;
-  type?: 'text' | 'textarea' | 'date';
+  widget?: WidgetKind;
+  setKey?: string;
+  defaultFromContact?: 'fullname' | 'first_name';
+  defaultToday?: boolean;
   placeholder?: string;
 }
 
 const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
+  stock_inquiry: [
+    { name: 'product_code', label: 'Product code', widget: 'product-async' },
+    { name: 'item_description', label: 'Item description', widget: 'textarea' },
+    { name: 'quantity', label: 'Quantity', widget: 'number' },
+    { name: 'delivery_date', label: 'Required delivery date', widget: 'date' },
+    { name: 'project_customer', label: 'Project customer', widget: 'debtor-async' },
+    { name: 'project_name', label: 'Project name' },
+    { name: 'salesperson', label: 'Salesperson', defaultFromContact: 'fullname' },
+    { name: 'remark', label: 'Remark', widget: 'textarea' },
+  ],
   complaint: [
     { name: 'customer_name', label: 'Customer name' },
     { name: 'contact_person', label: 'Contact person' },
     { name: 'contact_number', label: 'Contact number' },
-    { name: 'customer_address', label: 'Customer address', type: 'textarea' },
-    { name: 'delivery_order_number', label: 'Delivery order number' },
-    { name: 'complaint_date', label: 'Complaint date', type: 'date' },
-    { name: 'product_code', label: 'Product code' },
+    { name: 'customer_address', label: 'Customer address', widget: 'textarea' },
+    {
+      name: 'customer_type',
+      label: 'Customer type',
+      widget: 'lookup-select',
+      setKey: 'complaints_customer_type',
+    },
+    {
+      name: 'delivery_order_number',
+      label: 'Delivery order number(s)',
+      widget: 'do-multi-async',
+    },
+    {
+      name: 'complaint_date',
+      label: 'Complaint date',
+      widget: 'date',
+      defaultToday: true,
+    },
+    { name: 'product_code', label: 'Product code', widget: 'product-async' },
+    // TODO: auto-fill product_type from selected product.category_id once a
+    // category-code lookup endpoint is exposed; admin can fill manually for now.
     { name: 'product_type', label: 'Product type' },
-    { name: 'within_warranty', label: 'Within warranty' },
-    { name: 'defects_discovered', label: 'Defects discovered' },
-    { name: 'complaint_type', label: 'Complaint type' },
-    { name: 'defect_description', label: 'Defect description', type: 'textarea' },
-    { name: 'salesperson', label: 'Salesperson' },
+    {
+      name: 'within_warranty',
+      label: 'Within warranty',
+      widget: 'lookup-select',
+      setKey: 'complaints_within_warranty',
+    },
+    {
+      name: 'defects_discovered',
+      label: 'Defects discovered',
+      widget: 'lookup-select',
+      setKey: 'complaints_defects_discovered',
+    },
+    {
+      name: 'complaint_type',
+      label: 'Complaint type',
+      widget: 'lookup-select',
+      setKey: 'complaints_complaint_type',
+    },
+    {
+      name: 'defect_description',
+      label: 'Defect description',
+      widget: 'textarea',
+    },
+    {
+      name: 'salesperson',
+      label: 'Salesperson',
+      defaultFromContact: 'fullname',
+    },
     { name: 'project_title', label: 'Project title' },
-  ],
-  stock_inquiry: [
-    { name: 'product_code', label: 'Product code' },
-    { name: 'item_description', label: 'Item description', type: 'textarea' },
-    { name: 'quantity', label: 'Quantity' },
-    { name: 'delivery_date', label: 'Required delivery date' },
-    { name: 'project_customer', label: 'Project customer' },
-    { name: 'project_name', label: 'Project name' },
-    { name: 'salesperson', label: 'Salesperson' },
-    { name: 'remark', label: 'Remark', type: 'textarea' },
   ],
   purchase_request: [
     { name: 'customer_name', label: 'Customer name' },
     { name: 'project_title', label: 'Project title' },
-    { name: 'purpose', label: 'Purpose', type: 'textarea' },
-    { name: 'request_date', label: 'Request date', type: 'date' },
-    { name: 'expected_delivery_date', label: 'Expected delivery date', type: 'date' },
-    { name: 'expected_po_date', label: 'Expected PO date', type: 'date' },
+    { name: 'purpose', label: 'Purpose', widget: 'textarea' },
+    { name: 'request_date', label: 'Request date', widget: 'date' },
+    {
+      name: 'expected_delivery_date',
+      label: 'Expected delivery date',
+      widget: 'date',
+    },
+    { name: 'expected_po_date', label: 'Expected PO date', widget: 'date' },
     { name: 'requested_by', label: 'Requested by' },
     { name: 'external_reference', label: 'External reference' },
   ],
@@ -89,16 +157,29 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
     { name: 'customer_name', label: 'Customer name' },
     { name: 'project_title', label: 'Project title' },
     { name: 'sponsor_subject', label: 'Sponsor subject' },
-    { name: 'purpose', label: 'Purpose', type: 'textarea' },
-    { name: 'delivery_address', label: 'Delivery address', type: 'textarea' },
+    { name: 'purpose', label: 'Purpose', widget: 'textarea' },
+    { name: 'delivery_address', label: 'Delivery address', widget: 'textarea' },
     { name: 'total_project_value', label: 'Total project value' },
-    { name: 'request_date', label: 'Request date', type: 'date' },
-    { name: 'expected_delivery_date', label: 'Expected delivery date', type: 'date' },
+    { name: 'request_date', label: 'Request date', widget: 'date' },
+    {
+      name: 'expected_delivery_date',
+      label: 'Expected delivery date',
+      widget: 'date',
+    },
     { name: 'requested_by', label: 'Requested by' },
   ],
 };
 
 const HAS_LINES: PortalSubmissionKind[] = ['purchase_request', 'sponsorship_form'];
+
+// Fields that benefit from a 2-column md grid layout (short text fields).
+// Multi-line / async-multi widgets always span full width.
+function fieldSpansFullWidth(f: FieldDef): boolean {
+  return (
+    f.widget === 'textarea' ||
+    f.widget === 'do-multi-async'
+  );
+}
 
 interface Props {
   kind: PortalSubmissionKind;
@@ -114,20 +195,65 @@ export function SubmissionForm({ kind, submissionId }: Props) {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [detail, setDetail] = useState<PortalSubmissionDetail | null>(null);
-  const [fields, setFields] = useState<Record<string, string>>({});
+  const [fields, setFields] = useState<Record<string, string | string[]>>({});
   const [products, setProducts] = useState<ProductLine[]>([]);
   const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [contact, setContact] = useState<PortalContact | null>(null);
 
   const fieldDefs = FIELDS[kind];
   const showLines = HAS_LINES.includes(kind);
   const isEditable = useMemo(
     () => !detail || detail.is_draft || detail.status === 'rejected',
-    [detail]
+    [detail],
   );
 
+  // Fetch portal contact once for default values (salesperson etc.)
+  useEffect(() => {
+    let cancelled = false;
+    fetchMe()
+      .then((c) => {
+        if (!cancelled) setContact(c);
+      })
+      .catch(() => {
+        // Ignore — defaults will simply be blank if /me fails.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Helpers to derive default values from contact name.
+  const defaultsFromContact = useMemo(() => {
+    const name = contact?.name?.trim() ?? '';
+    if (!name) return { first_name: '', fullname: '' };
+    const parts = name.split(/\s+/);
+    const [first, ...rest] = parts;
+    void rest; // last name not currently used as a default
+    return { first_name: first ?? '', fullname: name };
+  }, [contact]);
+
+  // Load existing submission OR initialize with default values.
   useEffect(() => {
     if (!submissionId) {
+      // Fresh create: seed defaults.
+      const next: Record<string, string | string[]> = {};
+      for (const f of fieldDefs) {
+        if (f.widget === 'do-multi-async') {
+          next[f.name] = [];
+          continue;
+        }
+        if (f.defaultFromContact === 'fullname') {
+          next[f.name] = defaultsFromContact.fullname;
+        } else if (f.defaultFromContact === 'first_name') {
+          next[f.name] = defaultsFromContact.first_name;
+        } else if (f.defaultToday) {
+          next[f.name] = new Date().toISOString().slice(0, 10);
+        } else {
+          next[f.name] = '';
+        }
+      }
+      setFields(next);
       setLoading(false);
       return;
     }
@@ -137,10 +263,24 @@ export function SubmissionForm({ kind, submissionId }: Props) {
         const data = await fetchSubmission(kind, submissionId);
         if (cancelled) return;
         setDetail(data);
-        const next: Record<string, string> = {};
+        const next: Record<string, string | string[]> = {};
         for (const f of fieldDefs) {
           const v = (data as Record<string, unknown>)[f.name];
-          next[f.name] = v == null ? '' : String(v);
+          if (f.widget === 'do-multi-async') {
+            // Backend may return either an array or a comma/newline-joined string.
+            if (Array.isArray(v)) {
+              next[f.name] = v.map((x) => String(x).trim()).filter(Boolean);
+            } else if (v == null || v === '') {
+              next[f.name] = [];
+            } else {
+              next[f.name] = String(v)
+                .split(/[,\n]/)
+                .map((x) => x.trim())
+                .filter(Boolean);
+            }
+          } else {
+            next[f.name] = v == null ? '' : String(v);
+          }
         }
         setFields(next);
         if (showLines) {
@@ -161,13 +301,26 @@ export function SubmissionForm({ kind, submissionId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [fieldDefs, kind, router, showLines, submissionId]);
+    // We intentionally re-seed defaults whenever the contact resolves on a
+    // fresh-create path, so include defaultsFromContact in deps.
+  }, [fieldDefs, kind, router, showLines, submissionId, defaultsFromContact]);
 
   const cleanedFields = useMemo(() => {
     const out: Record<string, unknown> = {};
     for (const f of fieldDefs) {
-      const value = (fields[f.name] ?? '').trim();
-      if (value) out[f.name] = value;
+      const raw = fields[f.name];
+      if (f.widget === 'do-multi-async') {
+        const arr = Array.isArray(raw) ? raw : [];
+        const cleaned = arr.map((x) => String(x).trim()).filter(Boolean);
+        if (cleaned.length > 0) {
+          // Send as a comma-separated string for legacy text storage; backends
+          // that accept arrays will accept this as long as the field is text.
+          out[f.name] = cleaned.join(', ');
+        }
+      } else {
+        const value = (typeof raw === 'string' ? raw : '').trim();
+        if (value) out[f.name] = value;
+      }
     }
     return out;
   }, [fieldDefs, fields]);
@@ -188,13 +341,9 @@ export function SubmissionForm({ kind, submissionId }: Props) {
   const handleSaveDraft = async () => {
     setSaving(true);
     try {
-      const saved = await saveDraft(kind, cleanedFields, cleanedProducts, submissionId);
+      await saveDraft(kind, cleanedFields, cleanedProducts, submissionId);
       toast.success('Draft saved.');
-      if (!submissionId) {
-        router.replace(`/portal/${kind}/${saved.id}`);
-      } else {
-        setDetail(saved);
-      }
+      router.replace('/portal');
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
         router.replace('/portal/verify?reason=expired');
@@ -284,15 +433,21 @@ export function SubmissionForm({ kind, submissionId }: Props) {
               <p>{detail.rejection_reason}</p>
             </div>
           )}
-          {fieldDefs.map((f) => (
-            <FieldInput
-              key={f.name}
-              field={f}
-              value={fields[f.name] ?? ''}
-              onChange={(v) => setFields((prev) => ({ ...prev, [f.name]: v }))}
-              disabled={!isEditable}
-            />
-          ))}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {fieldDefs.map((f) => (
+              <div
+                key={f.name}
+                className={fieldSpansFullWidth(f) ? 'md:col-span-2' : undefined}
+              >
+                <FieldInput
+                  field={f}
+                  value={fields[f.name] ?? ''}
+                  onChange={(v) => setFields((prev) => ({ ...prev, [f.name]: v }))}
+                  disabled={!isEditable}
+                />
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
 
@@ -307,11 +462,17 @@ export function SubmissionForm({ kind, submissionId }: Props) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div className="space-y-1.5">
                     <Label>Item code</Label>
-                    <Input
+                    <AsyncCombobox<ProductLookupItem>
                       value={line.item_code ?? ''}
-                      onChange={(e) =>
-                        setProducts((prev) => prev.map((p, i) => (i === index ? { ...p, item_code: e.target.value } : p)))
+                      onChange={(v) =>
+                        setProducts((prev) =>
+                          prev.map((p, i) => (i === index ? { ...p, item_code: v } : p)),
+                        )
                       }
+                      fetchOptions={(q) => lookupProducts(q)}
+                      optionValue={(o) => o.product_code}
+                      optionLabel={(o) => o.product_code}
+                      optionMeta={(o) => o.product_name ?? ''}
                       disabled={!isEditable}
                     />
                   </div>
@@ -320,7 +481,11 @@ export function SubmissionForm({ kind, submissionId }: Props) {
                     <Input
                       value={line.quantity ?? ''}
                       onChange={(e) =>
-                        setProducts((prev) => prev.map((p, i) => (i === index ? { ...p, quantity: e.target.value } : p)))
+                        setProducts((prev) =>
+                          prev.map((p, i) =>
+                            i === index ? { ...p, quantity: e.target.value } : p,
+                          ),
+                        )
                       }
                       disabled={!isEditable}
                     />
@@ -332,7 +497,11 @@ export function SubmissionForm({ kind, submissionId }: Props) {
                         <Input
                           value={line.unit_price ?? ''}
                           onChange={(e) =>
-                            setProducts((prev) => prev.map((p, i) => (i === index ? { ...p, unit_price: e.target.value } : p)))
+                            setProducts((prev) =>
+                              prev.map((p, i) =>
+                                i === index ? { ...p, unit_price: e.target.value } : p,
+                              ),
+                            )
                           }
                           disabled={!isEditable}
                         />
@@ -342,7 +511,11 @@ export function SubmissionForm({ kind, submissionId }: Props) {
                         <Input
                           value={line.total ?? ''}
                           onChange={(e) =>
-                            setProducts((prev) => prev.map((p, i) => (i === index ? { ...p, total: e.target.value } : p)))
+                            setProducts((prev) =>
+                              prev.map((p, i) =>
+                                i === index ? { ...p, total: e.target.value } : p,
+                              ),
+                            )
                           }
                           disabled={!isEditable}
                         />
@@ -355,7 +528,11 @@ export function SubmissionForm({ kind, submissionId }: Props) {
                   <Textarea
                     value={line.remark ?? ''}
                     onChange={(e) =>
-                      setProducts((prev) => prev.map((p, i) => (i === index ? { ...p, remark: e.target.value } : p)))
+                      setProducts((prev) =>
+                        prev.map((p, i) =>
+                          i === index ? { ...p, remark: e.target.value } : p,
+                        ),
+                      )
                     }
                     rows={2}
                     disabled={!isEditable}
@@ -367,7 +544,9 @@ export function SubmissionForm({ kind, submissionId }: Props) {
                     variant="ghost"
                     size="sm"
                     disabled={!isEditable}
-                    onClick={() => setProducts((prev) => prev.filter((_, i) => i !== index))}
+                    onClick={() =>
+                      setProducts((prev) => prev.filter((_, i) => i !== index))
+                    }
                   >
                     <Trash2 className="h-4 w-4 mr-2" />
                     Remove
@@ -418,10 +597,17 @@ export function SubmissionForm({ kind, submissionId }: Props) {
             {deleting ? 'Deleting...' : 'Delete draft'}
           </Button>
         )}
-        <Button variant="outline" onClick={handleSaveDraft} disabled={!isEditable || saving || submitting}>
+        <Button
+          variant="outline"
+          onClick={handleSaveDraft}
+          disabled={!isEditable || saving || submitting}
+        >
           {saving ? 'Saving...' : 'Save as draft'}
         </Button>
-        <Button onClick={() => setConfirmOpen(true)} disabled={!isEditable || saving || submitting}>
+        <Button
+          onClick={() => setConfirmOpen(true)}
+          disabled={!isEditable || saving || submitting}
+        >
           {submitting ? 'Submitting...' : 'Submit'}
         </Button>
       </div>
@@ -429,9 +615,12 @@ export function SubmissionForm({ kind, submissionId }: Props) {
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Submit this {SUBMISSION_LABELS[kind].toLowerCase()}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Submit this {SUBMISSION_LABELS[kind].toLowerCase()}?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Once submitted, your team will be notified. You can no longer edit unless it is rejected.
+              Once submitted, your team will be notified. You can no longer edit unless it
+              is rejected.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -474,31 +663,128 @@ function FieldInput({
   disabled,
 }: {
   field: FieldDef;
-  value: string;
-  onChange: (v: string) => void;
+  value: string | string[];
+  onChange: (v: string | string[]) => void;
   disabled?: boolean;
 }) {
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor={field.name}>{field.label}</Label>
-      {field.type === 'textarea' ? (
+  const widget: WidgetKind = field.widget ?? 'text';
+  const stringValue = typeof value === 'string' ? value : '';
+  const arrayValue = Array.isArray(value) ? value : [];
+
+  let control: React.ReactNode;
+  switch (widget) {
+    case 'textarea':
+      control = (
         <Textarea
           id={field.name}
-          value={value}
+          value={stringValue}
           onChange={(e) => onChange(e.target.value)}
           rows={3}
           disabled={disabled}
         />
-      ) : (
+      );
+      break;
+    case 'date':
+      control = (
         <Input
           id={field.name}
-          type={field.type === 'date' ? 'date' : 'text'}
-          value={value}
+          type="date"
+          value={stringValue}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
           disabled={disabled}
         />
-      )}
+      );
+      break;
+    case 'number':
+      control = (
+        <Input
+          id={field.name}
+          type="number"
+          inputMode="numeric"
+          value={stringValue}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.placeholder}
+          disabled={disabled}
+        />
+      );
+      break;
+    case 'lookup-select':
+      control = (
+        <LookupSelect
+          id={field.name}
+          setKey={field.setKey ?? ''}
+          value={stringValue}
+          onChange={(v) => onChange(v)}
+          placeholder={field.placeholder ?? 'Select...'}
+          disabled={disabled}
+        />
+      );
+      break;
+    case 'product-async':
+      control = (
+        <AsyncCombobox<ProductLookupItem>
+          id={field.name}
+          value={stringValue}
+          onChange={(v) => onChange(v)}
+          fetchOptions={(q) => lookupProducts(q)}
+          optionValue={(o) => o.product_code}
+          optionLabel={(o) => o.product_code}
+          optionMeta={(o) => o.product_name ?? ''}
+          placeholder={field.placeholder ?? 'Search products...'}
+          disabled={disabled}
+        />
+      );
+      break;
+    case 'debtor-async':
+      control = (
+        <AsyncCombobox<DebtorLookupItem>
+          id={field.name}
+          value={stringValue}
+          onChange={(v) => onChange(v)}
+          fetchOptions={(q) => lookupDebtors(q)}
+          optionValue={(o) => o.debtor_name}
+          optionLabel={(o) => o.debtor_name}
+          placeholder={field.placeholder ?? 'Search debtors...'}
+          disabled={disabled}
+        />
+      );
+      break;
+    case 'do-multi-async':
+      control = (
+        <AsyncMultiCombobox<DOLookupItem>
+          id={field.name}
+          value={arrayValue}
+          onChange={(vs) => onChange(vs)}
+          fetchOptions={(q) => lookupDeliveryOrders(q)}
+          optionValue={(o) => o.order_number}
+          optionLabel={(o) => o.order_number}
+          optionMeta={(o) =>
+            [o.debtor_name, o.customer_name].filter(Boolean).join(' • ')
+          }
+          placeholder={field.placeholder ?? 'Search delivery orders...'}
+          disabled={disabled}
+        />
+      );
+      break;
+    case 'text':
+    default:
+      control = (
+        <Input
+          id={field.name}
+          type="text"
+          value={stringValue}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.placeholder}
+          disabled={disabled}
+        />
+      );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={field.name}>{field.label}</Label>
+      {control}
     </div>
   );
 }

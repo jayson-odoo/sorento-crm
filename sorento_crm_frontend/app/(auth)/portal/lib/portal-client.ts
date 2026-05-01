@@ -26,6 +26,7 @@ export interface PortalSubmissionSummary {
   id: string;
   kind: PortalSubmissionKind;
   title: string;
+  document_number?: string | null;
   reference: string | null;
   status: string;
   approval_status?: string | null;
@@ -224,3 +225,57 @@ export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
   purchase_request: 'Purchase Request',
   sponsorship_form: 'Sponsorship Form',
 };
+
+// ---------------------------------------------------------------------------
+// Lookup helpers for portal forms (searchable comboboxes / select sets)
+// ---------------------------------------------------------------------------
+
+export interface ProductLookupItem {
+  product_code: string;
+  product_name: string | null;
+  category_id: string | null;
+}
+
+export interface DebtorLookupItem {
+  debtor_name: string;
+}
+
+export interface DOLookupItem {
+  order_number: string;
+  debtor_name: string | null;
+  customer_name: string | null;
+  products: string[];
+}
+
+export interface LookupSetOption {
+  value: string;
+  label: string;
+}
+
+export async function lookupProducts(q: string, limit = 20): Promise<ProductLookupItem[]> {
+  const url = `/api/v1/public/portal/lookups/products?q=${encodeURIComponent(q)}&limit=${limit}`;
+  const res = await portalFetch(url);
+  return unwrap<ProductLookupItem[]>(res, 'Failed to load products.');
+}
+
+export async function lookupDebtors(q: string, limit = 20): Promise<DebtorLookupItem[]> {
+  const url = `/api/v1/public/portal/lookups/debtors?q=${encodeURIComponent(q)}&limit=${limit}`;
+  const res = await portalFetch(url);
+  return unwrap<DebtorLookupItem[]>(res, 'Failed to load debtors.');
+}
+
+export async function lookupDeliveryOrders(q: string, limit = 20): Promise<DOLookupItem[]> {
+  const url = `/api/v1/public/portal/lookups/delivery-orders?q=${encodeURIComponent(q)}&limit=${limit}`;
+  const res = await portalFetch(url);
+  return unwrap<DOLookupItem[]>(res, 'Failed to load delivery orders.');
+}
+
+const _lookupSetCache: Record<string, LookupSetOption[]> = {};
+export async function lookupSet(setKey: string): Promise<LookupSetOption[]> {
+  if (_lookupSetCache[setKey]) return _lookupSetCache[setKey];
+  const url = `/api/v1/public/portal/lookups/sets/${encodeURIComponent(setKey)}`;
+  const res = await portalFetch(url);
+  const data = await unwrap<LookupSetOption[]>(res, 'Failed to load lookup options.');
+  _lookupSetCache[setKey] = data;
+  return data;
+}
