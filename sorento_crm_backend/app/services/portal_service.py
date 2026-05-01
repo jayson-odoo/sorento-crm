@@ -440,6 +440,10 @@ class PortalService:
                     f"Cannot submit {kind} with status {previous_status!r}."
                 )
             # Keep status='draft' to align with legacy external-create flow.
+
+        # Document number generation (skip complaint — no number column).
+        self._assign_document_number_if_missing(kind, row)
+
         self.db.commit()
         self.db.refresh(row)
 
@@ -450,6 +454,45 @@ class PortalService:
             logger.warning("Post-submit notify failed for %s %s: %s", kind, row.id, e)
 
         return self.get_submission(token, kind, str(row.id))
+
+    def _assign_document_number_if_missing(self, kind: str, row: Any) -> None:
+        """Assign a stable document number on submit, scoped to today (UTC).
+
+        Format: ``{prefix}-{YYYYMMDD}-{nnnn}`` where nnnn = 1 + count of rows
+        whose number already starts with the same prefix+date stem.
+
+        - ``stock_inquiry`` -> ``inquiry_number`` with prefix ``SI``
+        - ``purchase_request`` -> ``request_number`` with prefix ``PR``
+        - ``sponsorship_form`` -> ``request_number`` with prefix ``SP``
+        - ``complaint`` -> no-op (no number column)
+        """
+        if kind == "complaint":
+            return
+        date_stem = _utcnow().strftime("%Y%m%d")
+        if kind == "stock_inquiry":
+            if getattr(row, "inquiry_number", None):
+                return
+            prefix = "SI"
+            stem = f"{prefix}-{date_stem}-"
+            existing = (
+                self.db.query(StockInquiry)
+                .filter(StockInquiry.inquiry_number.like(f"{stem}%"))
+                .count()
+            )
+            row.inquiry_number = f"{stem}{existing + 1:04d}"
+            return
+        if kind in ("purchase_request", "sponsorship_form"):
+            if getattr(row, "request_number", None):
+                return
+            prefix = "PR" if kind == "purchase_request" else "SP"
+            stem = f"{prefix}-{date_stem}-"
+            existing = (
+                self.db.query(PurchaseRequestHeader)
+                .filter(PurchaseRequestHeader.request_number.like(f"{stem}%"))
+                .count()
+            )
+            row.request_number = f"{stem}{existing + 1:04d}"
+            return
 
     def delete_draft(self, token: PortalToken, kind: str, submission_id: str) -> None:
         """Hard-delete a draft submission. Only drafts (portal_draft_at IS NOT NULL) are deletable."""
@@ -539,6 +582,9 @@ class PortalService:
         for field in editable:
             if field in payload:
                 value = payload.get(field)
+                # Coerce list values for multi-text fields (e.g. complaint.delivery_order_number).
+                if isinstance(value, list):
+                    value = ",".join(str(v).strip() for v in value if v not in (None, ""))
                 if value == "":
                     value = None
                 if field in self._date_fields(kind):
@@ -745,6 +791,7 @@ class PortalService:
             "kind": "complaint",
             "title": (row.defect_description or "Complaint")[:100],
             "reference": row.delivery_order_number,
+            "document_number": None,
             "status": row.status,
             "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
             "is_draft": row.portal_draft_at is not None,
@@ -781,6 +828,7 @@ class PortalService:
             "kind": "stock_inquiry",
             "title": (row.product_code or "Stock Inquiry"),
             "reference": row.inquiry_number,
+            "document_number": row.inquiry_number,
             "status": row.status,
             "rejection_reason": row.rejection_reason,
             "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
@@ -811,6 +859,7 @@ class PortalService:
             "kind": row.request_type,
             "title": row.project_title or row.sponsor_subject or "Request",
             "reference": row.request_number,
+            "document_number": row.request_number,
             "status": row.status,
             "approval_status": row.approval_status,
             "is_editable": bool(row.portal_draft_at) or row.status == "rejected",

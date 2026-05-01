@@ -169,6 +169,163 @@ def portal_me(
     )
 
 
+# ---------- Lookups (gated by portal token) ----------
+
+
+class ProductLookupItem(BaseModel):
+    product_code: str
+    product_name: Optional[str] = None
+    category_id: Optional[str] = None
+
+
+@router.get("/lookups/products", response_model=list[ProductLookupItem])
+def lookup_products(
+    q: str = Query("", description="Substring match on code or name"),
+    limit: int = Query(20, ge=1, le=50),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    from app.models.product import Product
+    query = db.query(Product).filter(Product.is_active.is_(True))
+    qs = (q or "").strip()
+    if qs:
+        like = f"%{qs}%"
+        query = query.filter((Product.product_code.ilike(like)) | (Product.product_name.ilike(like)))
+    rows = query.order_by(Product.product_code).limit(limit).all()
+    return [
+        ProductLookupItem(
+            product_code=r.product_code,
+            product_name=r.product_name,
+            category_id=str(r.category_id) if r.category_id else None,
+        )
+        for r in rows
+    ]
+
+
+class DebtorLookupItem(BaseModel):
+    debtor_name: str
+
+
+@router.get("/lookups/debtors", response_model=list[DebtorLookupItem])
+def lookup_debtors(
+    q: str = Query(""),
+    limit: int = Query(20, ge=1, le=50),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    from app.models.order import Order
+    qs = (q or "").strip()
+    query = db.query(Order.debtor_name).filter(Order.debtor_name.isnot(None))
+    if qs:
+        query = query.filter(Order.debtor_name.ilike(f"%{qs}%"))
+    rows = query.distinct().order_by(Order.debtor_name).limit(limit).all()
+    return [DebtorLookupItem(debtor_name=r[0]) for r in rows if r[0]]
+
+
+class DOLookupItem(BaseModel):
+    order_number: str
+    debtor_name: Optional[str] = None
+    customer_name: Optional[str] = None
+    products: list[str] = []
+
+
+@router.get("/lookups/delivery-orders", response_model=list[DOLookupItem])
+def lookup_delivery_orders(
+    q: str = Query(""),
+    limit: int = Query(20, ge=1, le=50),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    from sqlalchemy import or_
+    from app.models.order import Customer, Order, OrderLine
+    from app.models.product import Product
+
+    qs = (q or "").strip()
+    base = db.query(Order).outerjoin(Customer, Order.customer_id == Customer.id)
+    if qs:
+        like = f"%{qs}%"
+        # Search by order_number, debtor_name, customer.customer_name, OR product code via OrderLine
+        product_subq = (
+            db.query(OrderLine.order_id)
+            .join(Product, OrderLine.product_id == Product.id)
+            .filter(Product.product_code.ilike(like))
+        )
+        base = base.filter(
+            or_(
+                Order.order_number.ilike(like),
+                Order.debtor_name.ilike(like),
+                Customer.customer_name.ilike(like),
+                Order.id.in_(product_subq),
+            )
+        )
+    rows = base.order_by(Order.order_number.desc()).limit(limit).all()
+    out: list[DOLookupItem] = []
+    for o in rows:
+        customer_name = o.customer.customer_name if getattr(o, "customer", None) else None
+        products: list[str] = []
+        try:
+            from app.models.order import OrderLine as _OrderLine
+            from app.models.product import Product as _Product
+
+            lines = (
+                db.query(_Product.product_code)
+                .join(_OrderLine, _OrderLine.product_id == _Product.id)
+                .filter(_OrderLine.order_id == o.id)
+                .limit(5)
+                .all()
+            )
+            products = [code for (code,) in lines if code]
+        except Exception:
+            pass
+        out.append(
+            DOLookupItem(
+                order_number=o.order_number,
+                debtor_name=o.debtor_name,
+                customer_name=customer_name,
+                products=products,
+            )
+        )
+    return out
+
+
+_PORTAL_LOOKUP_SET_WHITELIST = {
+    "complaints_within_warranty",
+    "complaints_complaint_type",
+    "complaints_customer_type",
+    "complaints_defects_discovered",
+}
+
+
+class LookupSetOption(BaseModel):
+    value: str
+    label: str
+
+
+@router.get("/lookups/sets/{set_key}", response_model=list[LookupSetOption])
+def lookup_set_options(
+    set_key: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    if set_key not in _PORTAL_LOOKUP_SET_WHITELIST:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Lookup set not allowed for portal: {set_key}",
+        )
+    from app.models.lookup import LookupOption, LookupSet
+
+    s = db.query(LookupSet).filter(LookupSet.set_key == set_key).first()
+    if not s:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lookup set not found")
+    opts = (
+        db.query(LookupOption)
+        .filter(LookupOption.set_id == s.id, LookupOption.is_active.is_(True))
+        .order_by(LookupOption.sort_order)
+        .all()
+    )
+    return [LookupSetOption(value=o.value, label=o.label) for o in opts]
+
+
 # ---------- Submissions ----------
 
 
