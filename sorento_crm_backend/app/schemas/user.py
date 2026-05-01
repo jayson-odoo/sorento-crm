@@ -391,3 +391,33 @@ class McpToolForAgentOut(BaseModel):
 class AccessAgentMcpToolsUpdate(BaseModel):
     """PUT /access-agents/{id}/mcp-tools body."""
     tool_ids: list[str]
+
+
+# ---------------------------------------------------------------------------
+# MCP guard (Phase 3)
+# ---------------------------------------------------------------------------
+
+class McpAccessCheckIn(BaseModel):
+    tool_name: str
+    contact_id: str        # respond_io_id
+    space_id: str          # respond_workspace_id (UUID-as-str)
+
+
+class McpAccessCheckOut(BaseModel):
+    allowed: bool
+    decision: str          # "allow" | "deny_no_access" | "deny_tool_unlinked"
+                           # | "deny_unknown_tool" | "deny_unknown_contact"
+    agent_name: str | None = None
+
+
+class McpAccessLogOut(BaseModel):
+    id: str
+    tool_name: str
+    contact_external_id: str | None = None
+    respond_contact_id: str | None = None
+    respond_workspace_id: str | None = None
+    decision: str
+    matched_agent_id: str | None = None
+    ts: datetime
+
+    model_config = ConfigDict(from_attributes=True)
