@@ -1,5 +1,5 @@
 """User management schemas."""
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Optional, List, Any
 from datetime import datetime
 
@@ -359,3 +359,35 @@ class RespondAccessTypeMappingResponse(RespondAccessTypeMappingBase):
 
     class Config:
         from_attributes = True
+
+
+# ---------------------------------------------------------------------------
+# MCP tool catalog (Phase 2 — AccessAgent ↔ Tool ownership)
+# ---------------------------------------------------------------------------
+
+class McpToolOut(BaseModel):
+    """Picker row. `current_agent_*` populated when a tool is owned by some
+    OTHER access agent so the UI can warn before reassignment."""
+    id: str
+    tool_name: str
+    description: str | None = None
+    module_key: str = ""
+    current_agent_id: str | None = None
+    current_agent_name: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class McpToolForAgentOut(BaseModel):
+    """A row in `GET /access-agents/{id}/mcp-tools` (tools owned by THIS agent)."""
+    id: str
+    tool_name: str
+    description: str | None = None
+    module_key: str = ""
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AccessAgentMcpToolsUpdate(BaseModel):
+    """PUT /access-agents/{id}/mcp-tools body."""
+    tool_ids: list[str]
