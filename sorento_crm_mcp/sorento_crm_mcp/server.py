@@ -12,6 +12,7 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from sorento_crm_mcp.access_guard import check_access, deny_payload
 from sorento_crm_mcp.catalog import CATALOG, ToolSpec
 from sorento_crm_mcp.http_client import CRMClient
 from sorento_crm_mcp.module_loader import merged_catalog
@@ -361,16 +362,17 @@ def _compile_tool(spec: ToolSpec):
                 query_params_with_aliases.append(alias_name)
     qp_sig = ", ".join(f"{q}: str | None = None" for q in query_params_with_aliases)
     bp_sig = ", ".join(f"{b}: str" for b in spec.body_params)
+    guard_sig = "contact_id: str, space_id: str"
     if pp_sig and qp_sig:
-        sig = f"{pp_sig}, {qp_sig}"
+        sig = f"{guard_sig}, {pp_sig}, {qp_sig}"
     elif pp_sig:
-        sig = pp_sig
+        sig = f"{guard_sig}, {pp_sig}"
     elif qp_sig:
-        sig = qp_sig
+        sig = f"{guard_sig}, {qp_sig}"
     else:
-        sig = ""
+        sig = guard_sig
     if bp_sig:
-        sig = f"{sig}, {bp_sig}" if sig else bp_sig
+        sig = f"{sig}, {bp_sig}"
 
     pp_dict = "{" + ", ".join(f'"{p}": {p}' for p in spec.path_params) + "}"
     q_dict = "{" + ", ".join(f'"{q}": {q}' for q in query_params_with_aliases) + "}"
@@ -383,6 +385,10 @@ def _compile_tool(spec: ToolSpec):
     code = (
         f"async def {fname}(ctx: Context, {sig}):\n"
         f"    client = ctx.request_context.lifespan_context['client']\n"
+        f"    _settings = ctx.request_context.lifespan_context['settings']\n"
+        f"    _decision = await _check_access(_spec.name, contact_id, space_id, api_url=_settings.crm_base_url, api_key=_settings.external_api_key)\n"
+        f"    if not _decision.allowed:\n"
+        f"        return _deny_payload(_decision)\n"
         f"    _pp = {pp_dict}\n"
         f"    _qq = {q_dict}\n"
         f"    _bb = {b_dict}\n"
@@ -435,6 +441,8 @@ def _compile_tool(spec: ToolSpec):
         "_normalize_query_value": _normalize_query_value,
         "_execute_tool_request": _execute_tool_request,
         "_execute_tool_request_with_body": _execute_tool_request_with_body,
+        "_check_access": check_access,
+        "_deny_payload": deny_payload,
         "json": json,
         "_spec": spec,
     }
@@ -447,7 +455,7 @@ def create_mcp_app(settings: Settings) -> FastMCP:
     async def lifespan(_app: FastMCP) -> AsyncIterator[dict[str, Any]]:
         c = CRMClient(settings)
         try:
-            yield {"client": c}
+            yield {"client": c, "settings": settings}
         finally:
             await c.aclose()
 
