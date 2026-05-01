@@ -188,6 +188,22 @@ export async function verifyOtp(
   return unwrap(res, 'Failed to verify code.');
 }
 
+export interface PortalTokenInfo {
+  contact_id: string;
+  space_id: string;
+  expires_at: string;
+  expired: boolean;
+  revoked: boolean;
+}
+
+export async function fetchTokenInfo(token: string): Promise<PortalTokenInfo> {
+  const res = await fetch(
+    `/api/v1/public/portal/token-info?token=${encodeURIComponent(token)}`,
+    { method: 'GET' },
+  );
+  return unwrap(res, 'Could not look up portal token.');
+}
+
 export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
   complaint: 'Complaint',
   stock_inquiry: 'Stock Inquiry',

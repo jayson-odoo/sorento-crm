@@ -111,6 +111,38 @@ def portal_verify_otp(payload: OtpVerifyPayload, db: Session = Depends(get_db)):
     return TokenResponse(token=token.token, expires_at=token.expires_at.isoformat())
 
 
+class PortalTokenInfoResponse(BaseModel):
+    contact_id: str
+    space_id: str
+    expires_at: str
+    expired: bool
+    revoked: bool
+
+
+@router.get("/token-info", response_model=PortalTokenInfoResponse)
+def portal_token_info(token: str, db: Session = Depends(get_db)):
+    """Return basic info for any token row in ``portal_tokens``, even when the
+    token is expired or revoked. Lets the verify page recover the
+    ``contact_id`` / ``space_id`` pair without granting access.
+    """
+    from app.services.portal_service import _utcnow
+
+    row = (
+        db.query(PortalToken)
+        .filter(PortalToken.token == (token or "").strip())
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Token not found.")
+    return PortalTokenInfoResponse(
+        contact_id=row.contact_id,
+        space_id=row.space_id,
+        expires_at=row.expires_at.isoformat(),
+        expired=row.expires_at <= _utcnow(),
+        revoked=row.revoked_at is not None,
+    )
+
+
 # ---------- Contact ----------
 
 

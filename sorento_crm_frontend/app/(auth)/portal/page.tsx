@@ -62,7 +62,8 @@ function PortalLandingContent() {
   }, [router, searchParams]);
 
   const loadAll = useCallback(async () => {
-    if (!readPortalToken()) {
+    const existing = readPortalToken();
+    if (!existing) {
       router.replace('/portal/verify');
       return;
     }
@@ -80,7 +81,12 @@ function PortalLandingContent() {
       setError(null);
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
-        router.replace('/portal/verify?reason=expired');
+        // The portal client cleared the (expired) token from sessionStorage
+        // on 401, so forward it to /portal/verify via URL so it can look up
+        // the contact/space pair via /token-info.
+        const qs = new URLSearchParams({ reason: 'expired' });
+        if (existing) qs.set('token', existing);
+        router.replace(`/portal/verify?${qs.toString()}`);
         return;
       }
       setError(e instanceof Error ? e.message : 'Failed to load portal.');

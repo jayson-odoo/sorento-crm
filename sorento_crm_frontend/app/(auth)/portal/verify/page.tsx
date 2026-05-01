@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -9,49 +9,100 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { requestOtp, verifyOtp, writePortalToken } from '../lib/portal-client';
+import {
+  fetchTokenInfo,
+  readPortalToken,
+  requestOtp,
+  verifyOtp,
+  writePortalToken,
+} from '../lib/portal-client';
 
 function PortalVerifyContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const reason = searchParams?.get('reason');
-  const initialContact = searchParams?.get('contact_id') ?? '';
-  const initialSpace = searchParams?.get('space_id') ?? '';
 
-  const [contactId, setContactId] = useState(initialContact);
-  const [spaceId, setSpaceId] = useState(initialSpace);
+  const [contactId, setContactId] = useState<string | null>(null);
+  const [spaceId, setSpaceId] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [bootstrapping, setBootstrapping] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const otpFiredRef = useRef(false);
 
-  const handleSendCode = useCallback(async () => {
-    setError(null);
-    if (!contactId.trim() || !spaceId.trim()) {
-      setError('Contact and space are required.');
+  const sendCode = useCallback(
+    async (cid: string, sid: string, opts: { silent?: boolean } = {}) => {
+      setPending(true);
+      try {
+        const result = await requestOtp(cid, sid);
+        setSentTo(result.sent_to);
+        if (!opts.silent) toast.success('Verification code sent.');
+        setError(null);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to send code.');
+      } finally {
+        setPending(false);
+      }
+    },
+    [],
+  );
+
+  // Bootstrap: read token from sessionStorage or ?token= URL param, look up
+  // the (contact_id, space_id) pair from the BE, then auto-fire OTP.
+  useEffect(() => {
+    let cancelled = false;
+    const urlToken = searchParams?.get('token');
+    const token = (urlToken && urlToken.trim()) || readPortalToken();
+
+    if (!token) {
+      setBootstrapping(false);
+      setError('No portal token. Please request a new link.');
       return;
     }
-    setPending(true);
-    try {
-      const result = await requestOtp(contactId.trim(), spaceId.trim());
-      setSentTo(result.sent_to);
-      toast.success('Verification code sent.');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to send code.');
-    } finally {
-      setPending(false);
-    }
-  }, [contactId, spaceId]);
+
+    (async () => {
+      try {
+        const info = await fetchTokenInfo(token);
+        if (cancelled) return;
+        setContactId(info.contact_id);
+        setSpaceId(info.space_id);
+        setBootstrapping(false);
+        if (!otpFiredRef.current) {
+          otpFiredRef.current = true;
+          await sendCode(info.contact_id, info.space_id, { silent: true });
+        }
+      } catch (e) {
+        if (cancelled) return;
+        setBootstrapping(false);
+        setError(e instanceof Error ? e.message : 'Could not look up portal token.');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // Intentional: only on first mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleResend = useCallback(() => {
+    if (!contactId || !spaceId) return;
+    void sendCode(contactId, spaceId);
+  }, [contactId, spaceId, sendCode]);
 
   const handleVerify = useCallback(async () => {
     setError(null);
+    if (!contactId || !spaceId) {
+      setError('Missing portal context.');
+      return;
+    }
     if (!code.trim()) {
       setError('Enter the verification code.');
       return;
     }
     setPending(true);
     try {
-      const result = await verifyOtp(contactId.trim(), spaceId.trim(), code.trim());
+      const result = await verifyOtp(contactId, spaceId, code.trim());
       writePortalToken(result.token);
       toast.success('Verified.');
       router.replace('/portal');
@@ -62,15 +113,6 @@ function PortalVerifyContent() {
     }
   }, [code, contactId, router, spaceId]);
 
-  useEffect(() => {
-    // If contact + space arrived in the URL, kick off the OTP send immediately.
-    if (initialContact && initialSpace && !sentTo) {
-      void handleSendCode();
-    }
-    // Intentional: only on first mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
     <div className="min-h-screen max-w-md mx-auto px-4 py-6 space-y-4">
       <Card>
@@ -78,40 +120,23 @@ function PortalVerifyContent() {
           <CardTitle>Verify your identity</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {reason === 'expired' && (
-            <Alert>
-              <AlertIcon>
-                <AlertCircle />
-              </AlertIcon>
-              <AlertTitle>Your portal session expired. Verify with an OTP to continue.</AlertTitle>
-            </Alert>
+          <Alert>
+            <AlertIcon>
+              <AlertCircle />
+            </AlertIcon>
+            <AlertTitle>Your portal session expired. Verify with an OTP to continue.</AlertTitle>
+          </Alert>
+
+          {bootstrapping && (
+            <p className="text-sm text-muted-foreground">Looking up your portal session...</p>
           )}
-          <div className="space-y-1.5">
-            <Label htmlFor="contact_id">Contact ID</Label>
-            <Input
-              id="contact_id"
-              value={contactId}
-              onChange={(e) => setContactId(e.target.value)}
-              autoComplete="off"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="space_id">Space ID</Label>
-            <Input
-              id="space_id"
-              value={spaceId}
-              onChange={(e) => setSpaceId(e.target.value)}
-              autoComplete="off"
-            />
-          </div>
-          <Button type="button" onClick={handleSendCode} disabled={pending}>
-            {sentTo ? 'Resend code' : 'Send verification code'}
-          </Button>
+
           {sentTo && (
             <p className="text-xs text-muted-foreground">
               Code sent to {sentTo}. It expires in 10 minutes.
             </p>
           )}
+
           <div className="space-y-1.5">
             <Label htmlFor="code">Verification code</Label>
             <Input
@@ -122,11 +147,28 @@ function PortalVerifyContent() {
               maxLength={6}
               placeholder="6-digit code"
               autoComplete="one-time-code"
+              disabled={bootstrapping || !contactId || !spaceId}
             />
           </div>
-          <Button type="button" onClick={handleVerify} disabled={pending || !sentTo}>
-            Verify and continue
-          </Button>
+
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleResend}
+              disabled={pending || bootstrapping || !contactId || !spaceId}
+            >
+              Resend code
+            </Button>
+            <Button
+              type="button"
+              onClick={handleVerify}
+              disabled={pending || bootstrapping || !sentTo}
+            >
+              Verify and continue
+            </Button>
+          </div>
+
           {error && (
             <Alert variant="destructive">
               <AlertIcon>
