@@ -83,7 +83,7 @@ def upgrade() -> None:
             """
             INSERT INTO attachment_types (id, code, type_name, description, allowed_extensions, max_file_size_mb, max_count_per_entity)
             VALUES (
-                gen_random_uuid()::text,
+                gen_random_uuid(),
                 'portal_submission',
                 'Portal Submission',
                 'Attachments uploaded by external contacts via the user submission portal.',

@@ -89,6 +89,30 @@ class PortalService:
         self.db.refresh(token)
         return token
 
+    def get_or_mint_token(self, contact_id: str, space_id: str) -> tuple[PortalToken, bool]:
+        """Return latest live token for (contact_id, space_id) or mint a new one.
+
+        Returns (token, reused). A token is "live" if revoked_at is null and expires_at > now.
+        """
+        contact_id = (contact_id or "").strip()
+        space_id = (space_id or "").strip()
+        if not contact_id or not space_id:
+            raise handle_validation_error("contact_id and space_id are required.")
+        live = (
+            self.db.query(PortalToken)
+            .filter(
+                PortalToken.contact_id == contact_id,
+                PortalToken.space_id == space_id,
+                PortalToken.revoked_at.is_(None),
+                PortalToken.expires_at > _utcnow(),
+            )
+            .order_by(PortalToken.expires_at.desc())
+            .first()
+        )
+        if live is not None:
+            return live, True
+        return self.mint_token(contact_id, space_id), False
+
     def resolve_token(self, token_value: str) -> PortalToken:
         if not token_value or not token_value.strip():
             raise PortalAuthError("Missing portal token.")
