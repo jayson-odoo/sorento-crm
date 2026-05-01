@@ -102,6 +102,7 @@ class AccessAgent(Base):
 
     contact_accesses = relationship("ContactAgentAccess", back_populates="agent")
     agent_teams = relationship("AgentTeam", back_populates="agent", cascade="all, delete-orphan")
+    mcp_tools = relationship("McpTool", back_populates="agent")
 
     __table_args__ = (
         Index("ix_access_agents_is_active", "is_active"),
@@ -224,4 +225,62 @@ class AgentTeamRoundRobinCursor(Base):
 
     __table_args__ = (
         Index("ix_agent_team_round_robin_cursors_agent_team", "agent_id", "team_id", unique=True),
+    )
+
+
+class McpTool(Base):
+    """Persisted catalog row for one MCP tool. Synced from code catalog by
+    `app.services.mcp_tool_registry_service.sync_catalog`.
+
+    Ownership is N:1 — a tool belongs to at most one access agent (`agent_id`
+    nullable). Sync NEVER overwrites `agent_id`; only admins do.
+    """
+
+    __tablename__ = "mcp_tools"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tool_name = Column(Text, nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    module_key = Column(Text, nullable=False, default="", server_default="")
+    http_path = Column(Text, nullable=False)
+    http_method = Column(Text, nullable=False, default="GET", server_default="GET")
+    agent_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("access_agents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_active = Column(Boolean, default=True, nullable=False)
+    last_seen_at = Column(DateTime(timezone=False), nullable=False)
+    created_at = Column(
+        DateTime(timezone=False), server_default=func.now(), nullable=False
+    )
+
+    agent = relationship("AccessAgent", back_populates="mcp_tools")
+
+    __table_args__ = (
+        Index("ix_mcp_tools_module_key", "module_key"),
+        Index("ix_mcp_tools_is_active", "is_active"),
+        Index("ix_mcp_tools_agent_id", "agent_id"),
+    )
+
+
+class McpAccessLog(Base):
+    """One row per MCP access decision. Phase 1 defines the table; Phase 3's
+    access-check endpoint is the only writer.
+    """
+
+    __tablename__ = "mcp_access_log"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tool_name = Column(Text, nullable=False)
+    contact_external_id = Column(Text, nullable=True)
+    respond_contact_id = Column(Text, nullable=True)
+    respond_workspace_id = Column(UUID(as_uuid=False), nullable=True)
+    decision = Column(Text, nullable=False)
+    matched_agent_id = Column(UUID(as_uuid=False), nullable=True)
+    ts = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_mcp_access_log_ts", "ts"),
+        Index("ix_mcp_access_log_tool_name", "tool_name"),
     )
