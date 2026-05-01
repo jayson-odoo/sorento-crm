@@ -265,6 +265,24 @@ def install_uploaded_zip(zip_path: Path, *, run_migrations: bool = True) -> Uplo
         # Import the module's models, then call configure_mappers(); roll back on failure.
         _verify_module_mappers(module_key, backend_dest)
 
+        # Re-sync the persisted MCP tool catalog so newly-extracted module
+        # tools.json slices appear in `mcp_tools` without a backend restart.
+        try:
+            from app.database import SessionLocal
+            from app.services.mcp_tool_registry_service import sync_catalog
+            _sync_db = SessionLocal()
+            try:
+                sync_catalog(_sync_db)
+                _sync_db.commit()
+            finally:
+                _sync_db.close()
+        except Exception:
+            logger.exception(
+                "Module %s installed but MCP tool catalog sync failed; "
+                "next backend restart will retry.",
+                module_key,
+            )
+
     except Exception:
         logger.exception("Upload failed; rolling back %s", module_key)
         if backend_dest.exists():
