@@ -32,6 +32,7 @@ import ContactCreateDialog from './ContactCreateDialog';
 import ContactDeleteDialog from './ContactDeleteDialog';
 import ContactBulkDeleteDialog from './ContactBulkDeleteDialog';
 import BulkCopySettingsFromContactDialog from './BulkCopySettingsFromContactDialog';
+import PortalLinkButton from '@/components/contacts/PortalLinkButton';
 
 interface ContactsListProps {
   pageIndex?: number;
@@ -246,6 +247,12 @@ export default function ContactsList() {
         header: '',
         cell: ({ row }) => (
           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+            <PortalLinkButton
+              contactId={row.original.id}
+              contactLabel={row.original.name ?? row.original.phone_number ?? row.original.id}
+              canSendViaRespondIo={!!row.original.respond_io_id}
+              variant="icon"
+            />
             <Button
               variant="ghost"
               size="sm"
