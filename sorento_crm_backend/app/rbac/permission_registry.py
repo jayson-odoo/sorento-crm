@@ -41,6 +41,11 @@ PERMISSION_REGISTRY.extend([
     {"slug": "user_management.logs.view", "name": "View Logs", "description": "Permission to view system logs."},
     {"slug": "user_management.account.view", "name": "View Account", "description": "Permission to view own account."},
 ])
+PERMISSION_REGISTRY.append({
+    "slug": "user_management.contacts.portal_link",
+    "name": "Get contact portal link",
+    "description": "Generate or send a user-submission portal link for a respond contact.",
+})
 
 # Delivery Order Management
 PERMISSION_REGISTRY.extend(_crud("order_management", "orders", "Delivery Orders"))
