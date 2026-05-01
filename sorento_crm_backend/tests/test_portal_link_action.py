@@ -527,3 +527,21 @@ def test_portal_link_send_endpoint_503_when_api_key_missing(client, db, cleanup,
         cleanup["tokens"].append(tok.id)
     assert res.status_code == 503
     assert "respond api key" in res.json()["detail"].lower()
+
+
+def test_portal_link_endpoint_falls_back_to_request_base_url(client, db, cleanup, monkeypatch):
+    """When frontend_base_url is unset, response uses scheme://host from the request."""
+    from app.config import settings as _settings
+    monkeypatch.setattr(_settings, "frontend_base_url", None, raising=False)
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    res = client.post(f"/api/v1/user-management/contacts/{contact.id}/portal-link")
+    body = res.json()
+    for tok in db.query(PortalToken).filter_by(contact_id=contact.id).all():
+        cleanup["tokens"].append(tok.id)
+    assert res.status_code == 200
+    # TestClient base URL is http://testserver/
+    assert body["portal_url"].startswith("http"), f"expected absolute URL, got {body['portal_url']}"
+    assert body["portal_url"].endswith(f"/portal?token={body['token']}")

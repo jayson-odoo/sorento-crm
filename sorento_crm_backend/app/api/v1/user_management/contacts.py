@@ -1,5 +1,5 @@
 """Respond contacts API routes."""
-from fastapi import APIRouter, Depends, Query, status, HTTPException, Body
+from fastapi import APIRouter, Depends, Query, status, HTTPException, Body, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
@@ -45,6 +45,22 @@ def _resolve_space_id(db: Session, contact_id: str) -> tuple[RespondContact, str
             detail="Contact has no workspace; cannot mint portal link.",
         )
     return contact, workspace.space_id
+
+
+def _effective_base_url(request: Request, payload_base_url: Optional[str]) -> Optional[str]:
+    """Resolve the FE base URL for portal links.
+
+    Order: explicit payload override > settings.frontend_base_url > derived from
+    request (scheme://host). Ensures the response always carries an absolute URL
+    so QR codes and Respond.io chat messages render correctly.
+    """
+    if payload_base_url:
+        return payload_base_url
+    from app.config import settings as _settings
+    if (_settings.frontend_base_url or "").strip():
+        return _settings.frontend_base_url
+    base = str(request.base_url).rstrip("/")
+    return base or None
 
 
 @router.get("/", response_model=ListResponse[RespondContactResponse])
@@ -329,6 +345,7 @@ async def get_contact_access_agents(
 @router.post("/{contact_id}/portal-link", response_model=PortalLinkResponse)
 async def get_contact_portal_link(
     contact_id: str,
+    request: Request,
     payload: PortalLinkRequest = Body(default_factory=PortalLinkRequest),
     current_user: dict = Depends(require_permission("user_management.contacts.portal_link")),
     db: Session = Depends(get_db),
@@ -337,10 +354,11 @@ async def get_contact_portal_link(
     _, space_id = _resolve_space_id(db, contact_id)
     service = PortalService(db)
     token, reused = service.get_or_mint_token(contact_id, space_id)
+    base_url = _effective_base_url(request, payload.base_url)
     return PortalLinkResponse(
         token=token.token,
         expires_at=token.expires_at.isoformat(),
-        portal_url=service.build_portal_url(token.token, payload.base_url),
+        portal_url=service.build_portal_url(token.token, base_url),
         reused=reused,
     )
 
@@ -348,6 +366,7 @@ async def get_contact_portal_link(
 @router.post("/{contact_id}/portal-link/send", response_model=PortalLinkSendResponse)
 async def send_contact_portal_link(
     contact_id: str,
+    request: Request,
     payload: PortalLinkRequest = Body(default_factory=PortalLinkRequest),
     current_user: dict = Depends(require_permission("user_management.contacts.portal_link")),
     db: Session = Depends(get_db),
@@ -360,8 +379,9 @@ async def send_contact_portal_link(
             detail="Contact has no Respond.io identifier; cannot send link.",
         )
     service = PortalService(db)
+    base_url = _effective_base_url(request, payload.base_url)
     try:
-        result = service.send_link_via_respond_io(contact_id, space_id, payload.base_url)
+        result = service.send_link_via_respond_io(contact_id, space_id, base_url)
     except httpx.HTTPStatusError as exc:
         upstream = ""
         try:
