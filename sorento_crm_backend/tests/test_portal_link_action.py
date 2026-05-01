@@ -463,3 +463,67 @@ def test_portal_link_send_endpoint_502_on_upstream_failure(
             cleanup["tokens"].append(tok.id)
 
     assert res.status_code == 502, res.text
+
+
+def test_portal_link_send_endpoint_504_on_upstream_timeout(client, db, cleanup, monkeypatch):
+    import httpx as _httpx
+
+    def _timeout(self, identifier, text):
+        raise _httpx.ReadTimeout("upstream slow")
+
+    monkeypatch.setattr(
+        "app.services.portal_service.RespondClient.send_message", _timeout
+    )
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    res = client.post(
+        f"/api/v1/user-management/contacts/{contact.id}/portal-link/send"
+    )
+    for tok in db.query(PortalToken).filter_by(contact_id=contact.id).all():
+        cleanup["tokens"].append(tok.id)
+    assert res.status_code == 504
+    assert "timed out" in res.json()["detail"].lower()
+
+
+def test_portal_link_send_endpoint_502_on_network_error(client, db, cleanup, monkeypatch):
+    import httpx as _httpx
+
+    def _connect_err(self, identifier, text):
+        raise _httpx.ConnectError("dns fail")
+
+    monkeypatch.setattr(
+        "app.services.portal_service.RespondClient.send_message", _connect_err
+    )
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    res = client.post(
+        f"/api/v1/user-management/contacts/{contact.id}/portal-link/send"
+    )
+    for tok in db.query(PortalToken).filter_by(contact_id=contact.id).all():
+        cleanup["tokens"].append(tok.id)
+    assert res.status_code == 502
+    assert "unreachable" in res.json()["detail"].lower()
+
+
+def test_portal_link_send_endpoint_503_when_api_key_missing(client, db, cleanup, monkeypatch):
+    def _no_key(self, identifier, text):
+        raise ValueError("Respond API key is not configured.")
+
+    monkeypatch.setattr(
+        "app.services.portal_service.RespondClient.send_message", _no_key
+    )
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    res = client.post(
+        f"/api/v1/user-management/contacts/{contact.id}/portal-link/send"
+    )
+    for tok in db.query(PortalToken).filter_by(contact_id=contact.id).all():
+        cleanup["tokens"].append(tok.id)
+    assert res.status_code == 503
+    assert "respond api key" in res.json()["detail"].lower()

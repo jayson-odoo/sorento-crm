@@ -372,4 +372,19 @@ async def send_contact_portal_link(
             status_code=502,
             detail=f"Respond.io upstream failure: {upstream or str(exc)}",
         )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail="Respond.io upstream timed out.",
+        )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Respond.io upstream unreachable: {exc.__class__.__name__}",
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        )
     return PortalLinkSendResponse(**result)
