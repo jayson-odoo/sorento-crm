@@ -11,6 +11,7 @@ from app.api.v1.system import (
     ai_assistant,
     references,
     tool_capabilities,
+    mcp_tools,
 )
 from app.modules.runtime.guards import require_module_enabled_with_api_key
 
@@ -26,3 +27,4 @@ router.include_router(embeddings.router, tags=["embeddings"])
 router.include_router(ai_assistant.router, tags=["ai-assistant"])
 router.include_router(references.router, tags=["references"])
 router.include_router(tool_capabilities.router, tags=["tool-capabilities"])
+router.include_router(mcp_tools.router, tags=["mcp-tools"])
