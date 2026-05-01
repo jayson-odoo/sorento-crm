@@ -17,6 +17,8 @@ import {
   writePortalToken,
 } from '../lib/portal-client';
 
+const SENT_KEY_PREFIX = 'sorento.portal.otpSent.';
+
 function PortalVerifyContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -39,7 +41,16 @@ function PortalVerifyContent() {
         if (!opts.silent) toast.success('Verification code sent.');
         setError(null);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to send code.');
+        const msg = e instanceof Error ? e.message : 'Failed to send code.';
+        // On silent auto-fire, ignore "please wait" cooldown errors — the
+        // previous code is presumably still valid and the user has it. Mark
+        // sentTo so the verify button enables and don't surface a destructive
+        // alert that would obscure a successful manual verify a second later.
+        if (opts.silent && /please wait/i.test(msg)) {
+          setSentTo((prev) => prev ?? 'your registered contact');
+          return;
+        }
+        setError(msg);
       } finally {
         setPending(false);
       }
@@ -67,9 +78,25 @@ function PortalVerifyContent() {
         setContactId(info.contact_id);
         setSpaceId(info.space_id);
         setBootstrapping(false);
-        if (!otpFiredRef.current) {
+        // Guard the auto-fire against React StrictMode double-invoke AND
+        // against component re-mounts within the same browser session
+        // (e.g. Suspense boundary toggling, /portal -> /portal/verify
+        // bouncing on a transient 401). The sessionStorage key is keyed by
+        // token so a brand-new portal link will still auto-fire once.
+        const sentKey = SENT_KEY_PREFIX + token;
+        const alreadyFired =
+          typeof window !== 'undefined' &&
+          window.sessionStorage.getItem(sentKey) === '1';
+        if (!otpFiredRef.current && !alreadyFired) {
           otpFiredRef.current = true;
+          if (typeof window !== 'undefined') {
+            window.sessionStorage.setItem(sentKey, '1');
+          }
           await sendCode(info.contact_id, info.space_id, { silent: true });
+        } else if (alreadyFired) {
+          // Mirror the post-send hint so the verify button enables without
+          // hammering the BE again.
+          setSentTo((prev) => prev ?? 'your registered contact');
         }
       } catch (e) {
         if (cancelled) return;
