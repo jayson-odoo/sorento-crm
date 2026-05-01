@@ -127,3 +127,53 @@ export async function setAgentTeams(
 
 export type { Team } from '@/app/(protected)/user-management/teams/types/team.types';
 export { getTeams };
+
+export interface McpToolForAgent {
+  id: string;
+  tool_name: string;
+  description: string | null;
+  module_key: string;
+}
+
+export interface McpToolPickerRow extends McpToolForAgent {
+  current_agent_id: string | null;
+  current_agent_name: string | null;
+}
+
+export async function getMcpToolsForPicker(): Promise<McpToolPickerRow[]> {
+  const response = await apiFetch(
+    '/api/system/mcp-tools?is_active=true&limit=500',
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to fetch MCP tools'));
+  }
+  return response.json();
+}
+
+export async function getAgentMcpTools(agentId: string): Promise<McpToolForAgent[]> {
+  const response = await apiFetch(
+    `/api/user-management/access-agents/${agentId}/mcp-tools`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to fetch agent MCP tools'));
+  }
+  return response.json();
+}
+
+export async function setAgentMcpTools(
+  agentId: string,
+  toolIds: string[],
+): Promise<McpToolForAgent[]> {
+  const response = await apiFetch(
+    `/api/user-management/access-agents/${agentId}/mcp-tools`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool_ids: toolIds }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to set agent MCP tools'));
+  }
+  return response.json();
+}
