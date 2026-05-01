@@ -135,6 +135,13 @@ def _verify_module_mappers(module_key: str, backend_dest: Path) -> None:
             importlib.reload(importlib.sys.modules[module_path])
         else:
             importlib.import_module(module_path)
+        # Apply any deferred inverse relationships the module queued via
+        # ``register_inverse``. Without this, configure_mappers() would fail
+        # when the module's models declare ``back_populates="..."`` against
+        # platform classes that haven't yet received the reciprocal property.
+        from app.database import Base
+        from app.modules.runtime.relationship_registry import apply_pending
+        apply_pending(Base.registry)
         configure_mappers()
     except Exception as exc:  # noqa: BLE001
         raise ModuleUploadError(

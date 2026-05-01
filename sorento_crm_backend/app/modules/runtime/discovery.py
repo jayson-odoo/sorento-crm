@@ -165,13 +165,30 @@ def discover_module_routers(api_router) -> List[str]:
 
 
 def discover_module_models() -> List[str]:
-    """Import models.py (or models/ package) from each module so Alembic sees tables."""
+    """Import models.py (or models/ package) from each module so Alembic sees tables.
+
+    After every module is imported, the deferred relationship registry
+    (``app.modules.runtime.relationship_registry``) is applied so any inverse
+    relationships registered by modules attach to their target classes before
+    the first ``configure_mappers()`` call.
+    """
     imported: List[str] = []
     for d in _iter_module_dirs():
         if (d / "models.py").exists() or (d / "models" / "__init__.py").exists():
             dotted = f"{MODULES_PACKAGE}.{d.name}.models"
             if _safe_import(dotted) is not None:
                 imported.append(d.name)
+
+    # Apply any inverse relationships modules registered with the deferred
+    # registry. Lazy imports avoid circular import via app.database.
+    try:
+        from app.database import Base
+        from app.modules.runtime.relationship_registry import apply_pending
+        apply_pending(Base.registry)
+    except Exception:
+        logger.exception("Failed to apply deferred relationship registry")
+        raise
+
     return imported
 
 
