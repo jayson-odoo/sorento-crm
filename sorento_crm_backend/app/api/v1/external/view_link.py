@@ -159,4 +159,44 @@ def get_view_link(
         base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
     view_url = f"{base}{view_path}?token={token}" if base else f"{view_path}?token={token}"
 
-    return ViewLinkResponse(view_token=token, view_url=view_url)
+    portal_url = _maybe_portal_url(db, entity_type, entity_id, payload.base_url)
+
+    return ViewLinkResponse(view_token=token, view_url=view_url, portal_url=portal_url)
+
+
+def _maybe_portal_url(
+    db: Session,
+    entity_type: str,
+    entity_id: str,
+    base_url_override: str | None,
+) -> str | None:
+    """If the underlying record has contact_id + space_id, mint a portal token and build its URL."""
+    from app.models.complaints import Complaint
+    from app.models.procurement import StockInquiry, PurchaseRequestHeader
+    from app.services.portal_service import PortalService
+
+    contact_id: str | None = None
+    space_id: str | None = None
+    if entity_type == "complaint":
+        row = db.query(Complaint.contact_id, Complaint.space_id).filter(Complaint.id == entity_id).first()
+    elif entity_type == "stock_inquiry":
+        row = (
+            db.query(StockInquiry.contact_id, StockInquiry.space_id)
+            .filter((StockInquiry.id == entity_id) | (StockInquiry.inquiry_number == entity_id))
+            .first()
+        )
+    else:
+        row = (
+            db.query(PurchaseRequestHeader.contact_id, PurchaseRequestHeader.space_id)
+            .filter((PurchaseRequestHeader.id == entity_id) | (PurchaseRequestHeader.request_number == entity_id))
+            .first()
+        )
+    if row:
+        contact_id, space_id = row
+    if not contact_id or not space_id:
+        return None
+    try:
+        token = PortalService(db).mint_token(contact_id, space_id)
+        return PortalService(db).build_portal_url(token.token, base_url_override)
+    except Exception:  # noqa: BLE001
+        return None

@@ -857,34 +857,20 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         ("include_tools",),
     ),
-    # --- form-submission tools (callable) ---
+    # --- portal handoff (replaces the legacy *_submit tools) ---
     ToolSpec(
-        "crm_forms_stock_inquiries_submit",
+        "crm_portal_link_get",
         (
-            "Submit a Stock Inquiry to the purchasing team. CALL ONLY AFTER all required "
-            "fields are collected AND the user has explicitly confirmed (CONFIRM / OK / "
-            "YES / CORRECT).\n"
-            "The API enforces this: include `\"user_confirmed\": true` in payload_json only "
-            "on the same turn as that explicit confirmation; otherwise the request is rejected.\n"
-            "`payload_json` must be a JSON object with these fields:\n"
-            "REQUIRED:\n"
-            "  - user_confirmed (boolean, must be true)\n"
-            "  - product_code (string, e.g. SRTW2048)\n"
-            "  - item_description (string)\n"
-            "  - quantity (string or number)\n"
-            "  - delivery_date (string, DD/MM/YYYY)\n"
-            "  - project_customer (string, end customer / company name)\n"
-            "  - project_name (string)\n"
-            "  - salesperson (string)\n"
-            "  - contact_id (string)\n"
-            "  - space_id (string)\n"
-            "OPTIONAL:\n"
-            "  - remark (string)\n"
-            "  - additional_remark (string)\n"
-            "  - inquiry_number (string; set ONLY when editing a rejected inquiry, "
-            "otherwise omit)"
+            "Mint a 7-day user submission portal link for the active contact. Use this "
+            "INSTEAD OF crm_forms_*_submit when the user wants to file a complaint, stock "
+            "inquiry, purchase request or sponsorship form. Send the returned `portal_url` "
+            "to the user; on the portal they can save drafts, attach files (images and "
+            "PDFs, including pasted screenshots), submit, and review status. After 7 days "
+            "the link expires and the contact re-verifies via OTP.\n"
+            "`payload_json` must be a JSON object with: contact_id (string), space_id (string), "
+            "and optional base_url (string) to override the frontend host."
         ),
-        "/api/v1/external/stock-inquiries/",
+        "/api/v1/external/portal-tokens/",
         (),
         (),
         method="POST",
@@ -905,51 +891,6 @@ CATALOG: tuple[ToolSpec, ...] = (
         ("inquiry_id",),
         ("contact_id", "space_id"),
         method="GET",
-    ),
-    ToolSpec(
-        "crm_forms_purchase_requests_submit",
-        (
-            "Submit a Purchase Request OR Sponsorship Form. CALL ONLY AFTER all required "
-            "header fields AND at least one complete product line are collected AND the "
-            "user has explicitly confirmed (CONFIRM / OK / YES / CORRECT).\n"
-            "The API enforces this sequence strictly: required-field validation runs first, "
-            "then explicit confirmation is required. Include `\"user_confirmed\": true` in "
-            "payload_json only after that confirmation.\n"
-            "First ask the user whether it is a PURCHASE REQUEST or SPONSORSHIP FORM; "
-            "required fields differ.\n"
-            "`payload_json` must be a JSON object with these fields:\n"
-            "HEADER REQUIRED (both types):\n"
-            "  - user_confirmed (boolean, must be true)\n"
-            "  - request_type ('purchase_request' | 'sponsorship_form')\n"
-            "  - customer_name (string)\n"
-            "  - purpose (string, short reason)\n"
-            "  - requested_by (string, user's own name)\n"
-            "  - contact_id (string)\n"
-            "  - space_id (string)\n"
-            "  - products (array; at least 1 item, see LINE FIELDS)\n"
-            "HEADER REQUIRED for purchase_request:\n"
-            "  - project_title (string)\n"
-            "  - expected_delivery_date (string, DD/MM/YYYY)\n"
-            "HEADER REQUIRED for sponsorship_form:\n"
-            "  - sponsor_subject (string)\n"
-            "  - date_of_delivery (string, DD/MM/YYYY)\n"
-            "HEADER OPTIONAL:\n"
-            "  - delivery_address, expected_po_date (string or free text), "
-            "total_project_value, requested_at (DD/MM/YYYY, defaults to today), "
-            "project_title (sponsorship only), purpose (free text)\n"
-            "LINE FIELDS (each element of `products`):\n"
-            "  - item_code (string, REQUIRED)\n"
-            "  - quantity (string or number, REQUIRED)\n"
-            "  - unit_price (optional; required for sponsorship_form grand-total)\n"
-            "  - total (optional; auto = quantity * unit_price)\n"
-            "  - remark (optional string)\n"
-            "Include `request_number` ONLY when editing an existing rejected form (purchase request or sponsorship form)."
-        ),
-        "/api/v1/external/purchase-requests/",
-        (),
-        (),
-        method="POST",
-        body_params=("payload_json",),
     ),
     ToolSpec(
         "crm_forms_purchase_requests_list",
@@ -994,50 +935,6 @@ CATALOG: tuple[ToolSpec, ...] = (
         ("complaint_id",),
         ("contact_id", "space_id"),
         method="GET",
-    ),
-    ToolSpec(
-        "crm_forms_complaints_submit",
-        (
-            "Complaint filing draft/validator and final submit tool. CALL THIS TOOL as soon as "
-            "the user says they want to file a complaint, even if no details are captured yet. "
-            "If you do not have any fields, pass `payload_json` as `{}`. If you have partial fields, "
-            "pass only those fields.\n"
-            "DO-FIRST RULE: the API validates delivery_order_numbers first. If no valid DO is supplied, "
-            "the API returns structured guidance with status `needs_do_lookup`. Filters (customer_name, "
-            "product_code/product, order_date_from, order_date_to) are ALL OPTIONAL — ANY ONE is enough; "
-            "do not demand all four (combining narrows results).\n"
-            "If next_action is `collect_do_lookup_filters` (no filter yet in payload) → ask the user for ONE filter.\n"
-            "If next_action is `search_delivery_orders` and the response includes `provided_filters` → the user "
-            "ALREADY supplied filters in this call. DO NOT ask the user again. Immediately call "
-            "crm_order_management_orders_by_product_list (or crm_order_management_orders_list) with those filters "
-            "mapped per `recommended_tool_arg_mapping`, then resubmit this tool with delivery_order_numbers.\n"
-            "After the user provides any of customer / product / date range, use order-management tools "
-            "(`crm_order_management_orders_by_product_list` or `crm_order_management_orders_list`) "
-            "with customer_query, product_query, order_date_from, and order_date_to to find DO numbers. "
-            "After the user selects DO number(s), call this tool again with delivery_order_numbers and "
-            "any captured complaint details.\n"
-            "Only for the FINAL submission include `user_confirmed: true`, and only after all required "
-            "complaint fields are complete and the user explicitly confirms (CONFIRM / OK / YES / CORRECT). "
-            "Final required fields are: delivery_order_numbers, date_of_complaint, customer_name, "
-            "contact_number, product_code, quantity, complaint_type, defect_description, "
-            "defect_discovered_when, sales_person, address, customer_type, within_warranty, product_type, "
-            "contact_person, project_title, contact_id, and space_id. Optional: customer_type_other, attachments. "
-            "Attachments are optional and should only be linked when the user explicitly wants to attach files. "
-            "STRICT LOOKUP FIELDS: error responses include `field_guidance` per field. If a field has a `lookup` "
-            "block with `strict: true`, you MUST submit one of the exact `value` strings from `lookup.options` — "
-            "never paraphrase, translate, or invent. Map the user's free text to a value via per-option `keywords` "
-            "(case-insensitive). On no keyword match, ask the user to choose from the listed `label`s. Submitting "
-            "an unlisted value returns 422 invalid_lookup_value; you can also call POST /api/v1/lookup/resolve "
-            "(crm_lookup_resolve) with set_key + raw text to get the canonical value. Fields with no `lookup` "
-            "block are free-text — `recommended_values` / `observed_examples` are soft hints only. "
-            "For updates, include `system_id` (or `complaint_number` alias) only when editing a rejected complaint. "
-            "If the user is only searching for DO numbers and has not asked to file/submit a complaint, use order-management DO search tools instead."
-        ),
-        "/api/v1/complaints-management/complaints/",
-        (),
-        (),
-        method="POST",
-        body_params=("payload_json", "contact_id", "space_id", "access_level", "user_confirmed"),
     ),
     ToolSpec(
         "crm_forms_entity_attachments_link",

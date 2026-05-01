@@ -36,8 +36,9 @@ class AttachmentType(Base):
     description = Column(Text, nullable=True)
     allowed_extensions = Column(String(255), nullable=False)
     max_file_size_mb = Column(Integer, default=10, nullable=False)
+    max_count_per_entity = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
-    
+
     attachments = relationship("Attachment", back_populates="attachment_type")
 
 

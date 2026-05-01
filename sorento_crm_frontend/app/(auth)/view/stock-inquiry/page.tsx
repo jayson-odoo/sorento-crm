@@ -42,6 +42,7 @@ interface StockInquiryViewSummary {
   reopened_by_name?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  portal_url?: string | null;
 }
 
 function formatDateTimeStr(value: string | null | undefined): string {
@@ -172,6 +173,11 @@ function ViewStockInquiryContent() {
           <h1 className="text-xl sm:text-2xl font-semibold leading-tight">Stock Inquiry</h1>
         </div>
         <div className="flex flex-wrap gap-2 self-start">
+          {summary?.portal_url && (
+            <Button variant="outline" size="sm" className="shrink-0 self-start" asChild>
+              <Link href={summary.portal_url}>All my submissions</Link>
+            </Button>
+          )}
           {summary?.status === 'rejected' && (
             <Button onClick={handleRevise} disabled={revisePending}>
               {revisePending ? 'Sending...' : 'Revise'}
