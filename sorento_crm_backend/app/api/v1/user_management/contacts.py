@@ -6,15 +6,45 @@ from pydantic import BaseModel
 import logging
 import httpx
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
+from app.models.access import RespondContact
+from app.models.respond_workspace import RespondWorkspace
 from app.services.contact_service import ContactService
+from app.services.portal_service import PortalService
 from app.schemas.user import RespondContactResponse, RespondContactCreate, RespondContactUpdate, ContactAgentAccessResponse
 from app.schemas.common import ListResponse
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import handle_internal_error, handle_not_found
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _resolve_space_id(db: Session, contact_id: str) -> tuple[RespondContact, str]:
+    """Look up contact and resolve its workspace's space_id.
+
+    Raises 404 if the contact does not exist; raises 422 (with a "workspace"
+    message) if the contact is not associated with a usable workspace.
+    """
+    contact = db.query(RespondContact).filter(RespondContact.id == contact_id).first()
+    if contact is None:
+        raise handle_not_found("Contact", contact_id)
+    if not contact.workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Contact has no workspace; cannot mint portal link.",
+        )
+    workspace = (
+        db.query(RespondWorkspace)
+        .filter(RespondWorkspace.id == contact.workspace_id)
+        .first()
+    )
+    if workspace is None or not workspace.space_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Contact has no workspace; cannot mint portal link.",
+        )
+    return contact, workspace.space_id
 
 
 @router.get("/", response_model=ListResponse[RespondContactResponse])
@@ -51,6 +81,17 @@ class BulkDeleteContactsRequest(BaseModel):
 
 class BulkSyncContactsRequest(BaseModel):
     ids: list[str]
+
+
+class PortalLinkRequest(BaseModel):
+    base_url: Optional[str] = None
+
+
+class PortalLinkResponse(BaseModel):
+    token: str
+    expires_at: str
+    portal_url: str
+    reused: bool
 
 
 @router.post("/bulk-sync", status_code=status.HTTP_200_OK)
@@ -261,7 +302,7 @@ async def get_contact_access_agents(
     try:
         from app.services.user_service import AccessAgentService
         from app.schemas.user import ContactAgentAccessResponse
-        
+
         service = AccessAgentService(db)
         # List contact accesses filtered by respond_contact_id
         result = service.list_all_contact_accesses(
@@ -269,9 +310,28 @@ async def get_contact_access_agents(
             limit=limit,
             respond_contact_id=contact_id,
         )
-        
+
         return result
     except HTTPException:
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.post("/{contact_id}/portal-link", response_model=PortalLinkResponse)
+async def get_contact_portal_link(
+    contact_id: str,
+    payload: PortalLinkRequest = Body(default_factory=PortalLinkRequest),
+    current_user: dict = Depends(require_permission("user_management.contacts.portal_link")),
+    db: Session = Depends(get_db),
+):
+    """Mint or reuse a 7-day user-submission portal token for the contact."""
+    _, space_id = _resolve_space_id(db, contact_id)
+    service = PortalService(db)
+    token, reused = service.get_or_mint_token(contact_id, space_id)
+    return PortalLinkResponse(
+        token=token.token,
+        expires_at=token.expires_at.isoformat(),
+        portal_url=service.build_portal_url(token.token, payload.base_url),
+        reused=reused,
+    )

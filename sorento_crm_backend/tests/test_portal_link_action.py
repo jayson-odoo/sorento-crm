@@ -5,7 +5,12 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
+
+# MUST be first app import — resolves circular-import in app.modules.runtime.guards
+# (app.models.__init__ → app.modules.runtime.guards → app.dependencies during partial init).
+from app.main import app  # noqa: E402
 
 from app.database import SessionLocal
 from app.models.access import RespondContact
@@ -252,3 +257,128 @@ def test_send_link_propagates_respond_io_failure(db, cleanup, monkeypatch):
         .count()
         == 1
     )
+
+
+# ---------- HTTP endpoint tests ----------
+# We don't have a project-wide TestClient with auth helpers, so we build one
+# inline: dependency_overrides for get_current_user + get_db, plus a monkeypatch
+# on UserPermissionService.check_user_has_permission for the per-test allow/deny.
+
+
+@pytest.fixture
+def client(db, monkeypatch):
+    """TestClient that:
+    - injects a stub current user
+    - reuses the live Postgres session (so test setup writes are visible to routes)
+    - defaults UserPermissionService.check_user_has_permission to True
+      (each test can monkeypatch.setattr again to flip it).
+    """
+    from app.dependencies import get_current_user, get_db
+
+    stub_user = {"id": str(uuid.uuid4()), "email": "portal-test@test"}
+
+    def _override_user():
+        return stub_user
+
+    def _override_db():
+        # Reuse the same session as the test fixture so flushes/commits are
+        # visible to the route handler. We do NOT close it here; the `db`
+        # fixture owns that.
+        try:
+            yield db
+        finally:
+            pass
+
+    app.dependency_overrides[get_current_user] = _override_user
+    app.dependency_overrides[get_db] = _override_db
+
+    # Default to allowing the permission. Individual tests can override.
+    monkeypatch.setattr(
+        "app.services.user_service.UserPermissionService.check_user_has_permission",
+        lambda self, user_id, slug: True,
+    )
+
+    with TestClient(app) as c:
+        yield c
+
+    app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_db, None)
+
+
+def test_portal_link_endpoint_requires_permission(client, db, cleanup, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.user_service.UserPermissionService.check_user_has_permission",
+        lambda self, user_id, slug: False,
+    )
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    res = client.post(f"/api/v1/user-management/contacts/{contact.id}/portal-link")
+    assert res.status_code == 403
+
+
+def test_portal_link_endpoint_returns_url(client, db, cleanup):
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    res = client.post(f"/api/v1/user-management/contacts/{contact.id}/portal-link")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["token"]
+    assert body["portal_url"].endswith(f"/portal?token={body['token']}")
+    assert body["reused"] is False
+
+    # Track minted token for teardown.
+    for tok in db.query(PortalToken).filter(PortalToken.contact_id == contact.id).all():
+        if tok.id not in cleanup["tokens"]:
+            cleanup["tokens"].append(tok.id)
+
+
+def test_portal_link_endpoint_reuses_on_second_call(client, db, cleanup):
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    first = client.post(
+        f"/api/v1/user-management/contacts/{contact.id}/portal-link"
+    ).json()
+    second = client.post(
+        f"/api/v1/user-management/contacts/{contact.id}/portal-link"
+    ).json()
+
+    for tok in db.query(PortalToken).filter(PortalToken.contact_id == contact.id).all():
+        if tok.id not in cleanup["tokens"]:
+            cleanup["tokens"].append(tok.id)
+
+    assert first["token"] == second["token"]
+    assert first["reused"] is False
+    assert second["reused"] is True
+
+
+def test_portal_link_endpoint_404_unknown_contact(client):
+    res = client.post(
+        "/api/v1/user-management/contacts/does-not-exist/portal-link"
+    )
+    assert res.status_code == 404
+
+
+def test_portal_link_endpoint_422_when_no_workspace(client, db, cleanup):
+    c = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+6019{uuid.uuid4().hex[:8]}",
+        name="Orphan",
+        respond_io_id=f"rio_{uuid.uuid4().hex[:6]}",
+        workspace_id=None,
+    )
+    db.add(c)
+    db.commit()
+    cleanup["contacts"].append(c.id)
+
+    res = client.post(f"/api/v1/user-management/contacts/{c.id}/portal-link")
+    assert res.status_code == 422, res.text
+    body = res.json()
+    detail = body.get("detail")
+    # detail may be a string or structured; coerce to string and lowercase.
+    assert "workspace" in str(detail).lower()
