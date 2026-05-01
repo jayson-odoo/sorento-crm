@@ -131,8 +131,27 @@ function PortalVerifyContent() {
     try {
       const result = await verifyOtp(contactId, spaceId, code.trim());
       writePortalToken(result.token);
+      // Stamp when the fresh token was written so /portal can grace-period a
+      // transient 401 instead of bouncing right back here.
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem(
+          'sorento.portalTokenWrittenAt',
+          String(Date.now()),
+        );
+        // Drop any silent-fire guards from the previous expired-token session
+        // so a future /portal/verify visit (different token) can re-fire OTP.
+        Object.keys(window.sessionStorage)
+          .filter((k) => k.startsWith(SENT_KEY_PREFIX))
+          .forEach((k) => window.sessionStorage.removeItem(k));
+      }
       toast.success('Verified.');
-      router.replace('/portal');
+      // Hard-navigate so the app-router transition cannot stall and the new
+      // sessionStorage value is guaranteed visible to the fresh /portal mount.
+      if (typeof window !== 'undefined') {
+        window.location.assign('/portal');
+      } else {
+        router.replace('/portal');
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to verify.');
     } finally {

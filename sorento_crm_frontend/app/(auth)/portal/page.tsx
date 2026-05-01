@@ -67,9 +67,30 @@ function PortalLandingContent() {
       router.replace('/portal/verify');
       return;
     }
+    // If the token was minted very recently (post-verify), give the BE a tiny
+    // grace window before bouncing back to /portal/verify on a 401 — the
+    // /verify-otp commit + a fast follow-up /me can race in some setups.
+    const writtenAt =
+      typeof window !== 'undefined'
+        ? Number(window.sessionStorage.getItem('sorento.portalTokenWrittenAt') || '0')
+        : 0;
+    const tokenIsFresh = writtenAt > 0 && Date.now() - writtenAt < 30_000;
     setLoading(true);
     try {
-      const me = await fetchMe();
+      let me: PortalContact;
+      try {
+        me = await fetchMe();
+      } catch (firstErr) {
+        if (firstErr instanceof PortalUnauthorizedError && tokenIsFresh) {
+          // /portalFetch already cleared the token on 401 — restore it for the
+          // retry. If this also 401s, fall through to the bounce-back logic.
+          writePortalToken(existing);
+          await new Promise((r) => setTimeout(r, 500));
+          me = await fetchMe();
+        } else {
+          throw firstErr;
+        }
+      }
       setContact(me);
       const lists = await Promise.all(TYPES.map((t) => fetchSubmissions(t)));
       setSubmissions({
@@ -79,6 +100,11 @@ function PortalLandingContent() {
         sponsorship_form: lists[3],
       });
       setError(null);
+      // Token validated — clear the freshness stamp so subsequent transient
+      // 401s (e.g. real expiry) bounce back immediately without retry.
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.removeItem('sorento.portalTokenWrittenAt');
+      }
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
         // The portal client cleared the (expired) token from sessionStorage
