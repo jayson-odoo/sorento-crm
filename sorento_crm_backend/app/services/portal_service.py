@@ -39,6 +39,7 @@ from app.services.error_handler import (
     handle_not_found,
     handle_validation_error,
 )
+from app.services.integration_service import RespondClient
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,52 @@ class PortalService:
         if live is not None:
             return live, True
         return self.mint_token(contact_id, space_id), False
+
+    def _build_send_message_text(
+        self, contact: RespondContact, portal_url: str, expires_at
+    ) -> str:
+        name = (contact.name or getattr(contact, "first_name", None) or "").strip()
+        greeting = f"Hi {name}," if name else "Hi,"
+        expires_human = expires_at.strftime("%b %d, %Y")
+        return (
+            f"{greeting} here is your secure portal link:\n"
+            f"{portal_url}\n\n"
+            f"The link expires on {expires_human}. Reply if you need help."
+        )
+
+    def send_link_via_respond_io(
+        self,
+        contact_id: str,
+        space_id: str,
+        base_url: Optional[str] = None,
+    ) -> dict:
+        """Mint or reuse a portal token and deliver it via Respond.io chat.
+
+        Raises httpx.HTTPStatusError on upstream failure (caller maps to 502).
+        """
+        contact = (
+            self.db.query(RespondContact)
+            .filter(RespondContact.id == contact_id)
+            .first()
+        )
+        if contact is None:
+            raise handle_not_found("Contact", contact_id)
+        respond_io_id = (contact.respond_io_id or "").strip()
+        if not respond_io_id:
+            raise handle_validation_error(
+                "Contact has no Respond.io identifier; cannot send link."
+            )
+        token, reused = self.get_or_mint_token(contact_id, space_id)
+        portal_url = self.build_portal_url(token.token, base_url)
+        text = self._build_send_message_text(contact, portal_url, token.expires_at)
+        RespondClient().send_message(respond_io_id, text)
+        return {
+            "token": token.token,
+            "expires_at": token.expires_at.isoformat(),
+            "portal_url": portal_url,
+            "reused": reused,
+            "sent": True,
+        }
 
     def resolve_token(self, token_value: str) -> PortalToken:
         if not token_value or not token_value.strip():

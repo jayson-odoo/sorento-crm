@@ -150,3 +150,105 @@ def test_get_or_mint_token_mints_new_when_revoked(db, cleanup):
     assert reused is False
     assert new_token.token != revoked.token
     assert new_token.id != revoked.id
+
+
+# ---------- send_link_via_respond_io ----------
+
+
+def test_send_link_via_respond_io_success(db, cleanup, monkeypatch):
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    captured = {}
+
+    def fake_send(self, identifier, text):
+        captured["identifier"] = identifier
+        captured["text"] = text
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "app.services.portal_service.RespondClient.send_message",
+        fake_send,
+    )
+
+    svc = PortalService(db)
+    result = svc.send_link_via_respond_io(contact.id, ws.space_id)
+
+    # Track all live tokens for this contact for teardown
+    for tok in (
+        db.query(PortalToken).filter(PortalToken.contact_id == contact.id).all()
+    ):
+        if tok.id not in cleanup["tokens"]:
+            cleanup["tokens"].append(tok.id)
+
+    assert result["sent"] is True
+    assert result["reused"] is False
+    assert result["portal_url"]
+    assert captured["identifier"] == contact.respond_io_id
+    assert "portal" in captured["text"].lower()
+    assert result["portal_url"] in captured["text"]
+
+
+def test_send_link_via_respond_io_reuses_token(db, cleanup, monkeypatch):
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    monkeypatch.setattr(
+        "app.services.portal_service.RespondClient.send_message",
+        lambda self, identifier, text: {"ok": True},
+    )
+
+    svc = PortalService(db)
+    first = svc.send_link_via_respond_io(contact.id, ws.space_id)
+    second = svc.send_link_via_respond_io(contact.id, ws.space_id)
+
+    for tok in (
+        db.query(PortalToken).filter(PortalToken.contact_id == contact.id).all()
+    ):
+        if tok.id not in cleanup["tokens"]:
+            cleanup["tokens"].append(tok.id)
+
+    assert first["portal_url"] == second["portal_url"]
+    assert first["reused"] is False
+    assert second["reused"] is True
+
+
+def test_send_link_propagates_respond_io_failure(db, cleanup, monkeypatch):
+    import httpx
+
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    db.commit()
+
+    def boom(self, identifier, text):
+        request = httpx.Request("POST", "https://api.respond.io/v2/contact/x/message")
+        response = httpx.Response(500, request=request, text="upstream blew up")
+        raise httpx.HTTPStatusError("500", request=request, response=response)
+
+    monkeypatch.setattr(
+        "app.services.portal_service.RespondClient.send_message", boom
+    )
+
+    svc = PortalService(db)
+    with pytest.raises(httpx.HTTPStatusError):
+        svc.send_link_via_respond_io(contact.id, ws.space_id)
+
+    # Track minted tokens for teardown (the mint happened before send failed)
+    for tok in (
+        db.query(PortalToken).filter(PortalToken.contact_id == contact.id).all()
+    ):
+        if tok.id not in cleanup["tokens"]:
+            cleanup["tokens"].append(tok.id)
+
+    # token still minted (so /portal-link itself remains usable)
+    assert (
+        db.query(PortalToken)
+        .filter(
+            PortalToken.contact_id == contact.id,
+            PortalToken.revoked_at.is_(None),
+        )
+        .count()
+        == 1
+    )
