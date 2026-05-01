@@ -115,9 +115,9 @@ class PortalService:
         return self.mint_token(contact_id, space_id), False
 
     def _build_send_message_text(
-        self, contact: RespondContact, portal_url: str, expires_at
+        self, contact: RespondContact, portal_url: str, expires_at: datetime
     ) -> str:
-        name = (contact.name or getattr(contact, "first_name", None) or "").strip()
+        name = (contact.name or contact.first_name or "").strip()
         greeting = f"Hi {name}," if name else "Hi,"
         expires_human = expires_at.strftime("%b %d, %Y")
         return (
