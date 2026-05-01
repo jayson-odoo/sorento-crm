@@ -30,6 +30,7 @@ import { toast } from 'sonner';
 import ContactAccessAgentsTable from './components/ContactAccessAgentsTable';
 import ContactEditDialog from './components/ContactEditDialog';
 import ContactDeleteDialog from '../components/ContactDeleteDialog';
+import PortalLinkButton from '@/components/contacts/PortalLinkButton';
 import type { RespondContact } from '../types/contact.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
 
@@ -158,6 +159,11 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
               currentId={id}
               items={navigationItems}
               basePath="/user-management/contacts"
+            />
+            <PortalLinkButton
+              contactId={id}
+              contactLabel={contact?.name ?? contact?.phone_number ?? id}
+              canSendViaRespondIo={!!contact?.respond_io_id}
             />
             <Button
               variant="outline"
