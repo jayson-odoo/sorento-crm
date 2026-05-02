@@ -12,6 +12,7 @@ class RespondWorkspaceBase(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
     base_url: Optional[str] = Field(None, max_length=512)
     is_active: bool = True
+    is_default: bool = False
 
 
 class RespondWorkspaceCreate(RespondWorkspaceBase):
@@ -23,6 +24,7 @@ class RespondWorkspaceUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
     base_url: Optional[str] = Field(None, max_length=512)
     is_active: Optional[bool] = None
+    is_default: Optional[bool] = None
     api_key: Optional[str] = Field(None, description="When set, replaces stored key")
 
 
@@ -34,6 +36,7 @@ class RespondWorkspaceResponse(BaseModel):
     name: Optional[str] = None
     base_url: Optional[str] = None
     is_active: bool
+    is_default: bool = False
     api_key_masked: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -47,3 +50,4 @@ class RespondWorkspaceSelectItem(BaseModel):
     id: str
     space_id: str
     name: Optional[str] = None
+    is_default: bool = False

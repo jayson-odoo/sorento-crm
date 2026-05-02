@@ -34,6 +34,16 @@ export interface PortalSubmissionSummary {
   is_editable: boolean;
   is_draft: boolean;
   created_at: string | null;
+  // Optional kind-specific summary fields surfaced for the mobile card layout.
+  product_code?: string | null;
+  project_title?: string | null;
+  project_name?: string | null;
+  project_customer?: string | null;
+  customer_name?: string | null;
+  delivery_order_number?: string | null;
+  item_description?: string | null;
+  sponsor_subject?: string | null;
+  purpose?: string | null;
 }
 
 export interface PortalAttachment {

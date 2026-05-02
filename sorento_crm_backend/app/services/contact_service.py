@@ -210,7 +210,13 @@ class ContactService:
             logger.warning("Assign default agents to new contact failed: %s", e)
 
     def create_contact(self, contact_data: RespondContactCreate) -> RespondContact:
-        """Create a new contact and assign default access agents (assign_to_new_internal_contacts=True). Resolves user_type to access_type_code from catalog/mappings."""
+        """Create a new contact and assign default access agents (assign_to_new_internal_contacts=True). Resolves user_type to access_type_code from catalog/mappings.
+
+        If no ``workspace_id`` is provided, falls back to the tenant's default
+        Respond.io workspace (``respond_workspaces.is_default = true``) so that
+        scheduled-task and individual syncs land contacts under the configured
+        default automatically.
+        """
         # Check if contact with same phone number already exists
         existing = self.get_contact_by_phone(contact_data.phone_number)
         if existing:
@@ -220,6 +226,11 @@ class ContactService:
             from app.services.contact_access_type_service import ContactAccessTypeService
             access_svc = ContactAccessTypeService(self.db)
             data["access_type_code"] = access_svc.resolve_respond_value_to_code(data["user_type"])
+        if not data.get("workspace_id"):
+            from app.services.respond_workspace_service import RespondWorkspaceService
+            default_ws = RespondWorkspaceService(self.db).get_default()
+            if default_ws is not None:
+                data["workspace_id"] = str(default_ws.id)
         contact = RespondContact(**data)
         self.db.add(contact)
         self.db.commit()
@@ -281,6 +292,7 @@ class ContactService:
 
     @staticmethod
     def contact_to_response_dict(contact: RespondContact) -> dict:
+        ws = getattr(contact, "workspace", None)
         return {
             "id": str(contact.id),
             "phone_number": contact.phone_number,
@@ -290,6 +302,9 @@ class ContactService:
             "user_type": contact.user_type,
             "access_type_code": getattr(contact, "access_type_code", None),
             "respond_io_id": getattr(contact, "respond_io_id", None),
+            "workspace_id": str(contact.workspace_id) if getattr(contact, "workspace_id", None) else None,
+            "workspace_name": getattr(ws, "name", None) if ws is not None else None,
+            "workspace_space_id": getattr(ws, "space_id", None) if ws is not None else None,
             "created_at": contact.created_at,
             "updated_at": contact.updated_at,
             "created_by": contact.created_by,
@@ -330,12 +345,21 @@ class ContactService:
             if parsed.get("respond_io_id") is not None:
                 contact.respond_io_id = parsed["respond_io_id"]
 
+            workspace_assigned = False
+            if not contact.workspace_id:
+                from app.services.respond_workspace_service import RespondWorkspaceService
+                default_ws = RespondWorkspaceService(self.db).get_default()
+                if default_ws is not None:
+                    contact.workspace_id = str(default_ws.id)
+                    workspace_assigned = True
+
             updated = bool(
                 parsed.get("first_name") is not None
                 or parsed.get("last_name") is not None
                 or name is not None
                 or "user_type" in parsed
                 or parsed.get("respond_io_id") is not None
+                or workspace_assigned
             )
 
             if updated:

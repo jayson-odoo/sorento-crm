@@ -13,6 +13,7 @@ from app.api.v1.system import (
     tool_capabilities,
     mcp_tools,
     mcp_access,
+    respond_workspaces,
 )
 from app.modules.runtime.guards import require_module_enabled_with_api_key
 
@@ -30,3 +31,4 @@ router.include_router(references.router, tags=["references"])
 router.include_router(tool_capabilities.router, tags=["tool-capabilities"])
 router.include_router(mcp_tools.router, tags=["mcp-tools"])
 router.include_router(mcp_access.router, tags=["mcp-access"])
+router.include_router(respond_workspaces.router, tags=["respond-workspaces"])

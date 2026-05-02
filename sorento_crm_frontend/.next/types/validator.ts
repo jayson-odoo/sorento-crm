@@ -1928,6 +1928,15 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/system-management/respond-workspaces/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/system-management/respond-workspaces">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/system-management/respond-workspaces/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/(protected)/system-management/scheduled-tasks/[id]/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/system-management/scheduled-tasks/[id]">> = Specific

@@ -14,7 +14,7 @@
  *      flow.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Paperclip, Sparkles, Upload, X } from 'lucide-react';
+import { Clipboard, Loader2, Paperclip, Sparkles, Upload, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -140,6 +140,47 @@ export function AIExtractDialog({
     if (inputRef.current) inputRef.current.value = '';
   };
 
+  // Mobile-friendly clipboard paste — `navigator.clipboard.read()` returns the
+  // raw clipboard items including images (Cmd/Ctrl+V is desktop-only).
+  const handlePasteFromClipboard = useCallback(async () => {
+    const clip = (navigator as Navigator & {
+      clipboard?: { read?: () => Promise<unknown> };
+    }).clipboard;
+    if (!clip || typeof clip.read !== 'function') {
+      toast.error('Clipboard access not supported on this browser.');
+      return;
+    }
+    try {
+      const items = (await clip.read()) as unknown as Array<{
+        types: string[];
+        getType: (t: string) => Promise<Blob>;
+      }>;
+      const incoming: File[] = [];
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith('image/'));
+        if (!imageType) continue;
+        const blob = await item.getType(imageType);
+        const ext = imageType.split('/')[1] ?? 'png';
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        incoming.push(new File([blob], `clipboard-${ts}.${ext}`, { type: imageType }));
+      }
+      if (incoming.length === 0) {
+        toast.message('Clipboard has no image to paste.');
+        return;
+      }
+      addFiles(incoming);
+      toast.success(
+        `Pasted ${incoming.length} image${incoming.length === 1 ? '' : 's'} from clipboard.`,
+      );
+    } catch (e) {
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : 'Could not read clipboard. Allow clipboard access and try again.',
+      );
+    }
+  }, [addFiles]);
+
   const handleExtract = async () => {
     if (!files.length) return;
     setBusy(true);
@@ -233,18 +274,31 @@ export function AIExtractDialog({
               >
                 <Upload className="h-6 w-6 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  Drop files here, paste a screenshot (Ctrl/Cmd+V), or
+                  Drop files, paste (Ctrl/Cmd+V), or pick a source:
                 </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handlePickClick}
-                  disabled={busy}
-                >
-                  <Paperclip className="h-4 w-4 mr-2" />
-                  Choose files
-                </Button>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePickClick}
+                    disabled={busy}
+                  >
+                    <Paperclip className="h-4 w-4 mr-2" />
+                    Choose files
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePasteFromClipboard}
+                    disabled={busy}
+                    data-testid="ai-extract-paste-clipboard"
+                  >
+                    <Clipboard className="h-4 w-4 mr-2" />
+                    Paste from clipboard
+                  </Button>
+                </div>
                 <input
                   ref={inputRef}
                   type="file"
@@ -379,13 +433,6 @@ export function AIExtractDialog({
                   {kind === 'complaint' ? 'complaint' : 'submission'}
                 </Label>
               </div>
-
-              {result.usage && result.usage.total_tokens > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Used {result.usage.total_tokens} tokens
-                  {result.model ? ` · ${result.model}` : ''}.
-                </p>
-              )}
             </div>
 
             <DialogFooter>

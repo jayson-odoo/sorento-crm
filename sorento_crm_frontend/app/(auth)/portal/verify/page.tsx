@@ -154,12 +154,18 @@ function PortalVerifyContent() {
           .forEach((k) => window.sessionStorage.removeItem(k));
       }
       toast.success('Verified.');
+      // Preserve the deep-link `?type=` so the portal lands on the right tab.
+      const desiredType = searchParams?.get('type');
+      const target =
+        desiredType && desiredType.trim()
+          ? `/portal?type=${encodeURIComponent(desiredType.trim())}`
+          : '/portal';
       // Hard-navigate so the app-router transition cannot stall and the new
       // sessionStorage value is guaranteed visible to the fresh /portal mount.
       if (typeof window !== 'undefined') {
-        window.location.assign('/portal');
+        window.location.assign(target);
       } else {
-        router.replace('/portal');
+        router.replace(target);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to verify.');
@@ -192,13 +198,14 @@ function PortalVerifyContent() {
 
           {sentTo && (
             <p className="text-xs text-muted-foreground">
-              Code sent to {sentTo}. It expires in 10 minutes.
+              Code sent to {sentTo}. It expires in 10 minutes Please do not share with anyone.
             </p>
           )}
 
           <div className="space-y-1.5">
             <Label htmlFor="code">Verification code</Label>
             <Input
+              variant="lg"
               id="code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
@@ -207,15 +214,17 @@ function PortalVerifyContent() {
               placeholder="6-digit code"
               autoComplete="one-time-code"
               disabled={bootstrapping || !contactId || !spaceId}
+              className="text-center tracking-[0.4em] text-lg font-medium"
             />
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-col-reverse sm:flex-row gap-2">
             <Button
               type="button"
               variant="outline"
               onClick={handleResend}
               disabled={pending || bootstrapping || !contactId || !spaceId}
+              className="h-11 w-full sm:w-auto"
             >
               {sentTo ? 'Resend code' : 'Send code'}
             </Button>
@@ -223,6 +232,7 @@ function PortalVerifyContent() {
               type="button"
               onClick={handleVerify}
               disabled={pending || bootstrapping || !sentTo}
+              className="h-11 w-full sm:flex-1"
             >
               Verify and continue
             </Button>

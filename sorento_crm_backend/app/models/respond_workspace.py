@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, Column, DateTime, Index, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -29,6 +29,7 @@ class RespondWorkspace(Base):
     api_key_ciphertext = Column(Text, nullable=False)
     base_url = Column(String(512), nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="true")
+    is_default = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False),
@@ -42,4 +43,10 @@ class RespondWorkspace(Base):
     __table_args__ = (
         Index("ix_respond_workspaces_space_id", "space_id"),
         Index("ix_respond_workspaces_is_active", "is_active"),
+        Index(
+            "uq_respond_workspaces_one_default",
+            "is_default",
+            unique=True,
+            postgresql_where=text("is_default IS TRUE"),
+        ),
     )

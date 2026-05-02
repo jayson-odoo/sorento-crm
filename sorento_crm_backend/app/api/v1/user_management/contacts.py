@@ -101,6 +101,7 @@ class BulkSyncContactsRequest(BaseModel):
 
 class PortalLinkRequest(BaseModel):
     base_url: Optional[str] = None
+    submission_type: Optional[str] = None
 
 
 class PortalLinkResponse(BaseModel):
@@ -358,7 +359,9 @@ async def get_contact_portal_link(
     return PortalLinkResponse(
         token=token.token,
         expires_at=token.expires_at.isoformat(),
-        portal_url=service.build_portal_url(token.token, base_url),
+        portal_url=service.build_portal_url(
+            token.token, base_url, payload.submission_type
+        ),
         reused=reused,
     )
 
@@ -381,7 +384,9 @@ async def send_contact_portal_link(
     service = PortalService(db)
     base_url = _effective_base_url(request, payload.base_url)
     try:
-        result = service.send_link_via_respond_io(contact_id, space_id, base_url)
+        result = service.send_link_via_respond_io(
+            contact_id, space_id, base_url, payload.submission_type
+        )
     except httpx.HTTPStatusError as exc:
         upstream = ""
         try:

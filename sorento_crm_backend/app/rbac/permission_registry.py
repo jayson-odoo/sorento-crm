@@ -173,6 +173,12 @@ PERMISSION_REGISTRY.append({
     "name": "Manage App Store Modules",
     "description": "Install, enable, and disable application modules for the tenant.",
 })
+PERMISSION_REGISTRY.extend(_crud("system", "respond_workspaces", "Respond.io Workspaces"))
+PERMISSION_REGISTRY.append({
+    "slug": "system.respond_workspaces.set_default",
+    "name": "Set Default Respond.io Workspace",
+    "description": "Mark a Respond.io workspace as the tenant default for new contact syncs.",
+})
 PERMISSION_REGISTRY.extend(
     [
         {

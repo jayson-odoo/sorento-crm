@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Search, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronUp, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -107,6 +107,18 @@ export function DOFilterMultiSelect({ id, value, onChange, disabled }: Props) {
 
   const selectionCount = useMemo(() => draftSelected.size, [draftSelected]);
 
+  const [freeText, setFreeText] = useState('');
+  const commitFreeText = () => {
+    const v = freeText.trim();
+    if (!v) return;
+    if (value.includes(v)) {
+      setFreeText('');
+      return;
+    }
+    onChange([...value, v]);
+    setFreeText('');
+  };
+
   return (
     <div className="space-y-2" id={id}>
       {value.length > 0 && (
@@ -131,6 +143,23 @@ export function DOFilterMultiSelect({ id, value, onChange, disabled }: Props) {
           ))}
         </div>
       )}
+      {/* Free-text entry — DOs not in the system can still be filed. Press
+          Enter (or blur) to commit each value as a pill. The dialog search
+          remains available for known DOs. */}
+      <Input
+        type="text"
+        value={freeText}
+        onChange={(e) => setFreeText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault();
+            commitFreeText();
+          }
+        }}
+        onBlur={commitFreeText}
+        placeholder="Type DO number and press Enter"
+        disabled={disabled}
+      />
       <Button
         type="button"
         variant="outline"
@@ -139,7 +168,7 @@ export function DOFilterMultiSelect({ id, value, onChange, disabled }: Props) {
         onClick={() => setOpen(true)}
       >
         <Search className="h-4 w-4 mr-2" />
-        {value.length > 0 ? 'Edit selection' : 'Search & select delivery orders'}
+        {value.length > 0 ? 'Edit selection' : 'Search delivery orders'}
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -196,39 +225,12 @@ export function DOFilterMultiSelect({ id, value, onChange, disabled }: Props) {
                   {results.map((row) => {
                     const checked = draftSelected.has(row.order_number);
                     return (
-                      <li
+                      <DOResultRow
                         key={row.order_number}
-                        className="flex items-start gap-3 px-3 py-2 hover:bg-accent/40 cursor-pointer"
-                        onClick={() => toggleRow(row)}
-                      >
-                        <Checkbox
-                          checked={checked}
-                          onCheckedChange={() => toggleRow(row)}
-                          aria-label={`Select ${row.order_number}`}
-                          className="mt-1"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium">{row.order_number}</p>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {[
-                              row.debtor_name,
-                              row.customer_name,
-                              row.order_date
-                                ? new Date(row.order_date).toLocaleDateString(undefined, {
-                                    dateStyle: 'medium',
-                                  })
-                                : null,
-                            ]
-                              .filter(Boolean)
-                              .join(' • ')}
-                          </p>
-                          {row.products.length > 0 && (
-                            <p className="text-xs text-muted-foreground truncate">
-                              {row.products.join(', ')}
-                            </p>
-                          )}
-                        </div>
-                      </li>
+                        row={row}
+                        checked={checked}
+                        onToggle={() => toggleRow(row)}
+                      />
                     );
                   })}
                 </ul>
@@ -249,5 +251,103 @@ export function DOFilterMultiSelect({ id, value, onChange, disabled }: Props) {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function DOResultRow({
+  row,
+  checked,
+  onToggle,
+}: {
+  row: DOLookupItem;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFired = useRef(false);
+  const meta = [
+    row.debtor_name,
+    row.customer_name,
+    row.order_date
+      ? new Date(row.order_date).toLocaleDateString(undefined, { dateStyle: 'medium' })
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' • ');
+  const productList = row.products ?? [];
+
+  const startPress = () => {
+    longPressFired.current = false;
+    longPressTimer.current = setTimeout(() => {
+      longPressFired.current = true;
+      setExpanded((v) => !v);
+    }, 450);
+  };
+  const clearPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  };
+  const handleClick = () => {
+    if (longPressFired.current) {
+      longPressFired.current = false;
+      return;
+    }
+    onToggle();
+  };
+
+  return (
+    <li
+      className="flex items-start gap-3 px-3 py-2 hover:bg-accent/40 cursor-pointer select-none"
+      onClick={handleClick}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setExpanded((v) => !v);
+      }}
+      onTouchStart={startPress}
+      onTouchEnd={clearPress}
+      onTouchMove={clearPress}
+      onTouchCancel={clearPress}
+      onMouseDown={startPress}
+      onMouseUp={clearPress}
+      onMouseLeave={clearPress}
+    >
+      {/* pointer-events-none so clicks pass through to <li> — fixes the
+          "tickbox doesn't toggle, only the text does" bug. */}
+      <Checkbox
+        checked={checked}
+        aria-label={`Select ${row.order_number}`}
+        className="mt-1 pointer-events-none"
+        tabIndex={-1}
+      />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium break-words">{row.order_number}</p>
+        <p className={`text-xs text-muted-foreground ${expanded ? 'break-words' : 'truncate'}`}>
+          {meta}
+        </p>
+        {productList.length > 0 && (
+          <p className={`text-xs text-muted-foreground ${expanded ? 'break-words' : 'truncate'}`}>
+            {productList.join(', ')}
+          </p>
+        )}
+      </div>
+      <button
+        type="button"
+        aria-label={expanded ? 'Collapse details' : 'Expand details'}
+        className="shrink-0 p-1 -m-1 rounded hover:bg-accent text-muted-foreground"
+        onClick={(e) => {
+          e.stopPropagation();
+          setExpanded((v) => !v);
+        }}
+      >
+        {expanded ? (
+          <ChevronUp className="h-4 w-4" />
+        ) : (
+          <ChevronDown className="h-4 w-4" />
+        )}
+      </button>
+    </li>
   );
 }

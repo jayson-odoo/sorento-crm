@@ -23,6 +23,14 @@ class PortalTokenRequest(BaseModel):
         default=None,
         description="Optional FE base URL; falls back to FRONTEND_BASE_URL.",
     )
+    submission_type: str | None = Field(
+        default=None,
+        description=(
+            "Optional submission tab to deep-link: complaint | stock_inquiry | "
+            "purchase_request | sponsorship_form. When provided, the portal opens "
+            "directly on that tab after token verify."
+        ),
+    )
 
 
 class PortalTokenResponse(BaseModel):
@@ -45,5 +53,7 @@ def mint_portal_token(
     return PortalTokenResponse(
         token=token.token,
         expires_at=token.expires_at.isoformat(),
-        portal_url=service.build_portal_url(token.token, payload.base_url),
+        portal_url=service.build_portal_url(
+            token.token, payload.base_url, payload.submission_type
+        ),
     )

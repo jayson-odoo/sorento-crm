@@ -1,15 +1,14 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
 import {
   Alert,
-  AlertDescription,
   AlertIcon,
   AlertTitle,
 } from '@/components/ui/alert';
@@ -32,6 +31,8 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { LoaderCircleIcon } from 'lucide-react';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { listRespondWorkspaceSelect } from '@/app/(protected)/system-management/respond-workspaces/services/respondWorkspaceService';
 import type { RespondContact } from '../../types/contact.types';
 import {
   ContactEditSchema,
@@ -57,6 +58,7 @@ export default function ContactEditDialog({
       phone_number: contact?.phone_number || '',
       name: contact?.name || '',
       user_type: contact?.user_type || '',
+      workspace_id: contact?.workspace_id || '',
     },
     mode: 'onSubmit',
   });
@@ -67,9 +69,28 @@ export default function ContactEditDialog({
         phone_number: contact.phone_number || '',
         name: contact.name || '',
         user_type: contact.user_type || '',
+        workspace_id: contact.workspace_id || '',
       });
     }
   }, [open, contact, form]);
+
+  const { data: workspaces = [] } = useQuery({
+    queryKey: ['respond-workspace-select'],
+    queryFn: listRespondWorkspaceSelect,
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const workspaceOptions = useMemo(
+    () =>
+      workspaces.map((w) => ({
+        value: w.id,
+        label: w.name?.trim() ? w.name : `Workspace ${w.space_id}`,
+        description: `Space ID: ${w.space_id}${w.is_default ? ' • default' : ''}`,
+        searchText: `${w.name ?? ''} ${w.space_id}`.trim(),
+      })),
+    [workspaces],
+  );
 
   const mutation = useMutation({
     mutationFn: async (values: ContactEditSchemaType) => {
@@ -82,6 +103,7 @@ export default function ContactEditDialog({
           phone_number: values.phone_number,
           name: values.name || null,
           user_type: values.user_type || null,
+          workspace_id: values.workspace_id ? values.workspace_id : null,
         }),
       });
 
@@ -210,6 +232,35 @@ export default function ContactEditDialog({
                   </FormControl>
                   <FormDescription>
                     Optional: Synced from Respond.io or set manually
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="workspace_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Respond.io Workspace</FormLabel>
+                  <FormControl>
+                    <SearchableSelect
+                      value={field.value ?? ''}
+                      onChange={(v) => field.onChange(v || null)}
+                      options={workspaceOptions}
+                      placeholder={
+                        workspaceOptions.length === 0
+                          ? 'No workspaces configured'
+                          : 'Select workspace…'
+                      }
+                      emptyMessage="No matching workspaces"
+                      disabled={mutation.isPending || workspaceOptions.length === 0}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Workspace this contact belongs to. Configure workspaces under{' '}
+                    <span className="font-medium">System Management → Respond.io Workspaces</span>.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

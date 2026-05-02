@@ -21,7 +21,8 @@ import {
 } from '@/components/common/toolbar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Pencil, RefreshCw, Trash2 } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Info, Pencil, RefreshCw, Trash2 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 import { formatDate } from '@/lib/helpers';
@@ -238,6 +239,38 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
               <div>
                 <p className="text-sm text-muted-foreground">Respond.io ID</p>
                 <p className="font-medium font-mono text-sm">{contact.respond_io_id ?? <span className="text-muted-foreground">—</span>}</p>
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground">Respond.io Workspace</p>
+                {contact.workspace_id ? (
+                  <div className="flex items-center gap-1">
+                    <p className="font-medium">
+                      {contact.workspace_name?.trim()
+                        ? contact.workspace_name
+                        : `Workspace ${contact.workspace_space_id ?? ''}`.trim() || '—'}
+                    </p>
+                    {contact.workspace_space_id ? (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0"
+                            aria-label="Show space ID"
+                          >
+                            <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="start" className="w-auto px-3 py-2 text-xs">
+                          <span className="text-muted-foreground">Space ID: </span>
+                          <span className="font-mono">{contact.workspace_space_id}</span>
+                        </PopoverContent>
+                      </Popover>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="font-medium text-muted-foreground">Not set</p>
+                )}
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Created At</p>

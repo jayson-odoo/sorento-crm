@@ -867,8 +867,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "to the user; on the portal they can save drafts, attach files (images and "
             "PDFs, including pasted screenshots), submit, and review status. After 7 days "
             "the link expires and the contact re-verifies via OTP.\n"
-            "`payload_json` must be a JSON object with: contact_id (string), space_id (string), "
-            "and optional base_url (string) to override the frontend host."
+            "`payload_json` must be a JSON object with:\n"
+            "  - contact_id (string, required)\n"
+            "  - space_id (string, required)\n"
+            "  - submission_type (string, OPTIONAL but STRONGLY PREFERRED): one of "
+            "`complaint`, `stock_inquiry`, `purchase_request`, `sponsorship_form`. "
+            "When provided, the portal opens directly on that tab after the user "
+            "verifies — no extra clicks. Always infer this from what the user asked "
+            "to submit (complaint -> complaint, stock/product enquiry -> stock_inquiry, "
+            "purchase request -> purchase_request, sponsorship form -> sponsorship_form).\n"
+            "  - base_url (string, optional): override the frontend host."
         ),
         "/api/v1/external/portal-tokens/",
         (),

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Plus, Sparkles, Trash2 } from 'lucide-react';
@@ -35,6 +35,7 @@ import {
   fetchMe,
   fetchSubmission,
   lookupDebtors,
+  lookupDeliveryOrders,
   lookupProducts,
   saveDraft,
   statusLabel,
@@ -360,7 +361,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
       const saved = await saveDraft(kind, cleanedFields, cleanedProducts, submissionId);
       await flushPendingFiles(saved.id);
       toast.success('Draft saved.');
-      router.replace('/portal');
+      router.replace(`/portal?type=${kind}`);
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
         router.replace('/portal/verify?reason=expired');
@@ -383,7 +384,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
       await flushPendingFiles(id);
       await submitDraft(kind, id, cleanedFields, cleanedProducts);
       toast.success('Submitted.');
-      router.replace('/portal');
+      router.replace(`/portal?type=${kind}`);
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
         router.replace('/portal/verify?reason=expired');
@@ -402,7 +403,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
     try {
       await deleteDraftSubmission(kind, submissionId);
       toast.success('Draft deleted.');
-      router.replace('/portal');
+      router.replace(`/portal?type=${kind}`);
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
         router.replace('/portal/verify?reason=expired');
@@ -419,26 +420,103 @@ export function SubmissionForm({ kind, submissionId }: Props) {
     setFields((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleAIExtractApply = (payload: AIExtractApplyPayload) => {
-    let applied = 0;
+  const handleAIExtractApply = async (payload: AIExtractApplyPayload) => {
+    // AI extract is an explicit user action ("Confirm and prefill"), so we
+    // overwrite the affected fields rather than skipping non-empty ones.
+    // After the override, we enrich from a DO lookup: if the DO numbers exist
+    // in the system we backfill customer / product / product_type from the
+    // resolved DO rows. AI-provided values always take priority over the
+    // DO-derived ones.
+    const aiValues = payload.values;
     setFields((prev) => {
       const next = { ...prev };
-      for (const [name, value] of Object.entries(payload.values)) {
-        const existing = prev[name];
-        const isEmpty = Array.isArray(existing)
-          ? existing.length === 0
-          : !((existing ?? '') as string).trim();
-        if (!isEmpty) continue;
+      for (const [name, value] of Object.entries(aiValues)) {
         next[name] = value;
-        applied += 1;
       }
       return next;
     });
     if (payload.alsoAttach && payload.files.length > 0) {
       setPendingFiles((prev) => [...prev, ...payload.files]);
     }
-    if (applied === 0) {
-      toast.message('No empty fields to fill — your existing entries were kept.');
+
+    if (kind !== 'complaint') return;
+    const aiDOsRaw = aiValues.delivery_order_number;
+    if (!aiDOsRaw) return;
+    const doNumbers = (
+      Array.isArray(aiDOsRaw)
+        ? aiDOsRaw
+        : String(aiDOsRaw)
+            .split(/[,\n]/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+    )
+      .map((s) => String(s).trim())
+      .filter(Boolean);
+    if (doNumbers.length === 0) return;
+
+    // Best-effort lookup. Each DO not in the system simply contributes nothing
+    // to the enrichment — the field still keeps the AI-provided pill.
+    const items: DOLookupItem[] = [];
+    for (const dn of doNumbers) {
+      try {
+        const matches = await lookupDeliveryOrders(dn, 5);
+        const exact = matches.find((m) => m.order_number === dn);
+        if (exact) items.push(exact);
+      } catch {
+        // ignore — DO not resolvable, treat as free-text only.
+      }
+    }
+    if (items.length === 0) return;
+
+    const aiCustomer =
+      typeof aiValues.customer_name === 'string'
+        ? aiValues.customer_name.trim()
+        : '';
+    const aiProductCode =
+      typeof aiValues.product_code === 'string'
+        ? aiValues.product_code.trim()
+        : '';
+    const customerNames = Array.from(
+      new Set(
+        items
+          .map((i) => (i.debtor_name ?? i.customer_name ?? '').trim())
+          .filter(Boolean),
+      ),
+    );
+    const productCodes = Array.from(
+      new Set(
+        items
+          .flatMap((i) => i.products ?? [])
+          .map((p) => (p ?? '').trim())
+          .filter(Boolean),
+      ),
+    );
+    setFields((prev) => {
+      const next = { ...prev };
+      // AI customer wins; only fill from DO debtor when AI did not provide.
+      if (!aiCustomer && customerNames.length > 0) {
+        next.customer_name = customerNames.join(', ');
+      }
+      if (!aiProductCode && productCodes.length > 0) {
+        next.product_code = productCodes.join(', ');
+      }
+      return next;
+    });
+    if (productCodes.length > 0 && !aiProductCode) {
+      try {
+        const cats = new Set<string>();
+        for (const code of productCodes) {
+          const matches = await lookupProducts(code, 5);
+          const exact = matches.find((m) => m.product_code === code);
+          const c = (exact?.category_code ?? exact?.category_name ?? '').trim();
+          if (c) cats.add(c);
+        }
+        if (cats.size > 0) {
+          setFields((prev) => ({ ...prev, product_type: Array.from(cats).join(', ') }));
+        }
+      } catch {
+        // best-effort
+      }
     }
   };
 
@@ -518,7 +596,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
     <div className="min-h-screen max-w-3xl mx-auto px-4 py-6 space-y-4">
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" asChild>
-          <Link href="/portal">
+          <Link href={`/portal?type=${kind}`}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </Link>
@@ -544,9 +622,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
 
       {!isEditable && (
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-          This submission is not editable. Status:{' '}
-          <span className="font-medium text-foreground">{statusLabel(detail?.status ?? '')}</span>
-          .
+          This submission is not editable.
         </div>
       )}
       {detail?.rejection_reason && (
@@ -754,7 +830,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
         )}
         <Button
           variant="ghost"
-          onClick={() => router.replace('/portal')}
+          onClick={() => router.replace(`/portal?type=${kind}`)}
           disabled={saving || submitting || deleting}
         >
           Cancel
@@ -975,7 +1051,7 @@ function ComplaintFormSection({
           {fieldDefs.map((f) => (
             <div
               key={f.name}
-              className={fieldSpansFullWidth(f) ? 'md:col-span-2' : undefined}
+              className={`min-w-0 ${fieldSpansFullWidth(f) ? 'md:col-span-2' : ''}`}
             >
               <FieldInput
                 field={f}
@@ -1023,7 +1099,7 @@ function PurchaseRequestFormSection({
             {fieldDefs.map((f) => (
               <div
                 key={f.name}
-                className={fieldSpansFullWidth(f) ? 'sm:col-span-2' : undefined}
+                className={`min-w-0 ${fieldSpansFullWidth(f) ? 'sm:col-span-2' : ''}`}
               >
                 <FieldInput
                   field={f}
@@ -1057,8 +1133,10 @@ function FieldInput({
   disabled?: boolean;
 }) {
   return (
-    <div className="space-y-1.5">
-      <Label htmlFor={field.name}>{field.label}</Label>
+    <div className="space-y-1.5 min-w-0">
+      <Label htmlFor={field.name} className="min-w-0">
+        {field.label}
+      </Label>
       <FieldControl
         field={field}
         value={value}
@@ -1150,6 +1228,7 @@ function FieldControl({
           optionMeta={(o) => o.product_name ?? ''}
           placeholder={field.placeholder ?? 'Search products...'}
           disabled={disabled}
+          multiline
         />
       );
     case 'debtor-async':
@@ -1179,10 +1258,11 @@ function FieldControl({
       );
     case 'text':
     default:
+      // Render plain text fields as a wrapping Textarea so long values are
+      // visible without horizontal scrolling. Auto-grows to fit content.
       return (
-        <Input
+        <AutoGrowTextarea
           id={field.name}
-          type="text"
           value={stringValue}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}
@@ -1190,4 +1270,38 @@ function FieldControl({
         />
       );
   }
+}
+
+function AutoGrowTextarea({
+  id,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+}: {
+  id?: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  return (
+    <Textarea
+      ref={ref}
+      id={id}
+      rows={1}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      disabled={disabled}
+      className="resize-none overflow-hidden"
+    />
+  );
 }

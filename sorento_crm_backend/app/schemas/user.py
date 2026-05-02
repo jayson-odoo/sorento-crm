@@ -12,6 +12,7 @@ class RespondContactBase(BaseModel):
     last_name: Optional[str] = None
     user_type: Optional[str] = None
     respond_io_id: Optional[str] = None  # Respond.io contact id for inbox URL
+    workspace_id: Optional[str] = None  # FK to respond_workspaces.id
 
 
 class RespondContactCreate(RespondContactBase):
@@ -25,6 +26,7 @@ class RespondContactUpdate(BaseModel):
     last_name: Optional[str] = None
     user_type: Optional[str] = None
     respond_io_id: Optional[str] = None
+    workspace_id: Optional[str] = None
 
 
 class RespondContactResponse(RespondContactBase):
@@ -34,6 +36,8 @@ class RespondContactResponse(RespondContactBase):
     created_by: Optional[str] = None
     respond_io_id: Optional[str] = None
     access_type_code: Optional[str] = None  # Resolved from user_type via catalog/mappings
+    workspace_name: Optional[str] = None
+    workspace_space_id: Optional[str] = None
 
     class Config:
         from_attributes = True

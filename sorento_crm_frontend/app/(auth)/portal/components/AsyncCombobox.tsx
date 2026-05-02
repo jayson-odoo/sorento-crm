@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
 export interface AsyncComboboxProps<T> {
   value: string;
@@ -14,6 +15,13 @@ export interface AsyncComboboxProps<T> {
   disabled?: boolean;
   allowFreeText?: boolean;
   id?: string;
+  /**
+   * When true, renders the input as an auto-growing `<textarea>` so long
+   * values wrap onto multiple lines instead of scrolling horizontally. The
+   * search dropdown still works; pressing Enter while a result is highlighted
+   * commits the selection (no newline inserted).
+   */
+  multiline?: boolean;
 }
 
 /**
@@ -34,6 +42,7 @@ export function AsyncCombobox<T>({
   disabled,
   allowFreeText = true,
   id,
+  multiline,
 }: AsyncComboboxProps<T>) {
   const [text, setText] = useState(value);
   const [open, setOpen] = useState(false);
@@ -102,7 +111,9 @@ export function AsyncCombobox<T>({
     onChange(v, item);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (!open) {
@@ -120,10 +131,12 @@ export function AsyncCombobox<T>({
         options.length === 0 ? -1 : (idx - 1 + options.length) % options.length,
       );
     } else if (e.key === 'Enter') {
+      // In multiline mode allow Enter to insert a newline UNLESS the user is
+      // actively picking from the dropdown (activeIndex is highlighted).
       if (open && activeIndex >= 0 && activeIndex < options.length) {
         e.preventDefault();
         commitSelection(options[activeIndex]);
-      } else if (allowFreeText) {
+      } else if (!multiline && allowFreeText) {
         e.preventDefault();
         onChange(text);
         setOpen(false);
@@ -148,28 +161,64 @@ export function AsyncCombobox<T>({
     }, 150);
   };
 
+  // Auto-grow the textarea to fit its content so wrapped values are fully
+  // visible without scrolling.
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    if (!multiline) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [text, multiline]);
+
   return (
     <div ref={containerRef} className="relative">
-      <Input
-        id={id}
-        type="text"
-        value={text}
-        placeholder={placeholder}
-        disabled={disabled}
-        onChange={(e) => {
-          setText(e.target.value);
-          if (!open) setOpen(true);
-        }}
-        onFocus={() => {
-          if (!open && !disabled) {
-            setOpen(true);
-            void runFetch(text);
-          }
-        }}
-        onBlur={handleBlur}
-        onKeyDown={handleKeyDown}
-        autoComplete="off"
-      />
+      {multiline ? (
+        <Textarea
+          ref={textareaRef}
+          id={id}
+          value={text}
+          placeholder={placeholder}
+          disabled={disabled}
+          rows={2}
+          onChange={(e) => {
+            setText(e.target.value);
+            if (!open) setOpen(true);
+          }}
+          onFocus={() => {
+            if (!open && !disabled) {
+              setOpen(true);
+              void runFetch(text);
+            }
+          }}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+          autoComplete="off"
+          className="resize-none overflow-hidden"
+        />
+      ) : (
+        <Input
+          id={id}
+          type="text"
+          value={text}
+          placeholder={placeholder}
+          disabled={disabled}
+          onChange={(e) => {
+            setText(e.target.value);
+            if (!open) setOpen(true);
+          }}
+          onFocus={() => {
+            if (!open && !disabled) {
+              setOpen(true);
+              void runFetch(text);
+            }
+          }}
+          onBlur={handleBlur}
+          onKeyDown={handleKeyDown}
+          autoComplete="off"
+        />
+      )}
       {open && !disabled && (
         <div
           className="absolute z-50 mt-1 left-0 right-0 max-h-[200px] overflow-auto border rounded-md bg-background shadow"

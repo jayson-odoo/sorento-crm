@@ -151,6 +151,7 @@ class PortalService:
         contact_id: str,
         space_id: str,
         base_url: Optional[str] = None,
+        submission_type: Optional[str] = None,
     ) -> dict:
         """Mint or reuse a portal token and deliver it via Respond.io chat.
 
@@ -163,7 +164,7 @@ class PortalService:
                 "Contact has no Respond.io identifier; cannot send link."
             )
         token, reused = self.get_or_mint_token(contact.id, space_id)
-        portal_url = self.build_portal_url(token.token, base_url)
+        portal_url = self.build_portal_url(token.token, base_url, submission_type)
         text = self._build_send_message_text(contact, portal_url, token.expires_at)
         RespondClient().send_message(respond_io_id, text)
         return {
@@ -190,11 +191,24 @@ class PortalService:
             raise PortalAuthError("Portal token expired. Verify with OTP to continue.")
         return row
 
-    def build_portal_url(self, token: str, base_url_override: Optional[str] = None) -> str:
+    def build_portal_url(
+        self,
+        token: str,
+        base_url_override: Optional[str] = None,
+        submission_type: Optional[str] = None,
+    ) -> str:
         base = (base_url_override or "").strip().rstrip("/")
         if not base:
             base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+        kind = (submission_type or "").strip().lower()
+        if kind and kind not in SUPPORTED_TYPES:
+            raise handle_validation_error(
+                f"Unsupported submission type: {submission_type!r}. "
+                f"Allowed: {', '.join(SUPPORTED_TYPES)}."
+            )
         path = f"/portal?token={token}"
+        if kind:
+            path += f"&type={kind}"
         return f"{base}{path}" if base else path
 
     # ---------- OTP flow ----------
@@ -236,7 +250,7 @@ class PortalService:
             client = RespondClient()
             client.send_message(
                 identifier,
-                f"Your Sorento portal verification code is {code}. It expires in 10 minutes.",
+                f"Your Sorento portal verification code is {code}. It expires in 10 minutes. Please do not share with anyone.",
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to dispatch portal OTP for contact %s: %s", contact.id, e)
@@ -877,6 +891,10 @@ class PortalService:
             "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
             "is_draft": row.portal_draft_at is not None,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+            "product_code": row.product_code,
+            "project_title": row.project_title,
+            "customer_name": row.customer_name,
+            "delivery_order_number": row.delivery_order_number,
         }
 
     def _serialize_complaint_detail(self, row: Complaint) -> dict:
@@ -916,6 +934,10 @@ class PortalService:
             "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
             "is_draft": row.portal_draft_at is not None,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+            "product_code": row.product_code,
+            "project_name": row.project_name,
+            "project_customer": row.project_customer,
+            "item_description": row.item_description,
         }
 
     def _serialize_stock_inquiry_detail(self, row: StockInquiry) -> dict:
@@ -947,6 +969,10 @@ class PortalService:
             "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
             "is_draft": row.portal_draft_at is not None,
             "created_at": row.created_at.isoformat() if row.created_at else None,
+            "project_title": row.project_title,
+            "customer_name": row.customer_name,
+            "sponsor_subject": row.sponsor_subject,
+            "purpose": row.purpose,
         }
 
     def _serialize_request_detail(self, row: PurchaseRequestHeader) -> dict:

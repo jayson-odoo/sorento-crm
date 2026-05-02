@@ -664,6 +664,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'master_data.lookup_sets.view',
       },
       {
+        title: 'Respond.io Workspaces',
+        path: '/system-management/respond-workspaces',
+        permission: 'system.respond_workspaces.view',
+      },
+      {
         title: 'AI Assistant',
         children: [
           {
@@ -1416,6 +1421,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Lookup Sets',
         path: '/master-data-management/lookup-sets',
         permission: 'master_data.lookup_sets.view',
+      },
+      {
+        title: 'Respond.io Workspaces',
+        path: '/system-management/respond-workspaces',
+        permission: 'system.respond_workspaces.view',
       },
     ],
   },

@@ -7,6 +7,9 @@ export interface RespondContact {
   user_type?: string | null;
   access_type_code?: string | null;
   respond_io_id?: string | null;
+  workspace_id?: string | null;
+  workspace_name?: string | null;
+  workspace_space_id?: string | null;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
@@ -16,4 +19,5 @@ export interface RespondContactFormData {
   phone_number: string;
   name?: string;
   user_type?: string | null;
+  workspace_id?: string | null;
 }
