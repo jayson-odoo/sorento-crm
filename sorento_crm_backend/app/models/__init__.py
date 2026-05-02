@@ -40,6 +40,9 @@ from app.models.ai_assistant import (
     AIAssistantConversation,
     AIAssistantMessage,
     AIAssistantGovernanceEvent,
+    AIAssistantUsageLog,
+    AIAssistantWishlistCluster,
+    AIAssistantUnansweredQuery,
 )
 from app.models.chat_history import ChatHistory
 from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
@@ -138,6 +141,9 @@ __all__ = [
     "AIAssistantConversation",
     "AIAssistantMessage",
     "AIAssistantGovernanceEvent",
+    "AIAssistantUsageLog",
+    "AIAssistantWishlistCluster",
+    "AIAssistantUnansweredQuery",
     "ChatHistory",
     "LookupSet",
     "LookupOption",

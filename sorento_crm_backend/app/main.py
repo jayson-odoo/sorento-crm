@@ -133,6 +133,23 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Failed to sync MCP tool catalog at startup: {str(e)}", exc_info=True)
 
+    # AI assistant wishlist clustering — register the callable so ops can wire
+    # it to the existing background scheduler (or cron). We do not schedule it
+    # by default to avoid surprise traffic on environments without an OpenAI
+    # API key. To enable nightly runs, add a `scheduled_tasks` row keyed
+    # "ai_wishlist_clustering" or invoke `python -m app.jobs.ai_wishlist_clustering`.
+    try:
+        from app.services.scheduled_task_service import register_handler
+        from app.jobs.ai_wishlist_clustering import run_clustering_job
+
+        def _handler_ai_wishlist_clustering(db, _task):
+            return run_clustering_job(db=db)
+
+        register_handler("ai_wishlist_clustering", _handler_ai_wishlist_clustering)
+        logging.info("Registered scheduled task handler: ai_wishlist_clustering")
+    except Exception as e:
+        logging.error(f"Failed to register ai_wishlist_clustering handler: {str(e)}", exc_info=True)
+
 @app.on_event("shutdown")
 async def shutdown_event():
     """Shutdown event: stop scheduler."""

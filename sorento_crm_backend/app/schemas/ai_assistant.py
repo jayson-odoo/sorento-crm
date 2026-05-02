@@ -34,9 +34,19 @@ class AIAssistantConfigResponse(BaseModel):
     updated_at: datetime
 
 
+class PageSnapshotPayload(BaseModel):
+    """Comet-style page context shipped with each chat turn (optional)."""
+
+    path: str = ""
+    search: str = ""
+    title: str = ""
+    visible_text: str = ""
+
+
 class AIAssistantMessageCreate(BaseModel):
     conversation_id: Optional[str] = None
     message: str = Field(..., min_length=1)
+    page_snapshot: Optional[PageSnapshotPayload] = None
 
 
 class AIAssistantMessageResponse(BaseModel):
@@ -45,6 +55,7 @@ class AIAssistantMessageResponse(BaseModel):
     content: str
     metadata_json: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+    suggestions: list[str] = Field(default_factory=list)
 
 
 class AIAssistantConversationResponse(BaseModel):
@@ -60,3 +71,69 @@ class AIAssistantAuthContext(BaseModel):
     role_ids: list[str]
     permission_slugs: list[str]
     enabled_modules: list[str]
+
+
+# --- Settings: test-connection ---------------------------------------------
+
+
+class TestConnectionRequest(BaseModel):
+    provider: str = Field(..., max_length=64)
+    api_key: str = Field(..., min_length=1)
+    model: Optional[str] = Field(None, max_length=128)
+
+
+class TestConnectionResponse(BaseModel):
+    ok: bool
+    message: str
+    latency_ms: int
+
+
+# --- Usage analytics --------------------------------------------------------
+
+
+class UsageSummaryResponse(BaseModel):
+    total_messages: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+class UsageByDayItem(BaseModel):
+    date: str
+    messages: int
+    tokens: int
+
+
+class TopUserItem(BaseModel):
+    user_id: Optional[str] = None
+    name: Optional[str] = None
+    messages: int
+    tokens: int
+
+
+class RecentQueryItem(BaseModel):
+    message_id: Optional[str] = None
+    user_name: Optional[str] = None
+    query_preview: str = ""
+    response_time_ms: int = 0
+    total_tokens: int = 0
+    created_at: Optional[datetime] = None
+
+
+class QueryDetailResponse(BaseModel):
+    message_id: str
+    role: str
+    content: str
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    usage: Optional[dict[str, Any]] = None
+    tools_used: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class WishlistClusterItem(BaseModel):
+    id: str
+    representative_question: str
+    category: Optional[str] = None
+    count: int
+    last_seen_at: Optional[datetime] = None
+    created_at: datetime

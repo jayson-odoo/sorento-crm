@@ -5,12 +5,19 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.database import Base
+
+try:
+    from pgvector.sqlalchemy import Vector  # type: ignore
+    _HAS_PGVECTOR = True
+except Exception:  # pragma: no cover
+    Vector = None  # type: ignore[assignment]
+    _HAS_PGVECTOR = False
 
 
 def _uuid_str() -> str:
@@ -94,4 +101,86 @@ class AIAssistantGovernanceEvent(Base):
     __table_args__ = (
         Index("ix_ai_assistant_governance_events_user_id", "user_id"),
         Index("ix_ai_assistant_governance_events_event_type", "event_type"),
+    )
+
+
+class AIAssistantUsageLog(Base):
+    """Per-assistant-turn usage telemetry (tokens, latency, answered flag).
+
+    One row is written per assistant message produced by the agent loop.
+    """
+
+    __tablename__ = "ai_assistant_usage_logs"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    conversation_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("ai_assistant_conversations.id", ondelete="SET NULL"), nullable=True
+    )
+    message_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("ai_assistant_messages.id", ondelete="SET NULL"), nullable=True
+    )
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    tool_calls_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    response_time_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    was_answered: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_ai_assistant_usage_logs_user_id", "user_id"),
+        Index("ix_ai_assistant_usage_logs_created_at", "created_at"),
+        Index("ix_ai_assistant_usage_logs_message_id", "message_id"),
+    )
+
+
+class AIAssistantWishlistCluster(Base):
+    """Cluster of unanswered user questions, populated by the nightly job."""
+
+    __tablename__ = "ai_assistant_wishlist_clusters"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    representative_question: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    # Optional pgvector representative embedding (nullable if pgvector missing).
+    if _HAS_PGVECTOR:
+        representative_embedding: Mapped[Any | None] = mapped_column(Vector(1536), nullable=True)  # type: ignore[misc]
+    else:  # pragma: no cover
+        representative_embedding: Mapped[Any | None] = mapped_column(JSONB, nullable=True)  # type: ignore[misc]
+
+    __table_args__ = (
+        Index("ix_ai_assistant_wishlist_clusters_count", "count"),
+        Index("ix_ai_assistant_wishlist_clusters_last_seen_at", "last_seen_at"),
+    )
+
+
+class AIAssistantUnansweredQuery(Base):
+    """Per-message link from an unanswered turn to its assigned cluster."""
+
+    __tablename__ = "ai_assistant_unanswered_queries"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    message_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("ai_assistant_messages.id", ondelete="CASCADE"), nullable=False
+    )
+    cluster_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("ai_assistant_wishlist_clusters.id", ondelete="SET NULL"), nullable=True
+    )
+    if _HAS_PGVECTOR:
+        embedding: Mapped[Any | None] = mapped_column(Vector(1536), nullable=True)  # type: ignore[misc]
+    else:  # pragma: no cover
+        embedding: Mapped[Any | None] = mapped_column(JSONB, nullable=True)  # type: ignore[misc]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("message_id", name="uq_ai_assistant_unanswered_queries_message_id"),
+        Index("ix_ai_assistant_unanswered_queries_cluster_id", "cluster_id"),
+        Index("ix_ai_assistant_unanswered_queries_created_at", "created_at"),
     )

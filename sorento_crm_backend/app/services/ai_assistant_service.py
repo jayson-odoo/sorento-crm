@@ -20,11 +20,17 @@ from app.models.ai_assistant import (
     AIAssistantConversation,
     AIAssistantGovernanceEvent,
     AIAssistantMessage,
+    AIAssistantUsageLog,
 )
 from app.modules.runtime.installer import DEFAULT_TENANT_ID, get_enabled_module_keys, tenant_has_any_module_row
-from app.schemas.ai_assistant import AIAssistantAuthContext, AIAssistantConfigUpdate
+from app.schemas.ai_assistant import (
+    AIAssistantAuthContext,
+    AIAssistantConfigUpdate,
+    PageSnapshotPayload,
+)
 from app.services.embedding_service import EmbeddingReadService
 from app.services.entity_resolver import ResolutionResult, resolve_references
+from app.services.llm_provider import ChatResult, LLMProvider, get_provider
 from app.services.user_service import UserPermissionService
 
 logger = logging.getLogger(__name__)
@@ -266,12 +272,22 @@ class AIAssistantChatService:
         self.cfg = AIAssistantConfigService(db)
         self.gov = AIAssistantGovernanceService(db)
 
-    def list_conversations(self, user_id: str) -> list[AIAssistantConversation]:
+    def list_conversations(
+        self,
+        user_id: str,
+        *,
+        q: str | None = None,
+        limit: int = 100,
+    ) -> list[AIAssistantConversation]:
+        query = self.db.query(AIAssistantConversation).filter(
+            AIAssistantConversation.user_id == user_id
+        )
+        if q and q.strip():
+            like = f"%{q.strip()}%"
+            query = query.filter(AIAssistantConversation.title.ilike(like))
         return (
-            self.db.query(AIAssistantConversation)
-            .filter(AIAssistantConversation.user_id == user_id)
-            .order_by(AIAssistantConversation.updated_at.desc())
-            .limit(30)
+            query.order_by(AIAssistantConversation.updated_at.desc())
+            .limit(max(1, min(int(limit or 100), 200)))
             .all()
         )
 
@@ -320,7 +336,14 @@ class AIAssistantChatService:
         self.db.refresh(msg)
         return msg
 
-    def respond(self, *, user_id: str, conversation_id: str | None, message: str) -> tuple[AIAssistantConversation, AIAssistantMessage]:
+    def respond(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str | None,
+        message: str,
+        page_snapshot: PageSnapshotPayload | None = None,
+    ) -> tuple[AIAssistantConversation, AIAssistantMessage]:
         request_started = time.perf_counter()
         if not settings.ai_assistant_enabled:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI assistant feature is disabled")
@@ -346,7 +369,18 @@ class AIAssistantChatService:
         if recent_count > 20:
             raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded, try again soon.")
 
-        self.append_message(conv.id, "user", message)
+        # Persist a truncated copy of the page snapshot on the user message for
+        # later debugging / replay.
+        user_meta: dict[str, Any] = {}
+        if page_snapshot is not None:
+            user_meta["page_snapshot"] = {
+                "path": (page_snapshot.path or "")[:500],
+                "search": (page_snapshot.search or "")[:500],
+                "title": (page_snapshot.title or "")[:255],
+                "visible_text": (page_snapshot.visible_text or "")[:1000],
+            }
+
+        self.append_message(conv.id, "user", message, metadata_json=user_meta or None)
         logger.info("AI assistant user message appended conversation_id=%s", conv.id)
         history_rows = (
             self.db.query(AIAssistantMessage)
@@ -418,7 +452,7 @@ class AIAssistantChatService:
         )
 
         agent_started = time.perf_counter()
-        response_text, tool_calls = self._run_agent_loop(
+        response_text, tool_calls, token_usage = self._run_agent_loop(
             config=config,
             history=history_rows,
             user_message=message,
@@ -426,6 +460,7 @@ class AIAssistantChatService:
             selected_tools=selected_tools,
             sources=sources,
             resolution=resolution,
+            page_snapshot=page_snapshot,
         )
         agent_ms = (time.perf_counter() - agent_started) * 1000
         logger.info(
@@ -436,20 +471,75 @@ class AIAssistantChatService:
             agent_ms,
         )
         links = self._extract_links_from_text(response_text)
+
+        # Smart suggestions: best-effort follow-up question generation. Always
+        # returns a list (possibly empty); never blocks the assistant reply.
+        suggestions = self._generate_suggestions(
+            config=config,
+            history=history_rows,
+            user_message=message,
+            assistant_reply=response_text,
+        )
+
+        # was_answered = reply non-empty AND not a deterministic fallback.
+        is_fallback = self._is_fallback_reply(response_text, tool_calls)
+        was_answered = bool((response_text or "").strip()) and not is_fallback
+
         meta = {
             "links": links,
             "sources": sources,
             "selected_tools": selected_tools,
             "tool_calls": [{"tool_name": c.tool_name, "ok": c.ok} for c in tool_calls],
             "entity_resolution": resolution.as_dict(),
+            "suggestions": suggestions,
         }
+        if page_snapshot is not None:
+            meta["page_snapshot"] = {
+                "path": (page_snapshot.path or "")[:500],
+                "title": (page_snapshot.title or "")[:255],
+                "visible_text": (page_snapshot.visible_text or "")[:1000],
+            }
         assistant_msg = self.append_message(conv.id, "assistant", response_text, metadata_json=meta)
         total_ms = (time.perf_counter() - request_started) * 1000
+
+        # Usage logging — best effort, never break the response on telemetry
+        # failure.
+        try:
+            self.db.add(
+                AIAssistantUsageLog(
+                    user_id=user_id,
+                    conversation_id=str(conv.id),
+                    message_id=str(assistant_msg.id),
+                    model=config.model,
+                    provider=config.provider,
+                    prompt_tokens=int(token_usage.get("prompt_tokens", 0) or 0),
+                    completion_tokens=int(token_usage.get("completion_tokens", 0) or 0),
+                    total_tokens=int(token_usage.get("total_tokens", 0) or 0),
+                    tool_calls_count=len(tool_calls or []),
+                    response_time_ms=int(total_ms),
+                    was_answered=was_answered,
+                )
+            )
+            self.db.commit()
+        except Exception:
+            logger.exception("Failed to insert ai_assistant_usage_logs row")
+            self.db.rollback()
+
+        # Wishlist tagging when the turn was unanswered.
+        if not was_answered:
+            try:
+                from app.services.ai_wishlist_service import AiWishlistService
+
+                AiWishlistService(self.db).tag_unanswered(str(assistant_msg.id))
+            except Exception:
+                logger.exception("Failed to tag unanswered query message_id=%s", assistant_msg.id)
+
         logger.info(
-            "AI assistant request completed conversation_id=%s assistant_message_id=%s total_elapsed_ms=%.1f",
+            "AI assistant request completed conversation_id=%s assistant_message_id=%s total_elapsed_ms=%.1f was_answered=%s",
             conv.id,
             assistant_msg.id,
             total_ms,
+            was_answered,
         )
         return conv, assistant_msg
 
@@ -497,22 +587,18 @@ class AIAssistantChatService:
             f"Latest user turn:\n{raw}\n\n"
             "Reformulated standalone query:"
         )
-        payload = {
-            "model": config.model or "gpt-4o-mini",
-            "temperature": 0,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_block},
-            ],
-        }
         try:
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            with httpx.Client(timeout=15) as client:
-                resp = client.post(settings.openai_chat_completions_url, headers=headers, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-            content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-            reformulated = content.strip().strip('"').strip()
+            provider = get_provider(config.provider, api_key, config.model)
+            result = provider.chat(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_block},
+                ],
+                temperature=0.0,
+                model=config.model,
+                max_tokens=256,
+            )
+            reformulated = (result.content or "").strip().strip('"').strip()
             return reformulated or raw
         except Exception:
             logger.exception("AI assistant reformulator failed; using raw user message")
@@ -609,10 +695,17 @@ class AIAssistantChatService:
         selected_tools: list[dict[str, Any]],
         sources: list[dict[str, Any]],
         resolution: ResolutionResult | None = None,
-    ) -> tuple[str, list[MCPToolCallResult]]:
-        """Orchestrator loop: LLM chooses/invokes MCP tools via function-calling, then answers."""
+        page_snapshot: PageSnapshotPayload | None = None,
+    ) -> tuple[str, list[MCPToolCallResult], dict[str, int]]:
+        """Orchestrator loop: LLM chooses/invokes MCP tools via function-calling, then answers.
+
+        Returns ``(response_text, tool_calls, token_usage_dict)`` where
+        ``token_usage_dict`` aggregates ``prompt_tokens`` / ``completion_tokens`` /
+        ``total_tokens`` across every provider call made by this turn.
+        """
         api_key = config.api_key_ciphertext or settings.openai_api_key
         tool_calls_log: list[MCPToolCallResult] = []
+        token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
         mcp = MCPRuntimeClient(
             settings.ai_assistant_mcp_url,
@@ -622,11 +715,11 @@ class AIAssistantChatService:
             tool_catalog = mcp.list_tools_with_schema()
         except Exception as exc:
             logger.exception("Failed listing MCP tools")
+            err_log = [MCPToolCallResult("mcp_error", False, str(exc))]
             return (
-                self._deterministic_fallback(
-                    [MCPToolCallResult("mcp_error", False, str(exc))]
-                ),
-                [MCPToolCallResult("mcp_error", False, str(exc))],
+                self._deterministic_fallback(err_log),
+                err_log,
+                token_usage,
             )
         available = set(tool_catalog.keys())
 
@@ -646,13 +739,29 @@ class AIAssistantChatService:
 
         if not api_key:
             logger.warning("AI assistant agent has no API key; returning deterministic fallback")
-            return self._deterministic_fallback(tool_calls_log), tool_calls_log
+            return self._deterministic_fallback(tool_calls_log), tool_calls_log, token_usage
+
+        try:
+            provider: LLMProvider = get_provider(config.provider, api_key, config.model)
+        except Exception as exc:
+            logger.exception("AI assistant agent failed to instantiate provider")
+            err_log = [MCPToolCallResult("provider_error", False, str(exc))]
+            return self._deterministic_fallback(err_log), err_log, token_usage
 
         system = _html_to_text(config.system_prompt or "").strip() or self._default_system_prompt()
         source_context = "\n".join(
             [f"- {s.get('title')}: {str(s.get('why_selected') or '')[:200]}" for s in sources]
         )
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+        if page_snapshot is not None:
+            page_block = (
+                "The user is currently viewing this page. Use it as context only when their "
+                "question relates to it; otherwise ignore.\n\n"
+                f"--- Page: {page_snapshot.title} ({page_snapshot.path}{page_snapshot.search}) ---\n"
+                f"{page_snapshot.visible_text}\n"
+                "--- End page ---"
+            )
+            messages.append({"role": "system", "content": page_block})
         for msg in history[-6:]:
             if msg.role in {"user", "assistant"} and (msg.content or "").strip():
                 messages.append({"role": msg.role, "content": msg.content})
@@ -719,59 +828,69 @@ class AIAssistantChatService:
         tool_calls_made = 0
 
         for iteration in range(max_iters):
-            payload: dict[str, Any] = {
-                "model": config.model or "gpt-4o-mini",
-                "temperature": float(config.temperature or 0),
-                "messages": messages,
-            }
-            if openai_tools and tool_calls_made < tool_call_budget:
-                payload["tools"] = openai_tools
-                payload["tool_choice"] = "auto"
+            tools_to_pass = openai_tools if (openai_tools and tool_calls_made < tool_call_budget) else None
             try:
-                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-                with httpx.Client(timeout=60) as client:
-                    resp = client.post(settings.openai_chat_completions_url, headers=headers, json=payload)
-                    resp.raise_for_status()
-                    data = resp.json()
+                result: ChatResult = provider.chat(
+                    messages,
+                    tools=tools_to_pass,
+                    temperature=float(config.temperature or 0),
+                    model=config.model,
+                    max_tokens=2048,
+                )
             except Exception:
                 logger.exception("AI assistant agent chat completion failed iteration=%s", iteration)
                 break
 
-            choice = (data.get("choices") or [{}])[0]
-            msg = choice.get("message") or {}
-            finish_reason = choice.get("finish_reason")
-            requested_tool_calls = msg.get("tool_calls") or []
+            # Accumulate token usage across every provider call.
+            token_usage["prompt_tokens"] += int(result.prompt_tokens or 0)
+            token_usage["completion_tokens"] += int(result.completion_tokens or 0)
+            token_usage["total_tokens"] += int(result.total_tokens or 0)
 
-            if not requested_tool_calls or finish_reason == "stop":
-                content = (msg.get("content") or "").strip()
+            requested_tool_calls = result.tool_calls or []
+
+            if not requested_tool_calls:
+                content = (result.content or "").strip()
                 if content:
                     logger.info(
                         "AI assistant agent final answer iteration=%s response_len=%s",
                         iteration,
                         len(content),
                     )
-                    return content, tool_calls_log
+                    return content, tool_calls_log, token_usage
                 break
 
+            # Echo the assistant tool-call message back into the running thread
+            # using the OpenAI-style schema; the provider abstraction converts
+            # this on the wire when needed.
+            assistant_tool_calls = [
+                {
+                    "id": call.get("id") or f"call_{uuid.uuid4().hex[:8]}",
+                    "type": "function",
+                    "function": {
+                        "name": call.get("name") or "",
+                        "arguments": json.dumps(call.get("arguments") or {}),
+                    },
+                }
+                for call in requested_tool_calls
+            ]
             assistant_entry: dict[str, Any] = {
                 "role": "assistant",
-                "content": msg.get("content") or "",
-                "tool_calls": requested_tool_calls,
+                "content": result.content or "",
+                "tool_calls": assistant_tool_calls,
             }
             messages.append(assistant_entry)
 
-            for call in requested_tool_calls:
-                call_id = call.get("id") or f"call_{uuid.uuid4().hex[:8]}"
-                fn = (call.get("function") or {}) if isinstance(call, dict) else {}
-                tool_name = str(fn.get("name") or "")
-                raw_args = fn.get("arguments") or "{}"
-                try:
-                    parsed_args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
-                except Exception:
-                    parsed_args = {}
+            for call_idx, call in enumerate(requested_tool_calls):
+                call_id = assistant_tool_calls[call_idx]["id"]
+                tool_name = str(call.get("name") or "")
+                parsed_args = call.get("arguments") or {}
                 if not isinstance(parsed_args, dict):
                     parsed_args = {}
-                str_args = {k: (v if isinstance(v, str) else json.dumps(v)) for k, v in parsed_args.items() if v is not None}
+                str_args = {
+                    k: (v if isinstance(v, str) else json.dumps(v))
+                    for k, v in parsed_args.items()
+                    if v is not None
+                }
 
                 if tool_name not in available:
                     output = json.dumps({"error": "tool_not_available", "tool_name": tool_name})
@@ -828,7 +947,7 @@ class AIAssistantChatService:
             "AI assistant agent loop ended without explicit stop tool_calls_made=%s",
             tool_calls_made,
         )
-        return self._deterministic_fallback(tool_calls_log), tool_calls_log
+        return self._deterministic_fallback(tool_calls_log), tool_calls_log, token_usage
 
     def _default_system_prompt(self) -> str:
         return (
@@ -952,19 +1071,106 @@ class AIAssistantChatService:
         return redacted
 
     def _embed_query(self, query: str) -> list[float]:
-        if not settings.openai_api_key:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Embedding provider not configured")
-        headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
-        payload = {"model": settings.embedding_model_name, "input": query}
-        logger.info("AI assistant embedding request sent model=%s input_len=%s", settings.embedding_model_name, len(query or ""))
-        with httpx.Client(timeout=20) as client:
-            response = client.post(settings.openai_embeddings_url, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-        vector = data.get("data", [{}])[0].get("embedding")
+        # Embeddings always go via OpenAI for now (Anthropic does not expose
+        # an embeddings API as of this writing). The provider abstraction's
+        # embed() falls back to OpenAI when configured, so we delegate.
+        config = self.cfg.get()
+        api_key = config.api_key_ciphertext if config.provider == "openai" else settings.openai_api_key
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Embedding provider not configured",
+            )
+        try:
+            from app.services.llm_provider import OpenAIProvider
+
+            vector = OpenAIProvider(api_key, settings.embedding_model_name).embed(query)
+        except Exception as exc:
+            logger.exception("AI assistant embedding failed")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Embedding provider error: {exc}",
+            ) from exc
         if not vector:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Embedding provider returned empty vector")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Embedding provider returned empty vector",
+            )
         return vector
+
+    # ---------- Smart suggestions + answered detection ----------
+
+    def _generate_suggestions(
+        self,
+        *,
+        config: AIAssistantConfig,
+        history: list[AIAssistantMessage],
+        user_message: str,
+        assistant_reply: str,
+    ) -> list[str]:
+        """Generate up to 5 follow-up question suggestions via the configured provider.
+
+        Failure is non-fatal — returns ``[]`` and logs a warning so the
+        primary reply is never blocked on suggestion generation.
+        """
+        api_key = config.api_key_ciphertext or settings.openai_api_key
+        if not api_key:
+            return []
+        # Last 3 turns + current pair for context.
+        convo_lines: list[str] = []
+        for msg in history[-6:]:
+            if msg.role not in {"user", "assistant"}:
+                continue
+            text_piece = (msg.content or "").strip().replace("\n", " ")
+            if not text_piece:
+                continue
+            convo_lines.append(f"{msg.role}: {text_piece[:300]}")
+        convo_lines.append(f"user: {(user_message or '').strip()[:300]}")
+        convo_lines.append(f"assistant: {(assistant_reply or '').strip()[:600]}")
+        system_prompt = (
+            "You suggest exactly 5 short follow-up questions the user is likely to ask next, "
+            "based on the conversation. Reply ONLY as a JSON array of 5 strings — no prose, "
+            "no markdown, no preamble."
+        )
+        user_block = "Conversation:\n" + "\n".join(convo_lines) + "\n\nReturn the JSON array now."
+        try:
+            provider = get_provider(config.provider, api_key, config.model)
+            result = provider.chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_block},
+                ],
+                temperature=0.3,
+                model=config.model,
+                max_tokens=400,
+            )
+            raw = (result.content or "").strip()
+            # Some models wrap arrays in code fences; strip them.
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                if raw.lower().startswith("json"):
+                    raw = raw[4:]
+            raw = raw.strip()
+            parsed = json.loads(raw)
+            if not isinstance(parsed, list):
+                return []
+            cleaned = [str(item).strip() for item in parsed if str(item).strip()]
+            return cleaned[:5]
+        except Exception:
+            logger.warning("AI assistant suggestion generation failed", exc_info=True)
+            return []
+
+    def _is_fallback_reply(self, reply: str, tool_calls: list[MCPToolCallResult]) -> bool:
+        """True when the assistant reply matches a deterministic fallback string."""
+        if not (reply or "").strip():
+            return True
+        fallback_no_tool = self._deterministic_fallback([])
+        if reply.strip() == fallback_no_tool.strip():
+            return True
+        # The tool-result fallback always starts with this exact sentinel line.
+        if reply.startswith("Here is what I found from MCP tools:"):
+            return True
+        return False
 
     def _extract_links_from_text(self, text: str) -> list[str]:
         if not text:

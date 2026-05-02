@@ -1,21 +1,69 @@
 """System AI assistant config and chat endpoints."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from datetime import datetime, timedelta
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
+from app.models.ai_assistant import AIAssistantMessage, AIAssistantUsageLog
+from app.models.user import User
 from app.schemas.ai_assistant import (
     AIAssistantConfigResponse,
     AIAssistantConfigUpdate,
     AIAssistantConversationResponse,
     AIAssistantMessageCreate,
     AIAssistantMessageResponse,
+    QueryDetailResponse,
+    RecentQueryItem,
+    TestConnectionRequest,
+    TestConnectionResponse,
+    TopUserItem,
+    UsageByDayItem,
+    UsageSummaryResponse,
+    WishlistClusterItem,
 )
 from app.services.ai_assistant_service import AIAssistantChatService, AIAssistantConfigService
+from app.services.ai_wishlist_service import AiWishlistService
+from app.services.llm_provider import get_provider
 
 router = APIRouter()
+
+
+def _resolve_window(from_: Optional[str], to: Optional[str]) -> tuple[datetime, datetime]:
+    """Parse ISO-8601 window params; default to last 30 days."""
+    now = datetime.utcnow()
+    default_from = now - timedelta(days=30)
+    try:
+        f = datetime.fromisoformat(from_) if from_ else default_from
+    except ValueError:
+        f = default_from
+    try:
+        t = datetime.fromisoformat(to) if to else now
+    except ValueError:
+        t = now
+    if t < f:
+        f, t = t, f
+    return f, t
+
+
+def _message_to_response(row: AIAssistantMessage) -> AIAssistantMessageResponse:
+    meta = row.metadata_json or {}
+    suggestions = meta.get("suggestions") if isinstance(meta, dict) else []
+    if not isinstance(suggestions, list):
+        suggestions = []
+    return AIAssistantMessageResponse(
+        id=str(row.id),
+        role=row.role,
+        content=row.content,
+        metadata_json=meta if isinstance(meta, dict) else {},
+        created_at=row.created_at,
+        suggestions=[str(s) for s in suggestions][:5],
+    )
 
 
 @router.get("/ai-assistant/config", response_model=AIAssistantConfigResponse)
@@ -39,6 +87,20 @@ def update_ai_assistant_config(
     return AIAssistantConfigResponse(**svc.to_response_dict(row))
 
 
+@router.post("/ai-assistant/test-connection", response_model=TestConnectionResponse)
+def test_ai_assistant_connection(
+    payload: TestConnectionRequest,
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.edit")),
+):
+    """One-shot, non-persistent connection probe for the configured provider."""
+    try:
+        provider = get_provider(payload.provider, payload.api_key, payload.model)
+    except ValueError as exc:
+        return TestConnectionResponse(ok=False, message=str(exc), latency_ms=0)
+    ok, message, latency_ms = provider.test_connection()
+    return TestConnectionResponse(ok=ok, message=message, latency_ms=latency_ms)
+
+
 @router.get("/ai-assistant/tools", response_model=list[str])
 def list_ai_assistant_tools(
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
@@ -50,11 +112,12 @@ def list_ai_assistant_tools(
 
 @router.get("/ai-assistant/conversations", response_model=list[AIAssistantConversationResponse])
 def list_ai_assistant_conversations(
+    q: Optional[str] = Query(None, description="Substring filter on conversation title"),
     user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
     db: Session = Depends(get_db),
 ):
     chat = AIAssistantChatService(db)
-    rows = chat.list_conversations(str(user["id"]))
+    rows = chat.list_conversations(str(user["id"]), q=q, limit=100)
     return [
         AIAssistantConversationResponse(
             id=str(r.id),
@@ -75,16 +138,7 @@ def list_ai_assistant_messages(
 ):
     chat = AIAssistantChatService(db)
     rows = chat.list_messages(conversation_id, str(user["id"]))
-    return [
-        AIAssistantMessageResponse(
-            id=str(r.id),
-            role=r.role,
-            content=r.content,
-            metadata_json=r.metadata_json or {},
-            created_at=r.created_at,
-        )
-        for r in rows
-    ]
+    return [_message_to_response(r) for r in rows]
 
 
 @router.post("/ai-assistant/chat", response_model=AIAssistantConversationResponse)
@@ -94,21 +148,207 @@ def send_ai_assistant_message(
     db: Session = Depends(get_db),
 ):
     chat = AIAssistantChatService(db)
-    conv, _ = chat.respond(user_id=str(user["id"]), conversation_id=payload.conversation_id, message=payload.message)
+    conv, _ = chat.respond(
+        user_id=str(user["id"]),
+        conversation_id=payload.conversation_id,
+        message=payload.message,
+        page_snapshot=payload.page_snapshot,
+    )
     rows = chat.list_messages(str(conv.id), str(user["id"]))
     return AIAssistantConversationResponse(
         id=str(conv.id),
         title=conv.title,
         created_at=conv.created_at,
         updated_at=conv.updated_at,
-        messages=[
-            AIAssistantMessageResponse(
-                id=str(r.id),
-                role=r.role,
-                content=r.content,
-                metadata_json=r.metadata_json or {},
-                created_at=r.created_at,
-            )
-            for r in rows
-        ],
+        messages=[_message_to_response(r) for r in rows],
     )
+
+
+# --- Usage analytics --------------------------------------------------------
+
+
+@router.get("/ai-assistant/usage/summary", response_model=UsageSummaryResponse)
+def usage_summary(
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    f, t = _resolve_window(from_, to)
+    row = (
+        db.query(
+            func.count(AIAssistantUsageLog.id).label("messages"),
+            func.coalesce(func.sum(AIAssistantUsageLog.prompt_tokens), 0).label("prompt"),
+            func.coalesce(func.sum(AIAssistantUsageLog.completion_tokens), 0).label("completion"),
+            func.coalesce(func.sum(AIAssistantUsageLog.total_tokens), 0).label("total"),
+        )
+        .filter(AIAssistantUsageLog.created_at >= f, AIAssistantUsageLog.created_at <= t)
+        .one()
+    )
+    return UsageSummaryResponse(
+        total_messages=int(row.messages or 0),
+        prompt_tokens=int(row.prompt or 0),
+        completion_tokens=int(row.completion or 0),
+        total_tokens=int(row.total or 0),
+    )
+
+
+@router.get("/ai-assistant/usage/by-day", response_model=list[UsageByDayItem])
+def usage_by_day(
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    f, t = _resolve_window(from_, to)
+    bucket = func.date_trunc("day", AIAssistantUsageLog.created_at).label("day")
+    rows = (
+        db.query(
+            bucket,
+            func.count(AIAssistantUsageLog.id).label("messages"),
+            func.coalesce(func.sum(AIAssistantUsageLog.total_tokens), 0).label("tokens"),
+        )
+        .filter(AIAssistantUsageLog.created_at >= f, AIAssistantUsageLog.created_at <= t)
+        .group_by(bucket)
+        .order_by(bucket.asc())
+        .all()
+    )
+    out: list[UsageByDayItem] = []
+    for r in rows:
+        date_value = r.day
+        if isinstance(date_value, datetime):
+            date_str = date_value.date().isoformat()
+        else:
+            date_str = str(date_value)[:10]
+        out.append(UsageByDayItem(date=date_str, messages=int(r.messages or 0), tokens=int(r.tokens or 0)))
+    return out
+
+
+@router.get("/ai-assistant/usage/top-users", response_model=list[TopUserItem])
+def usage_top_users(
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=100),
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    f, t = _resolve_window(from_, to)
+    rows = (
+        db.query(
+            AIAssistantUsageLog.user_id,
+            User.name,
+            func.count(AIAssistantUsageLog.id).label("messages"),
+            func.coalesce(func.sum(AIAssistantUsageLog.total_tokens), 0).label("tokens"),
+        )
+        .outerjoin(User, User.id == AIAssistantUsageLog.user_id)
+        .filter(AIAssistantUsageLog.created_at >= f, AIAssistantUsageLog.created_at <= t)
+        .group_by(AIAssistantUsageLog.user_id, User.name)
+        .order_by(desc("tokens"))
+        .limit(limit)
+        .all()
+    )
+    return [
+        TopUserItem(
+            user_id=str(r.user_id) if r.user_id else None,
+            name=r.name,
+            messages=int(r.messages or 0),
+            tokens=int(r.tokens or 0),
+        )
+        for r in rows
+    ]
+
+
+@router.get("/ai-assistant/usage/recent-queries", response_model=list[RecentQueryItem])
+def usage_recent_queries(
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    f, t = _resolve_window(from_, to)
+    rows = (
+        db.query(AIAssistantUsageLog, User.name, AIAssistantMessage.content)
+        .outerjoin(User, User.id == AIAssistantUsageLog.user_id)
+        .outerjoin(AIAssistantMessage, AIAssistantMessage.id == AIAssistantUsageLog.message_id)
+        .filter(AIAssistantUsageLog.created_at >= f, AIAssistantUsageLog.created_at <= t)
+        .order_by(AIAssistantUsageLog.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    out: list[RecentQueryItem] = []
+    for log, user_name, content in rows:
+        preview = (content or "")[:120]
+        out.append(
+            RecentQueryItem(
+                message_id=str(log.message_id) if log.message_id else None,
+                user_name=user_name,
+                query_preview=preview,
+                response_time_ms=int(log.response_time_ms or 0),
+                total_tokens=int(log.total_tokens or 0),
+                created_at=log.created_at,
+            )
+        )
+    return out
+
+
+@router.get("/ai-assistant/usage/queries/{message_id}", response_model=QueryDetailResponse)
+def usage_query_detail(
+    message_id: str,
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    msg = db.query(AIAssistantMessage).filter(AIAssistantMessage.id == message_id).first()
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    log = (
+        db.query(AIAssistantUsageLog)
+        .filter(AIAssistantUsageLog.message_id == message_id)
+        .order_by(AIAssistantUsageLog.created_at.desc())
+        .first()
+    )
+    usage_dict: Optional[dict[str, Any]] = None
+    if log:
+        usage_dict = {
+            "model": log.model,
+            "provider": log.provider,
+            "prompt_tokens": log.prompt_tokens,
+            "completion_tokens": log.completion_tokens,
+            "total_tokens": log.total_tokens,
+            "tool_calls_count": log.tool_calls_count,
+            "response_time_ms": log.response_time_ms,
+            "was_answered": log.was_answered,
+        }
+    meta = msg.metadata_json if isinstance(msg.metadata_json, dict) else {}
+    tools_used = meta.get("tool_calls") or []
+    if not isinstance(tools_used, list):
+        tools_used = []
+    return QueryDetailResponse(
+        message_id=str(msg.id),
+        role=msg.role,
+        content=msg.content,
+        metadata_json=meta,
+        created_at=msg.created_at,
+        usage=usage_dict,
+        tools_used=tools_used,
+    )
+
+
+@router.get("/ai-assistant/wishlist", response_model=list[WishlistClusterItem])
+def list_wishlist_clusters(
+    limit: int = Query(20, ge=1, le=100),
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    items = AiWishlistService(db).list_clusters(limit=limit)
+    return [
+        WishlistClusterItem(
+            id=str(it["id"]),
+            representative_question=it.get("representative_question") or "",
+            category=it.get("category"),
+            count=int(it.get("count") or 0),
+            last_seen_at=it.get("last_seen_at"),
+            created_at=it["created_at"],
+        )
+        for it in items
+    ]
