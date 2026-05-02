@@ -62,6 +62,15 @@ Create a `.env` file in `sorento_crm_backend/` (you can copy from `.env.example`
 | `AWS_SECRET_ACCESS_KEY` | For S3 storage |
 | `AWS_REGION` | e.g. `us-east-1` |
 | `AWS_S3_BUCKET_NAME` | S3 bucket for attachments |
+| `CLOUDFRONT_DOMAIN` | CloudFront distribution domain (S3 read path) |
+| `CLOUDFRONT_KEY_PAIR_ID` | CloudFront key-pair ID for signed URLs |
+| `CLOUDFRONT_PRIVATE_KEY_PATH` | PEM file used to sign CloudFront URLs |
+| `STORAGE_DEFAULT_PROVIDER` | `s3` or `r2`. Provider used for new uploads (default: `s3`) |
+| `R2_ACCOUNT_ID` | Cloudflare account ID hosting the R2 bucket |
+| `R2_ACCESS_KEY_ID` | R2 S3-compatible access key |
+| `R2_SECRET_ACCESS_KEY` | R2 S3-compatible secret |
+| `R2_BUCKET_NAME` | R2 bucket name for attachments |
+| `R2_CDN_DOMAIN` | Cloudflare custom domain mapped to the R2 bucket (e.g. `cdn.sorento.com`) |
 | `N8N_WEBHOOK_URL` | n8n webhook URL for integrations |
 | `EXTERNAL_API_KEY` | API key for external API access |
 | `USE_REMOTE_TIME` | Set to `1` to use remote time in SLA logic |

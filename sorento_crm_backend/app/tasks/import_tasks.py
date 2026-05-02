@@ -27,7 +27,6 @@ from app.services.resources_service import (
     AttachmentService,
     AttachmentTypeService,
 )
-from app.services.s3_service import S3Service
 from app.services.attachment_webhook_helper import create_and_send_webhook
 from app.api.v1.external.utils import (
     get_inbound_shipment_by_container_number,
@@ -330,7 +329,13 @@ def process_attachment_bulk_import(
     dir_service = AttachmentDirectoryService(db)
     attachment_service = AttachmentService(db)
     type_service = AttachmentTypeService(db)
-    s3_service = S3Service()
+    from app.services.storage_router import (
+        cdn_base_url,
+        default_provider,
+        get_backend,
+    )
+    storage_provider = default_provider()
+    storage_backend = get_backend(storage_provider)
 
     access_levels_payload = None
     try:
@@ -437,7 +442,7 @@ def process_attachment_bulk_import(
                     entity_type = (attachment_type.type_name or "general").lower().replace(" ", "_")
                     s3_file_path = f"{entity_type}/{stored_filename}"
                     guessed_type, _ = mimetypes.guess_type(original_filename)
-                    s3_key, _ = s3_service.upload_file(
+                    s3_key, _ = storage_backend.upload_file(
                         file_content=file_content,
                         file_path=s3_file_path,
                         content_type=guessed_type,
@@ -449,7 +454,7 @@ def process_attachment_bulk_import(
                         attachment_type_id=attachment_type_id,
                         original_filename=original_filename,
                         stored_filename=stored_filename,
-                        file_path=s3_service.get_cloudfront_base_url(s3_key),
+                        file_path=cdn_base_url(storage_provider, s3_key),
                         file_size_bytes=len(file_content),
                         mime_type=guessed_type or "application/octet-stream",
                         file_hash=hashlib.sha256(file_content).hexdigest(),
@@ -457,6 +462,7 @@ def process_attachment_bulk_import(
                         entity_id=None,
                         directory_id=directory_id,
                         access_levels=access_levels_payload,
+                        storage_provider=storage_provider,
                     )
                     attachment = attachment_service.create_attachment(attachment_data, user_id)
                     if attachment is not None:

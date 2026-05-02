@@ -19,6 +19,8 @@ EXPORT_FILES_BACKEND = (
     "app/api/v1/resources/",
     "app/services/resources_service.py",
     "app/services/s3_service.py",
+    "app/services/r2_service.py",
+    "app/services/storage_router.py",
 )
 EXPORT_FILES_FRONTEND = (
     "app/(protected)/resource-management/",

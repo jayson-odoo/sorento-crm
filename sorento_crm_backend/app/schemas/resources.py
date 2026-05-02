@@ -86,6 +86,7 @@ class AttachmentBase(BaseModel):
     description: Optional[str] = None
     access_levels: Optional[list[str]] = None  # e.g. ["dealer", "end_user"]
     sort_order: Optional[int] = None
+    storage_provider: Optional[str] = None  # 's3' or 'r2'; controls URL signing dispatch
 
 
 class AttachmentCreate(AttachmentBase):

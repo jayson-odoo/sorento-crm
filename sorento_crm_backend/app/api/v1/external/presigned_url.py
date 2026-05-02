@@ -1,11 +1,17 @@
-"""External API: get a CloudFront presigned URL for a given file path (S3 key or CloudFront base URL)."""
+"""External API: get a presigned URL for a stored file (S3+CloudFront or R2+Cloudflare CDN)."""
 import logging
 from urllib.parse import urlparse, unquote
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
+from app.database import get_db
 from app.dependencies import get_external_api_user
-from app.services.s3_service import S3Service
+from app.services.storage_router import (
+    default_provider,
+    detect_provider_from_url,
+    get_backend,
+)
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -22,12 +28,13 @@ class PresignedUrlRequest(BaseModel):
 
 
 class PresignedUrlResponse(BaseModel):
-    """Response with CloudFront presigned URL."""
+    """Response with a presigned URL backed by either CloudFront or Cloudflare CDN."""
 
-    presigned_url: str = Field(..., description="CloudFront signed URL with Policy, Signature, Key-Pair-Id")
-    file_path: str = Field(..., description="Normalized S3 key used for signing")
+    presigned_url: str = Field(..., description="Signed URL (CloudFront Policy/Signature for S3, AWS4-HMAC for R2)")
+    file_path: str = Field(..., description="Normalized storage key used for signing")
     filename: str | None = Field(None, description="Filename if provided in request")
     expires_in: int = Field(..., description="Expiry in seconds")
+    storage_provider: str = Field(..., description="'s3' or 'r2' — which provider served the URL")
 
 
 def _normalize_to_s3_key(file_path: str) -> str:
@@ -52,32 +59,64 @@ def _normalize_to_s3_key(file_path: str) -> str:
     return key
 
 
+def _provider_for_file_path(db: Session, file_path: str) -> str:
+    """Best-effort provider lookup so the right backend signs the URL.
+
+    Tries DB lookup by stored file_path first (the canonical source of truth),
+    then URL-host sniffing, finally STORAGE_DEFAULT_PROVIDER.
+    """
+    from app.models.resources import Attachment
+
+    # Match the row by its stored file_path. Row ordering picks the most recent
+    # so reuploads of the same key resolve to the latest provider.
+    try:
+        row = (
+            db.query(Attachment.storage_provider)
+            .filter(Attachment.file_path == file_path)
+            .order_by(Attachment.uploaded_at.desc())
+            .first()
+        )
+        if row and row[0]:
+            return str(row[0])
+    except Exception as e:  # noqa: BLE001
+        logger.debug("storage_provider lookup failed for %s: %s", file_path[:80], e)
+
+    sniffed = detect_provider_from_url(file_path)
+    return sniffed or default_provider()
+
+
 @router.post("/", response_model=PresignedUrlResponse)
 async def get_presigned_url(
     body: PresignedUrlRequest,
     current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
 ):
     """
-    Return a CloudFront presigned URL for the given file path.
+    Return a presigned URL for the given file path.
+
+    Dispatch automatically picks S3+CloudFront or R2+Cloudflare CDN based on
+    the attachment row's ``storage_provider``.
 
     **Auth:** X-API-Key header (external API key).
 
     **Request body:**
-    - **file_path** (required): S3 key (e.g. `promotion/abc/file.pdf`) or CloudFront base URL.
+    - **file_path** (required): storage key (e.g. `promotion/abc/file.pdf`) or full CDN base URL.
     - **filename** (optional): Display name; echoed in response.
     - **expires_in** (optional): URL validity in seconds (60–86400). Default 3600.
 
-    **Response:** `presigned_url` (use for download/preview), `file_path`, `filename`, `expires_in`.
+    **Response:** `presigned_url`, `file_path`, `filename`, `expires_in`, `storage_provider`.
     """
     try:
-        s3_key = _normalize_to_s3_key(body.file_path)
-        s3 = S3Service()
-        presigned_url = s3.get_signed_url(s3_key, expires_in=body.expires_in)
+        key = _normalize_to_s3_key(body.file_path)
+        provider = _provider_for_file_path(db, body.file_path)
+        backend = get_backend(provider)
+        presigned_url = backend.get_signed_url(key, expires_in=body.expires_in)
         return PresignedUrlResponse(
             presigned_url=presigned_url,
-            file_path=s3_key,
+            file_path=key,
             filename=body.filename,
             expires_in=body.expires_in,
+            storage_provider=provider,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -85,5 +124,5 @@ async def get_presigned_url(
         logger.warning("Presigned URL generation failed for file_path=%s: %s", (body.file_path or "")[:80], e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate presigned URL. Check file_path and S3/CloudFront configuration.",
+            detail="Failed to generate presigned URL. Check file_path and storage configuration.",
         )

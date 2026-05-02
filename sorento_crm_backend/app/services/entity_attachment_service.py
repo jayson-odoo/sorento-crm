@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.resources import Attachment, AttachmentType
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
-from app.services.s3_service import S3Service
 
 
 class EntityAttachmentService:
@@ -17,12 +16,20 @@ class EntityAttachmentService:
         self.db = db
 
     def _resolve_attachment_url(self, file_path: Optional[str]) -> Optional[str]:
+        """Return a usable URL for the stored file_path. Provider-agnostic.
+
+        For full URLs (already a CDN base URL) we pass through; raw keys are
+        signed via the storage_router using URL-host sniffing or the default
+        provider since this helper does not have row context.
+        """
         if not file_path:
             return None
         if file_path.startswith(("http://", "https://")):
             return file_path
         try:
-            return S3Service().get_file_url(file_path)
+            from app.services.storage_router import resolve_signed_url
+
+            return resolve_signed_url(file_path)
         except Exception:
             return file_path
 
@@ -132,6 +139,7 @@ class EntityAttachmentService:
         file_size_bytes: Optional[int] = None,
         attachment_type_code: str = "complaint_document",
         created_by: Optional[str] = None,
+        storage_provider: Optional[str] = None,
     ) -> EntityAttachmentLink:
         et, eid = self._normalize(entity_type, entity_id)
         url = (file_url or "").strip()
@@ -143,12 +151,17 @@ class EntityAttachmentService:
         stored = name[:255]
         path = url[:500]
 
+        from app.services.storage_router import default_provider, normalize_provider
+
+        provider = normalize_provider(storage_provider) if storage_provider else default_provider()
+
         attachment = Attachment(
             attachment_type_id=type_id,
             original_filename=name,
             stored_filename=stored,
             file_path=path,
             file_size_bytes=file_size_bytes,
+            storage_provider=provider,
         )
         self.db.add(attachment)
         self.db.flush()

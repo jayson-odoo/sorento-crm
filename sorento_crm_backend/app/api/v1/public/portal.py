@@ -42,7 +42,6 @@ from app.services.portal_service import (
     PortalService,
     SUPPORTED_TYPES,
 )
-from app.services.s3_service import S3Service
 
 logger = logging.getLogger(__name__)
 
@@ -523,11 +522,17 @@ def _check_quota(
             )
 
 
-def _safe_presigned_url(file_path: Optional[str]) -> Optional[str]:
+def _safe_presigned_url(
+    file_path: Optional[str],
+    provider: Optional[str] = None,
+) -> Optional[str]:
+    """Sign portal attachment URLs against the row's provider (s3 or r2)."""
     if not file_path:
         return None
     try:
-        return S3Service().get_presigned_url(file_path, expiration=3600)
+        from app.services.storage_router import resolve_signed_url
+
+        return resolve_signed_url(file_path, provider=provider)
     except Exception as e:  # noqa: BLE001
         logger.warning("Portal presigned URL failed for %s: %s", file_path, e)
         return None
@@ -552,7 +557,7 @@ def _list_attachments_for(db: Session, entity_type: str, entity_id: str) -> list
                 "attachment_id": str(att.id),
                 "filename": att.original_filename,
                 "size": att.file_size_bytes,
-                "url": _safe_presigned_url(att.file_path) or att.file_path,
+                "url": _safe_presigned_url(att.file_path, getattr(att, "storage_provider", None)) or att.file_path,
                 "content_type": att.mime_type if hasattr(att, "mime_type") else None,
                 "uploaded_at": att.uploaded_at.isoformat() if att.uploaded_at else None,
             }
@@ -600,10 +605,15 @@ async def portal_upload_attachment(
 
     safe_ext = f".{extension}" if extension else ""
     s3_key = f"portal/{token.contact_id}/{uuid.uuid4()}{safe_ext}"
+    from app.services.storage_router import default_provider, get_backend
+
+    portal_provider = default_provider()
     try:
-        S3Service().upload_file(contents, s3_key, content_type=file.content_type)
+        get_backend(portal_provider).upload_file(
+            contents, s3_key, content_type=file.content_type
+        )
     except Exception as e:  # noqa: BLE001
-        logger.warning("Portal attachment upload failed: %s", e)
+        logger.warning("Portal attachment upload failed (provider=%s): %s", portal_provider, e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="File upload failed. Please try again.",
@@ -618,6 +628,7 @@ async def portal_upload_attachment(
         file_size_bytes=incoming_size,
         attachment_type_code=PORTAL_ATTACHMENT_TYPE_CODE,
         created_by=None,
+        storage_provider=portal_provider,
     )
     db.commit()
     db.refresh(link)

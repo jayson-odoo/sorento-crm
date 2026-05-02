@@ -113,7 +113,10 @@ async def get_attachments(
 
             if resolve_signed_urls:
                 # Optional on-demand signing for list responses.
-                data["file_path"] = _resolve_attachment_file_path(data.get("file_path"))
+                data["file_path"] = _resolve_attachment_file_path(
+                    data.get("file_path"),
+                    provider=getattr(att, "storage_provider", None),
+                )
             enriched.append(data)
 
         result["data"] = enriched
@@ -156,29 +159,21 @@ async def get_current_stock_list(
     return data
 
 
-def _resolve_attachment_file_path(file_path: Optional[str]) -> Optional[str]:
-    """Return a fresh CloudFront signed URL. Accepts S3 key or existing CloudFront base URL (https://domain/key)."""
+def _resolve_attachment_file_path(
+    file_path: Optional[str],
+    provider: Optional[str] = None,
+) -> Optional[str]:
+    """Return a fresh signed URL for the stored file_path.
+
+    Provider is taken from the attachment row when available so reads dispatch
+    to S3+CloudFront or R2+Cloudflare CDN per record. Without a row, the
+    storage_router falls back to URL-host sniffing then STORAGE_DEFAULT_PROVIDER.
+    """
     if not file_path:
         return file_path
-    try:
-        from app.services.s3_service import S3Service
-        from urllib.parse import urlparse, unquote
-        s3 = S3Service()
-        if file_path.startswith("https://") or file_path.startswith("http://"):
-            parsed = urlparse(file_path)
-            # If already a signed CloudFront URL, keep it as-is (no re-sign needed).
-            if parsed.query and "Policy=" in parsed.query and "Key-Pair-Id=" in parsed.query:
-                return file_path
-            # If it's our CloudFront domain, extract path (S3 key) and return signed URL
-            # Decode any existing URL-encoding first to avoid double-encoding when signing.
-            path = unquote((parsed.path or "").lstrip("/"))
-            if path:
-                return s3.get_signed_url(path)
-            return file_path
-        return s3.get_signed_url(unquote(file_path))
-    except Exception as e:
-        logger.warning("Could not generate signed URL for key %s: %s", (file_path or "")[:50], e)
-        return file_path
+    from app.services.storage_router import resolve_signed_url
+
+    return resolve_signed_url(file_path, provider=provider)
 
 
 def _attachment_response_with_linked_entities(service: AttachmentService, attachment) -> dict:
@@ -188,7 +183,10 @@ def _attachment_response_with_linked_entities(service: AttachmentService, attach
     attachment_id = str(attachment.id) if attachment.id else attachment.id
     data = AttachmentResponse.model_validate(attachment).model_dump()
     # On-demand signing only for single-attachment metadata/detail responses.
-    data["file_path"] = _resolve_attachment_file_path(data.get("file_path"))
+    data["file_path"] = _resolve_attachment_file_path(
+        data.get("file_path"),
+        provider=getattr(attachment, "storage_provider", None),
+    )
     linked = service.get_linked_entities(attachment_id)
     data["linked_products"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_products"]]
     data["linked_promotions"] = [LinkedEntityRef.model_validate(p).model_dump() for p in linked["linked_promotions"]]
@@ -341,7 +339,6 @@ async def create_attachment(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Files starting with ._ are macOS metadata files and cannot be uploaded. Please upload the actual file instead."
             )
-        from app.services.s3_service import S3Service
 
         # Read file content
         file_content = await file.read()
@@ -400,24 +397,30 @@ async def create_attachment(
         else:
             s3_file_path = f"{final_entity_type}/{stored_filename}"
 
-        # Upload to S3
-        s3_service = S3Service()
+        # Upload to whichever provider STORAGE_DEFAULT_PROVIDER points at (s3 or r2).
+        from app.services.storage_router import (
+            cdn_base_url,
+            default_provider,
+            get_backend,
+        )
+        provider = default_provider()
+        backend = get_backend(provider)
         try:
-            s3_key, _ = s3_service.upload_file(
+            s3_key, _ = backend.upload_file(
                 file_content=file_content,
                 file_path=s3_file_path,
-                content_type=file.content_type
+                content_type=file.content_type,
             )
         except Exception as s3_error:
-            logger.error(f"S3 upload failed: {str(s3_error)}")
+            logger.error("Storage upload failed (provider=%s): %s", provider, s3_error)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to upload file to storage: {str(s3_error)}"
             )
 
         is_promotion_upload = (entity_type or "").strip().lower() == "promotion"
-        # Persist only a stable, non-signed CloudFront URL in DB.
-        stored_file_path = s3_service.get_cloudfront_base_url(s3_key)
+        # Persist only a stable, non-signed CDN URL in DB; signing happens on read.
+        stored_file_path = cdn_base_url(provider, s3_key)
 
         # Parse access levels for attachment record and webhook (JSON array string expected).
         # For promotion uploads, use the promotion's access_levels when entity_id is provided.
@@ -439,7 +442,7 @@ async def create_attachment(
         if not access_levels_payload:
             access_levels_payload = access_svc.get_default_access_levels()
 
-        # Create attachment record. file_path stored as CloudFront base URL for consistency with other attachments.
+        # Create attachment record. file_path stored as CDN base URL for consistency with other attachments.
         attachment_data = AttachmentCreate(
             attachment_type_id=type_id,
             original_filename=original_filename,
@@ -452,6 +455,7 @@ async def create_attachment(
             entity_id=entity_id,
             directory_id=directory_id,
             access_levels=access_levels_payload,
+            storage_provider=provider,
         )
 
         service = AttachmentService(db)
@@ -520,7 +524,6 @@ async def replace_latest_stock_list(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File is required")
 
     try:
-        from app.services.s3_service import S3Service
         from app.models.resources import Attachment, AttachmentType
 
         service = AttachmentService(db)
@@ -560,21 +563,31 @@ async def replace_latest_stock_list(
         entity_type = (attachment_type.type_name or "general").lower().replace(" ", "_")
         s3_file_path = f"{entity_type}/{stored_filename}"
 
-        s3_service = S3Service()
+        from app.services.storage_router import (
+            cdn_base_url,
+            default_provider,
+            get_backend,
+        )
+        provider = default_provider()
+        backend = get_backend(provider)
         try:
-            s3_key, _ = s3_service.upload_file(
+            s3_key, _ = backend.upload_file(
                 file_content=file_content,
                 file_path=s3_file_path,
                 content_type=file.content_type,
             )
         except Exception as s3_error:
-            logger.error("S3 upload failed for replace-latest-stock-list: %s", s3_error)
+            logger.error(
+                "Storage upload failed for replace-latest-stock-list (provider=%s): %s",
+                provider,
+                s3_error,
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to upload file to storage: {str(s3_error)}",
             )
 
-        stored_file_path = s3_service.get_cloudfront_base_url(s3_key)
+        stored_file_path = cdn_base_url(provider, s3_key)
         from app.services.contact_access_type_service import ContactAccessTypeService
         access_svc = ContactAccessTypeService(db)
         access_levels_payload = access_svc.get_default_access_levels()
@@ -591,6 +604,7 @@ async def replace_latest_stock_list(
             directory_id=None,
             description="Latest stock list",
             access_levels=access_levels_payload,
+            storage_provider=provider,
         )
         attachment = service.create_attachment(attachment_data, current_user["id"])
         try:
@@ -771,7 +785,8 @@ async def get_attachment_preview_url(
         attachment = service.get_attachment(attachment_id)
         file_path = getattr(attachment, "file_path", None)
         preview_url = _resolve_attachment_file_path(
-            str(file_path) if file_path is not None else None
+            str(file_path) if file_path is not None else None,
+            provider=getattr(attachment, "storage_provider", None),
         )
         return {"attachment_id": attachment_id, "preview_url": preview_url}
     except HTTPException:
@@ -957,7 +972,10 @@ async def resubmit_attachment_webhook(
         raw_log = integration_service.get_integration_log(log_id)
 
         attachment_file_path = str(getattr(attachment, "file_path", ""))
-        signed_url = build_signed_attachment_url_for_webhook(attachment_file_path)
+        signed_url = build_signed_attachment_url_for_webhook(
+            attachment_file_path,
+            provider=getattr(attachment, "storage_provider", None),
+        )
         try:
             raw_request_payload = getattr(raw_log, "request_payload", None)
             payload_dict = json.loads(raw_request_payload) if raw_request_payload is not None else {}

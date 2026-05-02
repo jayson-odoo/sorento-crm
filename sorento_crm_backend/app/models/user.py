@@ -32,6 +32,8 @@ class User(Base):
     email_verified_at = Column(DateTime(timezone=False), nullable=True)
     is_trashed = Column(Boolean, default=False, nullable=False)
     avatar = Column(String, nullable=True)
+    # Mirrors attachments.storage_provider: 's3' (S3 + CloudFront) or 'r2' (Cloudflare R2 + CDN).
+    avatar_storage_provider = Column(String(16), nullable=False, server_default="s3")
     invited_by_user_id = Column(String, nullable=True)
     is_protected = Column(Boolean, default=False, nullable=False)
     respond_user_id = Column(String, nullable=True)
