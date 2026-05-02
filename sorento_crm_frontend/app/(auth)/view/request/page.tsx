@@ -53,6 +53,7 @@ interface ViewSummary {
   approved_at?: string | null;
   approved_by?: string | null;
   approval_comments?: string | null;
+  portal_url?: string | null;
 }
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
@@ -220,6 +221,11 @@ function ViewRequestContent() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <h1 className="text-xl sm:text-2xl font-semibold leading-tight">{typeLabel}</h1>
         <div className="flex flex-wrap gap-2 self-start">
+          {summary?.portal_url && (
+            <Button variant="outline" size="sm" className="shrink-0 self-start" asChild>
+              <Link href={summary.portal_url}>All my submissions</Link>
+            </Button>
+          )}
           {summary?.approval_status === 'rejected' && (
             <Button onClick={handleRevise} disabled={revisePending}>
               {revisePending ? 'Sending...' : 'Revise'}

@@ -1,20 +1,66 @@
 """Respond contacts API routes."""
-from fastapi import APIRouter, Depends, Query, status, HTTPException, Body
+from fastapi import APIRouter, Depends, Query, status, HTTPException, Body, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
 import logging
 import httpx
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_permission
+from app.models.access import RespondContact
+from app.models.respond_workspace import RespondWorkspace
 from app.services.contact_service import ContactService
+from app.services.portal_service import PortalService
 from app.schemas.user import RespondContactResponse, RespondContactCreate, RespondContactUpdate, ContactAgentAccessResponse
 from app.schemas.common import ListResponse
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import handle_internal_error, handle_not_found
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _resolve_space_id(db: Session, contact_id: str) -> tuple[RespondContact, str]:
+    """Look up contact and resolve its workspace's space_id.
+
+    Raises 404 if the contact does not exist; raises 422 (with a "workspace"
+    message) if the contact is not associated with a usable workspace.
+    """
+    contact = db.query(RespondContact).filter(RespondContact.id == contact_id).first()
+    if contact is None:
+        raise handle_not_found("Contact", contact_id)
+    if not contact.workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Contact has no workspace; cannot mint portal link.",
+        )
+    workspace = (
+        db.query(RespondWorkspace)
+        .filter(RespondWorkspace.id == contact.workspace_id)
+        .first()
+    )
+    if workspace is None or not workspace.space_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Contact has no workspace; cannot mint portal link.",
+        )
+    return contact, workspace.space_id
+
+
+def _effective_base_url(request: Request, payload_base_url: Optional[str]) -> Optional[str]:
+    """Resolve the FE base URL for portal links.
+
+    Order: explicit payload override > settings.frontend_base_url > derived from
+    request (scheme://host). Ensures the response always carries an absolute URL
+    so QR codes and Respond.io chat messages render correctly.
+    """
+    if payload_base_url:
+        return payload_base_url
+    from app.config import settings as _settings
+    if (_settings.frontend_base_url or "").strip():
+        return _settings.frontend_base_url
+    base = str(request.base_url).rstrip("/")
+    return base or None
 
 
 @router.get("/", response_model=ListResponse[RespondContactResponse])
@@ -51,6 +97,25 @@ class BulkDeleteContactsRequest(BaseModel):
 
 class BulkSyncContactsRequest(BaseModel):
     ids: list[str]
+
+
+class PortalLinkRequest(BaseModel):
+    base_url: Optional[str] = None
+
+
+class PortalLinkResponse(BaseModel):
+    token: str
+    expires_at: str
+    portal_url: str
+    reused: bool
+
+
+class PortalLinkSendResponse(BaseModel):
+    token: str
+    expires_at: str
+    portal_url: str
+    reused: bool
+    sent: bool
 
 
 @router.post("/bulk-sync", status_code=status.HTTP_200_OK)
@@ -261,7 +326,7 @@ async def get_contact_access_agents(
     try:
         from app.services.user_service import AccessAgentService
         from app.schemas.user import ContactAgentAccessResponse
-        
+
         service = AccessAgentService(db)
         # List contact accesses filtered by respond_contact_id
         result = service.list_all_contact_accesses(
@@ -269,9 +334,77 @@ async def get_contact_access_agents(
             limit=limit,
             respond_contact_id=contact_id,
         )
-        
+
         return result
     except HTTPException:
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.post("/{contact_id}/portal-link", response_model=PortalLinkResponse)
+async def get_contact_portal_link(
+    contact_id: str,
+    request: Request,
+    payload: PortalLinkRequest = Body(default_factory=PortalLinkRequest),
+    current_user: dict = Depends(require_permission("user_management.contacts.portal_link")),
+    db: Session = Depends(get_db),
+):
+    """Mint or reuse a 7-day user-submission portal token for the contact."""
+    _, space_id = _resolve_space_id(db, contact_id)
+    service = PortalService(db)
+    token, reused = service.get_or_mint_token(contact_id, space_id)
+    base_url = _effective_base_url(request, payload.base_url)
+    return PortalLinkResponse(
+        token=token.token,
+        expires_at=token.expires_at.isoformat(),
+        portal_url=service.build_portal_url(token.token, base_url),
+        reused=reused,
+    )
+
+
+@router.post("/{contact_id}/portal-link/send", response_model=PortalLinkSendResponse)
+async def send_contact_portal_link(
+    contact_id: str,
+    request: Request,
+    payload: PortalLinkRequest = Body(default_factory=PortalLinkRequest),
+    current_user: dict = Depends(require_permission("user_management.contacts.portal_link")),
+    db: Session = Depends(get_db),
+):
+    """Mint or reuse a portal token and send the link to the contact via Respond.io."""
+    contact, space_id = _resolve_space_id(db, contact_id)
+    if not (contact.respond_io_id or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Contact has no Respond.io identifier; cannot send link.",
+        )
+    service = PortalService(db)
+    base_url = _effective_base_url(request, payload.base_url)
+    try:
+        result = service.send_link_via_respond_io(contact_id, space_id, base_url)
+    except httpx.HTTPStatusError as exc:
+        upstream = ""
+        try:
+            upstream = exc.response.text[:500]
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=502,
+            detail=f"Respond.io upstream failure: {upstream or str(exc)}",
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=504,
+            detail="Respond.io upstream timed out.",
+        )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Respond.io upstream unreachable: {exc.__class__.__name__}",
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=str(exc),
+        )
+    return PortalLinkSendResponse(**result)

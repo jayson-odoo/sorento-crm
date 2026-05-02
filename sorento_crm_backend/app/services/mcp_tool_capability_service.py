@@ -1107,25 +1107,30 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     # FORM SUBMISSIONS — stock inquiry (purchasing escalation)
     # ==================================================================
-    "crm_forms_stock_inquiries_submit": ToolIntent(
-        category="stock_inquiries.form_submission",
-        intent="Create or edit a rejected Stock Inquiry for the purchasing team.",
+    "crm_portal_link_get": ToolIntent(
+        category="user_submission_portal",
+        intent="Hand the contact a 7-day portal link for filing complaints, stock inquiries, purchase requests, or sponsorship forms.",
         description=(
-            "POST /api/v1/external/stock-inquiries/ with payload_json. Use when the user wants to "
-            "submit a NEW stock inquiry to purchasing (product, salesperson, item description, "
-            "project customer, project name, quantity, delivery date), or edit an existing "
-            "rejected stock inquiry. contact_id and space_id are required. This is a WRITE action — only call after the user confirms. "
-            "Not for listing / viewing existing stock inquiries (use the list / get tools). "
-            "DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments."
+            "POST /api/v1/external/portal-tokens/ with payload_json containing contact_id and space_id. "
+            "Returns a `portal_url` to send to the user. The portal lets them save drafts, attach photos "
+            "(including pasted screenshots), submit, and review submission status. After 7 days the link "
+            "expires and the contact re-verifies via OTP. Use this tool INSTEAD OF the legacy submit tools."
         ),
         typical_user_questions=(
-            "Submit a new stock inquiry to purchasing.",
-            "Create stock inquiry for 50 units of SKU X by 15/05/2026.",
-            "Send this stock inquiry with project customer ABC and project Tower B.",
-            "File a stock inquiry for purchasing team review.",
-            "Edit my rejected stock inquiry with the updated quantity.",
+            "I want to file a complaint.",
+            "Submit a stock inquiry.",
+            "Create a purchase request.",
+            "Send me the link to my submissions.",
+            "Where can I see and edit my drafts?",
         ),
-        aliases=("create stock inquiry", "submit stock inquiry", "edit rejected stock inquiry"),
+        aliases=(
+            "send portal link",
+            "submit complaint",
+            "file complaint",
+            "submit stock inquiry",
+            "create purchase request",
+            "submit sponsorship form",
+        ),
     ),
     "crm_forms_stock_inquiries_list": ToolIntent(
         category="stock_inquiries.form_submission",
@@ -1135,7 +1140,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "downloadable templates, blank marketing forms, or attachments. "
             "List stock inquiries for the authenticated scope with pagination and query. For external/API-key usage, always include contact_id and space_id filters. Use for "
             "'show my stock inquiries', 'list my rejected stock inquiries', 'pending stock "
-            "inquiries this month'. Not for submitting — use crm_forms_stock_inquiries_submit."
+            "inquiries this month'. Not for submitting — send the user a portal link via crm_portal_link_get."
         ),
         typical_user_questions=(
             "Show my stock inquiries.",
@@ -1154,7 +1159,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "downloadable templates, blank marketing forms, or attachments. "
             "Get one stock inquiry by inquiry_id for view-only summary or to preload an update flow "
             "for a REJECTED stock inquiry. For external/API-key usage, contact_id and space_id are required filters. "
-            "Not for submit — use crm_forms_stock_inquiries_submit."
+            "Not for submit — send the user a portal link via crm_portal_link_get."
         ),
         typical_user_questions=(
             "Show details for stock inquiry SI-2026-00123.",
@@ -1166,35 +1171,6 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     # FORM SUBMISSIONS — purchase request / sponsorship form
     # ==================================================================
-    "crm_forms_purchase_requests_submit": ToolIntent(
-        category="purchase_request.form_submission",
-        intent="Create or edit a rejected Purchase Request OR Sponsorship Form submission.",
-        description=(
-            "POST /api/v1/external/purchase-requests/ with payload_json. One tool handles BOTH "
-            "request_type='purchase_request' AND request_type='sponsorship_form' creation, plus "
-            "editing rejected forms by request_number. WRITE action — only call after "
-            "all required fields are complete and the user confirms the summary. The API validates "
-            "required fields first, and requires user_confirmed=true only after explicit user "
-            "confirmation (e.g. OK / YES / CONFIRM). contact_id and space_id are required. Not for listing / viewing — use list / get tools. "
-            "DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments."
-        ),
-        typical_user_questions=(
-            "Create a purchase request for customer Alpha with three items.",
-            "Submit a new sponsorship form for our dealer launch event.",
-            "File a purchase request with these product lines and expected delivery date.",
-            "Submit a sponsorship form under my name with this subject.",
-            "Edit my rejected purchase request with updated quantities.",
-            "Edit rejected sponsorship form and submit again.",
-        ),
-        aliases=(
-            "create purchase request",
-            "submit purchase request",
-            "create sponsorship form",
-            "submit sponsorship form",
-            "edit rejected purchase request",
-            "edit rejected sponsorship form",
-        ),
-    ),
     "crm_forms_purchase_requests_list": ToolIntent(
         category="purchase_request.form_submission",
         intent="List my purchase requests AND sponsorship forms with filters.",
@@ -1271,59 +1247,6 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Open my complaint about cracked basin.",
             "View the full summary of this complaint.",
             "Load this rejected complaint so I can edit it.",
-        ),
-    ),
-    "crm_forms_complaints_submit": ToolIntent(
-        category="complaint.form_submission",
-        intent="Start or continue a customer complaint draft; validates and searches DO first, then performs final submit after completion/confirmation.",
-        description=(
-            "Complaint filing draft/validator, DO searcher, and final submission tool — ONE TOOL FOR THE WHOLE FLOW. "
-            "DO NOT use this tool if the user is looking for downloadable templates, blank marketing forms, or attachments. "
-            "Call this tool as soon as the user says they want to file a complaint, even if no details are captured yet; "
-            "pass payload_json as `{}` or with any partial fields you have. "
-            "The API validates delivery_order_numbers first. If no valid DO is supplied, it returns status "
-            "`needs_do_lookup` (no filters yet) or `needs_do_selection` (filters supplied — candidates returned inline). "
-            "Lookup filters (customer_name, product_code/product, order_year, order_date_from, order_date_to) are ALL "
-            "OPTIONAL — ANY ONE is enough; do not demand all of them. "
-            "If the user has not supplied any filter yet, next_action will be `collect_do_lookup_filters` (ask the user). "
-            "If the user supplies filters, this tool runs the DO search internally and returns "
-            "`candidate_delivery_orders` (a list of `{delivery_order_number, order_date, debtor_name, products}`) with "
-            "next_action `select_delivery_order`. DO NOT call any other tool to search DOs — this tool already did it. "
-            "Pick a DO from `candidate_delivery_orders` and resubmit this tool with delivery_order_numbers set to the "
-            "chosen DO(s). If candidates are empty, next_action is `refine_do_lookup_filters` — ask the user for "
-            "different filters and resubmit. The same response carries a `field_guidance` block (per-field description, "
-            "recommended_values, observed_examples). When the user asks 'what can I input for X?' / 'what options for "
-            "complaint_type?' / 'what values are valid for customer_type?', answer DIRECTLY from `field_guidance` — do "
-            "NOT push them to provide a DO or filters first. Only proceed to DO lookup once the user actually wants to "
-            "file. After a valid DO is supplied, the same tool validates remaining required complaint fields and "
-            "confirmation. Final submit requires user_confirmed=true only after all required fields are complete and "
-            "the user explicitly confirms. Attachments are optional and are linked via crm_forms_entity_attachments_link "
-            "only when explicitly requested. For updates include system_id (or complaint_number alias) in payload_json "
-            "only when the complaint is rejected. contact_id and space_id are required for final complaint submission. "
-            "If the user is only searching DO numbers and has NOT asked to file/submit a complaint, use order-management "
-            "tools instead."
-        ),
-        typical_user_questions=(
-            "I want to file a complaint.",
-            "I need to complain about a damaged product.",
-            "Start a complaint case.",
-            "File a complaint for delivery order DO-500123.",
-            "Submit this complaint with cracked basin defect.",
-            "Record this complaint about damaged product on my order.",
-            "Create a complaint case after I confirm the summary.",
-            "Log this customer complaint for the selected delivery orders.",
-            "Find delivery orders for my complaint by product code and customer.",
-            "Look up DO numbers for this complaint — I have customer name and product.",
-            "Yes, proceed with finding the delivery order number(s) for this complaint.",
-            "Confirm: search delivery orders for the complaint using these filters.",
-            "Which delivery orders match for the complaint about product X for customer Y in 2026?",
-        ),
-        aliases=(
-            "create complaint",
-            "submit complaint",
-            "file complaint",
-            "find delivery orders for complaint",
-            "search DO for complaint",
         ),
     ),
     "crm_forms_entity_attachments_link": ToolIntent(

@@ -22,6 +22,7 @@ from app.api.v1.external import (
     conversation_variables,
     view_link,
     rag,
+    portal_tokens,
 )
 
 router = APIRouter()
@@ -47,3 +48,4 @@ router.include_router(chat_history.router, prefix="/chat-history", tags=["extern
 router.include_router(conversation_variables.router, prefix="/conversation-variables", tags=["external"])
 router.include_router(view_link.router, prefix="/view-link", tags=["external"])
 router.include_router(rag.router, prefix="/rag", tags=["external"])
+router.include_router(portal_tokens.router, prefix="/portal-tokens", tags=["external"])

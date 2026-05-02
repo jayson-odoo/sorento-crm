@@ -291,6 +291,7 @@ class StockInquiry(Base):
     space_id = Column(Text, nullable=True)
     respond_inbox_url = Column(Text, nullable=True)
     status = Column(String(50), default="new", nullable=False)
+    portal_draft_at = Column(DateTime(timezone=False), nullable=True)  # set while user is editing in submission portal; cleared on Submit
     last_responded_by = Column(Text, nullable=True)
     last_responded_at = Column(DateTime(timezone=False), nullable=True)
     rejection_reason = Column(Text, nullable=True)
@@ -334,6 +335,7 @@ class PurchaseRequestHeader(Base):
     requested_by = Column(Text, nullable=True)
     requested_at = Column(Date, nullable=True)
     status = Column(String(50), default="draft", nullable=False)
+    portal_draft_at = Column(DateTime(timezone=False), nullable=True)  # set while user is editing in submission portal; cleared on Submit
     source = Column(String(50), default="external", nullable=False)
     external_reference = Column(Text, nullable=True)
     contact_id = Column(Text, nullable=True)

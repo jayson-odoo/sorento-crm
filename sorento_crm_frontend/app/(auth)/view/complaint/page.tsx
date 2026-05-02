@@ -41,6 +41,7 @@ interface ComplaintViewSummary {
   last_responded_at?: string | null;
   created_at?: string | null;
   attachments?: ViewAttachment[] | null;
+  portal_url?: string | null;
 }
 
 function formatDateStr(value: string | null | undefined): string {
@@ -144,14 +145,21 @@ function ViewComplaintContent() {
     <div className="min-h-screen max-w-lg mx-auto px-4 py-6 space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl sm:text-2xl font-semibold leading-tight">Complaint</h1>
-        {viewInSystemPath && (
-          <Button variant="outline" size="sm" className="shrink-0" asChild>
-            <Link href={viewInSystemPath}>
-              <ExternalLink className="h-4 w-4 mr-2" />
-              View in system
-            </Link>
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2 self-start">
+          {summary?.portal_url && (
+            <Button variant="outline" size="sm" className="shrink-0" asChild>
+              <Link href={summary.portal_url}>All my submissions</Link>
+            </Button>
+          )}
+          {viewInSystemPath && (
+            <Button variant="outline" size="sm" className="shrink-0" asChild>
+              <Link href={viewInSystemPath}>
+                <ExternalLink className="h-4 w-4 mr-2" />
+                View in system
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
       {error && (
         <Alert variant="destructive">

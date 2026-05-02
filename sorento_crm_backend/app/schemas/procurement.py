@@ -832,6 +832,7 @@ class ViewLinkRequest(BaseModel):
 class ViewLinkResponse(BaseModel):
     view_token: str
     view_url: str  # Full URL if base_url was provided, else relative path
+    portal_url: Optional[str] = None  # Landing for the contact's submission portal (mintable when contact_id+space_id known)
 
 
 class PublicApprovalLineSummary(BaseModel):
