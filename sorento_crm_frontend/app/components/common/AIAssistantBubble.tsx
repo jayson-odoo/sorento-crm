@@ -1,12 +1,64 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Loader2, SendHorizonal, X } from 'lucide-react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Bot, History, Loader2, Plus, SendHorizonal, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { sendAIAssistantMessage, type AIAssistantMessage } from '@/lib/aiAssistantChatApi';
+import {
+  listAIAssistantConversations,
+  loadConversation,
+  sendAIAssistantMessage,
+  type AIAssistantConversationSummary,
+  type AIAssistantMessage,
+} from '@/lib/aiAssistantChatApi';
+import { getPageSnapshot } from '@/lib/aiPageSnapshot';
 import { useHasPermission } from '@/hooks/usePermissions';
+
+const SIZE_STORAGE_KEY = 'sorento.ai.bubbleSize';
+const DEFAULT_SIZE = { width: 384, height: 600 };
+const MIN_WIDTH = 320;
+const MIN_HEIGHT = 400;
+
+interface BubbleSize {
+  width: number;
+  height: number;
+}
+
+function clampSize(size: BubbleSize): BubbleSize {
+  if (typeof window === 'undefined') {
+    return {
+      width: Math.max(size.width, MIN_WIDTH),
+      height: Math.max(size.height, MIN_HEIGHT),
+    };
+  }
+  const maxW = Math.max(MIN_WIDTH, Math.floor(window.innerWidth * 0.5));
+  const maxH = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.5));
+  return {
+    width: Math.min(Math.max(size.width, MIN_WIDTH), maxW),
+    height: Math.min(Math.max(size.height, MIN_HEIGHT), maxH),
+  };
+}
+
+function formatRelativeTime(iso: string): string {
+  try {
+    const then = new Date(iso).getTime();
+    if (!Number.isFinite(then)) return '';
+    const diffSec = Math.max(0, Math.floor((Date.now() - then) / 1000));
+    if (diffSec < 60) return `${diffSec}s ago`;
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 30) return `${diffDay}d ago`;
+    const diffMo = Math.floor(diffDay / 30);
+    if (diffMo < 12) return `${diffMo}mo ago`;
+    return `${Math.floor(diffMo / 12)}y ago`;
+  } catch {
+    return '';
+  }
+}
 
 export default function AIAssistantBubble() {
   const canUseAIAssistant = useHasPermission('system.ai_assistant_chat.use');
@@ -15,6 +67,12 @@ export default function AIAssistantBubble() {
   const [messages, setMessages] = useState<AIAssistantMessage[]>([]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [bubbleSize, setBubbleSize] = useState<BubbleSize>(DEFAULT_SIZE);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyItems, setHistoryItems] = useState<AIAssistantConversationSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historySearch, setHistorySearch] = useState('');
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const canSend = input.trim().length > 0 && !isSending;
 
@@ -23,40 +81,179 @@ export default function AIAssistantBubble() {
     [messages],
   );
 
+  const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
+  const suggestions =
+    lastMessage && lastMessage.role === 'assistant'
+      ? (lastMessage.metadata_json?.suggestions || []).slice(0, 5)
+      : [];
+
+  // Load persisted size on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(SIZE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<BubbleSize>;
+        if (
+          parsed &&
+          typeof parsed.width === 'number' &&
+          typeof parsed.height === 'number'
+        ) {
+          setBubbleSize(clampSize({ width: parsed.width, height: parsed.height }));
+          return;
+        }
+      }
+    } catch {
+      // ignore parse errors
+    }
+    setBubbleSize(clampSize(DEFAULT_SIZE));
+  }, []);
+
+  // Re-clamp on viewport resize
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setBubbleSize((prev) => clampSize(prev));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [sortedMessages.length, isSending]);
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!canSend) return;
-    const text = input.trim();
-    setInput('');
-    const optimistic: AIAssistantMessage = {
-      id: `temp-user-${Date.now()}`,
-      role: 'user',
-      content: text,
-      metadata_json: {},
-      created_at: new Date().toISOString(),
+  // Debounced history fetch
+  useEffect(() => {
+    if (!open || !historyOpen) return;
+    let cancelled = false;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    const t = window.setTimeout(async () => {
+      try {
+        const res = await listAIAssistantConversations({ q: historySearch || undefined, limit: 100 });
+        if (!cancelled) setHistoryItems(res.items || []);
+      } catch (err) {
+        if (!cancelled) setHistoryError((err as Error)?.message || 'Failed to load conversations');
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
     };
-    setMessages((prev) => [...prev, optimistic]);
-    setIsSending(true);
+  }, [open, historyOpen, historySearch]);
+
+  const persistSize = useCallback((size: BubbleSize) => {
     try {
-      const conv = await sendAIAssistantMessage(text, conversationId);
-      setConversationId(conv.id);
-      setMessages(conv.messages || []);
-    } catch (err) {
-      const errorMessage: AIAssistantMessage = {
-        id: `temp-error-${Date.now()}`,
-        role: 'assistant',
-        content: (err as Error)?.message || 'Failed to get assistant response.',
+      window.localStorage.setItem(SIZE_STORAGE_KEY, JSON.stringify(size));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const startResize = useCallback(
+    (axis: 'top' | 'left' | 'corner') => (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startW = bubbleSize.width;
+      const startH = bubbleSize.height;
+      const prevUserSelect = document.body.style.userSelect;
+      document.body.style.userSelect = 'none';
+
+      const onMove = (ev: MouseEvent) => {
+        // Dragging up (decreasing Y) increases height; left (decreasing X) increases width.
+        const dx = startX - ev.clientX;
+        const dy = startY - ev.clientY;
+        let nextW = startW;
+        let nextH = startH;
+        if (axis === 'left' || axis === 'corner') nextW = startW + dx;
+        if (axis === 'top' || axis === 'corner') nextH = startH + dy;
+        setBubbleSize(clampSize({ width: nextW, height: nextH }));
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.userSelect = prevUserSelect;
+        setBubbleSize((prev) => {
+          const clamped = clampSize(prev);
+          persistSize(clamped);
+          return clamped;
+        });
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    },
+    [bubbleSize.height, bubbleSize.width, persistSize],
+  );
+
+  const sendText = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || isSending) return;
+      setInput('');
+      const optimistic: AIAssistantMessage = {
+        id: `temp-user-${Date.now()}`,
+        role: 'user',
+        content: trimmed,
         metadata_json: {},
         created_at: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, errorMessage]);
-    } finally {
-      setIsSending(false);
+      setMessages((prev) => [...prev, optimistic]);
+      setIsSending(true);
+      try {
+        const snapshot = getPageSnapshot();
+        const conv = await sendAIAssistantMessage(trimmed, conversationId, snapshot);
+        setConversationId(conv.id);
+        setMessages(conv.messages || []);
+      } catch (err) {
+        const errorMessage: AIAssistantMessage = {
+          id: `temp-error-${Date.now()}`,
+          role: 'assistant',
+          content: (err as Error)?.message || 'Failed to get assistant response.',
+          metadata_json: {},
+          created_at: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, errorMessage]);
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [conversationId, isSending],
+  );
+
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!canSend) return;
+    await sendText(input);
+  };
+
+  const onNewConversation = () => {
+    setMessages([]);
+    setConversationId(undefined);
+    setInput('');
+    setHistoryOpen(false);
+  };
+
+  const onToggleHistory = () => {
+    setHistoryOpen((v) => !v);
+  };
+
+  const onPickConversation = async (id: string) => {
+    try {
+      const conv = await loadConversation(id);
+      setConversationId(conv.id);
+      setMessages(conv.messages || []);
+      setHistoryOpen(false);
+    } catch (err) {
+      setHistoryError((err as Error)?.message || 'Failed to load conversation');
     }
+  };
+
+  const onSuggestionClick = async (s: string) => {
+    setInput(s);
+    await sendText(s);
   };
 
   if (!canUseAIAssistant) return null;
@@ -73,82 +270,203 @@ export default function AIAssistantBubble() {
       </Button>
 
       {open ? (
-        <div className="absolute bottom-16 right-0 flex h-[min(60vh,420px)] w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm sm:h-[min(65vh,520px)] sm:w-[22rem] md:h-[min(70vh,600px)] md:w-[26rem] lg:h-[min(72vh,680px)] lg:w-[30rem] xl:h-[min(75vh,720px)] xl:w-[34rem] 2xl:w-[40rem]">
+        <div
+          className="absolute bottom-20 right-0 flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background to-muted/40 shadow-2xl backdrop-blur-sm"
+          style={{
+            width: `${bubbleSize.width}px`,
+            height: `${bubbleSize.height}px`,
+            maxWidth: 'calc(100vw - 3rem)',
+            maxHeight: 'calc(100vh - 6rem)',
+          }}
+        >
+          {/* Resize handles */}
+          <div
+            onMouseDown={startResize('top')}
+            className="absolute left-0 right-0 top-0 z-10 h-[6px] cursor-ns-resize hover:bg-primary/20"
+            aria-hidden="true"
+          />
+          <div
+            onMouseDown={startResize('left')}
+            className="absolute bottom-0 left-0 top-0 z-10 w-[6px] cursor-ew-resize hover:bg-primary/20"
+            aria-hidden="true"
+          />
+          <div
+            onMouseDown={startResize('corner')}
+            className="absolute left-0 top-0 z-20 h-[12px] w-[12px] cursor-nwse-resize hover:bg-primary/30"
+            aria-hidden="true"
+          />
+
           <div className="flex items-center justify-between border-b border-border/70 bg-background/80 px-4 py-3">
             <h3 className="text-base font-semibold">AI assistant</h3>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="rounded-full"
-              onClick={() => setOpen(false)}
-              aria-label="Close AI assistant"
-            >
-              <X className="size-4" />
-            </Button>
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <div className="space-y-3">
-              {sortedMessages.length === 0 ? (
-                <p className="rounded-xl bg-background/70 p-3 text-sm text-muted-foreground">
-                  Ask a CRM question to test MCP and embeddings.
-                </p>
-              ) : null}
-              {sortedMessages.map((m) => (
-                <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div
-                    className={`max-w-[85%] rounded-2xl px-3 py-2.5 text-sm leading-relaxed shadow-sm ${
-                      m.role === 'user'
-                        ? 'bg-primary/15 text-foreground'
-                        : 'bg-background/85 text-foreground'
-                    }`}
-                  >
-                    <p className="whitespace-pre-wrap">{m.content}</p>
-                    {m.role === 'assistant' && m.metadata_json?.links?.length ? (
-                      <div className="mt-2 space-y-1">
-                        {m.metadata_json.links.map((href) => (
-                          <Link key={href} href={href} className="block text-xs text-primary hover:underline">
-                            {href}
-                          </Link>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-              {isSending ? (
-                <div className="flex justify-start">
-                  <div className="rounded-2xl bg-background/85 p-3 text-sm shadow-sm">
-                    <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
-                      <Bot className="size-3.5 animate-pulse" />
-                      Thinking...
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="size-2 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:-0.3s]" />
-                      <span className="size-2 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:-0.15s]" />
-                      <span className="size-2 animate-bounce rounded-full bg-muted-foreground/70" />
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-              <div ref={messagesEndRef} />
-            </div>
-          </div>
-
-          <form onSubmit={onSubmit} className="border-t border-border/70 bg-background/85 p-3">
-            <div className="flex items-center gap-2">
-              <Input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask the assistant..."
-                className="rounded-xl"
-              />
-              <Button type="submit" size="icon" className="rounded-xl" disabled={!canSend}>
-                {isSending ? <Loader2 className="size-4 animate-spin" /> : <SendHorizonal className="size-4" />}
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 rounded-full"
+                onClick={onNewConversation}
+                aria-label="Start new conversation"
+                title="New conversation"
+              >
+                <Plus className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 rounded-full"
+                onClick={onToggleHistory}
+                aria-label="Show conversation history"
+                title="History"
+              >
+                <History className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 rounded-full"
+                onClick={() => setOpen(false)}
+                aria-label="Close AI assistant"
+                title="Close"
+              >
+                <X className="size-4" />
               </Button>
             </div>
-          </form>
+          </div>
+
+          {historyOpen ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="border-b border-border/60 bg-background/70 p-3">
+                <Input
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  placeholder="Search conversations..."
+                  className="rounded-xl"
+                />
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                {historyLoading ? (
+                  <div className="flex items-center justify-center p-4 text-sm text-muted-foreground">
+                    <Loader2 className="mr-2 size-4 animate-spin" />
+                    Loading...
+                  </div>
+                ) : historyError ? (
+                  <p className="rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{historyError}</p>
+                ) : historyItems.length === 0 ? (
+                  <p className="rounded-xl bg-background/70 p-3 text-sm text-muted-foreground">
+                    No conversations yet.
+                  </p>
+                ) : (
+                  <ul className="space-y-1">
+                    {historyItems.map((c) => (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          onClick={() => onPickConversation(c.id)}
+                          className="flex w-full flex-col items-start gap-0.5 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60 focus:bg-muted/60 focus:outline-none"
+                        >
+                          <span className="line-clamp-1 font-medium text-foreground">
+                            {c.title?.trim() || 'Untitled conversation'}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatRelativeTime(c.updated_at)}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                <div className="space-y-3">
+                  {sortedMessages.length === 0 ? (
+                    <p className="rounded-xl bg-background/70 p-3 text-sm text-muted-foreground">
+                      Ask a CRM question to test MCP and embeddings.
+                    </p>
+                  ) : null}
+                  {sortedMessages.map((m) => (
+                    <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div
+                        className={`max-w-[85%] rounded-2xl px-3 py-2.5 text-sm leading-relaxed shadow-sm ${
+                          m.role === 'user'
+                            ? 'bg-primary/15 text-foreground'
+                            : 'bg-background/85 text-foreground'
+                        }`}
+                      >
+                        <p className="whitespace-pre-wrap">{m.content}</p>
+                        {m.role === 'assistant' && m.metadata_json?.links?.length ? (
+                          <div className="mt-2 space-y-1">
+                            {m.metadata_json.links.map((href) => (
+                              <Link
+                                key={href}
+                                href={href}
+                                className="block text-xs text-primary hover:underline"
+                              >
+                                {href}
+                              </Link>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                  {suggestions.length > 0 && !isSending ? (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {suggestions.map((s, idx) => (
+                        <button
+                          key={`${idx}-${s}`}
+                          type="button"
+                          onClick={() => onSuggestionClick(s)}
+                          className="rounded-full border bg-secondary px-3 py-1 text-xs hover:bg-secondary/80"
+                          title={s}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  {isSending ? (
+                    <div className="flex justify-start">
+                      <div className="rounded-2xl bg-background/85 p-3 text-sm shadow-sm">
+                        <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+                          <Bot className="size-3.5 animate-pulse" />
+                          Thinking...
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="size-2 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:-0.3s]" />
+                          <span className="size-2 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:-0.15s]" />
+                          <span className="size-2 animate-bounce rounded-full bg-muted-foreground/70" />
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  <div ref={messagesEndRef} />
+                </div>
+              </div>
+
+              <form onSubmit={onSubmit} className="border-t border-border/70 bg-background/85 p-3">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    placeholder="Ask the assistant..."
+                    className="rounded-xl"
+                  />
+                  <Button type="submit" size="icon" className="rounded-xl" disabled={!canSend}>
+                    {isSending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <SendHorizonal className="size-4" />
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </>
+          )}
         </div>
       ) : null}
     </div>
