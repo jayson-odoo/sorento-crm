@@ -665,8 +665,23 @@ export const MENU_SIDEBAR: MenuConfig = [
       },
       {
         title: 'AI Assistant',
-        path: '/system-management/ai-assistant',
-        permission: 'system.ai_assistant_settings.view',
+        children: [
+          {
+            title: 'Settings',
+            path: '/system-management/ai-assistant',
+            permission: 'system.ai_assistant_settings.view',
+          },
+          {
+            title: 'Usage',
+            path: '/system-management/ai-assistant/usage',
+            permission: 'system.ai_assistant_settings.view',
+          },
+          {
+            title: 'Wishlist',
+            path: '/system-management/ai-assistant/wishlist',
+            permission: 'system.ai_assistant_settings.view',
+          },
+        ],
       },
     ],
   },

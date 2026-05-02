@@ -4,8 +4,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getAIAssistantConfig,
   getAIAssistantTools,
+  testAIAssistantConnection,
   updateAIAssistantConfig,
   type AIAssistantConfigUpdatePayload,
+  type TestConnectionPayload,
 } from '../services/aiAssistantAdminService';
 
 const KEY = ['system-ai-assistant-config'];
@@ -31,5 +33,11 @@ export function useAIAssistantTools() {
     queryKey: TOOLS_KEY,
     queryFn: getAIAssistantTools,
     staleTime: 60 * 1000,
+  });
+}
+
+export function useTestAIAssistantConnection() {
+  return useMutation({
+    mutationFn: (payload: TestConnectionPayload) => testAIAssistantConnection(payload),
   });
 }

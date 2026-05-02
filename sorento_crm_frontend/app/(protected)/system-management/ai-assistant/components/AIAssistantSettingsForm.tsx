@@ -10,15 +10,48 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
-import { useAIAssistantConfig, useAIAssistantTools, useUpdateAIAssistantConfig } from '../hooks/useAIAssistantAdmin';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Slider, SliderThumb } from '@/components/ui/slider';
+import {
+  useAIAssistantConfig,
+  useAIAssistantTools,
+  useTestAIAssistantConnection,
+  useUpdateAIAssistantConfig,
+} from '../hooks/useAIAssistantAdmin';
+
+const PROVIDER_OPTIONS: { value: string; label: string }[] = [
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'anthropic', label: 'Anthropic' },
+];
+
+const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
+  openai: [
+    { value: 'gpt-4o-mini', label: 'GPT-4o mini' },
+    { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'gpt-4.1', label: 'GPT-4.1' },
+  ],
+  anthropic: [
+    { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+    { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
+  ],
+};
 
 export default function AIAssistantSettingsForm() {
   const { data, isLoading, isError, error } = useAIAssistantConfig();
   const toolsQuery = useAIAssistantTools();
   const updateCfg = useUpdateAIAssistantConfig();
+  const testConn = useTestAIAssistantConnection();
 
   const [provider, setProvider] = useState('openai');
   const [model, setModel] = useState('gpt-4o-mini');
+  const [customModel, setCustomModel] = useState(false);
   const [temperature, setTemperature] = useState(0);
   const [systemPrompt, setSystemPrompt] = useState('');
   const [apiKeyInput, setApiKeyInput] = useState('');
@@ -31,8 +64,13 @@ export default function AIAssistantSettingsForm() {
 
   useEffect(() => {
     if (!data) return;
-    setProvider(data.provider || 'openai');
-    setModel(data.model || 'gpt-4o-mini');
+    const loadedProvider = data.provider || 'openai';
+    const loadedModel = data.model || 'gpt-4o-mini';
+    setProvider(loadedProvider);
+    setModel(loadedModel);
+    // Auto-detect custom-model if loaded model isn't in the standard list for the provider.
+    const knownForProvider = (MODEL_OPTIONS[loadedProvider] || []).some((m) => m.value === loadedModel);
+    setCustomModel(!knownForProvider);
     setTemperature(data.temperature ?? 0);
     setSystemPrompt(data.system_prompt || '');
     setEnabledTools(data.enabled_tools || []);
@@ -49,6 +87,37 @@ export default function AIAssistantSettingsForm() {
     return allTools.filter((t) => t.toLowerCase().includes(q));
   }, [toolSearch, toolsQuery.data]);
 
+  const modelOptions = MODEL_OPTIONS[provider] || [];
+
+  const handleProviderChange = (next: string) => {
+    setProvider(next);
+    // Reset model to first option in the new provider's list (unless user has chosen custom).
+    if (!customModel) {
+      const first = MODEL_OPTIONS[next]?.[0]?.value;
+      if (first) setModel(first);
+    }
+  };
+
+  const handleTestConnection = () => {
+    if (!apiKeyEdited || !apiKeyInput.trim()) {
+      toast.error('Enter API key to test');
+      return;
+    }
+    testConn.mutate(
+      { provider: provider.trim(), api_key: apiKeyInput.trim(), model: model.trim() },
+      {
+        onSuccess: (result) => {
+          if (result.ok) {
+            toast.success(`Connected in ${result.latency_ms}ms via ${provider}`);
+          } else {
+            toast.error(result.message || 'Connection failed');
+          }
+        },
+        onError: (e: Error) => toast.error(e.message),
+      },
+    );
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
@@ -64,22 +133,65 @@ export default function AIAssistantSettingsForm() {
       <div className="grid gap-3 md:grid-cols-3">
         <div className="space-y-2">
           <Label>Provider</Label>
-          <Input value={provider} onChange={(e) => setProvider(e.target.value)} placeholder="openai" />
+          <Select value={provider} onValueChange={handleProviderChange}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select provider" />
+            </SelectTrigger>
+            <SelectContent>
+              {PROVIDER_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="space-y-2">
           <Label>Model</Label>
-          <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="gpt-4o-mini" />
+          {customModel ? (
+            <Input
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="custom-model-name"
+            />
+          ) : (
+            <Select value={model} onValueChange={setModel}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select model" />
+              </SelectTrigger>
+              <SelectContent>
+                {modelOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Checkbox
+              checked={customModel}
+              onCheckedChange={(c) => setCustomModel(c === true)}
+            />
+            Custom model
+          </label>
         </div>
         <div className="space-y-2">
-          <Label>Temperature (0-2)</Label>
-          <Input
-            type="number"
-            min={0}
-            max={2}
-            step={1}
-            value={temperature}
-            onChange={(e) => setTemperature(Number(e.target.value || 0))}
-          />
+          <Label>Temperature: {temperature.toFixed(1)}</Label>
+          <div className="px-1 pt-3">
+            <Slider
+              min={0}
+              max={2}
+              step={0.1}
+              value={[temperature]}
+              onValueChange={(vals: number[]) => {
+                const v = vals?.[0];
+                if (typeof v === 'number') setTemperature(v);
+              }}
+            >
+              <SliderThumb />
+            </Slider>
+          </div>
         </div>
       </div>
 
@@ -108,6 +220,27 @@ export default function AIAssistantSettingsForm() {
           }}
           placeholder="****1234"
         />
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={testConn.isPending}
+            onClick={handleTestConnection}
+          >
+            {testConn.isPending ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                Testing...
+              </>
+            ) : (
+              'Test connection'
+            )}
+          </Button>
+          {!apiKeyEdited ? (
+            <span className="text-xs text-muted-foreground">Enter API key to test</span>
+          ) : null}
+        </div>
       </div>
 
       <div className="space-y-2">

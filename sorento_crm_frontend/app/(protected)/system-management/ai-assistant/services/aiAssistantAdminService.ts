@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 
 export interface AIAssistantConfig {
   id: string;
@@ -51,6 +52,32 @@ export async function getAIAssistantTools(): Promise<string[]> {
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail || 'Failed to load AI assistant tools');
+  }
+  return r.json();
+}
+
+export interface TestConnectionPayload {
+  provider: string;
+  api_key: string;
+  model: string;
+}
+
+export interface TestConnectionResult {
+  ok: boolean;
+  message: string;
+  latency_ms: number;
+}
+
+export async function testAIAssistantConnection(
+  payload: TestConnectionPayload,
+): Promise<TestConnectionResult> {
+  const r = await apiFetch('/api/v1/system/ai-assistant/test-connection', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    throw new Error(await extractApiError(r, 'Failed to test AI assistant connection'));
   }
   return r.json();
 }
