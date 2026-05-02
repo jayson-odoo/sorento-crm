@@ -116,16 +116,19 @@ class RecentQueryItem(BaseModel):
     user_name: Optional[str] = None
     query_preview: str = ""
     response_time_ms: int = 0
-    total_tokens: int = 0
+    tokens: int = 0
     created_at: Optional[datetime] = None
 
 
 class QueryDetailResponse(BaseModel):
-    message_id: str
-    role: str
-    content: str
+    message_id: Optional[str] = None
+    user_name: Optional[str] = None
+    query_preview: str = ""
+    reply: str = ""
+    response_time_ms: int = 0
+    tokens: int = 0
+    created_at: Optional[datetime] = None
     metadata_json: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime
     usage: Optional[dict[str, Any]] = None
     tools_used: list[dict[str, Any]] = Field(default_factory=list)
 

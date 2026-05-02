@@ -268,7 +268,7 @@ def usage_recent_queries(
 ):
     f, t = _resolve_window(from_, to)
     rows = (
-        db.query(AIAssistantUsageLog, User.name, AIAssistantMessage.content)
+        db.query(AIAssistantUsageLog, User.name, AIAssistantMessage.created_at, AIAssistantMessage.conversation_id)
         .outerjoin(User, User.id == AIAssistantUsageLog.user_id)
         .outerjoin(AIAssistantMessage, AIAssistantMessage.id == AIAssistantUsageLog.message_id)
         .filter(AIAssistantUsageLog.created_at >= f, AIAssistantUsageLog.created_at <= t)
@@ -277,15 +277,30 @@ def usage_recent_queries(
         .all()
     )
     out: list[RecentQueryItem] = []
-    for log, user_name, content in rows:
-        preview = (content or "")[:120]
+    for log, user_name, asst_created, conv_id in rows:
+        # Find the user message that prompted this assistant turn:
+        # most recent user message in the same conversation BEFORE the assistant message.
+        preview = ""
+        if conv_id and asst_created:
+            user_msg = (
+                db.query(AIAssistantMessage.content)
+                .filter(
+                    AIAssistantMessage.conversation_id == conv_id,
+                    AIAssistantMessage.role == "user",
+                    AIAssistantMessage.created_at <= asst_created,
+                )
+                .order_by(AIAssistantMessage.created_at.desc())
+                .first()
+            )
+            if user_msg:
+                preview = (user_msg[0] or "")[:120]
         out.append(
             RecentQueryItem(
                 message_id=str(log.message_id) if log.message_id else None,
                 user_name=user_name,
                 query_preview=preview,
                 response_time_ms=int(log.response_time_ms or 0),
-                total_tokens=int(log.total_tokens or 0),
+                tokens=int(log.total_tokens or 0),
                 created_at=log.created_at,
             )
         )
@@ -323,12 +338,34 @@ def usage_query_detail(
     tools_used = meta.get("tool_calls") or []
     if not isinstance(tools_used, list):
         tools_used = []
+    # Find prompting user message for query_preview
+    user_query = ""
+    if msg.conversation_id:
+        prior = (
+            db.query(AIAssistantMessage.content)
+            .filter(
+                AIAssistantMessage.conversation_id == msg.conversation_id,
+                AIAssistantMessage.role == "user",
+                AIAssistantMessage.created_at <= msg.created_at,
+            )
+            .order_by(AIAssistantMessage.created_at.desc())
+            .first()
+        )
+        if prior:
+            user_query = (prior[0] or "")[:500]
+    user_name = None
+    if log and log.user_id:
+        u = db.query(User).filter(User.id == log.user_id).first()
+        user_name = u.name if u else None
     return QueryDetailResponse(
         message_id=str(msg.id),
-        role=msg.role,
-        content=msg.content,
-        metadata_json=meta,
+        user_name=user_name,
+        query_preview=user_query,
+        reply=msg.content or "",
+        response_time_ms=int(log.response_time_ms or 0) if log else 0,
+        tokens=int(log.total_tokens or 0) if log else 0,
         created_at=msg.created_at,
+        metadata_json=meta,
         usage=usage_dict,
         tools_used=tools_used,
     )
