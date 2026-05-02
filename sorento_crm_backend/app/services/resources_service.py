@@ -990,40 +990,51 @@ class AttachmentService:
         return file_path
 
     def delete_attachment(self, attachment_id: str, deleted_by: str):
-        """Hard delete an attachment (permanent). Removes DB record; S3 delete runs in background."""
+        """Hard delete an attachment (permanent). Removes DB record; storage delete runs in background."""
         attachment = self.get_attachment(attachment_id)
         file_path = attachment.file_path
-        s3_keys = [self._s3_key_from_file_path(file_path)] if file_path else []
+        provider = getattr(attachment, "storage_provider", None) or "s3"
+        keys = [self._s3_key_from_file_path(file_path)] if file_path else []
         self.db.delete(attachment)
         self.db.commit()
-        if s3_keys:
+        if keys:
             try:
-                from app.tasks.s3_tasks import delete_s3_files
+                from app.tasks.s3_tasks import delete_storage_files
                 from app.services.queue_service import enqueue_job
-                enqueue_job(delete_s3_files, s3_keys, queue_name="imports", job_timeout=300)
+                enqueue_job(
+                    delete_storage_files,
+                    [(provider, k) for k in keys],
+                    queue_name="imports",
+                    job_timeout=300,
+                )
             except Exception as e:
-                logger.warning("Failed to enqueue S3 delete for %s: %s", attachment_id, e)
+                logger.warning("Failed to enqueue storage delete for %s: %s", attachment_id, e)
         return {"message": "Attachment deleted successfully"}
 
     def delete_attachments(self, attachment_ids: list[str], deleted_by: str):
-        """Hard delete multiple attachments by ID. Skips not-found. S3 deletes run in background."""
-        s3_keys = []
+        """Hard delete multiple attachments by ID. Skips not-found. Storage deletes run in background."""
+        items: list[tuple[str, str]] = []  # (provider, key)
         count = 0
         for aid in attachment_ids:
             attachment = self.db.query(Attachment).filter(Attachment.id == aid).first()
             if attachment:
                 if attachment.file_path:
-                    s3_keys.append(self._s3_key_from_file_path(attachment.file_path))
+                    items.append(
+                        (
+                            getattr(attachment, "storage_provider", None) or "s3",
+                            self._s3_key_from_file_path(attachment.file_path),
+                        )
+                    )
                 self.db.delete(attachment)
                 count += 1
         self.db.commit()
-        if s3_keys:
+        if items:
             try:
-                from app.tasks.s3_tasks import delete_s3_files
+                from app.tasks.s3_tasks import delete_storage_files
                 from app.services.queue_service import enqueue_job
-                enqueue_job(delete_s3_files, s3_keys, queue_name="imports", job_timeout=600)
+                enqueue_job(delete_storage_files, items, queue_name="imports", job_timeout=600)
             except Exception as e:
-                logger.warning("Failed to enqueue S3 deletes for %s keys: %s", len(s3_keys), e)
+                logger.warning("Failed to enqueue storage deletes for %s keys: %s", len(items), e)
         return {"message": f"{count} attachment(s) deleted successfully", "deleted_count": count}
 
     def archive_attachments_in_directories(self, directory_ids: list[str], archived_by: str) -> int:
@@ -1047,43 +1058,18 @@ class AttachmentService:
         return count
     
     def get_file_content(self, attachment_id: str) -> bytes:
-        """
-        Retrieve file content from S3 for an attachment.
-        
-        Args:
-            attachment_id: ID of the attachment
-        
-        Returns:
-            File content as bytes
-        
-        Raises:
-            Exception: If attachment not found or file retrieval fails
-        """
+        """Retrieve file bytes from whichever storage provider hosts this attachment."""
         attachment = self.get_attachment(attachment_id)
-        
         if not attachment.file_path:
             raise Exception("Attachment has no file path")
-        
-        from app.services.s3_service import S3Service
-        from urllib.parse import urlparse
-        
-        s3_service = S3Service()
-        
+
+        from app.services.storage_router import extract_key, get_backend
+
+        provider = getattr(attachment, "storage_provider", None)
+        key = extract_key(attachment.file_path)
+        if not key:
+            raise Exception("Could not extract storage key from file_path")
         try:
-            # Extract S3 key from URL if it's a full URL
-            # Format: https://bucket.s3.region.amazonaws.com/key
-            # Or: https://bucket.s3.amazonaws.com/key
-            file_path = attachment.file_path
-            if file_path.startswith("https://"):
-                # Parse URL to extract key
-                parsed = urlparse(file_path)
-                # Path will be like /key, so remove leading /
-                s3_key = parsed.path.lstrip("/")
-            else:
-                # Already a key
-                s3_key = file_path
-            
-            file_content = s3_service.download_file(s3_key)
-            return file_content
+            return get_backend(provider).download_file(key)
         except Exception as e:
-            raise Exception(f"Failed to retrieve file from S3: {str(e)}")
+            raise Exception(f"Failed to retrieve file from storage: {str(e)}")

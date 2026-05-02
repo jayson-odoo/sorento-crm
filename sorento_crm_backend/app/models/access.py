@@ -1,10 +1,37 @@
 """Access control models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index, Integer, text
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Table, Text, Index, Integer, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 import uuid
+
+
+# Join table — many-to-many between AccessAgent and McpTool.
+agent_mcp_tools = Table(
+    "agent_mcp_tools",
+    Base.metadata,
+    Column(
+        "agent_id",
+        UUID(as_uuid=False),
+        ForeignKey("access_agents.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "tool_id",
+        UUID(as_uuid=False),
+        ForeignKey("mcp_tools.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "created_at",
+        DateTime(timezone=False),
+        server_default=func.now(),
+        nullable=False,
+    ),
+    Index("ix_agent_mcp_tools_agent_id", "agent_id"),
+    Index("ix_agent_mcp_tools_tool_id", "tool_id"),
+)
 
 
 class ContactAccessType(Base):
@@ -102,7 +129,11 @@ class AccessAgent(Base):
 
     contact_accesses = relationship("ContactAgentAccess", back_populates="agent")
     agent_teams = relationship("AgentTeam", back_populates="agent", cascade="all, delete-orphan")
-    mcp_tools = relationship("McpTool", back_populates="agent")
+    mcp_tools = relationship(
+        "McpTool",
+        secondary=agent_mcp_tools,
+        back_populates="agents",
+    )
 
     __table_args__ = (
         Index("ix_access_agents_is_active", "is_active"),
@@ -232,8 +263,8 @@ class McpTool(Base):
     """Persisted catalog row for one MCP tool. Synced from code catalog by
     `app.services.mcp_tool_registry_service.sync_catalog`.
 
-    Ownership is N:1 — a tool belongs to at most one access agent (`agent_id`
-    nullable). Sync NEVER overwrites `agent_id`; only admins do.
+    Ownership is many-to-many via ``agent_mcp_tools``. Sync NEVER touches
+    ownership; only admins do.
     """
 
     __tablename__ = "mcp_tools"
@@ -244,23 +275,21 @@ class McpTool(Base):
     module_key = Column(Text, nullable=False, default="", server_default="")
     http_path = Column(Text, nullable=False)
     http_method = Column(Text, nullable=False, default="GET", server_default="GET")
-    agent_id = Column(
-        UUID(as_uuid=False),
-        ForeignKey("access_agents.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     is_active = Column(Boolean, default=True, nullable=False)
     last_seen_at = Column(DateTime(timezone=False), nullable=False)
     created_at = Column(
         DateTime(timezone=False), server_default=func.now(), nullable=False
     )
 
-    agent = relationship("AccessAgent", back_populates="mcp_tools")
+    agents = relationship(
+        "AccessAgent",
+        secondary=agent_mcp_tools,
+        back_populates="mcp_tools",
+    )
 
     __table_args__ = (
         Index("ix_mcp_tools_module_key", "module_key"),
         Index("ix_mcp_tools_is_active", "is_active"),
-        Index("ix_mcp_tools_agent_id", "agent_id"),
     )
 
 

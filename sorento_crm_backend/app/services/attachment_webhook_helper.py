@@ -13,28 +13,28 @@ from app.services.n8n_webhook_settings import get_n8n_attachment_webhook_url
 logger = logging.getLogger(__name__)
 
 
-def _build_signed_attachment_url(file_path: Optional[str]) -> Optional[str]:
-    """Build a short-lived signed URL for webhook consumers."""
+def _build_signed_attachment_url(
+    file_path: Optional[str],
+    provider: Optional[str] = None,
+) -> Optional[str]:
+    """Build a short-lived signed URL for webhook consumers, dispatched per provider."""
     if not file_path:
         return file_path
     try:
-        from app.services.s3_service import S3Service
+        from app.services.storage_router import resolve_signed_url
 
-        s3 = S3Service()
-        if file_path.startswith(("https://", "http://")):
-            parsed = urlparse(file_path)
-            # Always re-sign from the object path so expired Policy/Signature query strings are replaced
-            key = unquote((parsed.path or "").lstrip("/"))
-            return s3.get_signed_url(key) if key else file_path
-        return s3.get_signed_url(unquote(file_path))
+        return resolve_signed_url(file_path, provider=provider)
     except Exception as e:
         logger.warning("Could not generate signed attachment URL for webhook: %s", e)
         return file_path
 
 
-def build_signed_attachment_url_for_webhook(file_path: Optional[str]) -> Optional[str]:
-    """Public alias: always generate a fresh CloudFront signed URL from stored base URL or S3 key."""
-    return _build_signed_attachment_url(file_path)
+def build_signed_attachment_url_for_webhook(
+    file_path: Optional[str],
+    provider: Optional[str] = None,
+) -> Optional[str]:
+    """Public alias: always generate a fresh signed URL from stored base URL or storage key."""
+    return _build_signed_attachment_url(file_path, provider=provider)
 
 
 def create_and_send_webhook(
@@ -60,7 +60,10 @@ def create_and_send_webhook(
         status="pending",
     )
     integration_log = integration_service.create_integration_log(integration_log_data)
-    signed_attachment_url = _build_signed_attachment_url(getattr(attachment, "file_path", None))
+    signed_attachment_url = _build_signed_attachment_url(
+        getattr(attachment, "file_path", None),
+        provider=getattr(attachment, "storage_provider", None),
+    )
     webhook_payload = {
         "integration_log_id": integration_log.id,
         "attachment_url": signed_attachment_url,

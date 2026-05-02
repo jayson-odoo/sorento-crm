@@ -18,6 +18,7 @@ class Complaint(Base):
     __audit_entity_type__ = "complaint"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    complaint_number = Column(Text, nullable=True)
     delivery_order_number = Column(Text, nullable=True)
     complaint_date = Column(Date, nullable=True)
     customer_type = Column(Text, nullable=True)
@@ -51,6 +52,7 @@ class Complaint(Base):
         Index("ix_complaints_delivery_order_number", "delivery_order_number"),
         Index("ix_complaints_complaint_date", "complaint_date"),
         Index("ix_complaints_customer_name", "customer_name"),
+        Index("ix_complaints_complaint_number", "complaint_number"),
     )
 
 

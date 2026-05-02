@@ -30,7 +30,7 @@ def _new_agent(db: Session, code: str = "TEST-AGENT") -> AccessAgent:
     return a
 
 
-def test_mcp_tool_inserts_with_nullable_agent(db: Session):
+def test_mcp_tool_inserts_unowned(db: Session):
     tool = McpTool(
         id=str(uuid.uuid4()),
         tool_name=f"test_tool_{uuid.uuid4().hex[:8]}",
@@ -41,24 +41,28 @@ def test_mcp_tool_inserts_with_nullable_agent(db: Session):
     db.add(tool)
     db.flush()
     assert tool.id is not None
-    assert tool.agent_id is None
+    assert tool.agents == []
     assert tool.is_active is True
 
 
-def test_access_agent_mcp_tools_relationship(db: Session):
-    agent = _new_agent(db, code=f"REL-{uuid.uuid4().hex[:6]}")
+def test_access_agent_mcp_tools_many_to_many(db: Session):
+    agent_a = _new_agent(db, code=f"REL-A-{uuid.uuid4().hex[:6]}")
+    agent_b = _new_agent(db, code=f"REL-B-{uuid.uuid4().hex[:6]}")
     tool = McpTool(
         id=str(uuid.uuid4()),
         tool_name=f"rel_tool_{uuid.uuid4().hex[:8]}",
         http_path="/api/v1/rel",
         http_method="GET",
-        agent_id=agent.id,
         last_seen_at=datetime.utcnow(),
     )
+    tool.agents = [agent_a, agent_b]
     db.add(tool)
     db.flush()
-    db.refresh(agent)
-    assert tool in agent.mcp_tools
+    db.refresh(agent_a)
+    db.refresh(agent_b)
+    assert tool in agent_a.mcp_tools
+    assert tool in agent_b.mcp_tools
+    assert {a.id for a in tool.agents} == {agent_a.id, agent_b.id}
 
 
 def test_mcp_access_log_inserts(db: Session):

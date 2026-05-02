@@ -104,6 +104,7 @@ export async function apiFetch(
           '/api/sla-management/',
           '/api/resource-management/',
           '/api/user-management/',
+          '/api/system/',
         ];
 
         const isBusinessApi = !isNextJsRoute && businessApiRoutes.some(route => input.startsWith(route));
@@ -132,6 +133,8 @@ export async function apiFetch(
           url = `/api/v1/resource-management${input.replace('/api/resource-management', '')}`;
         } else if (input.startsWith('/api/user-management/')) {
           url = `/api/v1/user-management${input.replace('/api/user-management', '')}`;
+        } else if (input.startsWith('/api/system/')) {
+          url = `/api/v1/system${input.replace('/api/system', '')}`;
         } else if (input.startsWith('/api/v1/')) {
           // Already using v1 path - use as-is (relative)
           url = input;

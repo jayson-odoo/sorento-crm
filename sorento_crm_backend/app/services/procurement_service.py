@@ -4443,13 +4443,30 @@ class PurchaseRequestService:
         if space_id is not None:
             q = q.filter(PurchaseRequestHeader.space_id == str(space_id).strip())
         if query:
+            like = f"%{query}%"
+            line_subq = (
+                self.db.query(PurchaseRequestLine.purchase_request_id)
+                .filter(
+                    or_(
+                        PurchaseRequestLine.item_code.ilike(like),
+                        PurchaseRequestLine.remark.ilike(like),
+                    )
+                )
+            )
             q = q.filter(
                 or_(
-                    PurchaseRequestHeader.customer_name.ilike(f"%{query}%"),
-                    PurchaseRequestHeader.project_title.ilike(f"%{query}%"),
-                    PurchaseRequestHeader.purpose.ilike(f"%{query}%"),
-                    PurchaseRequestHeader.requested_by.ilike(f"%{query}%"),
-                    PurchaseRequestHeader.request_number.ilike(f"%{query}%"),
+                    PurchaseRequestHeader.request_number.ilike(like),
+                    PurchaseRequestHeader.customer_name.ilike(like),
+                    PurchaseRequestHeader.project_title.ilike(like),
+                    PurchaseRequestHeader.purpose.ilike(like),
+                    PurchaseRequestHeader.delivery_address.ilike(like),
+                    PurchaseRequestHeader.sponsor_subject.ilike(like),
+                    PurchaseRequestHeader.requested_by.ilike(like),
+                    PurchaseRequestHeader.external_reference.ilike(like),
+                    PurchaseRequestHeader.total_project_value_text.ilike(like),
+                    PurchaseRequestHeader.status.ilike(like),
+                    PurchaseRequestHeader.approval_status.ilike(like),
+                    PurchaseRequestHeader.id.in_(line_subq),
                 )
             )
         if request_type and request_type.strip() in ("purchase_request", "sponsorship_form"):

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import and_, or_
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.access import (
@@ -20,6 +20,7 @@ from app.models.access import (
     McpAccessLog,
     McpTool,
     RespondContact,
+    agent_mcp_tools,
 )
 from app.models.respond_workspace import RespondWorkspace
 
@@ -99,7 +100,16 @@ def evaluate(
         )
         return AccessDecision(allowed=False, decision="deny_unknown_tool", agent_name=None)
 
-    if tool.agent_id is None:
+    linked_agents = (
+        db.query(AccessAgent)
+        .join(agent_mcp_tools, agent_mcp_tools.c.agent_id == AccessAgent.id)
+        .filter(
+            agent_mcp_tools.c.tool_id == tool.id,
+            AccessAgent.is_active.is_(True),
+        )
+        .all()
+    )
+    if not linked_agents:
         _record_log(
             db,
             tool_name=tool_name,
@@ -111,22 +121,7 @@ def evaluate(
         )
         return AccessDecision(allowed=False, decision="deny_tool_unlinked", agent_name=None)
 
-    owner = (
-        db.query(AccessAgent)
-        .filter(AccessAgent.id == tool.agent_id, AccessAgent.is_active.is_(True))
-        .one_or_none()
-    )
-    if owner is None:
-        _record_log(
-            db,
-            tool_name=tool_name,
-            contact_external_id=contact_id,
-            respond_contact_id=None,
-            respond_workspace_id=workspace_uuid,
-            decision="deny_tool_unlinked",
-            matched_agent_id=None,
-        )
-        return AccessDecision(allowed=False, decision="deny_tool_unlinked", agent_name=None)
+    fallback_name = linked_agents[0].name
 
     if workspace_uuid is None:
         _record_log(
@@ -138,7 +133,7 @@ def evaluate(
             decision="deny_unknown_contact",
             matched_agent_id=None,
         )
-        return AccessDecision(allowed=False, decision="deny_unknown_contact", agent_name=owner.name)
+        return AccessDecision(allowed=False, decision="deny_unknown_contact", agent_name=fallback_name)
 
     contact = (
         db.query(RespondContact)
@@ -158,14 +153,15 @@ def evaluate(
             decision="deny_unknown_contact",
             matched_agent_id=None,
         )
-        return AccessDecision(allowed=False, decision="deny_unknown_contact", agent_name=owner.name)
+        return AccessDecision(allowed=False, decision="deny_unknown_contact", agent_name=fallback_name)
 
     now = datetime.utcnow()
+    agent_ids = [a.id for a in linked_agents]
     granted = (
-        db.query(ContactAgentAccess.id)
+        db.query(ContactAgentAccess.agent_id)
         .filter(
             ContactAgentAccess.respond_contact_id == contact.id,
-            ContactAgentAccess.agent_id == owner.id,
+            ContactAgentAccess.agent_id.in_(agent_ids),
             ContactAgentAccess.is_allowed.is_(True),
             or_(ContactAgentAccess.valid_to.is_(None), ContactAgentAccess.valid_to > now),
             or_(ContactAgentAccess.valid_from.is_(None), ContactAgentAccess.valid_from <= now),
@@ -182,8 +178,13 @@ def evaluate(
             decision="deny_no_access",
             matched_agent_id=None,
         )
-        return AccessDecision(allowed=False, decision="deny_no_access", agent_name=owner.name)
+        return AccessDecision(allowed=False, decision="deny_no_access", agent_name=fallback_name)
 
+    matched_agent_id = granted[0]
+    matched_name = next(
+        (a.name for a in linked_agents if a.id == matched_agent_id),
+        fallback_name,
+    )
     _record_log(
         db,
         tool_name=tool_name,
@@ -191,6 +192,6 @@ def evaluate(
         respond_contact_id=contact.id,
         respond_workspace_id=workspace_uuid,
         decision="allow",
-        matched_agent_id=owner.id,
+        matched_agent_id=matched_agent_id,
     )
-    return AccessDecision(allowed=True, decision="allow", agent_name=owner.name)
+    return AccessDecision(allowed=True, decision="allow", agent_name=matched_name)

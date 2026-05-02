@@ -74,7 +74,7 @@ function PortalLandingContent() {
     }
   }, [router, searchParams]);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (q?: string) => {
     const existing = readPortalToken();
     if (!existing) {
       router.replace('/portal/verify');
@@ -105,7 +105,7 @@ function PortalLandingContent() {
         }
       }
       setContact(me);
-      const lists = await Promise.all(TYPES.map((t) => fetchSubmissions(t)));
+      const lists = await Promise.all(TYPES.map((t) => fetchSubmissions(t, q)));
       setSubmissions({
         stock_inquiry: lists[0],
         complaint: lists[1],
@@ -137,6 +137,19 @@ function PortalLandingContent() {
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
+
+  // Debounced refetch when the user types in the search box; backend now does
+  // the field-spanning search so the result reflects every column (product,
+  // metadata, doc number, etc.).
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      void loadAll(search);
+    }, 300);
+    return () => window.clearTimeout(handle);
+    // loadAll is stable via useCallback; we intentionally exclude it from deps
+    // so the debounce timer isn't reset on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const totals = useMemo(() => {
     const out: Record<PortalSubmissionKind, number> = {
@@ -241,7 +254,6 @@ function PortalLandingContent() {
             <SubmissionList
               kind={t}
               items={submissions[t] ?? []}
-              search={search}
               statusFilter={statusFilter}
             />
           </TabsContent>
@@ -254,41 +266,18 @@ function PortalLandingContent() {
 function SubmissionList({
   kind,
   items,
-  search,
   statusFilter,
 }: {
   kind: PortalSubmissionKind;
   items: PortalSubmissionSummary[];
-  search: string;
   statusFilter: StatusFilter;
 }) {
   const filtered = useMemo(() => {
-    let rows = items;
-    // Apply status filter first (per spec).
-    if (statusFilter !== 'all') {
-      rows = rows.filter((r) => effectiveStatus(r) === statusFilter);
-    }
-    // Then substring search across visible-ish fields.
-    const q = search.trim().toLowerCase();
-    if (q) {
-      rows = rows.filter((r) => {
-        const created = r.created_at
-          ? new Date(r.created_at).toLocaleDateString(undefined, { dateStyle: 'medium' })
-          : '';
-        const haystack = [
-          r.document_number ?? '',
-          r.title ?? '',
-          r.status ?? '',
-          r.reference ?? '',
-          created,
-        ]
-          .join(' ')
-          .toLowerCase();
-        return haystack.includes(q);
-      });
-    }
-    return rows;
-  }, [items, search, statusFilter]);
+    // Substring search runs server-side (every field). Local filter only
+    // narrows by status for a snappy tab switch.
+    if (statusFilter === 'all') return items;
+    return items.filter((r) => effectiveStatus(r) === statusFilter);
+  }, [items, statusFilter]);
 
   return (
     <div className="space-y-3">

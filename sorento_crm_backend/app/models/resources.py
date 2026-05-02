@@ -66,6 +66,8 @@ class Attachment(Base):
     description = Column(Text, nullable=True)  # User-editable description for search / n8n AI agent
     access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')  # dealer / end_user visibility
     sort_order = Column(Integer, nullable=True)
+    # 's3' (legacy AWS S3 + CloudFront) or 'r2' (Cloudflare R2 + CDN). Drives URL signing dispatch.
+    storage_provider = Column(String(16), nullable=False, server_default="s3")
 
     attachment_type = relationship("AttachmentType", back_populates="attachments")
     directory = relationship("AttachmentDirectory", back_populates="attachments")
@@ -77,6 +79,7 @@ class Attachment(Base):
         Index("ix_attachments_file_hash", "file_hash"),
         Index("ix_attachments_directory_id", "directory_id"),
         Index("ix_attachments_access_levels", "access_levels", postgresql_using="gin"),
+        Index("ix_attachments_storage_provider", "storage_provider"),
     )
 
 

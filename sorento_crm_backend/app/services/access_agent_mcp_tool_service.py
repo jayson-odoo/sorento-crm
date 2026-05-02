@@ -1,33 +1,38 @@
-"""AccessAgent ↔ McpTool ownership service (Phase 2).
+"""AccessAgent <-> McpTool ownership service (many-to-many).
 
-Tools are N:1 to access agents — each `mcp_tools.agent_id` either points at
-exactly one agent or is NULL.
+Tools and agents share a M:N relationship via ``agent_mcp_tools``. Each link
+row stands for "agent X is allowed to invoke tool Y".
 
-`set_tools_for_agent` is replace-semantics in a single transaction:
-1. Claim every tool in `tool_ids` for `agent_id` (overwrites any prior owner).
-2. Release every tool currently owned by `:agent_id` not in `tool_ids` get `agent_id = NULL`.
+``set_tools_for_agent`` is replace-semantics in a single transaction:
+1. Insert links for any tool in ``tool_ids`` not already linked to ``agent_id``.
+2. Delete links for tools currently linked to ``agent_id`` but not in ``tool_ids``.
 
-Reassignment of a tool from one agent to another is logged with structured
-fields (tool_id, from_agent_id, to_agent_id) so audits can reconstruct
-ownership history.
+Reassignments are logged with structured fields (tool_id, agent_id, action) so
+audits can reconstruct ownership history.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.models.access import AccessAgent, McpTool
+from app.models.access import AccessAgent, McpTool, agent_mcp_tools
 
 logger = logging.getLogger(__name__)
 
 
 def list_tools_for_agent(db: Session, agent_id: str) -> list[McpTool]:
-    """Return every active McpTool owned by `agent_id`, ordered by tool_name."""
+    """Return every active McpTool linked to ``agent_id``, ordered by tool_name."""
     return (
         db.query(McpTool)
-        .filter(McpTool.agent_id == agent_id, McpTool.is_active.is_(True))
+        .join(agent_mcp_tools, agent_mcp_tools.c.tool_id == McpTool.id)
+        .filter(
+            agent_mcp_tools.c.agent_id == agent_id,
+            McpTool.is_active.is_(True),
+        )
         .order_by(McpTool.tool_name.asc())
         .all()
     )
@@ -38,65 +43,87 @@ def list_picker_tools(
 ) -> list[dict[str, Any]]:
     """Return tools for the AccessAgentForm picker.
 
-    Joins to `access_agents` so the UI can render "currently owned by X"
-    warnings before the admin reassigns. Active tools only by default —
-    inactive tools (deactivated by sync) are normally hidden.
+    With many-to-many, a single tool can belong to multiple agents. Each row
+    carries the comma-separated list of agent ids/names already linked, so the
+    UI can show "shared with X, Y" instead of warning about reassignment.
     """
-    q = (
-        db.query(McpTool, AccessAgent.name)
-        .outerjoin(AccessAgent, AccessAgent.id == McpTool.agent_id)
-    )
+    q = db.query(McpTool)
     if only_active:
         q = q.filter(McpTool.is_active.is_(True))
     q = q.order_by(McpTool.module_key.asc(), McpTool.tool_name.asc()).limit(limit)
+    tools = q.all()
+    if not tools:
+        return []
 
-    rows: list[dict[str, Any]] = []
-    for tool, agent_name in q.all():
-        rows.append(
+    tool_ids = [t.id for t in tools]
+    rows = (
+        db.execute(
+            select(
+                agent_mcp_tools.c.tool_id,
+                AccessAgent.id,
+                AccessAgent.name,
+            )
+            .select_from(agent_mcp_tools)
+            .join(AccessAgent, AccessAgent.id == agent_mcp_tools.c.agent_id)
+            .where(agent_mcp_tools.c.tool_id.in_(tool_ids))
+        )
+        .all()
+    )
+    by_tool: dict[str, list[tuple[str, str]]] = {}
+    for tool_id, ag_id, ag_name in rows:
+        by_tool.setdefault(tool_id, []).append((ag_id, ag_name))
+
+    out: list[dict[str, Any]] = []
+    for tool in tools:
+        owners = by_tool.get(tool.id, [])
+        out.append(
             {
                 "id": tool.id,
                 "tool_name": tool.tool_name,
                 "description": tool.description,
                 "module_key": tool.module_key or "",
-                "current_agent_id": tool.agent_id,
-                "current_agent_name": agent_name,
+                "current_agent_ids": [ag_id for ag_id, _ in owners],
+                "current_agent_names": [ag_name for _, ag_name in owners],
             }
         )
-    return rows
+    return out
 
 
 def set_tools_for_agent(db: Session, agent_id: str, tool_ids: list[str]) -> None:
-    """Replace `agent_id`'s tool ownership set.
+    """Replace ``agent_id``'s tool ownership set in one transaction."""
+    desired = {tid for tid in tool_ids if tid}
 
-    Single transaction:
-    - Tools in `tool_ids` get `agent_id = :agent_id` (claim / reassign).
-    - Tools currently owned by `:agent_id` not in `tool_ids` get `agent_id = NULL`.
-    """
-    if tool_ids:
-        prior = {
-            t.id: t.agent_id
-            for t in db.query(McpTool).filter(McpTool.id.in_(tool_ids)).all()
-        }
-    else:
-        prior = {}
-
-    if tool_ids:
-        db.query(McpTool).filter(McpTool.id.in_(tool_ids)).update(
-            {"agent_id": agent_id}, synchronize_session=False
+    existing_rows = db.execute(
+        select(agent_mcp_tools.c.tool_id).where(
+            agent_mcp_tools.c.agent_id == agent_id
         )
+    ).all()
+    existing = {row[0] for row in existing_rows}
 
-    release_q = db.query(McpTool).filter(McpTool.agent_id == agent_id)
-    if tool_ids:
-        release_q = release_q.filter(~McpTool.id.in_(tool_ids))
-    release_q.update({"agent_id": None}, synchronize_session=False)
+    to_add = desired - existing
+    to_remove = existing - desired
 
-    for tid, old in prior.items():
-        if old is not None and old != agent_id:
+    if to_add:
+        db.execute(
+            pg_insert(agent_mcp_tools)
+            .values([{"agent_id": agent_id, "tool_id": tid} for tid in to_add])
+            .on_conflict_do_nothing()
+        )
+        for tid in to_add:
             logger.info(
-                "mcp_tool_reassigned",
-                extra={
-                    "tool_id": tid,
-                    "from_agent_id": old,
-                    "to_agent_id": agent_id,
-                },
+                "mcp_tool_linked",
+                extra={"tool_id": tid, "agent_id": agent_id, "action": "linked"},
+            )
+
+    if to_remove:
+        db.execute(
+            agent_mcp_tools.delete().where(
+                agent_mcp_tools.c.agent_id == agent_id,
+                agent_mcp_tools.c.tool_id.in_(to_remove),
+            )
+        )
+        for tid in to_remove:
+            logger.info(
+                "mcp_tool_unlinked",
+                extra={"tool_id": tid, "agent_id": agent_id, "action": "unlinked"},
             )

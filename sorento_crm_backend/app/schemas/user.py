@@ -366,14 +366,15 @@ class RespondAccessTypeMappingResponse(RespondAccessTypeMappingBase):
 # ---------------------------------------------------------------------------
 
 class McpToolOut(BaseModel):
-    """Picker row. `current_agent_*` populated when a tool is owned by some
-    OTHER access agent so the UI can warn before reassignment."""
+    """Picker row. ``current_agent_ids/names`` list every agent the tool is
+    linked to (many-to-many). UI shows the list so the admin sees what other
+    agents already share this tool."""
     id: str
     tool_name: str
     description: str | None = None
     module_key: str = ""
-    current_agent_id: str | None = None
-    current_agent_name: str | None = None
+    current_agent_ids: list[str] = []
+    current_agent_names: list[str] = []
 
     model_config = ConfigDict(from_attributes=True)
 

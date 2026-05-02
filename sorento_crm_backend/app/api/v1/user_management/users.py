@@ -90,7 +90,7 @@ async def get_users(
                 "superior_id": user.superior_id,
                 "tier": getattr(user, "tier", None),
                 "daily_sla_summary_subscribed": getattr(user, "daily_sla_summary_subscribed", True),
-                "avatar": resolve_avatar_url_for_client(user.avatar),
+                "avatar": resolve_avatar_url_for_client(user.avatar, getattr(user, "avatar_storage_provider", None)),
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
                 "last_sign_in_at": user.last_sign_in_at,
@@ -689,13 +689,19 @@ async def update_current_user_profile(
                 s3_path = f"avatars/{uuid.uuid4().hex}_{stem}{ext}"
 
                 try:
-                    from app.services.s3_service import S3Service
+                    from app.services.storage_router import (
+                        cdn_base_url,
+                        default_provider,
+                        get_backend,
+                    )
 
-                    s3 = S3Service()
-                    s3_key, _ = s3.upload_file(
+                    avatar_provider = default_provider()
+                    backend = get_backend(avatar_provider)
+                    s3_key, _ = backend.upload_file(
                         content, s3_path, content_type=ctype
                     )
-                    update_dict["avatar"] = s3.get_cloudfront_base_url(s3_key)
+                    update_dict["avatar"] = cdn_base_url(avatar_provider, s3_key)
+                    update_dict["avatar_storage_provider"] = avatar_provider
                 except ValueError as cfg_err:
                     logger.error("Avatar upload configuration error: %s", cfg_err)
                     raise HTTPException(

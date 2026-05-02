@@ -6,8 +6,8 @@ export interface McpToolCatalogRow {
   tool_name: string;
   description: string | null;
   module_key: string;
-  current_agent_id: string | null;
-  current_agent_name: string | null;
+  current_agent_ids: string[];
+  current_agent_names: string[];
 }
 
 export interface McpAccessLogRow {
