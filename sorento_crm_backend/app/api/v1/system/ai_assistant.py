@@ -18,6 +18,7 @@ from app.schemas.ai_assistant import (
     AIAssistantConversationResponse,
     AIAssistantMessageCreate,
     AIAssistantMessageResponse,
+    GreetingResponse,
     QueryDetailResponse,
     RecentQueryItem,
     TestConnectionRequest,
@@ -108,6 +109,16 @@ def list_ai_assistant_tools(
 ):
     chat = AIAssistantChatService(db)
     return chat.list_mcp_tools()
+
+
+@router.get("/ai-assistant/greeting", response_model=GreetingResponse)
+def ai_assistant_greeting(
+    current_user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
+    db: Session = Depends(get_db),
+):
+    chat = AIAssistantChatService(db)
+    data = chat.generate_greeting(current_user["id"])
+    return GreetingResponse(**data)
 
 
 @router.get("/ai-assistant/conversations", response_model=list[AIAssistantConversationResponse])

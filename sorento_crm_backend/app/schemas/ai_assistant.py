@@ -88,6 +88,11 @@ class TestConnectionResponse(BaseModel):
     latency_ms: int
 
 
+class GreetingResponse(BaseModel):
+    greeting: str
+    suggestions: list[str] = Field(default_factory=list)
+
+
 # --- Usage analytics --------------------------------------------------------
 
 

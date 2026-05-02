@@ -34,6 +34,20 @@ export interface AIAssistantConversationList {
   items: AIAssistantConversationSummary[];
 }
 
+export interface AIAssistantGreeting {
+  greeting: string;
+  suggestions: string[];
+}
+
+export async function fetchAIAssistantGreeting(): Promise<AIAssistantGreeting> {
+  const r = await apiFetch('/api/v1/system/ai-assistant/greeting', { method: 'GET' });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error((err as { detail?: string }).detail || 'Failed to load greeting');
+  }
+  return (await r.json()) as AIAssistantGreeting;
+}
+
 export async function sendAIAssistantMessage(
   message: string,
   conversationId?: string,

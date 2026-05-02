@@ -1160,6 +1160,74 @@ class AIAssistantChatService:
             logger.warning("AI assistant suggestion generation failed", exc_info=True)
             return []
 
+    def generate_greeting(self, user_id: str) -> dict:
+        """Greeting + 5 starter suggestions based on the user's recent past questions.
+
+        Falls back to generic CRM suggestions when no history (or LLM call fails).
+        """
+        config = AIAssistantConfigService(self.db).get()
+        # Pull last 20 user messages across recent conversations for this user.
+        recent_user_msgs = (
+            self.db.query(AIAssistantMessage.content)
+            .join(AIAssistantConversation, AIAssistantConversation.id == AIAssistantMessage.conversation_id)
+            .filter(
+                AIAssistantConversation.user_id == user_id,
+                AIAssistantMessage.role == "user",
+            )
+            .order_by(AIAssistantMessage.created_at.desc())
+            .limit(20)
+            .all()
+        )
+        past_questions = [(r[0] or "").strip()[:200] for r in recent_user_msgs if (r[0] or "").strip()]
+        generic_fallback = [
+            "What can you help me with here?",
+            "Show me my open complaints",
+            "What stock inquiries are pending?",
+            "Find products by code",
+            "Summarise this page",
+        ]
+        greeting = "Hi, how can I help you?"
+        if not past_questions:
+            return {"greeting": greeting, "suggestions": generic_fallback}
+        api_key = config.api_key_ciphertext or settings.openai_api_key
+        if not api_key:
+            return {"greeting": greeting, "suggestions": generic_fallback}
+        system_prompt = (
+            "You suggest exactly 5 short follow-up questions the user is likely to want to ask next, "
+            "based on a list of their past questions. Reply ONLY as a JSON array of 5 strings — "
+            "no prose, no markdown, no preamble."
+        )
+        user_block = (
+            "Past questions (most recent first):\n"
+            + "\n".join(f"- {q}" for q in past_questions)
+            + "\n\nReturn the JSON array now."
+        )
+        try:
+            provider = get_provider(config.provider, api_key, config.model)
+            result = provider.chat(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_block},
+                ],
+                temperature=0.4,
+                model=config.model,
+                max_tokens=400,
+            )
+            raw = (result.content or "").strip()
+            if raw.startswith("```"):
+                raw = raw.strip("`")
+                if raw.lower().startswith("json"):
+                    raw = raw[4:]
+            raw = raw.strip()
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                cleaned = [str(item).strip() for item in parsed if str(item).strip()]
+                if cleaned:
+                    return {"greeting": greeting, "suggestions": cleaned[:5]}
+        except Exception:
+            logger.warning("AI assistant greeting suggestions failed", exc_info=True)
+        return {"greeting": greeting, "suggestions": generic_fallback}
+
     def _is_fallback_reply(self, reply: str, tool_calls: list[MCPToolCallResult]) -> bool:
         """True when the assistant reply matches a deterministic fallback string."""
         if not (reply or "").strip():

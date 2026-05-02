@@ -6,6 +6,7 @@ import { Bot, History, Loader2, Plus, SendHorizonal, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
+  fetchAIAssistantGreeting,
   listAIAssistantConversations,
   loadConversation,
   sendAIAssistantMessage,
@@ -73,6 +74,9 @@ export default function AIAssistantBubble() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historySearch, setHistorySearch] = useState('');
+  const [greeting, setGreeting] = useState<string>('Hi, how can I help you?');
+  const [greetingSuggestions, setGreetingSuggestions] = useState<string[]>([]);
+  const greetingFetchedRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const canSend = input.trim().length > 0 && !isSending;
 
@@ -120,6 +124,36 @@ export default function AIAssistantBubble() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [sortedMessages.length, isSending]);
+
+  // Greeting fetch on first open with no messages and no conversation loaded.
+  useEffect(() => {
+    if (!open) return;
+    if (greetingFetchedRef.current) return;
+    if (messages.length > 0) return;
+    if (conversationId) return;
+    greetingFetchedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchAIAssistantGreeting();
+        if (cancelled) return;
+        setGreeting(data.greeting || 'Hi, how can I help you?');
+        setGreetingSuggestions(Array.isArray(data.suggestions) ? data.suggestions.slice(0, 5) : []);
+      } catch {
+        // Silent fail — fallback strings already set.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, messages.length, conversationId]);
+
+  // Reset greeting-fetched flag when user clicks "New" (clears messages + conversation).
+  useEffect(() => {
+    if (!conversationId && messages.length === 0) {
+      greetingFetchedRef.current = false;
+    }
+  }, [conversationId, messages.length]);
 
   // Debounced history fetch
   useEffect(() => {
@@ -384,9 +418,26 @@ export default function AIAssistantBubble() {
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
                 <div className="space-y-3">
                   {sortedMessages.length === 0 ? (
-                    <p className="rounded-xl bg-background/70 p-3 text-sm text-muted-foreground">
-                      Ask a CRM question to test MCP and embeddings.
-                    </p>
+                    <div className="space-y-3">
+                      <div className="rounded-2xl bg-background/85 px-3 py-2.5 text-sm leading-relaxed shadow-sm">
+                        <p className="whitespace-pre-wrap">{greeting}</p>
+                      </div>
+                      {greetingSuggestions.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {greetingSuggestions.map((s, idx) => (
+                            <button
+                              key={`g-${idx}-${s}`}
+                              type="button"
+                              onClick={() => onSuggestionClick(s)}
+                              className="rounded-full border bg-secondary px-3 py-1 text-xs hover:bg-secondary/80"
+                              title={s}
+                            >
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                   ) : null}
                   {sortedMessages.map((m) => (
                     <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
