@@ -295,13 +295,27 @@ class ComplaintService:
         q = self.db.query(Complaint)
 
         if query:
+            like = f"%{query}%"
             q = q.filter(
                 or_(
-                    Complaint.delivery_order_number.ilike(f"%{query}%"),
-                    Complaint.customer_name.ilike(f"%{query}%"),
-                    Complaint.product_code.ilike(f"%{query}%"),
-                    Complaint.defect_description.ilike(f"%{query}%"),
-                    Complaint.project_title.ilike(f"%{query}%")
+                    Complaint.complaint_number.ilike(like),
+                    Complaint.delivery_order_number.ilike(like),
+                    Complaint.customer_name.ilike(like),
+                    Complaint.customer_type.ilike(like),
+                    Complaint.customer_type_others.ilike(like),
+                    Complaint.contact_person.ilike(like),
+                    Complaint.contact_number.ilike(like),
+                    Complaint.customer_address.ilike(like),
+                    Complaint.product_code.ilike(like),
+                    Complaint.product_type.ilike(like),
+                    Complaint.complaint_type.ilike(like),
+                    Complaint.defects_discovered.ilike(like),
+                    Complaint.defect_description.ilike(like),
+                    Complaint.salesperson.ilike(like),
+                    Complaint.project_title.ilike(like),
+                    Complaint.within_warranty.ilike(like),
+                    Complaint.status.ilike(like),
+                    Complaint.assigned_to.ilike(like),
                 )
             )
         if assigned_to is not None and str(assigned_to).strip():

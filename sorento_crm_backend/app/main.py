@@ -1,4 +1,17 @@
 """FastAPI application entry point."""
+# Load .env with override=True so file values beat any stale shell env
+# (e.g. a STORAGE_DEFAULT_PROVIDER exported earlier in the session).
+from pathlib import Path as _Path
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _env_path = _Path(__file__).resolve().parent.parent / ".env"
+    if _env_path.exists():
+        _load_dotenv(_env_path, override=True)
+    else:
+        _load_dotenv(override=True)
+except ImportError:
+    pass
+
 from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware

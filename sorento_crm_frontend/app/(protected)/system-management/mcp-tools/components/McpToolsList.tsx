@@ -25,7 +25,7 @@ export function McpToolsList() {
     return (
       r.tool_name.toLowerCase().includes(q) ||
       r.module_key.toLowerCase().includes(q) ||
-      (r.current_agent_name ?? '').toLowerCase().includes(q)
+      (r.current_agent_names ?? []).some((n) => n.toLowerCase().includes(q))
     );
   });
 
@@ -53,7 +53,7 @@ export function McpToolsList() {
             <TableRow>
               <TableHead className="w-[280px]">Tool</TableHead>
               <TableHead className="w-[140px]">Module</TableHead>
-              <TableHead className="w-[200px]">Owner agent</TableHead>
+              <TableHead className="w-[260px]">Linked agents</TableHead>
               <TableHead className="w-[100px]">Status</TableHead>
               <TableHead>Description</TableHead>
             </TableRow>
@@ -77,16 +77,16 @@ export function McpToolsList() {
                   <TableCell className="font-mono text-xs">{r.tool_name}</TableCell>
                   <TableCell>{r.module_key || '—'}</TableCell>
                   <TableCell>
-                    {r.current_agent_name ? (
-                      r.current_agent_name
+                    {(r.current_agent_names ?? []).length > 0 ? (
+                      r.current_agent_names.join(', ')
                     ) : (
                       <span className="text-amber-700">Unassigned</span>
                     )}
                   </TableCell>
                   <TableCell>
                     <StatusPill
-                      label={r.current_agent_id ? 'Linked' : 'Orphan'}
-                      colorHex={r.current_agent_id ? '#16a34a' : '#d97706'}
+                      label={(r.current_agent_ids ?? []).length > 0 ? 'Linked' : 'Orphan'}
+                      colorHex={(r.current_agent_ids ?? []).length > 0 ? '#16a34a' : '#d97706'}
                     />
                   </TableCell>
                   <TableCell className="truncate" title={r.description ?? ''}>

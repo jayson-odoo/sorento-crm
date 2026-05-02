@@ -136,8 +136,8 @@ export interface McpToolForAgent {
 }
 
 export interface McpToolPickerRow extends McpToolForAgent {
-  current_agent_id: string | null;
-  current_agent_name: string | null;
+  current_agent_ids: string[];
+  current_agent_names: string[];
 }
 
 export async function getMcpToolsForPicker(): Promise<McpToolPickerRow[]> {

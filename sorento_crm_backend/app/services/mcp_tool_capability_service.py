@@ -1109,27 +1109,48 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     "crm_portal_link_get": ToolIntent(
         category="user_submission_portal",
-        intent="Hand the contact a 7-day portal link for filing complaints, stock inquiries, purchase requests, or sponsorship forms.",
+        intent="Hand the contact a 7-day portal link for filing complaints, stock inquiries (a.k.a. stock enquiries / product enquiries), purchase requests, or sponsorship forms.",
         description=(
             "POST /api/v1/external/portal-tokens/ with payload_json containing contact_id and space_id. "
             "Returns a `portal_url` to send to the user. The portal lets them save drafts, attach photos "
             "(including pasted screenshots), submit, and review submission status. After 7 days the link "
-            "expires and the contact re-verifies via OTP. Use this tool INSTEAD OF the legacy submit tools."
+            "expires and the contact re-verifies via OTP. Use this tool INSTEAD OF any legacy submit tools "
+            "whenever the user asks to submit/file/create a complaint, stock inquiry / stock enquiry / "
+            "product enquiry / product inquiry, purchase request, or sponsorship form."
         ),
         typical_user_questions=(
             "I want to file a complaint.",
-            "Submit a stock inquiry.",
+            "I want to submit a complaint.",
+            "I want to submit a stock inquiry.",
+            "I want to submit a stock enquiry.",
+            "I want to submit a product enquiry.",
+            "I want to submit a product inquiry.",
+            "I want to submit a purchase request.",
+            "I want to submit a sponsorship form.",
             "Create a purchase request.",
             "Send me the link to my submissions.",
             "Where can I see and edit my drafts?",
         ),
         aliases=(
             "send portal link",
+            "submission portal link",
             "submit complaint",
             "file complaint",
+            "lodge complaint",
             "submit stock inquiry",
+            "submit stock enquiry",
+            "submit product inquiry",
+            "submit product enquiry",
+            "stock enquiry",
+            "stock inquiry",
+            "product enquiry",
+            "product inquiry",
             "create purchase request",
+            "submit purchase request",
+            "file purchase request",
             "submit sponsorship form",
+            "file sponsorship form",
+            "create sponsorship form",
         ),
     ),
     "crm_forms_stock_inquiries_list": ToolIntent(

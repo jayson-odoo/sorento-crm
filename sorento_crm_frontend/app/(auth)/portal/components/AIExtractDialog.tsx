@@ -204,76 +204,79 @@ export function AIExtractDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="ai-extract-dialog"
-        className="sm:max-w-2xl"
+        className="sm:max-w-2xl max-h-[85vh]"
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-primary" />
             AI Extract
           </DialogTitle>
-          <DialogDescription>
-            Drop the delivery order PDF, defect photos, or message screenshots —
-            we&apos;ll read them and prefill this form. You review before anything
-            is saved.
-          </DialogDescription>
         </DialogHeader>
 
         {stage === 'upload' && (
-          <div className="space-y-3" data-testid="ai-extract-upload">
+          <>
             <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={handleDrop}
-              className={`flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed p-6 text-center transition ${
-                dragOver ? 'border-primary bg-primary/5' : 'border-border'
-              }`}
-              data-testid="ai-extract-dropzone"
+              className="space-y-3 flex-1 min-h-0 overflow-y-auto -mx-1 px-1"
+              data-testid="ai-extract-upload"
             >
-              <Upload className="h-6 w-6 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                Drop files here, paste a screenshot (Ctrl/Cmd+V), or
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handlePickClick}
-                disabled={busy}
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                className={`flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed p-6 text-center transition ${
+                  dragOver ? 'border-primary bg-primary/5' : 'border-border'
+                }`}
+                data-testid="ai-extract-dropzone"
               >
-                <Paperclip className="h-4 w-4 mr-2" />
-                Choose files
-              </Button>
-              <input
-                ref={inputRef}
-                type="file"
-                accept="image/*,.pdf"
-                className="hidden"
-                multiple
-                data-testid="ai-extract-file-input"
-                onChange={handleSelect}
-              />
+                <Upload className="h-6 w-6 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  Drop files here, paste a screenshot (Ctrl/Cmd+V), or
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handlePickClick}
+                  disabled={busy}
+                >
+                  <Paperclip className="h-4 w-4 mr-2" />
+                  Choose files
+                </Button>
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept="image/*,.pdf"
+                  className="hidden"
+                  multiple
+                  data-testid="ai-extract-file-input"
+                  onChange={handleSelect}
+                />
+              </div>
+
+              {files.length > 0 && (
+                <ul
+                  className="space-y-2"
+                  data-testid="ai-extract-file-list"
+                >
+                  {files.map((file, idx) => (
+                    <PendingPreview
+                      key={`${file.name}-${idx}-${file.size}`}
+                      file={file}
+                      onRemove={() => removeFile(idx)}
+                    />
+                  ))}
+                </ul>
+              )}
+
+              {extractError && (
+                <p className="text-sm text-destructive" data-testid="ai-extract-error">
+                  {extractError}
+                </p>
+              )}
             </div>
-
-            {files.length > 0 && (
-              <ul className="space-y-2" data-testid="ai-extract-file-list">
-                {files.map((file, idx) => (
-                  <PendingPreview
-                    key={`${file.name}-${idx}-${file.size}`}
-                    file={file}
-                    onRemove={() => removeFile(idx)}
-                  />
-                ))}
-              </ul>
-            )}
-
-            {extractError && (
-              <p className="text-sm text-destructive" data-testid="ai-extract-error">
-                {extractError}
-              </p>
-            )}
 
             <DialogFooter>
               <Button
@@ -301,84 +304,89 @@ export function AIExtractDialog({
                 )}
               </Button>
             </DialogFooter>
-          </div>
+          </>
         )}
 
         {stage === 'review' && result && (
-          <div className="space-y-3" data-testid="ai-extract-review">
-            {remainingFieldEntries.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                Nothing extractable was found. Go back and try with clearer
-                pages, or close to fill the form manually.
-              </p>
-            ) : (
-              <div className="rounded-md border border-border">
-                <table className="w-full text-sm">
-                  <tbody>
-                    {remainingFieldEntries.map((f) => (
-                      <tr
-                        key={f.name}
-                        className="border-b border-border last:border-b-0"
-                        data-testid={`ai-extract-field-${f.name}`}
-                      >
-                        <td className="px-3 py-2 align-top text-muted-foreground w-44">
-                          {fieldsByName[f.name]?.label ?? f.label}
-                        </td>
-                        <td className="px-3 py-2 align-top">
-                          <span className="break-words">
-                            {Array.isArray(f.value) ? f.value.join(', ') : f.value}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right align-top w-12">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            aria-label={`Drop ${f.label}`}
-                            data-testid={`ai-extract-drop-${f.name}`}
-                            onClick={() =>
-                              setDiscarded((prev) => {
-                                const next = new Set(prev);
-                                next.add(f.name);
-                                return next;
-                              })
-                            }
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+          <>
+            <div
+              className="space-y-3 flex-1 min-h-0 overflow-y-auto -mx-1 px-1"
+              data-testid="ai-extract-review"
+            >
+              {remainingFieldEntries.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Nothing extractable was found. Go back and try with clearer
+                  pages, or close to fill the form manually.
+                </p>
+              ) : (
+                <div className="rounded-md border border-border">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {remainingFieldEntries.map((f) => (
+                        <tr
+                          key={f.name}
+                          className="border-b border-border last:border-b-0"
+                          data-testid={`ai-extract-field-${f.name}`}
+                        >
+                          <td className="px-3 py-2 align-top text-muted-foreground w-44">
+                            {fieldsByName[f.name]?.label ?? f.label}
+                          </td>
+                          <td className="px-3 py-2 align-top">
+                            <span className="break-words">
+                              {Array.isArray(f.value) ? f.value.join(', ') : f.value}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right align-top w-12">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`Drop ${f.label}`}
+                              data-testid={`ai-extract-drop-${f.name}`}
+                              onClick={() =>
+                                setDiscarded((prev) => {
+                                  const next = new Set(prev);
+                                  next.add(f.name);
+                                  return next;
+                                })
+                              }
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
-            {result.products && result.products.length > 0 && (
-              <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-                {result.products.length} line item{result.products.length === 1 ? '' : 's'} also detected (will be applied to the items list).
-              </div>
-            )}
+              {result.products && result.products.length > 0 && (
+                <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+                  {result.products.length} line item{result.products.length === 1 ? '' : 's'} also detected (will be applied to the items list).
+                </div>
+              )}
 
-            <div className="flex items-center gap-2 pt-1">
-              <Checkbox
-                id="ai-extract-also-attach"
-                checked={alsoAttach}
-                onCheckedChange={(v) => setAlsoAttach(v === true)}
-                data-testid="ai-extract-attach"
-              />
-              <Label htmlFor="ai-extract-also-attach" className="cursor-pointer">
-                Also attach these {files.length} file{files.length === 1 ? '' : 's'} to my{' '}
-                {kind === 'complaint' ? 'complaint' : 'submission'}
-              </Label>
+              <div className="flex items-center gap-2 pt-1">
+                <Checkbox
+                  id="ai-extract-also-attach"
+                  checked={alsoAttach}
+                  onCheckedChange={(v) => setAlsoAttach(v === true)}
+                  data-testid="ai-extract-attach"
+                />
+                <Label htmlFor="ai-extract-also-attach" className="cursor-pointer">
+                  Also attach these {files.length} file{files.length === 1 ? '' : 's'} to my{' '}
+                  {kind === 'complaint' ? 'complaint' : 'submission'}
+                </Label>
+              </div>
+
+              {result.usage && result.usage.total_tokens > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Used {result.usage.total_tokens} tokens
+                  {result.model ? ` · ${result.model}` : ''}.
+                </p>
+              )}
             </div>
-
-            {result.usage && result.usage.total_tokens > 0 && (
-              <p className="text-xs text-muted-foreground">
-                Used {result.usage.total_tokens} tokens
-                {result.model ? ` · ${result.model}` : ''}.
-              </p>
-            )}
 
             <DialogFooter>
               <Button
@@ -398,7 +406,7 @@ export function AIExtractDialog({
                 Confirm and prefill
               </Button>
             </DialogFooter>
-          </div>
+          </>
         )}
       </DialogContent>
     </Dialog>

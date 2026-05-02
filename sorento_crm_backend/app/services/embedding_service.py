@@ -410,7 +410,44 @@ class EmbeddingReadService:
                 "locate delivery order",
             )
             _do_lookup_intent = any(w in q_lower for w in _do_lookup_words)
-            _explicit_submit_intent = any(w in q_lower for w in ("submit complaint", "file complaint", "confirm submission", "user_confirmed"))
+            _explicit_submit_intent = any(
+                w in q_lower
+                for w in (
+                    "submit complaint",
+                    "file complaint",
+                    "lodge complaint",
+                    "submit stock inquiry",
+                    "submit stock enquiry",
+                    "submit product enquiry",
+                    "submit product inquiry",
+                    "submit purchase request",
+                    "create purchase request",
+                    "file purchase request",
+                    "submit sponsorship",
+                    "create sponsorship",
+                    "file sponsorship",
+                    "confirm submission",
+                    "user_confirmed",
+                )
+            )
+            # Direct intent: user wants to submit one of the four supported forms ->
+            # always lift crm_portal_link_get above per-resource list/get tools.
+            _portal_form_words = (
+                "stock inquiry",
+                "stock enquiry",
+                "product enquiry",
+                "product inquiry",
+                "purchase request",
+                "sponsorship form",
+                "sponsorship",
+                "complaint",
+            )
+            _submission_verbs = ("submit", "file", "create", "lodge", "send", "i want to")
+            _wants_portal = any(v in q_lower for v in _submission_verbs) and any(
+                w in q_lower for w in _portal_form_words
+            )
+            if _wants_portal and tool_name == "crm_portal_link_get":
+                score += 0.20
             if _do_lookup_intent and not _has_do_number:
                 if tool_name in ("crm_order_management_orders_list", "crm_order_management_orders_by_product_list"):
                     score += 0.20
@@ -436,7 +473,13 @@ class EmbeddingReadService:
             )
             if _complaint_intent and not _attachment_intent and tool_name == "crm_forms_entity_attachments_link":
                 score -= 0.30
-            if ("stock inquiry" in q_lower or "stock enquiry" in q_lower or "lead time" in q_lower) and cat == "stock_inquiries.form_submission":
+            if (
+                "stock inquiry" in q_lower
+                or "stock enquiry" in q_lower
+                or "product enquiry" in q_lower
+                or "product inquiry" in q_lower
+                or "lead time" in q_lower
+            ) and cat == "stock_inquiries.form_submission":
                 score += 0.08
             # Promotion questions should not rank stock inquiry form flows.
             if any(w in q_lower for w in ("promo", "promotion", "campaign", "discount", "offer")) and cat == "stock_inquiries.form_submission":

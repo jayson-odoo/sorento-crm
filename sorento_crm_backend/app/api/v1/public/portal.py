@@ -401,10 +401,13 @@ def _check_kind(kind: str) -> str:
 @router.get("/submissions")
 def portal_list_submissions(
     type: str = Query(...),
+    q: Optional[str] = Query(None, description="Free-text search across all fields"),
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    return {"items": PortalService(db).list_submissions(token, _check_kind(type))}
+    return {
+        "items": PortalService(db).list_submissions(token, _check_kind(type), q=q),
+    }
 
 
 @router.get("/submissions/{kind}/{submission_id}")

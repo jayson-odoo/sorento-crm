@@ -85,6 +85,7 @@ class BulkDeleteComplaintsRequest(BaseModel):
 
 
 class ComplaintBase(BaseModel):
+    complaint_number: Optional[str] = None
     delivery_order_number: Optional[str] = None
     complaint_date: Optional[date] = None
     customer_type: Optional[str] = None
@@ -132,6 +133,7 @@ class ComplaintCreate(ComplaintBase):
 
 
 class ComplaintUpdate(BaseModel):
+    complaint_number: Optional[str] = None
     delivery_order_number: Optional[str] = None
     complaint_date: Optional[date] = None
     customer_type: Optional[str] = None

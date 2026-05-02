@@ -23,6 +23,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
@@ -289,43 +290,98 @@ class PortalService:
 
     # ---------- List submissions ----------
 
-    def list_submissions(self, token: PortalToken, kind: str) -> list[dict]:
+    def list_submissions(
+        self,
+        token: PortalToken,
+        kind: str,
+        q: Optional[str] = None,
+    ) -> list[dict]:
         kind = (kind or "").strip().lower()
         if kind not in SUPPORTED_TYPES:
             raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+        like = f"%{q.strip()}%" if q and q.strip() else None
         if kind == "complaint":
-            rows = (
-                self.db.query(Complaint)
-                .filter(
-                    Complaint.contact_id == token.contact_id,
-                    Complaint.space_id == token.space_id,
-                )
-                .order_by(Complaint.created_at.desc())
-                .all()
+            query = self.db.query(Complaint).filter(
+                Complaint.contact_id == token.contact_id,
+                Complaint.space_id == token.space_id,
             )
+            if like is not None:
+                query = query.filter(
+                    or_(
+                        Complaint.complaint_number.ilike(like),
+                        Complaint.delivery_order_number.ilike(like),
+                        Complaint.customer_name.ilike(like),
+                        Complaint.customer_type.ilike(like),
+                        Complaint.customer_type_others.ilike(like),
+                        Complaint.contact_person.ilike(like),
+                        Complaint.contact_number.ilike(like),
+                        Complaint.customer_address.ilike(like),
+                        Complaint.product_code.ilike(like),
+                        Complaint.product_type.ilike(like),
+                        Complaint.complaint_type.ilike(like),
+                        Complaint.defects_discovered.ilike(like),
+                        Complaint.defect_description.ilike(like),
+                        Complaint.salesperson.ilike(like),
+                        Complaint.project_title.ilike(like),
+                        Complaint.within_warranty.ilike(like),
+                        Complaint.status.ilike(like),
+                    )
+                )
+            rows = query.order_by(Complaint.created_at.desc()).all()
             return [self._serialize_complaint_summary(r) for r in rows]
         if kind == "stock_inquiry":
-            rows = (
-                self.db.query(StockInquiry)
-                .filter(
-                    StockInquiry.contact_id == token.contact_id,
-                    StockInquiry.space_id == token.space_id,
-                )
-                .order_by(StockInquiry.created_at.desc())
-                .all()
+            query = self.db.query(StockInquiry).filter(
+                StockInquiry.contact_id == token.contact_id,
+                StockInquiry.space_id == token.space_id,
             )
+            if like is not None:
+                query = query.filter(
+                    or_(
+                        StockInquiry.inquiry_number.ilike(like),
+                        StockInquiry.salesperson.ilike(like),
+                        StockInquiry.product_code.ilike(like),
+                        StockInquiry.item_description.ilike(like),
+                        StockInquiry.project_customer.ilike(like),
+                        StockInquiry.project_name.ilike(like),
+                        StockInquiry.remark.ilike(like),
+                        StockInquiry.additional_remark.ilike(like),
+                        StockInquiry.status.ilike(like),
+                    )
+                )
+            rows = query.order_by(StockInquiry.created_at.desc()).all()
             return [self._serialize_stock_inquiry_summary(r) for r in rows]
         # purchase_request / sponsorship_form
-        rows = (
-            self.db.query(PurchaseRequestHeader)
-            .filter(
-                PurchaseRequestHeader.contact_id == token.contact_id,
-                PurchaseRequestHeader.space_id == token.space_id,
-                PurchaseRequestHeader.request_type == kind,
-            )
-            .order_by(PurchaseRequestHeader.created_at.desc())
-            .all()
+        query = self.db.query(PurchaseRequestHeader).filter(
+            PurchaseRequestHeader.contact_id == token.contact_id,
+            PurchaseRequestHeader.space_id == token.space_id,
+            PurchaseRequestHeader.request_type == kind,
         )
+        if like is not None:
+            line_subq = (
+                self.db.query(PurchaseRequestLine.purchase_request_id)
+                .filter(
+                    or_(
+                        PurchaseRequestLine.item_code.ilike(like),
+                        PurchaseRequestLine.remark.ilike(like),
+                    )
+                )
+            )
+            query = query.filter(
+                or_(
+                    PurchaseRequestHeader.request_number.ilike(like),
+                    PurchaseRequestHeader.customer_name.ilike(like),
+                    PurchaseRequestHeader.project_title.ilike(like),
+                    PurchaseRequestHeader.purpose.ilike(like),
+                    PurchaseRequestHeader.delivery_address.ilike(like),
+                    PurchaseRequestHeader.sponsor_subject.ilike(like),
+                    PurchaseRequestHeader.requested_by.ilike(like),
+                    PurchaseRequestHeader.external_reference.ilike(like),
+                    PurchaseRequestHeader.total_project_value_text.ilike(like),
+                    PurchaseRequestHeader.status.ilike(like),
+                    PurchaseRequestHeader.id.in_(line_subq),
+                )
+            )
+        rows = query.order_by(PurchaseRequestHeader.created_at.desc()).all()
         return [self._serialize_request_summary(r) for r in rows]
 
     # ---------- Detail ----------
@@ -423,7 +479,7 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit complaint with status {previous_status!r}."
                 )
-            row.status = "new"
+            row.status = "submitted"
         elif kind == "stock_inquiry":
             if previous_status not in ("draft", "rejected"):
                 raise handle_validation_error(
@@ -442,7 +498,7 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit {kind} with status {previous_status!r}."
                 )
-            # Keep status='draft' to align with legacy external-create flow.
+            row.status = "submitted"
 
         # Document number generation (skip complaint — no number column).
         self._assign_document_number_if_missing(kind, row)
@@ -464,14 +520,24 @@ class PortalService:
         Format: ``{prefix}-{YYYYMMDD}-{nnnn}`` where nnnn = 1 + count of rows
         whose number already starts with the same prefix+date stem.
 
+        - ``complaint`` -> ``complaint_number`` with prefix ``CMP``
         - ``stock_inquiry`` -> ``inquiry_number`` with prefix ``SI``
         - ``purchase_request`` -> ``request_number`` with prefix ``PR``
         - ``sponsorship_form`` -> ``request_number`` with prefix ``SP``
-        - ``complaint`` -> no-op (no number column)
         """
-        if kind == "complaint":
-            return
         date_stem = _utcnow().strftime("%Y%m%d")
+        if kind == "complaint":
+            if getattr(row, "complaint_number", None):
+                return
+            prefix = "CMP"
+            stem = f"{prefix}-{date_stem}-"
+            existing = (
+                self.db.query(Complaint)
+                .filter(Complaint.complaint_number.like(f"{stem}%"))
+                .count()
+            )
+            row.complaint_number = f"{stem}{existing + 1:04d}"
+            return
         if kind == "stock_inquiry":
             if getattr(row, "inquiry_number", None):
                 return
@@ -793,8 +859,8 @@ class PortalService:
             "id": str(row.id),
             "kind": "complaint",
             "title": (row.defect_description or "Complaint")[:100],
-            "reference": row.delivery_order_number,
-            "document_number": None,
+            "reference": row.complaint_number or row.delivery_order_number,
+            "document_number": row.complaint_number,
             "status": row.status,
             "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
             "is_draft": row.portal_draft_at is not None,
@@ -805,6 +871,7 @@ class PortalService:
         base = self._serialize_complaint_summary(row)
         base.update(
             {
+                "complaint_number": row.complaint_number,
                 "delivery_order_number": row.delivery_order_number,
                 "complaint_date": row.complaint_date.isoformat() if row.complaint_date else None,
                 "customer_type": row.customer_type,

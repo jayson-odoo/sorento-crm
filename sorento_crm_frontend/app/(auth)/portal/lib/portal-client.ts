@@ -159,8 +159,13 @@ export async function fetchMe(): Promise<PortalContact> {
   return unwrap<PortalContact>(res, 'Failed to load profile.');
 }
 
-export async function fetchSubmissions(kind: PortalSubmissionKind): Promise<PortalSubmissionSummary[]> {
-  const res = await portalFetch(`/api/v1/public/portal/submissions?type=${encodeURIComponent(kind)}`);
+export async function fetchSubmissions(
+  kind: PortalSubmissionKind,
+  q?: string,
+): Promise<PortalSubmissionSummary[]> {
+  const usp = new URLSearchParams({ type: kind });
+  if (q && q.trim()) usp.set('q', q.trim());
+  const res = await portalFetch(`/api/v1/public/portal/submissions?${usp.toString()}`);
   const data = await unwrap<{ items: PortalSubmissionSummary[] }>(res, 'Failed to load submissions.');
   return data.items ?? [];
 }
