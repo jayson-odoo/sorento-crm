@@ -66,7 +66,9 @@ export async function listAIAssistantConversations(params: { q?: string; limit?:
     const err = await r.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail || 'Failed to load conversations');
   }
-  return (await r.json()) as AIAssistantConversationList;
+  const data = await r.json();
+  if (Array.isArray(data)) return { items: data as AIAssistantConversationSummary[] };
+  return data as AIAssistantConversationList;
 }
 
 export async function loadConversation(id: string) {
@@ -77,5 +79,15 @@ export async function loadConversation(id: string) {
     const err = await r.json().catch(() => ({}));
     throw new Error((err as { detail?: string }).detail || 'Failed to load conversation');
   }
-  return (await r.json()) as AIAssistantConversation;
+  const data = await r.json();
+  if (Array.isArray(data)) {
+    return {
+      id,
+      title: null,
+      created_at: '',
+      updated_at: '',
+      messages: data as AIAssistantMessage[],
+    } as AIAssistantConversation;
+  }
+  return data as AIAssistantConversation;
 }
