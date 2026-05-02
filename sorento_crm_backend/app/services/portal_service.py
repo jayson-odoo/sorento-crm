@@ -69,6 +69,27 @@ class PortalService:
     def __init__(self, db: Session):
         self.db = db
 
+    def _resolve_contact(self, contact_id: str) -> RespondContact:
+        """Resolve a RespondContact by internal `id` or `respond_io_id`.
+
+        External callers (MCP/n8n) pass the Respond.io contact id (e.g. "437264483"),
+        while internal endpoints pass the internal UUID. Accept either; raise NOT_FOUND
+        if neither matches.
+        """
+        contact = (
+            self.db.query(RespondContact)
+            .filter(
+                or_(
+                    RespondContact.id == contact_id,
+                    RespondContact.respond_io_id == contact_id,
+                )
+            )
+            .first()
+        )
+        if contact is None:
+            raise handle_not_found("Contact", contact_id)
+        return contact
+
     # ---------- Token lifecycle ----------
 
     def mint_token(self, contact_id: str, space_id: str) -> PortalToken:
@@ -76,13 +97,10 @@ class PortalService:
         space_id = (space_id or "").strip()
         if not contact_id or not space_id:
             raise handle_validation_error("contact_id and space_id are required.")
-        # Confirm contact exists in respond_contacts.
-        contact = self.db.query(RespondContact).filter(RespondContact.id == contact_id).first()
-        if not contact:
-            raise handle_not_found("Contact", contact_id)
+        contact = self._resolve_contact(contact_id)
         token = PortalToken(
             token=secrets.token_urlsafe(48),
-            contact_id=contact_id,
+            contact_id=contact.id,
             space_id=space_id,
             expires_at=_utcnow() + PORTAL_TOKEN_TTL,
         )
@@ -100,10 +118,11 @@ class PortalService:
         space_id = (space_id or "").strip()
         if not contact_id or not space_id:
             raise handle_validation_error("contact_id and space_id are required.")
+        contact = self._resolve_contact(contact_id)
         live = (
             self.db.query(PortalToken)
             .filter(
-                PortalToken.contact_id == contact_id,
+                PortalToken.contact_id == contact.id,
                 PortalToken.space_id == space_id,
                 PortalToken.revoked_at.is_(None),
                 PortalToken.expires_at > _utcnow(),
@@ -113,7 +132,7 @@ class PortalService:
         )
         if live is not None:
             return live, True
-        return self.mint_token(contact_id, space_id), False
+        return self.mint_token(contact.id, space_id), False
 
     def _build_send_message_text(
         self, contact: RespondContact, portal_url: str, expires_at: datetime
@@ -137,19 +156,13 @@ class PortalService:
 
         Raises httpx.HTTPStatusError on upstream failure (caller maps to 502).
         """
-        contact = (
-            self.db.query(RespondContact)
-            .filter(RespondContact.id == contact_id)
-            .first()
-        )
-        if contact is None:
-            raise handle_not_found("Contact", contact_id)
+        contact = self._resolve_contact(contact_id)
         respond_io_id = (contact.respond_io_id or "").strip()
         if not respond_io_id:
             raise handle_validation_error(
                 "Contact has no Respond.io identifier; cannot send link."
             )
-        token, reused = self.get_or_mint_token(contact_id, space_id)
+        token, reused = self.get_or_mint_token(contact.id, space_id)
         portal_url = self.build_portal_url(token.token, base_url)
         text = self._build_send_message_text(contact, portal_url, token.expires_at)
         RespondClient().send_message(respond_io_id, text)
@@ -192,14 +205,12 @@ class PortalService:
         space_id = (space_id or "").strip()
         if not contact_id or not space_id:
             raise handle_validation_error("contact_id and space_id are required.")
-        contact = self.db.query(RespondContact).filter(RespondContact.id == contact_id).first()
-        if contact is None:
-            raise handle_not_found("Contact", contact_id)
+        contact = self._resolve_contact(contact_id)
 
         # Rate-limit: at most one outstanding OTP per contact within cooldown.
         recent = (
             self.db.query(PortalOtpCode)
-            .filter(PortalOtpCode.contact_id == contact_id)
+            .filter(PortalOtpCode.contact_id == contact.id)
             .order_by(PortalOtpCode.created_at.desc())
             .first()
         )
@@ -208,7 +219,7 @@ class PortalService:
 
         code = f"{secrets.randbelow(1_000_000):06d}"
         otp = PortalOtpCode(
-            contact_id=contact_id,
+            contact_id=contact.id,
             space_id=space_id,
             code_hash=_hash_otp(code),
             expires_at=_utcnow() + OTP_TTL,
@@ -217,8 +228,8 @@ class PortalService:
         self.db.commit()
         self.db.refresh(otp)
 
-        # Dispatch via Respond.io. Prefer respond_io_id; fall back to contact_id.
-        identifier = (contact.respond_io_id or "").strip() or contact_id
+        # Dispatch via Respond.io. Prefer respond_io_id; fall back to internal id.
+        identifier = (contact.respond_io_id or "").strip() or contact.id
         try:
             from app.services.integration_service import RespondClient
 
@@ -228,7 +239,7 @@ class PortalService:
                 f"Your Sorento portal verification code is {code}. It expires in 10 minutes.",
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning("Failed to dispatch portal OTP for contact %s: %s", contact_id, e)
+            logger.warning("Failed to dispatch portal OTP for contact %s: %s", contact.id, e)
             raise handle_validation_error(
                 "Could not send the verification code right now. Please try again shortly."
             ) from e
@@ -241,11 +252,12 @@ class PortalService:
         code = (code or "").strip()
         if not contact_id or not space_id or not code:
             raise handle_validation_error("contact_id, space_id and code are required.")
+        contact = self._resolve_contact(contact_id)
 
         otp = (
             self.db.query(PortalOtpCode)
             .filter(
-                PortalOtpCode.contact_id == contact_id,
+                PortalOtpCode.contact_id == contact.id,
                 PortalOtpCode.consumed_at.is_(None),
             )
             .order_by(PortalOtpCode.created_at.desc())
@@ -265,7 +277,7 @@ class PortalService:
 
         otp.consumed_at = _utcnow()
         self.db.commit()
-        return self.mint_token(contact_id, space_id)
+        return self.mint_token(contact.id, space_id)
 
     @staticmethod
     def _mask_phone(phone: Optional[str]) -> Optional[str]:

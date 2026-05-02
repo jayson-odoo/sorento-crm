@@ -52,6 +52,7 @@ npm run build:staging        # copies .env.staging -> .env.local first
 npm run lint                 # eslint .
 npm run test                 # vitest run
 npm run test:watch
+npm run test:e2e             # playwright (e2e/, chromium, baseURL :3000)
 npm run format               # prettier --write .
 
 npx prisma db push           # apply schema
@@ -146,6 +147,39 @@ Storage routing: each `attachments` row carries a `storage_provider` (`s3` or `r
 Frontend (`sorento_crm_frontend/.env` or `.env.local`): `DATABASE_URL` (Prisma — NextAuth/user data only), `NEXTAUTH_SECRET` (must align with backend `JWT_SECRET` if sharing tokens), `NEXTAUTH_URL`, `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_BASE_PATH`, `GOOGLE_CLIENT_*`, `EXTERNAL_API_KEY`, `SMTP_*`, `STORAGE_*`, `RECAPTCHA_*`, `FRONTEND_BASE_URL`.
 
 MCP (`sorento_crm_mcp/`): `CRM_BASE_URL`, `EXTERNAL_API_KEY`, optional `CRM_MCP_HOST/PORT/TIMEOUT/MAX_RESPONSE_BYTES/LOG_LEVEL`.
+
+## Browser verification (Playwright)
+
+Frontend changes are not done until verified in a real browser. Type-check + Vitest = code correctness, not feature correctness. UI/flow changes MUST be exercised end-to-end before reporting complete.
+
+Two paths, pick one:
+
+### 1. Interactive verification via Playwright MCP (preferred during a task)
+
+Use the `mcp__plugin_playwright_playwright__*` tools to drive Chromium against the running dev server.
+
+- Ensure FE dev server runs at `http://localhost:3000` (`npm run dev` in `sorento_crm_frontend/`) and BE at `http://localhost:8000`.
+- Tool flow: `browser_navigate` → `browser_snapshot` (gets accessibility tree + element refs) → `browser_click` / `browser_fill_form` / `browser_type` → re-snapshot to assert state.
+- Always check `browser_console_messages` after the interaction. Treat unexpected `error` / `warning` as a regression.
+- Use `browser_take_screenshot` for visual confirmation of CRUD flows (list → modal create → row appears → row edit → confirm-delete dialog → row gone).
+- Use `browser_network_requests` to verify the FE hit the expected `/api/v1/*` endpoint with the right method/payload — confirms the hook → service → api-client chain wired correctly.
+- Test the golden path AND edge cases: empty states (every section per CRUD UX standard), validation errors, delete confirmation copy, RBAC denial.
+- Close with `browser_close` when done.
+
+If unable to reach a browser (server down, sandboxed, etc.), state that explicitly. Never claim a UI change works without browser verification.
+
+### 2. Persisted Playwright spec (when the flow deserves regression coverage)
+
+- Specs live in `sorento_crm_frontend/e2e/`, config in `sorento_crm_frontend/playwright.config.ts` (chromium only, `baseURL` from `PORTAL_E2E_BASE_URL` ?? `http://localhost:3000`, viewport 1400x1600, single worker, no retries).
+- Run all: `npm run test:e2e`. Run one: `npx playwright test e2e/foo.spec.ts`. Headed debug: `npx playwright test --headed --project=chromium`.
+- Fixtures in `e2e/fixtures/` are real committed sample files (per memory rule: AI/file features test against real fixtures, not stubbed mocks). Add new fixtures alongside, do not gitignore them.
+- Trace retained on failure (`trace: 'retain-on-failure'`); inspect via `npx playwright show-trace`.
+
+### When to use which
+
+- New CRUD page / modal / detail page → MCP interactive verification minimum; promote to a spec only when it exercises a non-trivial cross-feature flow worth pinning.
+- AI / file-extraction / portal flows → spec required, real fixture required.
+- Pure visual / Tailwind tweak → MCP screenshot is sufficient.
 
 ## Cache reset (frontend)
 

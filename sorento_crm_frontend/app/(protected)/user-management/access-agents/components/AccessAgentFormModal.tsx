@@ -446,10 +446,6 @@ export default function AccessAgentFormModal({
               {isEditMode && accessAgentId && (
                 <div className="space-y-3">
                   <h4 className="font-medium">MCP Tools</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Tools selected here will require an authorised contact under this access agent
-                    before they can be invoked.
-                  </p>
                   <McpToolSelector
                     value={selectedToolIds}
                     onChange={setSelectedToolIds}

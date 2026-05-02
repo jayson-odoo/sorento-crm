@@ -483,10 +483,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
               <CardTitle>MCP Tools</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Tools selected here will require an authorised contact under this access agent
-                before they can be invoked.
-              </p>
               <McpToolSelector
                 value={selectedToolIds}
                 onChange={setSelectedToolIds}
