@@ -1,0 +1,63 @@
+{
+  "title": "k6 — Sorento CRM Loadtest",
+  "uid": "sorento-k6-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "tags": ["k6", "sorento"],
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "RPS (http_reqs)",
+      "datasource": "k6-influx",
+      "targets": [
+        {
+          "rawQuery": true,
+          "query": "SELECT non_negative_derivative(mean(\"value\"), 1s) FROM \"http_reqs\" WHERE $timeFilter GROUP BY time($__interval), \"name\""
+        }
+      ],
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Response time p95 (ms)",
+      "datasource": "k6-influx",
+      "targets": [
+        {
+          "rawQuery": true,
+          "query": "SELECT percentile(\"value\", 95) FROM \"http_req_duration\" WHERE $timeFilter GROUP BY time($__interval), \"name\""
+        }
+      ],
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Error rate (http_req_failed)",
+      "datasource": "k6-influx",
+      "targets": [
+        {
+          "rawQuery": true,
+          "query": "SELECT mean(\"value\") FROM \"http_req_failed\" WHERE $timeFilter GROUP BY time($__interval), \"name\""
+        }
+      ],
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "VUs",
+      "datasource": "k6-influx",
+      "targets": [
+        {
+          "rawQuery": true,
+          "query": "SELECT mean(\"value\") FROM \"vus\" WHERE $timeFilter GROUP BY time($__interval)"
+        }
+      ],
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 }
+    }
+  ]
+}

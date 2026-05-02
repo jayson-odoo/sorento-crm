@@ -1820,6 +1820,24 @@ type RouteHandlerConfig<Route extends AppRouteHandlerRoutes = AppRouteHandlerRou
   type __Unused = __Check
 }
 
+// Validate ../../app/(protected)/system-management/ai-assistant/usage/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/system-management/ai-assistant/usage">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/system-management/ai-assistant/usage/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
+// Validate ../../app/(protected)/system-management/ai-assistant/wishlist/page.tsx
+{
+  type __IsExpected<Specific extends AppPageConfig<"/system-management/ai-assistant/wishlist">> = Specific
+  const handler = {} as typeof import("../../app/(protected)/system-management/ai-assistant/wishlist/page.js")
+  type __Check = __IsExpected<typeof handler>
+  // @ts-ignore
+  type __Unused = __Check
+}
+
 // Validate ../../app/(protected)/system-management/app-store/bundles/page.tsx
 {
   type __IsExpected<Specific extends AppPageConfig<"/system-management/app-store/bundles">> = Specific

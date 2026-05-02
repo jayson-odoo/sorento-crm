@@ -36,6 +36,20 @@ class ChatResult:
     raw: Any = None  # provider-native response
 
 
+@dataclass
+class ImagePart:
+    """Single image attached to the last user message in a multimodal call.
+
+    ``mime`` must be a content type the active provider accepts
+    (``image/png``, ``image/jpeg``, ``image/webp``). ``data_b64`` is raw
+    base64 with no ``data:`` prefix — each provider's ``chat`` adapter
+    wraps it in the native shape.
+    """
+
+    mime: str
+    data_b64: str
+
+
 class LLMProvider(Protocol):
     name: str
 
@@ -47,11 +61,101 @@ class LLMProvider(Protocol):
         temperature: float = 0.0,
         model: Optional[str] = None,
         max_tokens: Optional[int] = None,
+        images: Optional[list[ImagePart]] = None,
+        response_format: Optional[dict] = None,
     ) -> ChatResult: ...
 
     def embed(self, text: str) -> list[float]: ...
 
     def test_connection(self) -> tuple[bool, str, int]: ...
+
+
+# ---------------------------------------------------------------------------
+# Multimodal helpers
+# ---------------------------------------------------------------------------
+
+
+def _attach_images_openai(
+    messages: list[dict], images: list[ImagePart]
+) -> list[dict]:
+    """Return a copy of ``messages`` with ``images`` appended to the final
+    user message in OpenAI's vision format.
+
+    If no user message exists, a new one is created. The original text is
+    preserved as a ``{"type":"text"}`` block so callers can keep passing
+    plain-string content.
+    """
+    if not images:
+        return messages
+    out = [dict(m) for m in messages]
+    last_user_idx = -1
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].get("role") == "user":
+            last_user_idx = i
+            break
+    if last_user_idx == -1:
+        out.append({"role": "user", "content": []})
+        last_user_idx = len(out) - 1
+
+    msg = out[last_user_idx]
+    existing = msg.get("content")
+    blocks: list[dict] = []
+    if isinstance(existing, str) and existing:
+        blocks.append({"type": "text", "text": existing})
+    elif isinstance(existing, list):
+        blocks.extend(existing)
+    for img in images:
+        blocks.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{img.mime};base64,{img.data_b64}",
+                },
+            }
+        )
+    msg["content"] = blocks
+    out[last_user_idx] = msg
+    return out
+
+
+def _attach_images_anthropic(
+    messages: list[dict], images: list[ImagePart]
+) -> list[dict]:
+    """Return a copy of ``messages`` with ``images`` appended to the final
+    user message in Anthropic's content-block format."""
+    if not images:
+        return messages
+    out = [dict(m) for m in messages]
+    last_user_idx = -1
+    for i in range(len(out) - 1, -1, -1):
+        if out[i].get("role") == "user":
+            last_user_idx = i
+            break
+    if last_user_idx == -1:
+        out.append({"role": "user", "content": []})
+        last_user_idx = len(out) - 1
+
+    msg = out[last_user_idx]
+    existing = msg.get("content")
+    blocks: list[dict] = []
+    if isinstance(existing, str) and existing:
+        blocks.append({"type": "text", "text": existing})
+    elif isinstance(existing, list):
+        blocks.extend(existing)
+    for img in images:
+        blocks.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": img.mime,
+                    "data": img.data_b64,
+                },
+            }
+        )
+    msg["content"] = blocks
+    out[last_user_idx] = msg
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -81,11 +185,16 @@ class OpenAIProvider:
         temperature: float = 0.0,
         model: Optional[str] = None,
         max_tokens: Optional[int] = None,
+        images: Optional[list[ImagePart]] = None,
+        response_format: Optional[dict] = None,
     ) -> ChatResult:
         client = self._client()
+        outbound_messages = (
+            _attach_images_openai(messages, images) if images else messages
+        )
         kwargs: dict[str, Any] = {
             "model": model or self.default_model,
-            "messages": messages,
+            "messages": outbound_messages,
             "temperature": temperature,
         }
         if tools:
@@ -93,6 +202,8 @@ class OpenAIProvider:
             kwargs["tool_choice"] = "auto"
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+        if response_format is not None:
+            kwargs["response_format"] = response_format
 
         completion = client.chat.completions.create(**kwargs)
 
@@ -290,10 +401,23 @@ class AnthropicProvider:
         temperature: float = 0.0,
         model: Optional[str] = None,
         max_tokens: Optional[int] = None,
+        images: Optional[list[ImagePart]] = None,
+        response_format: Optional[dict] = None,
     ) -> ChatResult:
         client = self._client()
         system_text, rest = _split_system_messages(messages)
+        # Anthropic has no native JSON-mode flag; emulate by appending an
+        # explicit instruction to the system prompt. The extract service
+        # validates the response is parseable JSON either way.
+        if response_format and response_format.get("type") == "json_object":
+            json_directive = (
+                "Return ONLY a single JSON object as the assistant message — "
+                "no prose, no code fences, no leading or trailing text."
+            )
+            system_text = f"{system_text}\n\n{json_directive}".strip()
         ant_messages = _convert_messages_to_anthropic(rest)
+        if images:
+            ant_messages = _attach_images_anthropic(ant_messages, images)
         kwargs: dict[str, Any] = {
             "model": model or self.default_model,
             "messages": ant_messages,

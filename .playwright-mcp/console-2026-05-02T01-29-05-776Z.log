@@ -1,0 +1,20 @@
+[     656ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/compiled/react-dom/cjs/react-dom-client.development.js:25630
+[    1005ms] [LOG] i18next: languageChanged en-GB @ webpack-internal:///(app-pages-browser)/./node_modules/i18next/dist/esm/i18next.js:223
+[    1006ms] [LOG] i18next: initialized {debug: true, initAsync: true, ns: Array(1), defaultNS: Array(1), fallbackLng: Array(1)} @ webpack-internal:///(app-pages-browser)/./node_modules/i18next/dist/esm/i18next.js:223
+[    1025ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[    1026ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[    1026ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[    1026ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[    1026ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[    1026ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[    1026ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[    1026ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[    1667ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[    1673ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[    1890ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[  136003ms] [LOG] [Fast Refresh] rebuilding @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/hot-reloader/app/hot-reloader-app.js:196
+[  136776ms] [LOG] [Fast Refresh] done in 773ms @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/report-hmr-latency.js:13
+[  152999ms] [LOG] [Fast Refresh] rebuilding @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/hot-reloader/app/hot-reloader-app.js:196
+[  153408ms] [LOG] [Fast Refresh] done in 408ms @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/report-hmr-latency.js:13
+[  162211ms] [LOG] [Fast Refresh] rebuilding @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/hot-reloader/app/hot-reloader-app.js:196
+[  162762ms] [LOG] [Fast Refresh] done in 551ms @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/report-hmr-latency.js:13

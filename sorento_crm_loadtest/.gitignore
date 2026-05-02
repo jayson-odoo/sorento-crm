@@ -1,0 +1,7 @@
+.env
+.env.local
+results/
+node_modules/
+fixtures/attachments/*
+!fixtures/attachments/.gitkeep
+!fixtures/attachments/README.md

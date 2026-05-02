@@ -1,0 +1,18 @@
+{
+  "name": "sorento-crm-loadtest",
+  "version": "0.1.0",
+  "private": true,
+  "description": "k6 stress-test suite for Sorento CRM (FE + BE + n8n)",
+  "scripts": {
+    "smoke": "./ci/run.sh smoke",
+    "load": "./ci/run.sh load",
+    "stress": "./ci/run.sh stress",
+    "spike": "./ci/run.sh spike",
+    "soak": "./ci/run.sh soak",
+    "obs:up": "docker compose -f docker-compose.observability.yml up -d",
+    "obs:down": "docker compose -f docker-compose.observability.yml down"
+  },
+  "engines": {
+    "k6": ">=0.50.0"
+  }
+}

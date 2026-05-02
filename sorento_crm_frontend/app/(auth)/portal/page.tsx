@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, ChevronRight, FileText, Plus } from 'lucide-react';
+import { AlertCircle, ChevronRight, FileText, LogOut, Plus } from 'lucide-react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,9 +17,11 @@ import {
   PortalSubmissionSummary,
   PortalUnauthorizedError,
   SUBMISSION_LABELS,
+  clearPortalToken,
   fetchMe,
   fetchSubmissions,
   readPortalToken,
+  statusLabel,
   writePortalToken,
 } from './lib/portal-client';
 
@@ -147,6 +149,14 @@ function PortalLandingContent() {
     return out;
   }, [submissions]);
 
+  const handleLogout = useCallback(() => {
+    const t = readPortalToken();
+    clearPortalToken();
+    const qs = new URLSearchParams({ reason: 'logout' });
+    if (t) qs.set('token', t);
+    router.replace(`/portal/verify?${qs.toString()}`);
+  }, [router]);
+
   if (loading) {
     return (
       <div className="min-h-screen max-w-4xl mx-auto px-4 py-6 space-y-4">
@@ -176,8 +186,12 @@ function PortalLandingContent() {
   return (
     <div className="min-h-screen max-w-4xl mx-auto px-4 py-6 space-y-6">
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="pb-3 flex flex-row items-start justify-between gap-2">
           <CardTitle className="text-base">Welcome{contact?.name ? `, ${contact.name}` : ''}</CardTitle>
+          <Button variant="outline" size="sm" onClick={handleLogout}>
+            <LogOut className="h-4 w-4 mr-2" />
+            Log out
+          </Button>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-1">
           {contact?.phone_number && <p>Phone: {contact.phone_number}</p>}
@@ -338,7 +352,7 @@ function SubmissionList({
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <Badge variant={statusVariant(row.is_draft ? 'draft' : row.status)}>
-                      {row.is_draft ? 'Draft' : row.status}
+                      {row.is_draft ? 'Draft' : statusLabel(row.status)}
                     </Badge>
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                   </div>

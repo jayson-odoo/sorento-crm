@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "format": "prettier --write ."
   },
   "prisma": {
@@ -87,6 +88,7 @@
     "zod": "^3.25.67"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@prisma/client": "^6.10.1",
     "@tailwindcss/postcss": "^4.1.11",
     "@testing-library/jest-dom": "^6.9.1",

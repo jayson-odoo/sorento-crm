@@ -1,0 +1,12 @@
+{
+  "integration_log_id": "00000000-0000-0000-0000-000000000000",
+  "attachment_url": "https://cdn.example.invalid/loadtest.pdf",
+  "s3_url": "s3://sorento-loadtest/loadtest.pdf",
+  "file_path": "loadtest/loadtest.pdf",
+  "attachment_id": "00000000-0000-0000-0000-000000000000",
+  "attachment_filename": "loadtest.pdf",
+  "mime_type": "application/pdf",
+  "file_size": 102400,
+  "attachment_type": "general",
+  "access_levels": ["internal"]
+}

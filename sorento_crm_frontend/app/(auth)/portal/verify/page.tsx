@@ -22,6 +22,8 @@ const SENT_KEY_PREFIX = 'sorento.portal.otpSent.';
 function PortalVerifyContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const reason = searchParams?.get('reason');
+  const isLogout = reason === 'logout';
 
   const [contactId, setContactId] = useState<string | null>(null);
   const [spaceId, setSpaceId] = useState<string | null>(null);
@@ -78,6 +80,13 @@ function PortalVerifyContent() {
         setContactId(info.contact_id);
         setSpaceId(info.space_id);
         setBootstrapping(false);
+        // Skip auto-fire when the user explicitly logged out — they did not
+        // ask to log in again, so don't burn an OTP. They can click
+        // "Send code" / "Resend code" when ready.
+        const reasonNow = searchParams?.get('reason');
+        if (reasonNow === 'logout') {
+          return;
+        }
         // Guard the auto-fire against React StrictMode double-invoke AND
         // against component re-mounts within the same browser session
         // (e.g. Suspense boundary toggling, /portal -> /portal/verify
@@ -170,7 +179,11 @@ function PortalVerifyContent() {
             <AlertIcon>
               <AlertCircle />
             </AlertIcon>
-            <AlertTitle>Your portal session expired. Verify with an OTP to continue.</AlertTitle>
+            <AlertTitle>
+              {isLogout
+                ? 'You have been logged out. Verify with an OTP to continue.'
+                : 'Your portal session expired. Verify with an OTP to continue.'}
+            </AlertTitle>
           </Alert>
 
           {bootstrapping && (
@@ -204,7 +217,7 @@ function PortalVerifyContent() {
               onClick={handleResend}
               disabled={pending || bootstrapping || !contactId || !spaceId}
             >
-              Resend code
+              {sentTo ? 'Resend code' : 'Send code'}
             </Button>
             <Button
               type="button"

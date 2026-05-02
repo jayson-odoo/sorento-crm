@@ -1,0 +1,44 @@
+[
+  {
+    "contact": {
+      "id": 423512626,
+      "phone": "+60123456789",
+      "firstName": "Loadtest",
+      "lastName": "Contact"
+    },
+    "message": {
+      "messageId": 1777127407164001,
+      "contactId": 423512626,
+      "traffic": "outgoing",
+      "timestamp": 1777127407164,
+      "message": {
+        "type": "text",
+        "text": "LOADTEST outbound message"
+      },
+      "status": [
+        { "value": "pending", "timestamp": 1777127407164 }
+      ]
+    },
+    "channel": {
+      "id": null,
+      "name": "Whatsapp Business",
+      "source": "whatsapp_business"
+    },
+    "user": {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "firstName": "Loadtest",
+      "lastName": "User",
+      "email": "loadtest@sorento.local"
+    },
+    "sender": {
+      "source": "user",
+      "userId": "00000000-0000-0000-0000-000000000001"
+    },
+    "source": "User",
+    "crm": {
+      "business_table": "stock_inquiries",
+      "business_id": "9d69259e-4cb2-4839-81c4-f5be1ced463f",
+      "space_id": "364817"
+    }
+  }
+]

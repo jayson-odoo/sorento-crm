@@ -1,0 +1,860 @@
+[    2218ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/compiled/react-dom/cjs/react-dom-client.development.js:25630
+[    3107ms] [LOG] i18next: languageChanged en-GB @ webpack-internal:///(app-pages-browser)/./node_modules/i18next/dist/esm/i18next.js:223
+[    3107ms] [LOG] i18next: initialized {debug: true, initAsync: true, ns: Array(1), defaultNS: Array(1), fallbackLng: Array(1)} @ webpack-internal:///(app-pages-browser)/./node_modules/i18next/dist/esm/i18next.js:223
+[    3202ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o @ http://localhost:3000/signin:0
+[    3785ms] [LOG] [Fast Refresh] rebuilding @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/hot-reloader/app/hot-reloader-app.js:196
+[    4881ms] [LOG] [Fast Refresh] done in 1096ms @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/report-hmr-latency.js:13
+[   12585ms] [LOG] [Fast Refresh] rebuilding @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/hot-reloader/app/hot-reloader-app.js:196
+[   13555ms] [LOG] [Fast Refresh] done in 971ms @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/report-hmr-latency.js:13
+[   27027ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[   27033ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[   27033ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[   27033ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673:0
+[   27219ms] [LOG] [Fast Refresh] rebuilding @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/hot-reloader/app/hot-reloader-app.js:196
+[   27455ms] [LOG] [Fast Refresh] done in 236ms @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/report-hmr-latency.js:13
+[   43349ms] [LOG] [Fast Refresh] rebuilding @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/hot-reloader/app/hot-reloader-app.js:196
+[   44109ms] [LOG] [Fast Refresh] done in 760ms @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/report-hmr-latency.js:13
+[   71085ms] [LOG] [Fast Refresh] rebuilding @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/hot-reloader/app/hot-reloader-app.js:196
+[   71798ms] [LOG] [Fast Refresh] done in 713ms @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/report-hmr-latency.js:13
+[   75855ms] [LOG] [Fast Refresh] rebuilding @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/hot-reloader/app/hot-reloader-app.js:196
+[   77634ms] [LOG] [Fast Refresh] done in 1780ms @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/client/dev/report-hmr-latency.js:13
+[   88784ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[   88785ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[   88811ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/__nextjs_original-stack-frames:0
+[   88813ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[   89815ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[   89816ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[   89820ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/__nextjs_original-stack-frames:0
+[   89824ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[   91829ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[   91829ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[   91848ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[   95853ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[   95853ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[   95855ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  105860ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  105860ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  105866ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  106869ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  106869ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  106871ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  108873ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  108873ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  108880ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  112885ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  112885ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  112892ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  122897ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  122897ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  122911ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  123914ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  123914ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  123916ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  125919ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  125919ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  125922ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  129930ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  129931ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  129949ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  139957ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  139957ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  139986ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  140991ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  140991ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  140995ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  143006ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  143007ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  143028ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  147036ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  147038ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  147049ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  157061ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  157062ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  157080ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  158084ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  158084ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  158090ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  160093ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  160093ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  160096ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  164107ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  164107ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  164138ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  174155ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  174156ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  174225ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  175231ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  175231ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  175256ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  177275ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  177276ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  177315ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  181343ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  181344ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  181449ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  191463ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  191463ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  191477ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  192480ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  192480ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  192486ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  194498ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  194499ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  194637ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  198642ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  198642ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  198650ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  208657ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  208658ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  208681ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  209685ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  209685ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  209689ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  211694ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  211694ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  211699ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  215703ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  215705ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  215720ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  225737ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  225737ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  225753ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  226757ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  226758ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  226761ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  228782ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  228784ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  228841ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  232849ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  232850ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  232868ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  242887ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  242892ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  242969ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  243995ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  243997ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  244029ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  246058ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  246058ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  246621ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  250643ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  250644ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  250766ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  260787ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  260788ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  260823ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  261834ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  261834ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  261839ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  263856ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  263857ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  263964ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  268001ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  268003ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  268086ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  278091ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  278091ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  278099ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  279102ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  279102ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  279105ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  281109ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  281109ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  281115ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  285124ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  285124ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  285142ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  295172ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  295174ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  295315ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  296319ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  296319ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  296329ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  298344ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  298347ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  298407ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  302441ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  302442ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  302537ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  312548ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  312549ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  312562ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  313565ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  313566ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  313569ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  315572ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  315572ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  315579ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  319585ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  319585ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  319625ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  329634ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  329637ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  329653ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  330656ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  330657ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  330662ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  332665ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  332666ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  332672ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  336685ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  336685ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  336704ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  346710ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  346711ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  346735ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  347741ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  347741ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  347745ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  349774ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  349775ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  349829ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  353844ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  353844ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  353901ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  363905ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  363905ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  363911ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  364914ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  364914ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  364916ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[  366928ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[  366928ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[  366978ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1201024ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1201035ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1201213ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1202234ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1202234ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1202248ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1204257ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1204259ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1204267ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1208324ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1208329ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1208343ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1218359ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1218360ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1218365ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1219374ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1219374ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1219380ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1221412ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1221412ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1221420ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1225425ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1225426ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1225432ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1235439ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1235439ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1235443ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1236447ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1236447ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1236450ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1238452ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1238452ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1238455ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1242458ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1242458ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1242460ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1252464ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1252464ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at Object.start (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:130:9)
+    at Query.fetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:272:40)
+    at #executeFetch (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:181:38)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/queryObserver.js:218:27) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1252479ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1253482ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1253482ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1253483ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1255485ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1255485ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1255488ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 1259495ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3000/api/auth/token:0
+[ 1259495ms] [ERROR] Failed to get token for API call TypeError: Failed to fetch
+    at apiFetch (webpack-internal:///(app-pages-browser)/./lib/api.ts:135:53)
+    at getUnreadCount (webpack-internal:///(app-pages-browser)/./services/notificationService.ts:33:73)
+    at NotificationsSheet.useQuery (webpack-internal:///(app-pages-browser)/./app/components/partials/topbar/notifications-sheet.tsx:54:125)
+    at Object.fetchFn [as fn] (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/query.js:225:14)
+    at run (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:88:49)
+    at eval (webpack-internal:///(app-pages-browser)/./node_modules/@tanstack/query-core/build/modern/retryer.js:112:11) @ webpack-internal:///(app-pages-browser)/./node_modules/next/dist/next-devtools/userspace/app/errors/intercept-console-error.js:56
+[ 1259519ms] [ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6907404ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6908423ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6910429ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6914459ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6924489ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6925513ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6927528ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6931544ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6941571ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6942584ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6944589ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6948602ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6958620ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6959635ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6961658ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6965669ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6975700ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6976727ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6978734ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6982781ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6992837ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6993845ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6995854ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 6999869ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 7009894ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 7010900ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 7012911ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0
+[ 7016960ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:8000/api/v1/notifications/unread-count?include_archived=false:0

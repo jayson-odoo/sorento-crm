@@ -1,0 +1,44 @@
+[
+  {
+    "contact": {
+      "id": 437264483,
+      "phone": null,
+      "firstName": "",
+      "lastName": "",
+      "role": "user",
+      "created_at": 1777127407
+    },
+    "message": {
+      "messageId": 1777127407164000,
+      "channelMessageId": null,
+      "contactId": 437264483,
+      "channelId": null,
+      "traffic": "incoming",
+      "timestamp": 1777127407164,
+      "message": {
+        "type": "text",
+        "text": "What are the products you have?"
+      }
+    },
+    "channel": {
+      "id": null,
+      "name": "Whatsapp Business",
+      "source": "whatsapp_business",
+      "meta": null,
+      "created_at": 1777127407
+    },
+    "sender": {
+      "source": "contact",
+      "userId": null,
+      "teamId": null,
+      "workflowId": null,
+      "broadcastHistoryId": null
+    },
+    "source": "Contact",
+    "crm": {
+      "business_table": "stock_inquiries",
+      "business_id": "9d69259e-4cb2-4839-81c4-f5be1ced463f",
+      "space_id": "364817"
+    }
+  }
+]

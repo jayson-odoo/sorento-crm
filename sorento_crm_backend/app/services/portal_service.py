@@ -429,7 +429,10 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit stock inquiry with status {previous_status!r}."
                 )
-            row.status = "new"
+            # Portal submit mirrors the system "submit for project sales" flow:
+            # advance directly to pending_project_sales so the Project Sales
+            # team is queued for review (notification fires below).
+            row.status = "pending_project_sales"
             row.rejection_reason = None
             row.rejected_at = None
             row.rejected_by = None

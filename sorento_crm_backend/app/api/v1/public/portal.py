@@ -176,6 +176,8 @@ class ProductLookupItem(BaseModel):
     product_code: str
     product_name: Optional[str] = None
     category_id: Optional[str] = None
+    category_code: Optional[str] = None
+    category_name: Optional[str] = None
 
 
 @router.get("/lookups/products", response_model=list[ProductLookupItem])
@@ -185,8 +187,12 @@ def lookup_products(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    from app.models.product import Product
-    query = db.query(Product).filter(Product.is_active.is_(True))
+    from app.models.product import Product, ProductCategory
+    query = (
+        db.query(Product, ProductCategory)
+        .outerjoin(ProductCategory, Product.category_id == ProductCategory.id)
+        .filter(Product.is_active.is_(True))
+    )
     qs = (q or "").strip()
     if qs:
         like = f"%{qs}%"
@@ -194,11 +200,13 @@ def lookup_products(
     rows = query.order_by(Product.product_code).limit(limit).all()
     return [
         ProductLookupItem(
-            product_code=r.product_code,
-            product_name=r.product_name,
-            category_id=str(r.category_id) if r.category_id else None,
+            product_code=p.product_code,
+            product_name=p.product_name,
+            category_id=str(p.category_id) if p.category_id else None,
+            category_code=c.category_code if c else None,
+            category_name=c.category_name if c else None,
         )
-        for r in rows
+        for (p, c) in rows
     ]
 
 
@@ -227,15 +235,21 @@ class DOLookupItem(BaseModel):
     debtor_name: Optional[str] = None
     customer_name: Optional[str] = None
     products: list[str] = []
+    order_date: Optional[str] = None
 
 
 @router.get("/lookups/delivery-orders", response_model=list[DOLookupItem])
 def lookup_delivery_orders(
     q: str = Query(""),
     limit: int = Query(20, ge=1, le=50),
+    start_date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD) lower bound on order_date"),
+    end_date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD) upper bound on order_date"),
+    product_code: Optional[str] = Query(None, description="Filter to DOs containing this product code (substring)"),
+    debtor_name: Optional[str] = Query(None, description="Filter to DOs whose debtor or customer name matches (substring)"),
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
+    from datetime import date as _date, datetime
     from sqlalchemy import or_
     from app.models.order import Customer, Order, OrderLine
     from app.models.product import Product
@@ -244,7 +258,6 @@ def lookup_delivery_orders(
     base = db.query(Order).outerjoin(Customer, Order.customer_id == Customer.id)
     if qs:
         like = f"%{qs}%"
-        # Search by order_number, debtor_name, customer.customer_name, OR product code via OrderLine
         product_subq = (
             db.query(OrderLine.order_id)
             .join(Product, OrderLine.product_id == Product.id)
@@ -258,7 +271,35 @@ def lookup_delivery_orders(
                 Order.id.in_(product_subq),
             )
         )
-    rows = base.order_by(Order.order_number.desc()).limit(limit).all()
+    if start_date:
+        try:
+            base = base.filter(Order.order_date >= datetime.fromisoformat(start_date))
+        except ValueError:
+            raise handle_validation_error(f"Invalid start_date: {start_date!r}")
+    if end_date:
+        try:
+            # inclusive upper bound: end of that day
+            end_dt = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59)
+            base = base.filter(Order.order_date <= end_dt)
+        except ValueError:
+            raise handle_validation_error(f"Invalid end_date: {end_date!r}")
+    if product_code and product_code.strip():
+        like_p = f"%{product_code.strip()}%"
+        product_subq = (
+            db.query(OrderLine.order_id)
+            .join(Product, OrderLine.product_id == Product.id)
+            .filter(Product.product_code.ilike(like_p))
+        )
+        base = base.filter(Order.id.in_(product_subq))
+    if debtor_name and debtor_name.strip():
+        like_d = f"%{debtor_name.strip()}%"
+        base = base.filter(
+            or_(
+                Order.debtor_name.ilike(like_d),
+                Customer.customer_name.ilike(like_d),
+            )
+        )
+    rows = base.order_by(Order.order_date.desc().nullslast(), Order.order_number.desc()).limit(limit).all()
     out: list[DOLookupItem] = []
     for o in rows:
         customer_name = o.customer.customer_name if getattr(o, "customer", None) else None
@@ -277,12 +318,22 @@ def lookup_delivery_orders(
             products = [code for (code,) in lines if code]
         except Exception:
             pass
+        od = o.order_date
+        if od is None:
+            order_date_iso = None
+        elif isinstance(od, datetime):
+            order_date_iso = od.date().isoformat()
+        elif isinstance(od, _date):
+            order_date_iso = od.isoformat()
+        else:
+            order_date_iso = str(od)
         out.append(
             DOLookupItem(
                 order_number=o.order_number,
                 debtor_name=o.debtor_name,
                 customer_name=customer_name,
                 products=products,
+                order_date=order_date_iso,
             )
         )
     return out
@@ -472,6 +523,16 @@ def _check_quota(
             )
 
 
+def _safe_presigned_url(file_path: Optional[str]) -> Optional[str]:
+    if not file_path:
+        return None
+    try:
+        return S3Service().get_presigned_url(file_path, expiration=3600)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Portal presigned URL failed for %s: %s", file_path, e)
+        return None
+
+
 def _list_attachments_for(db: Session, entity_type: str, entity_id: str) -> list[dict]:
     rows = (
         db.query(EntityAttachmentLink, Attachment)
@@ -491,7 +552,8 @@ def _list_attachments_for(db: Session, entity_type: str, entity_id: str) -> list
                 "attachment_id": str(att.id),
                 "filename": att.original_filename,
                 "size": att.file_size_bytes,
-                "url": att.file_path,
+                "url": _safe_presigned_url(att.file_path) or att.file_path,
+                "content_type": att.mime_type if hasattr(att, "mime_type") else None,
                 "uploaded_at": att.uploaded_at.isoformat() if att.uploaded_at else None,
             }
         )
@@ -560,12 +622,14 @@ async def portal_upload_attachment(
     db.commit()
     db.refresh(link)
     attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
+    file_path = attachment.file_path if attachment else s3_key
     return {
         "link_id": str(link.id),
         "attachment_id": str(link.attachment_id),
         "filename": attachment.original_filename if attachment else file.filename,
         "size": incoming_size,
-        "url": attachment.file_path if attachment else s3_key,
+        "url": _safe_presigned_url(file_path) or file_path,
+        "content_type": (attachment.mime_type if attachment else file.content_type) or None,
     }
 
 

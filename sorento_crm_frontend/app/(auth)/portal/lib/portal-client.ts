@@ -42,6 +42,7 @@ export interface PortalAttachment {
   filename: string | null;
   size: number | null;
   url: string | null;
+  content_type?: string | null;
   uploaded_at?: string | null;
 }
 
@@ -73,11 +74,71 @@ export function clearPortalToken(): void {
   window.sessionStorage.removeItem(TOKEN_KEY);
 }
 
+/**
+ * Resolve the backend base URL.
+ *
+ * - In production (or when NEXT_PUBLIC_API_URL is set), this is the absolute
+ *   API host.
+ * - In development with no NEXT_PUBLIC_API_URL, the empty string keeps URLs
+ *   relative so the Next.js rewrite proxies `/api/v1/*` to the FastAPI server.
+ *
+ * Multipart uploads use {@link absoluteApiUrl} to bypass the rewrite, since
+ * Next.js dev rewrites can mangle streaming `multipart/form-data` bodies.
+ */
+function apiBase(): string {
+  if (typeof process !== 'undefined') {
+    const env = process.env?.NEXT_PUBLIC_API_URL;
+    if (env) return env.replace(/\/$/, '');
+  }
+  return '';
+}
+
+function absoluteApiUrl(path: string): string {
+  const base = apiBase();
+  if (base) return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+  // Dev fallback: hit FastAPI directly to bypass the Next.js rewrite, which
+  // can corrupt multipart bodies in some Next 15 builds.
+  if (typeof window !== 'undefined') {
+    const port = window.location.port;
+    if (port === '3000' || port === '3001') {
+      return `${window.location.protocol}//${window.location.hostname}:8000${path}`;
+    }
+  }
+  return path;
+}
+
 async function portalFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const token = readPortalToken();
   const headers = new Headers(init.headers || {});
   if (token) headers.set('X-Portal-Token', token);
   const res = await fetch(input, { ...init, headers });
+  if (res.status === 401) {
+    clearPortalToken();
+    throw new PortalUnauthorizedError();
+  }
+  return res;
+}
+
+async function portalMultipartFetch(
+  path: string,
+  form: FormData,
+): Promise<Response> {
+  const token = readPortalToken();
+  const url = absoluteApiUrl(path);
+  // IMPORTANT: do NOT pass a Content-Type header. fetch must auto-set
+  // 'multipart/form-data; boundary=...' when body is FormData. Passing a
+  // Headers object with only X-Portal-Token is fine; fetch fills in CT itself.
+  const init: RequestInit = {
+    method: 'POST',
+    body: form,
+    headers: token ? { 'X-Portal-Token': token } : undefined,
+  };
+  // Cross-origin in dev: we hit :8000 from :3000. CORS must allow.
+  if (url.startsWith('http')) {
+    init.mode = 'cors';
+    init.credentials = 'omit';
+  }
+  const res = await fetch(url, init);
   if (res.status === 401) {
     clearPortalToken();
     throw new PortalUnauthorizedError();
@@ -166,8 +227,8 @@ export async function uploadAttachment(
   const form = new FormData();
   form.set('kind', kind);
   form.set('submission_id', submissionId);
-  form.set('file', file);
-  const res = await portalFetch('/api/v1/public/portal/attachments', { method: 'POST', body: form });
+  form.set('file', file, file.name);
+  const res = await portalMultipartFetch('/api/v1/public/portal/attachments', form);
   return unwrap<PortalAttachment>(res, 'Upload failed.');
 }
 
@@ -226,6 +287,29 @@ export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
   sponsorship_form: 'Sponsorship Form',
 };
 
+// Friendly labels for backend status / approval_status values surfaced in the
+// portal. Falls back to the raw value when not in this map.
+export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  new: 'New',
+  pending: 'Pending',
+  pending_approval: 'Pending approval',
+  pending_project_sales: 'Pending project sales',
+  pending_purchasing: 'Pending purchasing',
+  approved: 'Approved',
+  rejected: 'Rejected',
+  responded: 'Responded',
+  submitted: 'Submitted',
+  completed: 'Completed',
+  updated: 'Updated',
+};
+
+export function statusLabel(status: string | null | undefined): string {
+  const s = (status ?? '').trim();
+  if (!s) return '';
+  return SUBMISSION_STATUS_LABELS[s] ?? s;
+}
+
 // ---------------------------------------------------------------------------
 // Lookup helpers for portal forms (searchable comboboxes / select sets)
 // ---------------------------------------------------------------------------
@@ -234,6 +318,8 @@ export interface ProductLookupItem {
   product_code: string;
   product_name: string | null;
   category_id: string | null;
+  category_code?: string | null;
+  category_name?: string | null;
 }
 
 export interface DebtorLookupItem {
@@ -245,6 +331,14 @@ export interface DOLookupItem {
   debtor_name: string | null;
   customer_name: string | null;
   products: string[];
+  order_date?: string | null;
+}
+
+export interface DOLookupFilters {
+  start_date?: string;
+  end_date?: string;
+  product_code?: string;
+  debtor_name?: string;
 }
 
 export interface LookupSetOption {
@@ -264,8 +358,17 @@ export async function lookupDebtors(q: string, limit = 20): Promise<DebtorLookup
   return unwrap<DebtorLookupItem[]>(res, 'Failed to load debtors.');
 }
 
-export async function lookupDeliveryOrders(q: string, limit = 20): Promise<DOLookupItem[]> {
-  const url = `/api/v1/public/portal/lookups/delivery-orders?q=${encodeURIComponent(q)}&limit=${limit}`;
+export async function lookupDeliveryOrders(
+  q: string,
+  limit = 20,
+  filters: DOLookupFilters = {},
+): Promise<DOLookupItem[]> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  if (filters.start_date) params.set('start_date', filters.start_date);
+  if (filters.end_date) params.set('end_date', filters.end_date);
+  if (filters.product_code) params.set('product_code', filters.product_code);
+  if (filters.debtor_name) params.set('debtor_name', filters.debtor_name);
+  const url = `/api/v1/public/portal/lookups/delivery-orders?${params.toString()}`;
   const res = await portalFetch(url);
   return unwrap<DOLookupItem[]>(res, 'Failed to load delivery orders.');
 }
@@ -278,4 +381,57 @@ export async function lookupSet(setKey: string): Promise<LookupSetOption[]> {
   const data = await unwrap<LookupSetOption[]>(res, 'Failed to load lookup options.');
   _lookupSetCache[setKey] = data;
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// AI Extract — generic form prefill from attachments (images + PDFs)
+// ---------------------------------------------------------------------------
+
+export interface AIExtractFieldMeta {
+  raw?: unknown;
+  canonical?: unknown;
+  source?: string | null;
+}
+
+export interface AIExtractedProductLine {
+  product_code?: string | null;
+  product_name?: string | null;
+  quantity?: number | null;
+  notes?: string | null;
+}
+
+export interface AIExtractTokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+export interface AIExtractResult {
+  values: Record<string, unknown>;
+  products: AIExtractedProductLine[];
+  per_field: Record<string, AIExtractFieldMeta>;
+  usage: AIExtractTokenUsage;
+  model?: string | null;
+  provider?: string | null;
+}
+
+export const AI_EXTRACT_FORM_KEYS: Record<PortalSubmissionKind, string> = {
+  complaint: 'portal.complaint',
+  stock_inquiry: 'portal.stock_inquiry',
+  purchase_request: 'portal.purchase_request',
+  sponsorship_form: 'portal.sponsorship_form',
+};
+
+export async function aiExtractFromFiles(
+  formKey: string,
+  files: File[],
+): Promise<AIExtractResult> {
+  if (!files.length) throw new Error('Drop at least one file before extracting.');
+  const form = new FormData();
+  form.set('form_key', formKey);
+  for (const file of files) {
+    form.append('files', file, file.name);
+  }
+  const res = await portalMultipartFetch('/api/v1/public/portal/ai-extract', form);
+  return unwrap<AIExtractResult>(res, 'AI extract failed.');
 }
