@@ -229,8 +229,22 @@ class OrderService:
                     q = q.order_by(sort_column.asc())
 
         offset = (page - 1) * limit
-        orders = q.offset(offset).limit(limit).all()
-        
+        # Eager-load relations referenced by OrderResponse to avoid N+1 lazy loads
+        # during Pydantic serialization. joinedload for to-one (customer, order_status),
+        # selectinload for the lines collection (1 batched IN query, then per-line
+        # product is also batched).
+        from sqlalchemy.orm import selectinload
+        orders = (
+            q.options(
+                joinedload(Order.customer),
+                joinedload(Order.order_status),
+                selectinload(Order.lines).joinedload(OrderLine.product),
+            )
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
         return {
             "data": orders,
             "pagination": {

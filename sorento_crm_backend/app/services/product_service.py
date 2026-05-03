@@ -238,8 +238,19 @@ class ProductService:
         
         # Apply pagination
         offset = (page - 1) * limit
-        products = q.offset(offset).limit(limit).all()
-        
+        # Eager-load relations referenced by ProductResponse to avoid N+1 lazy loads
+        # during Pydantic serialization.
+        products = (
+            q.options(
+                joinedload(Product.category),
+                joinedload(Product.brand),
+                joinedload(Product.base_uom),
+            )
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
         return {
             "data": products,
             "pagination": {
