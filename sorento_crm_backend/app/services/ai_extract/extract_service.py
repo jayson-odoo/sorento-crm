@@ -75,6 +75,8 @@ class ExtractedProductLine(BaseModel):
     product_code: str | None = None
     product_name: str | None = None
     quantity: float | None = None
+    unit_price: float | None = None
+    total: float | None = None
     notes: str | None = None
 
 
@@ -191,6 +193,7 @@ class AIExtractService:
             result=result,
             elapsed_ms=elapsed_ms,
             user_id=user_id,
+            contact_id=portal_contact_id,
             form_key=form_key,
             page_count=len(image_parts),
             answered=bool(values),
@@ -444,8 +447,9 @@ class AIExtractService:
             f"Fields:\n{json.dumps(field_specs, ensure_ascii=False, indent=2)}\n\n"
             "Return ONLY a single JSON object keyed by field name. "
             "Optionally include a top-level `products` array of "
-            "{product_code, product_name, quantity, notes} when the document "
-            "lists line items."
+            "{product_code, product_name, quantity, unit_price, total, notes} "
+            "when the document lists line items. Only include `unit_price` and "
+            "`total` when the document actually shows them; omit otherwise."
         )
         return [
             {"role": "system", "content": system},
@@ -604,16 +608,21 @@ class AIExtractService:
             code = str(item.get("product_code") or "").strip() or None
             if code:
                 code = self._canonical_product_code(code)
-            qty = item.get("quantity")
-            try:
-                qty_val = float(qty) if qty is not None and qty != "" else None
-            except (TypeError, ValueError):
-                qty_val = None
+            def _coerce_float(raw: Any) -> float | None:
+                if raw is None or raw == "":
+                    return None
+                try:
+                    return float(raw)
+                except (TypeError, ValueError):
+                    return None
+
             out.append(
                 ExtractedProductLine(
                     product_code=code,
                     product_name=str(item.get("product_name") or "").strip() or None,
-                    quantity=qty_val,
+                    quantity=_coerce_float(item.get("quantity")),
+                    unit_price=_coerce_float(item.get("unit_price")),
+                    total=_coerce_float(item.get("total")),
                     notes=str(item.get("notes") or "").strip() or None,
                 )
             )
@@ -629,6 +638,7 @@ class AIExtractService:
         result: ChatResult,
         elapsed_ms: int,
         user_id: str | None,
+        contact_id: str | None,
         form_key: str,
         page_count: int,
         answered: bool,
@@ -637,6 +647,9 @@ class AIExtractService:
             self.db.add(
                 AIAssistantUsageLog(
                     user_id=user_id,
+                    contact_id=contact_id,
+                    feature="ai_extract",
+                    form_key=form_key,
                     provider=provider_name,
                     model=model,
                     prompt_tokens=int(result.prompt_tokens or 0),

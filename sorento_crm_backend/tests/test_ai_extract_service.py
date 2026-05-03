@@ -140,6 +140,40 @@ def test_form_schemas_keys_namespaced():
         assert "." in k, f"form_key should be namespaced (e.g. portal.complaint), got {k!r}"
 
 
+def test_portal_stock_inquiry_schema_has_quantity_no_do_number():
+    """Stock inquiry has quantity (number) but NOT delivery_order_number —
+    proves per-form field flexibility (the user's "complaint has DO number
+    but stock inquiry doesn't" requirement)."""
+    schema = get_form_schema("portal.stock_inquiry")
+    names = {f.name for f in schema}
+    assert "quantity" in names
+    assert "delivery_date" in names
+    assert "salesperson" in names
+    assert "delivery_order_number" not in names
+    assert "within_warranty" not in names
+    qty = next(f for f in schema if f.name == "quantity")
+    assert qty.kind == "number"
+
+
+def test_portal_purchase_request_schema_has_no_warranty_or_do_number():
+    schema = get_form_schema("portal.purchase_request")
+    names = {f.name for f in schema}
+    assert "expected_po_date" in names
+    assert "external_reference" in names
+    assert "delivery_order_number" not in names
+    assert "within_warranty" not in names
+
+
+def test_portal_sponsorship_schema_keeps_total_project_value_as_text():
+    """total_project_value must stay 'text' so the LLM doesn't strip
+    descriptive fragments like 'BULK ORDER EST RM1.6MIL'."""
+    schema = get_form_schema("portal.sponsorship_form")
+    fields = {f.name: f for f in schema}
+    assert "delivery_address" in fields
+    assert "sponsor_subject" in fields
+    assert fields["total_project_value"].kind == "text"
+
+
 # ---- Image attachers ------------------------------------------------------
 
 
@@ -425,6 +459,51 @@ def test_validate_do_number_coerces_string_to_list():
         schema,
     )
     assert values["delivery_order_number"] == ["PS202603-0071", "PO2509-013"]
+
+
+def test_extract_products_carries_unit_price_and_total():
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    parsed = {
+        "products": [
+            {
+                "product_code": "ABC-1",
+                "product_name": "Widget",
+                "quantity": 2,
+                "unit_price": 199.5,
+                "total": 399.0,
+                "notes": "with caps",
+            },
+            {
+                # purchase_request style — no unit_price/total
+                "product_code": "DEF-2",
+                "quantity": 1,
+                "notes": "spare",
+            },
+        ]
+    }
+    out = svc._extract_products(parsed)
+    assert len(out) == 2
+    assert out[0].product_code == "ABC-1"
+    assert out[0].unit_price == 199.5
+    assert out[0].total == 399.0
+    assert out[0].quantity == 2.0
+    assert out[1].unit_price is None
+    assert out[1].total is None
+
+
+def test_extract_products_coerces_strings_and_drops_garbage():
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    parsed = {
+        "products": [
+            {"product_code": "X", "quantity": "3", "unit_price": "10.5", "total": "31.5"},
+            {"product_code": "Y", "unit_price": "n/a"},  # bad number → None
+        ]
+    }
+    out = svc._extract_products(parsed)
+    assert out[0].quantity == 3.0
+    assert out[0].unit_price == 10.5
+    assert out[0].total == 31.5
+    assert out[1].unit_price is None
 
 
 def test_validate_drops_empty_and_blank_fields():

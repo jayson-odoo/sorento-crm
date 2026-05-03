@@ -128,12 +128,22 @@ class AIAssistantUsageLog(Base):
     tool_calls_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     response_time_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     was_answered: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    # Portal contacts (no users.id) — internal respond_contacts.id (Text PK), NOT respond_io_id.
+    contact_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    # Discriminator: "ai_assistant" (chat) | "ai_extract" (portal form pre-fill).
+    feature: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # When feature="ai_extract", the portal form_key, e.g. "portal.stock_inquiry".
+    form_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_ai_assistant_usage_logs_user_id", "user_id"),
         Index("ix_ai_assistant_usage_logs_created_at", "created_at"),
         Index("ix_ai_assistant_usage_logs_message_id", "message_id"),
+        Index("ix_ai_assistant_usage_logs_contact_id", "contact_id"),
+        Index("ix_ai_assistant_usage_logs_feature_created_at", "feature", "created_at"),
     )
 
 

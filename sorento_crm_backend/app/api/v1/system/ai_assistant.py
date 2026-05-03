@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
+from app.models.access import RespondContact
 from app.models.ai_assistant import AIAssistantMessage, AIAssistantUsageLog
 from app.models.user import User
 from app.schemas.ai_assistant import (
@@ -23,6 +24,7 @@ from app.schemas.ai_assistant import (
     RecentQueryItem,
     TestConnectionRequest,
     TestConnectionResponse,
+    TopContactItem,
     TopUserItem,
     UsageByDayItem,
     UsageSummaryResponse,
@@ -33,6 +35,19 @@ from app.services.ai_wishlist_service import AiWishlistService
 from app.services.llm_provider import get_provider
 
 router = APIRouter()
+
+
+def _feature_filters(feature: Optional[str]) -> list:
+    """Optional ``AIAssistantUsageLog.feature == feature`` filter clause.
+
+    Returns ``[]`` when no feature is requested, so the existing default
+    behavior is unchanged. NULL feature values (legacy rows written before
+    the discriminator was added) are treated as legacy AI assistant rows
+    and only included when ``feature`` is unset.
+    """
+    if not feature:
+        return []
+    return [AIAssistantUsageLog.feature == feature]
 
 
 def _resolve_window(from_: Optional[str], to: Optional[str]) -> tuple[datetime, datetime]:
@@ -182,6 +197,7 @@ def send_ai_assistant_message(
 def usage_summary(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
+    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -193,7 +209,11 @@ def usage_summary(
             func.coalesce(func.sum(AIAssistantUsageLog.completion_tokens), 0).label("completion"),
             func.coalesce(func.sum(AIAssistantUsageLog.total_tokens), 0).label("total"),
         )
-        .filter(AIAssistantUsageLog.created_at >= f, AIAssistantUsageLog.created_at <= t)
+        .filter(
+            AIAssistantUsageLog.created_at >= f,
+            AIAssistantUsageLog.created_at <= t,
+            *_feature_filters(feature),
+        )
         .one()
     )
     return UsageSummaryResponse(
@@ -208,6 +228,7 @@ def usage_summary(
 def usage_by_day(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
+    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -219,7 +240,11 @@ def usage_by_day(
             func.count(AIAssistantUsageLog.id).label("messages"),
             func.coalesce(func.sum(AIAssistantUsageLog.total_tokens), 0).label("tokens"),
         )
-        .filter(AIAssistantUsageLog.created_at >= f, AIAssistantUsageLog.created_at <= t)
+        .filter(
+            AIAssistantUsageLog.created_at >= f,
+            AIAssistantUsageLog.created_at <= t,
+            *_feature_filters(feature),
+        )
         .group_by(bucket)
         .order_by(bucket.asc())
         .all()
@@ -240,6 +265,7 @@ def usage_top_users(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=100),
+    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -252,7 +278,12 @@ def usage_top_users(
             func.coalesce(func.sum(AIAssistantUsageLog.total_tokens), 0).label("tokens"),
         )
         .outerjoin(User, User.id == AIAssistantUsageLog.user_id)
-        .filter(AIAssistantUsageLog.created_at >= f, AIAssistantUsageLog.created_at <= t)
+        .filter(
+            AIAssistantUsageLog.created_at >= f,
+            AIAssistantUsageLog.created_at <= t,
+            AIAssistantUsageLog.user_id.isnot(None),
+            *_feature_filters(feature),
+        )
         .group_by(AIAssistantUsageLog.user_id, User.name)
         .order_by(desc("tokens"))
         .limit(limit)
@@ -269,26 +300,89 @@ def usage_top_users(
     ]
 
 
+@router.get("/ai-assistant/usage/top-contacts", response_model=list[TopContactItem])
+def usage_top_contacts(
+    from_: Optional[str] = Query(None, alias="from"),
+    to: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=100),
+    feature: Optional[str] = Query("ai_extract", description="Default scopes to ai_extract — pass empty for all."),
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    """Top portal contacts by token spend.
+
+    Joins respond_contacts so admins can see phone number + name. Excludes
+    rows without a contact_id (those are user-scoped — see top-users).
+    Defaults to feature='ai_extract' since that's the only writer that
+    populates contact_id today.
+    """
+    f, t = _resolve_window(from_, to)
+    feature_param = feature or None
+    rows = (
+        db.query(
+            AIAssistantUsageLog.contact_id,
+            RespondContact.name,
+            RespondContact.phone_number,
+            func.count(AIAssistantUsageLog.id).label("messages"),
+            func.coalesce(func.sum(AIAssistantUsageLog.total_tokens), 0).label("tokens"),
+        )
+        .outerjoin(RespondContact, RespondContact.id == AIAssistantUsageLog.contact_id)
+        .filter(
+            AIAssistantUsageLog.created_at >= f,
+            AIAssistantUsageLog.created_at <= t,
+            AIAssistantUsageLog.contact_id.isnot(None),
+            *_feature_filters(feature_param),
+        )
+        .group_by(AIAssistantUsageLog.contact_id, RespondContact.name, RespondContact.phone_number)
+        .order_by(desc("tokens"))
+        .limit(limit)
+        .all()
+    )
+    return [
+        TopContactItem(
+            contact_id=str(r.contact_id) if r.contact_id else None,
+            name=r.name,
+            phone_number=r.phone_number,
+            messages=int(r.messages or 0),
+            tokens=int(r.tokens or 0),
+        )
+        for r in rows
+    ]
+
+
 @router.get("/ai-assistant/usage/recent-queries", response_model=list[RecentQueryItem])
 def usage_recent_queries(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
+    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
     f, t = _resolve_window(from_, to)
     rows = (
-        db.query(AIAssistantUsageLog, User.name, AIAssistantMessage.created_at, AIAssistantMessage.conversation_id)
+        db.query(
+            AIAssistantUsageLog,
+            User.name,
+            RespondContact.name.label("contact_name"),
+            RespondContact.phone_number,
+            AIAssistantMessage.created_at,
+            AIAssistantMessage.conversation_id,
+        )
         .outerjoin(User, User.id == AIAssistantUsageLog.user_id)
+        .outerjoin(RespondContact, RespondContact.id == AIAssistantUsageLog.contact_id)
         .outerjoin(AIAssistantMessage, AIAssistantMessage.id == AIAssistantUsageLog.message_id)
-        .filter(AIAssistantUsageLog.created_at >= f, AIAssistantUsageLog.created_at <= t)
+        .filter(
+            AIAssistantUsageLog.created_at >= f,
+            AIAssistantUsageLog.created_at <= t,
+            *_feature_filters(feature),
+        )
         .order_by(AIAssistantUsageLog.created_at.desc())
         .limit(limit)
         .all()
     )
     out: list[RecentQueryItem] = []
-    for log, user_name, asst_created, conv_id in rows:
+    for log, user_name, contact_name, contact_phone, asst_created, conv_id in rows:
         # Find the user message that prompted this assistant turn:
         # most recent user message in the same conversation BEFORE the assistant message.
         preview = ""
@@ -305,10 +399,18 @@ def usage_recent_queries(
             )
             if user_msg:
                 preview = (user_msg[0] or "")[:120]
+        # AI extract rows have no conversation/message — surface the form_key
+        # as the preview so the table is still informative.
+        if not preview and log.form_key:
+            preview = f"[{log.form_key}]"
         out.append(
             RecentQueryItem(
                 message_id=str(log.message_id) if log.message_id else None,
                 user_name=user_name,
+                contact_name=contact_name,
+                contact_phone=contact_phone,
+                feature=log.feature,
+                form_key=log.form_key,
                 query_preview=preview,
                 response_time_ms=int(log.response_time_ms or 0),
                 tokens=int(log.total_tokens or 0),

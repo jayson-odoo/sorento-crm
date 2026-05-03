@@ -416,8 +416,39 @@ export function AIExtractDialog({
               )}
 
               {result.products && result.products.length > 0 && (
-                <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
-                  {result.products.length} line item{result.products.length === 1 ? '' : 's'} also detected (will be applied to the items list).
+                <div className="rounded-md border border-border">
+                  <div className="px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
+                    Line items ({result.products.length}) — will be applied to the items list
+                  </div>
+                  <table
+                    className="w-full text-sm"
+                    data-testid="ai-extract-products-table"
+                  >
+                    <thead className="text-xs text-muted-foreground">
+                      <tr className="border-b border-border">
+                        <th className="px-3 py-1.5 text-left font-normal">Item code</th>
+                        <th className="px-3 py-1.5 text-right font-normal">Qty</th>
+                        <th className="px-3 py-1.5 text-right font-normal">Unit price</th>
+                        <th className="px-3 py-1.5 text-right font-normal">Total</th>
+                        <th className="px-3 py-1.5 text-left font-normal">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.products.map((p, i) => (
+                        <tr
+                          key={i}
+                          className="border-b border-border last:border-b-0"
+                          data-testid={`ai-extract-product-row-${i}`}
+                        >
+                          <td className="px-3 py-2 align-top break-words">{p.product_code ?? '—'}</td>
+                          <td className="px-3 py-2 align-top text-right">{p.quantity ?? '—'}</td>
+                          <td className="px-3 py-2 align-top text-right">{p.unit_price ?? '—'}</td>
+                          <td className="px-3 py-2 align-top text-right">{p.total ?? '—'}</td>
+                          <td className="px-3 py-2 align-top break-words">{p.notes ?? ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
 

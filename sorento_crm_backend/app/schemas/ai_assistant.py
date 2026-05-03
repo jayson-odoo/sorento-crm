@@ -116,9 +116,21 @@ class TopUserItem(BaseModel):
     tokens: int
 
 
+class TopContactItem(BaseModel):
+    contact_id: Optional[str] = None
+    name: Optional[str] = None
+    phone_number: Optional[str] = None
+    messages: int
+    tokens: int
+
+
 class RecentQueryItem(BaseModel):
     message_id: Optional[str] = None
     user_name: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    feature: Optional[str] = None
+    form_key: Optional[str] = None
     query_preview: str = ""
     response_time_ms: int = 0
     tokens: int = 0
