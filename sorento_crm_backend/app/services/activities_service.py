@@ -94,6 +94,62 @@ def _event_to_dict(
     }
 
 
+def _notify_mentions(
+    db: Session,
+    entity_type: str,
+    entity_id: str,
+    *,
+    actor_id: Optional[str],
+    mentioned_user_ids: List[str],
+) -> None:
+    """Best-effort notification fanout for @-mentions on a posted activity.
+
+    Looks up an existing ``app.services.notifications_service`` (legacy or
+    self-contained module variant) and calls a sensibly-named entry point
+    if one exists. Failures are logged but never bubble up — the activity
+    write itself is the source of truth.
+    """
+    if not mentioned_user_ids:
+        return
+    title = f"You were mentioned on a {entity_type}"
+    body = f"{actor_id or 'Someone'} mentioned you on {entity_type} {entity_id}."
+    try:
+        from app.services import notifications_service as ns  # type: ignore
+
+        for uid in mentioned_user_ids:
+            for fn_name in (
+                "create_notification",
+                "send_notification",
+                "notify_user",
+                "deliver_in_app",
+            ):
+                fn = getattr(ns, fn_name, None)
+                if callable(fn):
+                    try:
+                        fn(
+                            db,
+                            user_id=uid,
+                            title=title,
+                            body=body,
+                            entity_type=entity_type,
+                            entity_id=entity_id,
+                        )
+                        break
+                    except TypeError:
+                        # Try a positional-only call shape as a last resort.
+                        try:
+                            fn(db, uid, title, body)
+                            break
+                        except Exception:
+                            continue
+                    except Exception:
+                        continue
+    except ImportError:
+        logger.debug("notifications_service unavailable; skipping mention fanout")
+    except Exception:
+        logger.exception("mention notification fanout failed")
+
+
 def list_activities(
     db: Session,
     entity_type: str,
@@ -183,6 +239,14 @@ def post_activity(
             logger.exception("activities on_post hook failed for %s", entity_type)
     db.commit()
     db.refresh(event)
+    # Mention fanout runs after commit so notifications never block the write.
+    _notify_mentions(
+        db,
+        entity_type,
+        entity_id,
+        actor_id=actor_id or None,
+        mentioned_user_ids=cleaned_mentions,
+    )
     actor_user = (
         db.query(User).filter(User.id == event.actor_id).first() if event.actor_id else None
     )
@@ -375,6 +439,65 @@ def list_entity_contacts(
         return []
 
 
+# --- Respond.io message helpers ---------------------------------------
+
+
+def _validate_contact_for_entity(
+    db: Session, adapter: ActivitiesAdapter, entity_id: str, contact_id: str
+) -> None:
+    """Make sure ``contact_id`` actually belongs to the entity (anti-tamper)."""
+    if adapter.get_respond_contacts is None:
+        # Adapter doesn't expose contacts → cannot validate; reject to be safe.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This entity has no Respond.io contacts.",
+        )
+    try:
+        rows = list(adapter.get_respond_contacts(db, entity_id) or [])
+    except Exception:
+        logger.exception("get_respond_contacts failed during validate")
+        rows = []
+    valid_ids = {str(r.get("contact_id")) for r in rows if r.get("contact_id")}
+    if str(contact_id) not in valid_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contact not linked to this entity.",
+        )
+
+
+def _ms_to_datetime(ms: Any) -> datetime:
+    try:
+        n = int(ms)
+        if n > 1e12:
+            return datetime.utcfromtimestamp(n / 1000.0)
+        return datetime.utcfromtimestamp(float(n))
+    except Exception:
+        return datetime.utcnow()
+
+
+def _respond_item_to_message(item: Dict[str, Any], contact_id: str) -> Dict[str, Any]:
+    msg = item.get("message") or {}
+    traffic = (item.get("traffic") or "").lower()
+    direction = "outgoing" if traffic in ("outgoing", "outbound") else "incoming"
+    statuses = item.get("status") or []
+    sent_at: datetime = datetime.utcnow()
+    if isinstance(statuses, list) and statuses:
+        first = statuses[0] or {}
+        ts = first.get("timestamp")
+        if ts is not None:
+            sent_at = _ms_to_datetime(ts)
+    raw_id = item.get("messageId") or item.get("channelMessageId") or ""
+    return {
+        "id": str(raw_id),
+        "contact_id": str(item.get("contactId") or contact_id),
+        "direction": direction,
+        "body": msg.get("text"),
+        "body_html": None,
+        "sent_at": sent_at,
+        "attachments": [],
+    }
+
+
 def list_messages(
     db: Session,
     entity_type: str,
@@ -384,11 +507,45 @@ def list_messages(
     cursor: Optional[str],
     current_user: dict,
 ) -> Dict[str, Any]:
-    """Phase 2 stub: real Respond.io proxy lands in Phase 4. Returning an
-    empty page keeps the FE Messages tab rendering cleanly with the
-    'no messages yet' state when a contact is selected."""
-    _ = _resolve_adapter(entity_type)
-    return {"items": [], "has_more": False, "next_cursor": None}
+    """Proxy to ``RespondClient.list_messages`` for a contact linked to the
+    entity. The adapter's ``get_respond_contacts`` is used to verify the
+    contact belongs to the entity before any outbound call is made."""
+    adapter = _resolve_adapter(entity_type)
+    _ensure_can_view(db, adapter, entity_id, current_user)
+    _validate_contact_for_entity(db, adapter, entity_id, contact_id)
+
+    try:
+        from app.services.integration_service import RespondClient  # local import (avoids boot cost)
+    except Exception:
+        logger.exception("RespondClient import failed; returning empty page")
+        return {"items": [], "has_more": False, "next_cursor": None}
+
+    try:
+        client = RespondClient()
+        raw = client.list_messages(contact_id, limit=50, cursor=cursor)
+    except ValueError as e:
+        # Most commonly: API key not configured. Surface as a 400 so the FE
+        # can show a useful error toast rather than a raw 500.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.exception("Respond.io list_messages failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Respond.io list failed: {e}",
+        )
+    items_raw = (raw or {}).get("items") or []
+    pagination = (raw or {}).get("pagination") or {}
+    items = [_respond_item_to_message(it, contact_id) for it in items_raw if isinstance(it, dict)]
+    next_cursor = (
+        pagination.get("next")
+        if isinstance(pagination.get("next"), str)
+        else pagination.get("cursorId")
+    )
+    return {
+        "items": items,
+        "has_more": bool(next_cursor),
+        "next_cursor": next_cursor or None,
+    }
 
 
 def send_message(
@@ -401,22 +558,83 @@ def send_message(
     attachment_ids: List[str],
     current_user: dict,
 ) -> Dict[str, Any]:
-    """Phase 2 stub: queues the outbound message and writes a system
-    Activities row so the feed reflects it. Real Respond.io send-out is
-    wired in Phase 4."""
+    """Send an outbound text message to a Respond.io contact, write an
+    integration log, and append a ``message.sent`` system Activities row
+    so the panel feed reflects it immediately."""
     adapter = _resolve_adapter(entity_type)
     _ensure_can_view(db, adapter, entity_id, current_user)
+    _validate_contact_for_entity(db, adapter, entity_id, contact_id)
+
+    actor_id = str(current_user.get("id") or "") or None
+    text = (body or "").strip()
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Message body required."
+        )
+
+    response: Optional[Dict[str, Any]] = None
+    log_status = "success"
+    error_message: Optional[str] = None
+
+    try:
+        from app.services.integration_service import RespondClient  # local import
+        client = RespondClient()
+        response = client.send_message(contact_id, text)
+    except ValueError as e:
+        # API key not configured.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.exception("Respond.io send_message failed")
+        log_status = "failed"
+        error_message = str(e)
+        response = None
+
+    # Best-effort integration log entry — don't break the send path on log failure.
+    try:
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.integration_service import IntegrationLogService
+
+        log_service = IntegrationLogService(db)
+        log_service.create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="respond_io",
+                business_table=f"activity_{entity_type}",
+                business_id=entity_id,
+                external_reference=str(contact_id),
+                direction="outbound",
+                endpoint=f"https://api.respond.io/v2/contact/id:{contact_id}/message",
+                http_method="POST",
+                status=log_status,
+                response_payload=str(response)[:50000] if response else None,
+                error_message=error_message,
+            ),
+            request_payload_dict={"message": {"type": "text", "text": text}},
+        )
+    except Exception:
+        logger.exception("Failed to write integration_log for activities send_message")
+
+    # If the outbound call failed, surface that to the caller after logging.
+    if log_status == "failed":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Respond.io send failed: {error_message}",
+        )
+
     record_system_event(
         db,
         entity_type,
         entity_id,
         template="message.sent",
         payload={"contact_id": contact_id},
-        actor_id=str(current_user.get("id") or "") or None,
-        body_text=body,
+        actor_id=actor_id,
+        body_text=text,
         commit=True,
     )
-    return {"contact_id": contact_id, "queued": True}
+    return {
+        "contact_id": contact_id,
+        "queued": False,
+        "respond_response": response,
+    }
 
 
 def mark_mention_seen(db: Session, event_id: str, current_user: dict) -> Dict[str, Any]:
