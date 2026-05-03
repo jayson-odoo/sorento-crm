@@ -23,6 +23,8 @@ from app.api.v1 import (
     list_query,
     workflow_forms,
     lookup,
+    activities,
+    tickets,
 )
 from app.api.v1.system import modules_runtime
 from app.api.v1.user_management.access_agent_mcp_tools import router as _agent_mcp_tools_router
@@ -154,6 +156,22 @@ api_router.include_router(
     tags=["list-query"],
 )
 api_router.include_router(lookup.router, prefix="/lookup", tags=["lookup"])
+
+# Activities & Notes — generic per-entity panel (consumed by tickets et al.).
+api_router.include_router(
+    activities.router,
+    prefix="/activities",
+    tags=["activities"],
+    dependencies=[Depends(require_module_enabled_with_api_key("activities"))],
+)
+
+# Tickets — Jira-style internal ticketing.
+api_router.include_router(
+    tickets.router,
+    prefix="/tickets-management",
+    tags=["tickets"],
+    dependencies=[Depends(require_module_enabled_with_api_key("tickets"))],
+)
 
 # Public quoting customer-approval endpoint — unauthenticated, must be mounted
 # OUTSIDE the commercial_core module guard.

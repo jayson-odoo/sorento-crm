@@ -8,11 +8,13 @@ from app.models.marketing import Promotion
 from app.models.order import Order
 from app.models.product import Product
 from app.models.procurement import Supplier
+from app.models.tickets import Ticket
 from app.models.workflow_forms import WorkflowFormDefinition, WorkflowSubmission
 from app.schemas.marketing import PromotionResponse
 from app.schemas.order import OrderResponse
 from app.schemas.product import ProductResponse
 from app.schemas.procurement import SupplierResponse
+from app.schemas.tickets import TicketResponse
 from app.schemas.workflow_forms import WorkflowFormDefinitionOut, WorkflowSubmissionOut
 
 
@@ -45,6 +47,10 @@ def _serialize_workflow_definitions(rows: Iterable[Any]) -> list[Any]:
 
 def _serialize_workflow_submissions(rows: Iterable[Any]) -> list[Any]:
     return [WorkflowSubmissionOut.model_validate(x) for x in rows]
+
+
+def _serialize_tickets(rows: Iterable[Any]) -> list[Any]:
+    return [TicketResponse.model_validate(x) for x in rows]
 
 
 @dataclass(frozen=True)
@@ -120,6 +126,16 @@ ADAPTERS: Dict[str, ListQueryResourceAdapter] = {
         compile_prefix="sub",
         display_name="Workflow Form Submissions",
         description="Workflow form submission list-query metadata",
+    ),
+    "tickets": ListQueryResourceAdapter(
+        resource_key="tickets",
+        view_slug="tickets.tickets.view",
+        export_slug="tickets.tickets.export",
+        serializer=_serialize_tickets,
+        model=Ticket,
+        compile_prefix="ticket",
+        display_name="Tickets",
+        description="Ticket list filter/export metadata",
     ),
 }
 
