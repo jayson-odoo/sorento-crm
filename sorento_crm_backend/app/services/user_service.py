@@ -778,9 +778,80 @@ class UserRoleService:
         return {"message": "Role successfully set as the default"}
 
 
+import os as _os
+import threading as _threading
+import time as _time
+
+
+class _RbacCache:
+    """Per-process TTL cache for permission/role lookups.
+
+    Each gunicorn worker has its own instance — keys never cross workers.
+    RBAC writes must call ``invalidate_rbac_cache(user_id)`` (or pass None
+    to clear all). Default TTL = 30s, override via RBAC_CACHE_TTL_SECONDS.
+    """
+
+    def __init__(self, ttl_seconds: float = 30.0, max_entries: int = 50000):
+        self._ttl = ttl_seconds
+        self._max = max_entries
+        self._store: dict = {}
+        self._lock = _threading.RLock()
+
+    def get(self, key):
+        now = _time.monotonic()
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                return None
+            value, expiry = entry
+            if now >= expiry:
+                self._store.pop(key, None)
+                return None
+            return value
+
+    def set(self, key, value):
+        now = _time.monotonic()
+        with self._lock:
+            if len(self._store) >= self._max:
+                # Drop the 10% oldest entries by expiry time.
+                items = sorted(self._store.items(), key=lambda kv: kv[1][1])
+                for k, _v in items[: max(1, self._max // 10)]:
+                    self._store.pop(k, None)
+            self._store[key] = (value, now + self._ttl)
+
+    def invalidate(self, prefix=None):
+        with self._lock:
+            if prefix is None:
+                self._store.clear()
+                return
+            for k in [k for k in self._store if isinstance(k, tuple) and k[: len(prefix)] == prefix]:
+                self._store.pop(k, None)
+
+
+_RBAC_CACHE_TTL = float(_os.environ.get("RBAC_CACHE_TTL_SECONDS", "30"))
+_RBAC_CACHE_ENABLED = _os.environ.get("RBAC_CACHE_ENABLED", "1") == "1"
+_rbac_cache = _RbacCache(ttl_seconds=_RBAC_CACHE_TTL)
+
+
+def invalidate_rbac_cache(user_id=None):
+    """Drop cached permission/role lookups. Call after RBAC writes.
+
+    With ``user_id=None`` clear entire cache (use for bulk RBAC migrations).
+    With a specific user_id, drop only that user's entries — other users keep
+    their warm cache.
+    """
+    if user_id is None:
+        _rbac_cache.invalidate()
+    else:
+        _rbac_cache.invalidate(("perm", str(user_id)))
+        _rbac_cache.invalidate(("any_perm", str(user_id)))
+        _rbac_cache.invalidate(("role_slugs", str(user_id)))
+        _rbac_cache.invalidate(("perm_slugs", str(user_id)))
+
+
 class UserPermissionService:
     """Service for user permission operations."""
-    
+
     def __init__(self, db: Session):
         self.db = db
     
@@ -872,43 +943,108 @@ class UserPermissionService:
 
     def get_user_role_slugs(self, user_id: str) -> set[str]:
         """Return all role slugs for a user (for superadmin bypass)."""
+        if _RBAC_CACHE_ENABLED:
+            cached = _rbac_cache.get(("role_slugs", str(user_id)))
+            if cached is not None:
+                return cached
         role_ids = self.get_user_role_ids(user_id)
         if not role_ids:
-            return set()
-        roles = self.db.query(UserRole.slug).filter(UserRole.id.in_(role_ids)).all()
-        return {r.slug for r in roles}
+            result: set[str] = set()
+        else:
+            roles = self.db.query(UserRole.slug).filter(UserRole.id.in_(role_ids)).all()
+            result = {r.slug for r in roles}
+        if _RBAC_CACHE_ENABLED:
+            _rbac_cache.set(("role_slugs", str(user_id)), result)
+        return result
 
     def get_user_permission_slugs(self, user_id: str) -> set[str]:
         """Return effective permission slugs for a user (union of all assigned roles).
         Users with role slug 'superadmin' or 'admin' receive all known permissions (for frontend menu/actions)."""
+        if _RBAC_CACHE_ENABLED:
+            cached = _rbac_cache.get(("perm_slugs", str(user_id)))
+            if cached is not None:
+                return cached
         role_slugs = self.get_user_role_slugs(user_id)
         if role_slugs & {self.SUPERADMIN_ROLE_SLUG, "admin"}:
             rows = self.db.query(UserPermission.slug).all()
-            return {r.slug for r in rows}
-        role_ids = self.get_user_role_ids(user_id)
-        if not role_ids:
-            return set()
-        rows = (
-            self.db.query(UserPermission.slug)
-            .join(UserRolePermission, UserRolePermission.permission_id == UserPermission.id)
-            .filter(UserRolePermission.role_id.in_(role_ids))
-            .distinct()
-            .all()
-        )
-        return {r.slug for r in rows}
+            result = {r.slug for r in rows}
+        else:
+            role_ids = self.get_user_role_ids(user_id)
+            if not role_ids:
+                result = set()
+            else:
+                rows = (
+                    self.db.query(UserPermission.slug)
+                    .join(UserRolePermission, UserRolePermission.permission_id == UserPermission.id)
+                    .filter(UserRolePermission.role_id.in_(role_ids))
+                    .distinct()
+                    .all()
+                )
+                result = {r.slug for r in rows}
+        if _RBAC_CACHE_ENABLED:
+            _rbac_cache.set(("perm_slugs", str(user_id)), result)
+        return result
 
     def check_user_has_permission(self, user_id: str, permission_slug: str) -> bool:
-        """True if user has the permission or is superadmin."""
+        """True if user has the permission or is superadmin.
+
+        Cached for ``RBAC_CACHE_TTL_SECONDS`` (default 30s). Cache miss runs a
+        single targeted query that joins user_role_assignments → role_permissions
+        → permissions WHERE permissions.slug = ? — no full-permission-set fetch.
+        """
+        cache_key = ("perm", str(user_id), permission_slug)
+        if _RBAC_CACHE_ENABLED:
+            cached = _rbac_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         if self.get_user_role_slugs(user_id) & {self.SUPERADMIN_ROLE_SLUG, "admin"}:
-            return True
-        return permission_slug in self.get_user_permission_slugs(user_id)
+            result = True
+        else:
+            role_ids = self.get_user_role_ids(user_id)
+            if not role_ids:
+                result = False
+            else:
+                hit = (
+                    self.db.query(UserPermission.id)
+                    .join(UserRolePermission, UserRolePermission.permission_id == UserPermission.id)
+                    .filter(UserRolePermission.role_id.in_(role_ids))
+                    .filter(UserPermission.slug == permission_slug)
+                    .first()
+                )
+                result = hit is not None
+
+        if _RBAC_CACHE_ENABLED:
+            _rbac_cache.set(cache_key, result)
+        return result
 
     def check_user_has_any_permission(self, user_id: str, permission_slugs: list[str]) -> bool:
         """True if user has at least one of the permissions or is superadmin."""
+        cache_key = ("any_perm", str(user_id), tuple(sorted(permission_slugs)))
+        if _RBAC_CACHE_ENABLED:
+            cached = _rbac_cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         if self.get_user_role_slugs(user_id) & {self.SUPERADMIN_ROLE_SLUG, "admin"}:
-            return True
-        user_slugs = self.get_user_permission_slugs(user_id)
-        return any(s in user_slugs for s in permission_slugs)
+            result = True
+        else:
+            role_ids = self.get_user_role_ids(user_id)
+            if not role_ids:
+                result = False
+            else:
+                hit = (
+                    self.db.query(UserPermission.id)
+                    .join(UserRolePermission, UserRolePermission.permission_id == UserPermission.id)
+                    .filter(UserRolePermission.role_id.in_(role_ids))
+                    .filter(UserPermission.slug.in_(permission_slugs))
+                    .first()
+                )
+                result = hit is not None
+
+        if _RBAC_CACHE_ENABLED:
+            _rbac_cache.set(cache_key, result)
+        return result
 
 
 class AccessAgentService:
