@@ -45,6 +45,7 @@ import {
   TicketPriorityBadge,
   TicketStatusBadge,
 } from '../components/TicketStatusBadge';
+import TicketWatchersSection from '../components/TicketWatchersSection';
 
 function formatDuration(hours: number | string | null | undefined): string {
   if (hours === null || hours === undefined) return '—';
@@ -356,20 +357,7 @@ export default function TicketDetailPage({ params }: PageProps) {
               </div>
             </div>
 
-            <div>
-              <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-2">
-                Watchers ({ticket.watchers.length})
-              </h4>
-              {ticket.watchers.length === 0 ? (
-                <span className="text-sm text-muted-foreground">None.</span>
-              ) : (
-                <ul className="flex flex-col gap-1 text-sm">
-                  {ticket.watchers.map((w) => (
-                    <li key={w.user_id}>{w.display_name ?? w.user_id}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            <TicketWatchersSection ticket={ticket} onChange={setTicket} />
 
             <div>
               <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-2">
