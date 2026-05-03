@@ -179,18 +179,36 @@ def advanced_search(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    import os, sys, time
+    _profile = os.environ.get("LIST_QUERY_PROFILE") == "1"
+    _t0 = time.perf_counter() if _profile else 0.0
+
     require_adapter(body.resource)
     if not _can_view(db, current_user["id"], body.resource):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+    _t1 = time.perf_counter() if _profile else 0.0
     try:
         result = ListQuerySearchService(db).search(body)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise handle_internal_error(str(e))
+    _t2 = time.perf_counter() if _profile else 0.0
 
     adapter = require_adapter(body.resource)
     data = adapter.serializer(result["data"])
+    _t3 = time.perf_counter() if _profile else 0.0
+
+    if _profile:
+        print(
+            f"[search-prof] resource={body.resource} "
+            f"perm={1000*(_t1-_t0):.0f}ms "
+            f"search={1000*(_t2-_t1):.0f}ms "
+            f"serialize={1000*(_t3-_t2):.0f}ms "
+            f"total={1000*(_t3-_t0):.0f}ms",
+            file=sys.stderr,
+            flush=True,
+        )
 
     return {
         "data": data,
