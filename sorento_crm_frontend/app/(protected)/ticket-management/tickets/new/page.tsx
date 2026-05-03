@@ -112,7 +112,7 @@ export default function NewTicketPage() {
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Short summary of the issue…"
-              maxLength={{255}}
+              maxLength={255}
               autoFocus
             />
           </div>
