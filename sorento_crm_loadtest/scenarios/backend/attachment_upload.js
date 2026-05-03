@@ -38,7 +38,7 @@ export function uploadAttachment() {
   const filename = `loadtest-${__VU}-${__ITER}.pdf`;
 
   const res = http.post(
-    `${be}/api/v1/resources/attachments/`,
+    `${be}/api/v1/resource-management/attachments/`,
     {
       file: http.file(FILE_BIN, filename, 'application/pdf'),
       attachment_type: 'general',

@@ -9,15 +9,12 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { useLookupSets } from '../hooks/useLookupSets';
 import LookupSetTable from './LookupSetTable';
 import LookupSetFormDialog from './LookupSetFormDialog';
-import LookupSetDeleteDialog from './LookupSetDeleteDialog';
-import type { LookupSet } from '../types/lookup.types';
 
 export default function LookupSetsList() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | undefined>();
-  const [deleting, setDeleting] = useState<LookupSet | null>(null);
 
   const { data, isLoading } = useLookupSets({
     pageIndex: 0,
@@ -60,7 +57,6 @@ export default function LookupSetsList() {
                   setEditingId(s.id);
                   setFormOpen(true);
                 }}
-                onDelete={(s) => setDeleting(s)}
               />
               <ScrollBar orientation="horizontal" />
             </ScrollArea>
@@ -68,13 +64,6 @@ export default function LookupSetsList() {
         </CardTable>
       </Card>
       <LookupSetFormDialog open={formOpen} onOpenChange={setFormOpen} setId={editingId} />
-      {deleting && (
-        <LookupSetDeleteDialog
-          open={!!deleting}
-          closeDialog={() => setDeleting(null)}
-          set={deleting}
-        />
-      )}
     </>
   );
 }

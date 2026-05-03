@@ -1,8 +1,12 @@
 // Peak/2, hold 1 hour. Memory leaks, connection-pool drift.
-// For longer soaks, override via -e SOAK_DURATION=4h.
+// Env: SOAK_DURATION (default 1h), K6_PEAK_RPS, K6_MAX_VUS.
 export function soak({ exec = 'default', peakRps = 50, preAllocatedVUs = 50, maxVUs = 200 } = {}) {
   const duration = __ENV.SOAK_DURATION || '1h';
-  const sustainedRps = Math.max(1, Math.floor(peakRps / 2));
+  const peak = Number(__ENV.K6_PEAK_RPS || peakRps);
+  const maxV = Number(__ENV.K6_MAX_VUS || maxVUs);
+  const sustainedRps = Math.max(1, Math.floor(peak / 2));
+  preAllocatedVUs = Math.max(preAllocatedVUs, Math.min(sustainedRps * 2, maxV));
+  maxVUs = maxV;
   return {
     soak: {
       executor: 'constant-arrival-rate',

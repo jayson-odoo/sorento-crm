@@ -2073,6 +2073,7 @@ class StockInquiryService:
         sort_dir: str = "desc",
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
     ):
         """List stock inquiries."""
         q = self.db.query(StockInquiry)
@@ -2080,7 +2081,9 @@ class StockInquiryService:
             q = q.filter(StockInquiry.contact_id == str(contact_id).strip())
         if space_id is not None:
             q = q.filter(StockInquiry.space_id == str(space_id).strip())
-        
+        if statuses:
+            q = q.filter(StockInquiry.status.in_(statuses))
+
         if query:
             q = q.filter(
                 or_(

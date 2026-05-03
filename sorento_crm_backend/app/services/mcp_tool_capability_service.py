@@ -1469,6 +1469,81 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         ),
         aliases=("get customer by id", "customer detail", "developer detail"),
     ),
+    # ==================================================================
+    # USER GUIDES (Outline-backed how-to retrieval)
+    # ==================================================================
+    "user_guides_search": ToolIntent(
+        category="user_guides",
+        intent=(
+            "Find Sorento CRM how-to guides that explain a UI flow (uploading "
+            "a packing list, submitting a portal stock inquiry, sending a "
+            "purchase request for approval, etc.)."
+        ),
+        description=(
+            "Free-text search over the Sorento CRM user-guide collection on "
+            "Outline (doc.foundryx.my). Use whenever the user asks "
+            "'how do I…' / 'how to…' / 'where do I find…' / 'what's the "
+            "process for…' about CRM features. Returns up to N matching "
+            "guides with title, snippet, and doc id. Always follow up with "
+            "user_guides_read on the most relevant id before answering."
+        ),
+        typical_user_questions=(
+            "How do I upload a packing list?",
+            "How to submit a stock inquiry from the portal?",
+            "How do I send a purchase request for approval?",
+            "How does the project sales manager approve a purchase request?",
+            "How do I flow a stock inquiry to purchasing?",
+            "How do I upload a GRN?",
+            "How do I upload delivery orders / order tracking?",
+            "How do I upload a promotion?",
+            "How do I upload a marketing form?",
+            "How do I upload product attachments?",
+            "How does the rep get the portal link via WhatsApp?",
+            "What's the OTP flow for the portal?",
+            "How do I save a draft on the portal?",
+            "What happens after I submit a complaint?",
+            "How does AI Extract work on a complaint?",
+            "How do I reject a stock inquiry?",
+            "How do I reopen a rejected stock inquiry?",
+            "Where do folders live in Files?",
+            "How do I pin a folder to Quick Access?",
+        ),
+        aliases=(
+            "search user guides",
+            "search how-to",
+            "find documentation",
+            "search docs",
+            "user guide search",
+            "outline docs search",
+            "how to guide",
+        ),
+    ),
+    "user_guides_read": ToolIntent(
+        category="user_guides",
+        intent="Read the full markdown body of a single Sorento CRM user guide.",
+        description=(
+            "Fetch the full markdown body of one Sorento CRM user guide by "
+            "Outline doc id (UUID) or url-id. Pass the id returned by "
+            "user_guides_search. Returns the title, the canonical "
+            "doc.foundryx.my URL, and the full markdown text — quote the "
+            "relevant steps verbatim when answering the user, including the "
+            "exact UI labels mentioned in the guide."
+        ),
+        typical_user_questions=(
+            "Open this user guide.",
+            "Read the full how-to article.",
+            "Show me the full guide text.",
+            "Get the documentation body.",
+        ),
+        aliases=(
+            "read user guide",
+            "open how-to",
+            "fetch documentation",
+            "read docs",
+            "user guide detail",
+            "outline doc info",
+        ),
+    ),
 }
 
 

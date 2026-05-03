@@ -333,16 +333,38 @@ async def get_complaint_conversation(
     """Get Respond.io conversation messages for this complaint (contact from respond_inbox_url)."""
     try:
         from app.services.integration_service import RespondClient
+        from app.models.access import RespondContact
 
         service = ComplaintService(db)
         complaint = service.get_complaint(complaint_id)
         identifier = service._identifier_from_respond_inbox_url(
             getattr(complaint, "respond_inbox_url", None)
         )
+        contact_meta: Optional[dict] = None
+        contact_id_val = getattr(complaint, "contact_id", None)
+        if contact_id_val:
+            row = (
+                db.query(RespondContact)
+                .filter(
+                    (RespondContact.id == contact_id_val)
+                    | (RespondContact.respond_io_id == contact_id_val)
+                )
+                .first()
+            )
+            if row is not None:
+                contact_meta = {"name": row.name, "phone": row.phone_number}
         if not identifier:
-            return {"items": [], "pagination": {}, "error": "No Respond.io contact linked"}
+            return {
+                "items": [],
+                "pagination": {},
+                "error": "No Respond.io contact linked",
+                "contact": contact_meta,
+            }
         client = RespondClient()
-        return client.list_messages(identifier, limit=limit, cursor=cursor)
+        result = client.list_messages(identifier, limit=limit, cursor=cursor)
+        if isinstance(result, dict):
+            result["contact"] = contact_meta
+        return result
     except HTTPException:
         raise
     except ValueError as e:

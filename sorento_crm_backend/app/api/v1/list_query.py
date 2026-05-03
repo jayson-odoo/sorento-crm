@@ -93,7 +93,7 @@ def _can_view_listing_key(db: Session, user_id: str, listing_key: str) -> bool:
 
 
 @router.get("/resources", response_model=List[ListQueryResourceResponse])
-async def list_resources(
+def list_resources(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -108,7 +108,7 @@ async def list_resources(
 
 
 @router.get("/resources/{resource_key}/fields", response_model=List[ListQueryFieldResponse])
-async def list_fields(
+def list_fields(
     resource_key: str,
     definition_id: Optional[str] = Query(
         None,
@@ -174,7 +174,7 @@ async def list_fields(
 
 
 @router.post("/search")
-async def advanced_search(
+def advanced_search(
     body: ListSearchRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -200,7 +200,7 @@ async def advanced_search(
 
 
 @router.post("/export")
-async def export_rows(
+def export_rows(
     body: ListExportRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -219,7 +219,7 @@ async def export_rows(
 
 
 @router.get("/column-config/{listing_key:path}", response_model=UserListColumnConfigResponse)
-async def get_list_column_config(
+def get_list_column_config(
     listing_key: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -241,7 +241,7 @@ async def get_list_column_config(
 
 
 @router.put("/column-config/{listing_key:path}", response_model=UserListColumnConfigResponse)
-async def upsert_list_column_config(
+def upsert_list_column_config(
     listing_key: str,
     body: UserListColumnConfigPayload,
     current_user: dict = Depends(get_current_user),
@@ -278,7 +278,7 @@ async def upsert_list_column_config(
 
 
 @router.delete("/column-config/{listing_key:path}", status_code=status.HTTP_204_NO_CONTENT)
-async def reset_list_column_config(
+def reset_list_column_config(
     listing_key: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),

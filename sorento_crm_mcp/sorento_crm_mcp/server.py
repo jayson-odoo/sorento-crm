@@ -17,6 +17,7 @@ from sorento_crm_mcp.catalog import CATALOG, ToolSpec
 from sorento_crm_mcp.http_client import CRMClient
 from sorento_crm_mcp.module_loader import merged_catalog
 from sorento_crm_mcp.settings import Settings
+from sorento_crm_mcp.user_guides import register_user_guide_tools
 
 logger = logging.getLogger(__name__)
 
@@ -492,8 +493,15 @@ def create_mcp_app(settings: Settings) -> FastMCP:
     )
 
     for spec in merged_catalog(CATALOG):
+        if getattr(spec, "external", False):
+            # External tools (e.g. Outline-backed user_guides_*) are registered
+            # by their dedicated handler below — skip the HTTP-backed compile.
+            continue
         impl = _compile_tool(spec)
         mcp.add_tool(impl, name=spec.name, description=spec.description)
         logger.debug("Registered MCP tool %s", spec.name)
+
+    register_user_guide_tools(mcp, settings)
+    logger.debug("Registered user-guide tools")
 
     return mcp

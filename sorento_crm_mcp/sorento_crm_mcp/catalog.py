@@ -14,6 +14,9 @@ class ToolSpec:
     method: str = "GET"
     body_params: tuple[str, ...] = ()
     module: str = ""  # Module key (e.g. "order"); empty for legacy unbound tools
+    external: bool = False  # When true, the tool is registered by a custom handler
+    # (not via the HTTP-backed _compile_tool template). Still appears in the
+    # persisted `mcp_tools` catalog so admins can assign it to an AI assistant.
 
 
 # Paths match [sorento_crm_backend/app/api/v1/__init__.py](sorento_crm_backend/app/api/v1/__init__.py) prefixes.
@@ -1013,5 +1016,44 @@ CATALOG: tuple[ToolSpec, ...] = (
         method="PATCH",
         body_params=("payload_json",),
         module="commercial_core",
+    ),
+    # ===== User-guides (Outline-backed how-to retrieval) =====
+    # These tools call the Outline API directly (not the CRM backend), so they
+    # carry external=True and are wired up by `register_user_guide_tools` on
+    # the MCP server. They still appear in the persisted catalog so admins can
+    # toggle them for an AI assistant just like any other tool.
+    ToolSpec(
+        "user_guides_search",
+        (
+            "Search Sorento CRM end-user how-to guides (Outline collection 'Sorento CRM'). "
+            "Use this whenever the user asks 'how do I…?' / 'how to…?' questions about CRM "
+            "actions: uploading a packing list, filing a stock inquiry from the portal, "
+            "approving a purchase request, flowing a stock inquiry to purchasing, sending a "
+            "sponsorship form for approval, etc. Returns the top matching guides with a "
+            "short snippet — call user_guides_read with one of the returned ids to get the "
+            "full markdown body before answering the user."
+        ),
+        "/outline/documents.search",  # synthetic; not hit over HTTP
+        (),
+        ("query", "limit"),
+        method="POST",
+        module="user_guides",
+        external=True,
+    ),
+    ToolSpec(
+        "user_guides_read",
+        (
+            "Read the full markdown body of one Sorento CRM user guide. Pass the doc id "
+            "returned by user_guides_search (UUID or url-id like "
+            "'portal-overview-aBcDe'). Returns the title, canonical doc.foundryx.my URL, "
+            "and the full markdown text — quote the relevant steps verbatim when you "
+            "answer the user, including the exact UI labels mentioned in the guide."
+        ),
+        "/outline/documents.info",  # synthetic; not hit over HTTP
+        (),
+        ("identifier",),
+        method="POST",
+        module="user_guides",
+        external=True,
     ),
 )

@@ -470,6 +470,11 @@ class AIAssistantChatService:
             len(tool_calls),
             agent_ms,
         )
+        # Post-process: when the agent rephrased a how-to answer and dropped
+        # inline markdown links from the guide, re-wrap any bold menu paths
+        # with their canonical FE route links. Cheap deterministic safety net
+        # so the LLM doesn't have to be perfect about preserving links.
+        response_text = self._inject_route_links(response_text)
         links = self._extract_links_from_text(response_text)
 
         # Smart suggestions: best-effort follow-up question generation. Always
@@ -749,6 +754,12 @@ class AIAssistantChatService:
             return self._deterministic_fallback(err_log), err_log, token_usage
 
         system = _html_to_text(config.system_prompt or "").strip() or self._default_system_prompt()
+        # Always append the user-guide protocol so admins who set a custom
+        # system_prompt still get the search-then-read-then-answer behavior
+        # for how-to questions. Idempotent: skipped when the protocol header
+        # is already in the prompt.
+        if "USER GUIDE PROTOCOL" not in system:
+            system = system.rstrip() + "\n\n" + self._user_guide_protocol_addendum()
         source_context = "\n".join(
             [f"- {s.get('title')}: {str(s.get('why_selected') or '')[:200]}" for s in sources]
         )
@@ -1030,7 +1041,91 @@ class AIAssistantChatService:
             "9) Complaint DO matching rules: partial text is valid. Use case-insensitive "
             "partial matching (`query`) for debtor/customer and product terms; do not "
             "require exact full debtor name or exact product code when user provides "
-            "partial values.\n"
+            "partial values.\n\n"
+            "USER GUIDE PROTOCOL (applies to `user_guides_search` + `user_guides_read`)\n"
+            "When the user asks a how-to / process question — phrasings like 'how do I…', "
+            "'how to…', 'where do I…', 'what's the process for…', 'steps to…', 'guide me on…', "
+            "or any request for instructions on a CRM action (uploading a packing list, "
+            "submitting a stock inquiry, sending a purchase request for approval, flowing a "
+            "stock inquiry to purchasing, approving via email link, OTP / portal access, etc.) "
+            "— follow this exact flow:\n"
+            "1) Call `user_guides_search` with the user's question as `query` (limit 3).\n"
+            "2) Pick the single most relevant hit by title + snippet match against the user's "
+            "intent. If snippets all look unrelated, briefly tell the user no guide matches and "
+            "ask them to rephrase. Do NOT pretend a hit covers the topic when it does not.\n"
+            "3) Call `user_guides_read` with the chosen hit's id (or `url_id`).\n"
+            "4) Read the returned markdown and ANSWER THE USER directly with concrete steps. "
+            "Quote the exact UI labels from the guide in **bold** (button names, dialog titles, "
+            "page names) so the user can find them in the UI. Use a short numbered list when the "
+            "guide describes steps.\n"
+            "4a) PRESERVE INLINE MARKDOWN LINKS from the guide verbatim. When the guide body "
+            "contains a markdown link like `[**Resource Management → Files**](/resource-management/attachment-directories)`, "
+            "your reply MUST keep the WHOLE markdown link — square brackets, label, parens, "
+            "URL, all of it — exactly as written. Do NOT unwrap it to plain bold. Do NOT replace "
+            "it with the label only. Do NOT replace it with the URL only. Do NOT move the URL "
+            "to a separate sentence. The frontend renders these inline markdown links as "
+            "clickable shortcuts to the actual CRM page; that is the primary value to the user.\n"
+            "    EXAMPLE — guide says:\n"
+            "      `1. Open [**Resource Management → Files**](/resource-management/attachment-directories) (URL: \\`/resource-management/attachment-directories\\`).`\n"
+            "    Your reply must say (label-with-link kept intact):\n"
+            "      `1. Open [**Resource Management → Files**](/resource-management/attachment-directories) in the left menu.`\n"
+            "    NOT (link dropped, BAD):\n"
+            "      `1. Open Resource Management → Files in your CRM.`\n"
+            "    NOT (link separated, BAD):\n"
+            "      `1. Open Resource Management → Files. Link: /resource-management/attachment-directories`\n"
+            "4b) Do NOT just paste the doc URL on its own and tell the user to go read it — the "
+            "user came here to avoid that. Do NOT append a 'Full guide: <doc URL>' line either; "
+            "the inline links inside the steps are sufficient. Keep the response tight: short "
+            "intro line, numbered steps, optional one-line caveat. No raw URLs at the bottom.\n"
+            "5) If the answer requires content from more than one guide (e.g. a flow that spans "
+            "rep portal + admin review + manager approval), call `user_guides_read` on each "
+            "relevant id and synthesize a single coherent answer.\n"
+            "6) Never invent UI labels, button names, dialog titles, or routes that aren't in the "
+            "guide body. If the guide doesn't cover a step the user asked about, say so.\n"
+        )
+
+    def _user_guide_protocol_addendum(self) -> str:
+        return (
+            "USER GUIDE PROTOCOL (applies to `user_guides_search` + `user_guides_read`)\n"
+            "When the user asks a how-to / process question — phrasings like 'how do I…', "
+            "'how to…', 'where do I…', 'what's the process for…', 'steps to…', 'guide me on…', "
+            "or any request for instructions on a CRM action (uploading a packing list, "
+            "submitting a stock inquiry, sending a purchase request for approval, flowing a "
+            "stock inquiry to purchasing, approving via email link, OTP / portal access, etc.) "
+            "— follow this exact flow:\n"
+            "1) Call `user_guides_search` with the user's question as `query` (limit 3).\n"
+            "2) Pick the single most relevant hit by title + snippet match against the user's "
+            "intent. If snippets all look unrelated, briefly tell the user no guide matches and "
+            "ask them to rephrase. Do NOT pretend a hit covers the topic when it does not.\n"
+            "3) Call `user_guides_read` with the chosen hit's id (or `url_id`).\n"
+            "4) Read the returned markdown and ANSWER THE USER directly with concrete steps. "
+            "Quote the exact UI labels from the guide in **bold** (button names, dialog titles, "
+            "page names) so the user can find them in the UI. Use a short numbered list when the "
+            "guide describes steps.\n"
+            "4a) PRESERVE INLINE MARKDOWN LINKS from the guide verbatim. When the guide body "
+            "contains a markdown link like `[**Resource Management → Files**](/resource-management/attachment-directories)`, "
+            "your reply MUST keep the WHOLE markdown link — square brackets, label, parens, "
+            "URL, all of it — exactly as written. Do NOT unwrap it to plain bold. Do NOT replace "
+            "it with the label only. Do NOT replace it with the URL only. Do NOT move the URL "
+            "to a separate sentence. The frontend renders these inline markdown links as "
+            "clickable shortcuts to the actual CRM page; that is the primary value to the user.\n"
+            "    EXAMPLE — guide says:\n"
+            "      `1. Open [**Resource Management → Files**](/resource-management/attachment-directories) (URL: \\`/resource-management/attachment-directories\\`).`\n"
+            "    Your reply must say (label-with-link kept intact):\n"
+            "      `1. Open [**Resource Management → Files**](/resource-management/attachment-directories) in the left menu.`\n"
+            "    NOT (link dropped, BAD):\n"
+            "      `1. Open Resource Management → Files in your CRM.`\n"
+            "    NOT (link separated, BAD):\n"
+            "      `1. Open Resource Management → Files. Link: /resource-management/attachment-directories`\n"
+            "4b) Do NOT just paste the doc URL on its own and tell the user to go read it — the "
+            "user came here to avoid that. Do NOT append a 'Full guide: <doc URL>' line either; "
+            "the inline links inside the steps are sufficient. Keep the response tight: short "
+            "intro line, numbered steps, optional one-line caveat. No raw URLs at the bottom.\n"
+            "5) If the answer requires content from more than one guide (e.g. a flow that spans "
+            "rep portal + admin review + manager approval), call `user_guides_read` on each "
+            "relevant id and synthesize a single coherent answer.\n"
+            "6) Never invent UI labels, button names, dialog titles, or routes that aren't in the "
+            "guide body. If the guide doesn't cover a step the user asked about, say so.\n"
         )
 
     def _deterministic_fallback(self, tool_calls: list[MCPToolCallResult]) -> str:
@@ -1108,125 +1203,40 @@ class AIAssistantChatService:
         user_message: str,
         assistant_reply: str,
     ) -> list[str]:
-        """Generate up to 5 follow-up question suggestions via the configured provider.
+        """Mid-conversation follow-up suggestions are intentionally disabled.
 
-        Failure is non-fatal — returns ``[]`` and logs a warning so the
-        primary reply is never blocked on suggestion generation.
+        Previously this called the LLM for 5 contextual follow-ups per message.
+        It added 1-2s of latency per turn for marginal value, so we now return
+        an empty list. Static "starter" suggestions still appear on a new
+        conversation via :py:meth:`generate_greeting`.
         """
-        api_key = config.api_key_ciphertext or settings.openai_api_key
-        if not api_key:
-            return []
-        # Last 3 turns + current pair for context.
-        convo_lines: list[str] = []
-        for msg in history[-6:]:
-            if msg.role not in {"user", "assistant"}:
-                continue
-            text_piece = (msg.content or "").strip().replace("\n", " ")
-            if not text_piece:
-                continue
-            convo_lines.append(f"{msg.role}: {text_piece[:300]}")
-        convo_lines.append(f"user: {(user_message or '').strip()[:300]}")
-        convo_lines.append(f"assistant: {(assistant_reply or '').strip()[:600]}")
-        system_prompt = (
-            "You suggest exactly 5 short follow-up questions the user is likely to ask next, "
-            "based on the conversation. Reply ONLY as a JSON array of 5 strings — no prose, "
-            "no markdown, no preamble."
-        )
-        user_block = "Conversation:\n" + "\n".join(convo_lines) + "\n\nReturn the JSON array now."
-        try:
-            provider = get_provider(config.provider, api_key, config.model)
-            result = provider.chat(
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_block},
-                ],
-                temperature=0.3,
-                model=config.model,
-                max_tokens=400,
-            )
-            raw = (result.content or "").strip()
-            # Some models wrap arrays in code fences; strip them.
-            if raw.startswith("```"):
-                raw = raw.strip("`")
-                if raw.lower().startswith("json"):
-                    raw = raw[4:]
-            raw = raw.strip()
-            parsed = json.loads(raw)
-            if not isinstance(parsed, list):
-                return []
-            cleaned = [str(item).strip() for item in parsed if str(item).strip()]
-            return cleaned[:5]
-        except Exception:
-            logger.warning("AI assistant suggestion generation failed", exc_info=True)
-            return []
+        return []
+
+    # Static starter pills shown on a fresh conversation. Curated to cover
+    # the most common how-to flows backed by user-guides + a couple of
+    # general data lookups. Editing this list ships immediately — no LLM
+    # call, no per-user personalization, no latency.
+    _GREETING_SUGGESTIONS: tuple[str, ...] = (
+        "How do I upload a packing list?",
+        "How do I submit a stock inquiry from the portal?",
+        "How do I send a purchase request for approval?",
+        "How do I upload a GRN?",
+        "How does the project sales rep get the portal link?",
+        "Show me pending stock inquiries",
+    )
 
     def generate_greeting(self, user_id: str) -> dict:
-        """Greeting + 5 starter suggestions based on the user's recent past questions.
+        """Greeting + a static set of starter suggestions.
 
-        Falls back to generic CRM suggestions when no history (or LLM call fails).
+        Previously this hit the LLM to personalize 5 follow-ups based on the
+        user's recent question history. The latency wasn't worth it for a
+        first-paint surface, so the suggestions are now hardcoded. To change
+        them, edit :py:attr:`_GREETING_SUGGESTIONS`.
         """
-        config = AIAssistantConfigService(self.db).get()
-        # Pull last 20 user messages across recent conversations for this user.
-        recent_user_msgs = (
-            self.db.query(AIAssistantMessage.content)
-            .join(AIAssistantConversation, AIAssistantConversation.id == AIAssistantMessage.conversation_id)
-            .filter(
-                AIAssistantConversation.user_id == user_id,
-                AIAssistantMessage.role == "user",
-            )
-            .order_by(AIAssistantMessage.created_at.desc())
-            .limit(20)
-            .all()
-        )
-        past_questions = [(r[0] or "").strip()[:200] for r in recent_user_msgs if (r[0] or "").strip()]
-        generic_fallback = [
-            "What can you help me with here?",
-            "Show me my open complaints",
-            "What stock inquiries are pending?",
-            "Find products by code",
-            "Summarise this page",
-        ]
-        greeting = "Hi, how can I help you?"
-        if not past_questions:
-            return {"greeting": greeting, "suggestions": generic_fallback}
-        api_key = config.api_key_ciphertext or settings.openai_api_key
-        if not api_key:
-            return {"greeting": greeting, "suggestions": generic_fallback}
-        system_prompt = (
-            "You suggest exactly 5 short follow-up questions the user is likely to want to ask next, "
-            "based on a list of their past questions. Reply ONLY as a JSON array of 5 strings — "
-            "no prose, no markdown, no preamble."
-        )
-        user_block = (
-            "Past questions (most recent first):\n"
-            + "\n".join(f"- {q}" for q in past_questions)
-            + "\n\nReturn the JSON array now."
-        )
-        try:
-            provider = get_provider(config.provider, api_key, config.model)
-            result = provider.chat(
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_block},
-                ],
-                temperature=0.4,
-                model=config.model,
-                max_tokens=400,
-            )
-            raw = (result.content or "").strip()
-            if raw.startswith("```"):
-                raw = raw.strip("`")
-                if raw.lower().startswith("json"):
-                    raw = raw[4:]
-            raw = raw.strip()
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                cleaned = [str(item).strip() for item in parsed if str(item).strip()]
-                if cleaned:
-                    return {"greeting": greeting, "suggestions": cleaned[:5]}
-        except Exception:
-            logger.warning("AI assistant greeting suggestions failed", exc_info=True)
-        return {"greeting": greeting, "suggestions": generic_fallback}
+        return {
+            "greeting": "Hi, how can I help you?",
+            "suggestions": list(self._GREETING_SUGGESTIONS),
+        }
 
     def _is_fallback_reply(self, reply: str, tool_calls: list[MCPToolCallResult]) -> bool:
         """True when the assistant reply matches a deterministic fallback string."""
@@ -1239,6 +1249,81 @@ class AIAssistantChatService:
         if reply.startswith("Here is what I found from MCP tools:"):
             return True
         return False
+
+    # Canonical menu-path → FE route map. Mirrors
+    # `scripts/annotate_user_guides_routes.py` so the agent's response gets
+    # the same hyperlinks the source guide has, even when the LLM paraphrases.
+    # Order matters: longer, more-specific paths first.
+    _ROUTE_MAP: tuple[tuple[str, str], ...] = (
+        ("Resource Management → Files", "/resource-management/attachment-directories"),
+        ("Resource Management → Attachment Types", "/resource-management/attachment-types"),
+        ("Resource Management → Trash", "/resource-management/trash"),
+        ("Procurement → Stock Inquiries", "/procurement-management/stock-inquiries"),
+        ("Procurement → Purchase Requests", "/procurement-management/purchase-requests"),
+        ("Procurement → Sponsorship Forms", "/procurement-management/sponsorship-forms"),
+        ("Procurement → SPO Allocations", "/procurement-management/spo-allocations"),
+        ("Procurement → Packing Lists", "/procurement-management/packing-lists"),
+        ("Procurement → GRN", "/procurement-management/grn"),
+        ("Master Data Management → Products", "/master-data-management/products"),
+        ("Delivery Order Management → Delivery Orders", "/order-management/orders"),
+        ("Inventory Management → Warehouses", "/inventory-management/warehouses"),
+        ("Inventory Management → Stock", "/inventory-management/stock"),
+        ("Marketing Management → Promotion Products", "/marketing-management/promotion-products"),
+        ("Marketing Management → Promotions", "/marketing-management/promotions"),
+        ("Complaint Management → Complaints", "/complaint-management/complaints"),
+        ("System Management → Integration Logs", "/system-management/integration-logs"),
+        ("System Management → Import Jobs", "/system-management/import-jobs"),
+        ("User Management → Contacts", "/user-management/contacts"),
+    )
+
+    def _inject_route_links(self, text: str) -> str:
+        """Wrap bare bold menu paths (`**Resource Management → Files**`) and
+        plain mentions (`Resource Management → Files`) with the canonical FE
+        route link. Skips mentions that are already inside a markdown link.
+
+        Also removes any "Full guide: <doc URL>" / "refer to the full guide
+        here: ..." trailing lines because the inline links are sufficient
+        and the bare doc URLs land on the doc.foundryx.my surface (which
+        the user said they don't want).
+        """
+        if not text:
+            return text
+        result = text
+        # 1) Wrap bold menu paths (bias the LLM to use bold for menu mentions
+        # via the prompt, and we cover both with/without bold below).
+        for label, route in self._ROUTE_MAP:
+            esc = re.escape(label)
+            # `**label**` not already inside `](`/`)`.
+            bold_pat = re.compile(
+                r"(?<!\]\()(?<!`)\*\*" + esc + r"\*\*(?!\]\()"
+            )
+            result = bold_pat.sub(f"[**{label}**]({route})", result)
+        # 2) Wrap PLAIN (non-bold, non-linked) menu paths with bold + link
+        # so the LLM's "Resource Management → Files in your CRM" still ends
+        # up clickable. Skip mentions already inside markdown link parens.
+        for label, route in self._ROUTE_MAP:
+            esc = re.escape(label)
+            plain_pat = re.compile(
+                r"(?<!\*)(?<!\]\()(?<!`)\b" + esc + r"\b(?!\]\()(?!\*)"
+            )
+            result = plain_pat.sub(f"[**{label}**]({route})", result)
+        # 3) Strip trailing "Full guide" / "refer to the full guide" footers.
+        # These are noisy: the inline links cover the same ground and the
+        # raw doc.foundryx.my URLs add nothing.
+        footer_patterns = [
+            re.compile(
+                r"\n+For (?:more )?detailed instructions[^\n]*?(?:\n[^\n]*)*$",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\n+(?:You can )?(?:refer to|see) the full guide[^\n]*?(?:\n[^\n]*)*$",
+                re.IGNORECASE,
+            ),
+            re.compile(r"\n+Full guide:[^\n]*?(?:\n[^\n]*)*$", re.IGNORECASE),
+        ]
+        for pat in footer_patterns:
+            result = pat.sub("", result)
+        return result.rstrip()
 
     def _extract_links_from_text(self, text: str) -> list[str]:
         if not text:

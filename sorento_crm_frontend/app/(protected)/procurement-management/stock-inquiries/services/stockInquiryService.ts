@@ -10,9 +10,9 @@ import type {
 } from '@/components/ui/data-grid';
 
 export async function getStockInquiries(
-  params: DataGridApiFetchParams,
+  params: DataGridApiFetchParams & { statuses?: string[] },
 ): Promise<DataGridApiResponse<StockInquiry>> {
-  const { pageIndex, pageSize, sorting, searchQuery } = params;
+  const { pageIndex, pageSize, sorting, searchQuery, statuses } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -20,6 +20,7 @@ export async function getStockInquiries(
     limit: String(pageSize),
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
+    ...(statuses && statuses.length ? { status: statuses.join(',') } : {}),
   });
   const response = await apiFetch(
     `/api/v1/procurement/stock-inquiries?${queryParams.toString()}`,
@@ -297,6 +298,7 @@ export interface RespondConversationResponse {
   items: RespondMessageItem[];
   pagination?: { next?: string; previous?: string };
   error?: string;
+  contact?: { name?: string | null; phone?: string | null } | null;
 }
 
 export async function getStockInquiryConversation(

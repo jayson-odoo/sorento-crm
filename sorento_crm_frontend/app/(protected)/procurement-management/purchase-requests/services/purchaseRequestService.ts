@@ -295,6 +295,7 @@ export interface RespondConversationResponse {
   items: RespondMessageItem[];
   pagination?: { next?: string; previous?: string };
   error?: string;
+  contact?: { name?: string | null; phone?: string | null } | null;
 }
 
 export async function getPurchaseRequestConversation(

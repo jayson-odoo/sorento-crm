@@ -34,3 +34,19 @@ class Settings(BaseSettings):
     mcp_host: str = Field("0.0.0.0", validation_alias=AliasChoices("CRM_MCP_HOST", "mcp_host"))
     mcp_port: int = Field(8765, validation_alias=AliasChoices("CRM_MCP_PORT", "mcp_port"))
     log_level: str = Field("INFO", validation_alias=AliasChoices("CRM_MCP_LOG_LEVEL", "log_level"))
+
+    outline_base_url: str = Field(
+        "https://doc.foundryx.my",
+        validation_alias=AliasChoices("OUTLINE_BASE_URL", "outline_base_url"),
+        description="Base URL of the Outline workspace hosting the user guides.",
+    )
+    outline_api_token: str | None = Field(
+        None,
+        validation_alias=AliasChoices("OUTLINE_API_TOKEN", "outline_api_token"),
+        description="Outline API token used by the user-guide search/read tools.",
+    )
+    outline_collection_id: str = Field(
+        "18f78b01-bf5a-4032-934c-d5679609d553",
+        validation_alias=AliasChoices("OUTLINE_COLLECTION_ID", "outline_collection_id"),
+        description="UUID of the Sorento CRM user-guides collection.",
+    )

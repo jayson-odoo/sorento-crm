@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Bot, History, Loader2, Plus, SendHorizonal, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -448,20 +450,49 @@ export default function AIAssistantBubble() {
                             : 'bg-background/85 text-foreground'
                         }`}
                       >
-                        <p className="whitespace-pre-wrap">{m.content}</p>
-                        {m.role === 'assistant' && m.metadata_json?.links?.length ? (
-                          <div className="mt-2 space-y-1">
-                            {m.metadata_json.links.map((href) => (
-                              <Link
-                                key={href}
-                                href={href}
-                                className="block text-xs text-primary hover:underline"
-                              >
-                                {href}
-                              </Link>
-                            ))}
+                        {m.role === 'assistant' ? (
+                          <div className="ai-markdown space-y-2 [&_p]:my-0 [&_ul]:my-1 [&_ol]:my-1 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_li]:my-0.5 [&_strong]:font-semibold [&_em]:italic [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[0.9em] [&_h1]:mt-2 [&_h1]:mb-1 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:mb-1 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-1.5 [&_h3]:mb-0.5 [&_h3]:text-sm [&_h3]:font-semibold [&_blockquote]:border-l-2 [&_blockquote]:border-muted [&_blockquote]:pl-2 [&_blockquote]:text-muted-foreground [&_table]:my-2 [&_table]:w-full [&_th]:border [&_th]:border-border [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-border [&_td]:px-1.5 [&_td]:py-1">
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                a: ({ href, children, ...props }) => {
+                                  const url = href ?? '';
+                                  const isInternal = url.startsWith('/');
+                                  if (isInternal) {
+                                    return (
+                                      <Link
+                                        href={url}
+                                        className="text-primary underline underline-offset-2"
+                                      >
+                                        {children}
+                                      </Link>
+                                    );
+                                  }
+                                  return (
+                                    <a
+                                      href={url}
+                                      target="_blank"
+                                      rel="noreferrer noopener"
+                                      className="text-primary underline underline-offset-2"
+                                      {...props}
+                                    >
+                                      {children}
+                                    </a>
+                                  );
+                                },
+                              }}
+                            >
+                              {m.content}
+                            </ReactMarkdown>
                           </div>
-                        ) : null}
+                        ) : (
+                          <p className="whitespace-pre-wrap">{m.content}</p>
+                        )}
+                        {/* Inline markdown links inside the message body are now the only
+                            link surface — the previous "raw URL list" footer was redundant
+                            (and confusing when the same URLs were already wrapped in the
+                            markdown above). Keep `metadata_json.links` populated server-side
+                            for analytics, but stop rendering the duplicate panel here. */}
                       </div>
                     </div>
                   ))}

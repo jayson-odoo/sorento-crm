@@ -11,25 +11,26 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, FileDown, Trash2, Columns3 } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Trash2, Filter, Check } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Separator } from '@/components/ui/separator';
+import { cn } from '@/lib/utils';
 import { useStockInquiries } from '../hooks/useStockInquiries';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { StockInquiry } from '../types/stockInquiry.types';
 import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
-import { exportStockInquiriesToExcel } from '../utils/exportStockInquiryToExcel';
 import StockInquiryBulkDeleteDialog from './StockInquiryBulkDeleteDialog';
 
 export default function StockInquiriesList() {
@@ -42,7 +43,7 @@ export default function StockInquiriesList() {
     { id: 'created_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [exporting, setExporting] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [selectedInquiryIds, setSelectedInquiryIds] = useState<Set<string>>(new Set());
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
@@ -51,6 +52,7 @@ export default function StockInquiriesList() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
+    statuses: statusFilter,
   });
 
   const handleRowClick = (row: StockInquiry) => {
@@ -58,15 +60,11 @@ export default function StockInquiriesList() {
     router.push(`/procurement-management/stock-inquiries/${inquiryId}`);
   };
 
-  const handleExportExcel = async () => {
-    const items = data?.data ?? [];
-    if (items.length === 0) return;
-    setExporting(true);
-    try {
-      await exportStockInquiriesToExcel(items, 'Stock_Inquiries.xlsx');
-    } finally {
-      setExporting(false);
-    }
+  const toggleStatusFilter = (value: string) => {
+    setStatusFilter((prev) =>
+      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value],
+    );
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
 
   const toggleInquirySelection = (inquiryId: string) => {
@@ -224,7 +222,12 @@ export default function StockInquiriesList() {
           const status = row.original.status;
           if (!status) return '-';
           return (
-            <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
+            <Badge
+              variant={getStatusBadgeVariant(status)}
+              appearance="light"
+              shape="circle"
+              size="sm"
+            >
               {STOCK_INQUIRY_STATUS_LABELS[status] ?? status}
             </Badge>
           );
@@ -271,24 +274,90 @@ export default function StockInquiriesList() {
     >
       <Card>
         <CardHeader className="flex-row items-center justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search stock inquiries..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
-            />
-            {searchQuery && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
-              </Button>
-            )}
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+              <Input
+                placeholder="Search stock inquiries..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="ps-9 w-64"
+              />
+              {searchQuery && (
+                <Button
+                  mode="icon"
+                  variant="dim"
+                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                  onClick={() => setSearchQuery('')}
+                >
+                  <X />
+                </Button>
+              )}
+            </div>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  mode="icon"
+                  aria-label="Filter by status"
+                  className="relative w-7 px-0"
+                >
+                  <Filter className="size-4" />
+                  {statusFilter.length > 0 && (
+                    <span className="absolute -top-1 -end-1 inline-flex size-4 items-center justify-center rounded-full bg-primary text-[10px] font-medium text-primary-foreground">
+                      {statusFilter.length}
+                    </span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-56 p-0" align="start">
+                <div className="px-3 py-2 text-xs font-medium text-muted-foreground">
+                  Filter by status
+                </div>
+                <Separator />
+                <div className="py-1">
+                  {Object.entries(STOCK_INQUIRY_STATUS_LABELS).map(([value, label]) => {
+                    const checked = statusFilter.includes(value);
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => toggleStatusFilter(value)}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
+                      >
+                        <span
+                          className={cn(
+                            'flex size-4 items-center justify-center rounded-sm border border-primary',
+                            checked
+                              ? 'bg-primary text-primary-foreground'
+                              : 'opacity-50 [&_svg]:invisible',
+                          )}
+                        >
+                          <Check className="size-3.5" />
+                        </span>
+                        <span>{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {statusFilter.length > 0 && (
+                  <>
+                    <Separator />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStatusFilter([]);
+                        setPagination((p) => ({ ...p, pageIndex: 0 }));
+                      }}
+                      className="w-full px-3 py-2 text-sm text-center hover:bg-accent"
+                    >
+                      Clear filters
+                    </button>
+                  </>
+                )}
+              </PopoverContent>
+            </Popover>
           </div>
           <div className="flex items-center gap-2">
             {selectedInquiryIds.size > 0 && (
@@ -302,25 +371,6 @@ export default function StockInquiriesList() {
                 Bulk Delete ({selectedInquiryIds.size})
               </Button>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleExportExcel}
-              disabled={exporting || !data?.data?.length}
-              className="gap-1"
-            >
-              <FileDown className="size-4" />
-              {exporting ? 'Exporting…' : 'Export'}
-            </Button>
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
             <Button
               onClick={() =>
                 router.push('/procurement-management/stock-inquiries/new')

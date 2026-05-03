@@ -14,6 +14,8 @@ import {
   Trash2,
   MoreHorizontal,
   Shield,
+  Search,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -102,15 +104,39 @@ function AllAttachmentsDropTarget({
       type="button"
       className={cn(
         'w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-left',
-        isSelected && 'bg-accent text-accent-foreground',
+        isSelected && 'bg-primary text-primary-foreground font-medium',
         isOver && 'ring-2 ring-primary ring-inset'
       )}
       onClick={onSelect}
     >
-      <Folder className="size-4 text-muted-foreground shrink-0" />
+      <Folder className={cn('size-4 shrink-0', isSelected ? 'text-primary-foreground' : 'text-muted-foreground')} />
       All attachments
     </button>
   );
+}
+
+function filterTreeBySearch(
+  nodes: AttachmentDirectoryTreeNode[],
+  query: string
+): { filtered: AttachmentDirectoryTreeNode[]; matchedAncestors: Set<string> } {
+  const q = query.trim().toLowerCase();
+  const matchedAncestors = new Set<string>();
+  if (!q) return { filtered: nodes, matchedAncestors };
+
+  const visit = (node: AttachmentDirectoryTreeNode): AttachmentDirectoryTreeNode | null => {
+    const selfMatch = node.name.toLowerCase().includes(q);
+    const filteredChildren = (node.children ?? [])
+      .map(visit)
+      .filter((n): n is AttachmentDirectoryTreeNode => n !== null);
+    if (selfMatch || filteredChildren.length > 0) {
+      if (filteredChildren.length > 0) matchedAncestors.add(node.id);
+      return { ...node, children: filteredChildren };
+    }
+    return null;
+  };
+
+  const filtered = nodes.map(visit).filter((n): n is AttachmentDirectoryTreeNode => n !== null);
+  return { filtered, matchedAncestors };
 }
 
 function findPathToFolder(
@@ -185,7 +211,7 @@ function DirectoryRow({
         ref={setDropRef}
         className={cn(
           'group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm cursor-pointer min-w-0',
-          isSelected && 'bg-accent text-accent-foreground',
+          isSelected && 'bg-primary text-primary-foreground font-medium',
           isOver && 'ring-2 ring-primary ring-inset',
           isDragging && 'opacity-50'
         )}
@@ -194,17 +220,23 @@ function DirectoryRow({
       >
         <span
           ref={setDragRef}
-          className="touch-none p-0.5 hover:bg-muted rounded shrink-0 cursor-grab active:cursor-grabbing"
+          className={cn(
+            'touch-none p-0.5 rounded shrink-0 cursor-grab active:cursor-grabbing',
+            isSelected ? 'hover:bg-primary-foreground/20' : 'hover:bg-muted'
+          )}
           title="Drag to move folder"
           {...listeners}
           {...attributes}
           onClick={(e) => e.stopPropagation()}
         >
-          <GripVertical className="size-4 text-muted-foreground" />
+          <GripVertical className={cn('size-4', isSelected ? 'text-primary-foreground' : 'text-muted-foreground')} />
         </span>
         <button
           type="button"
-          className="p-0.5 hover:bg-muted rounded shrink-0"
+          className={cn(
+            'p-0.5 rounded shrink-0',
+            isSelected ? 'hover:bg-primary-foreground/20' : 'hover:bg-muted'
+          )}
           onClick={(e) => {
             e.stopPropagation();
             onToggleExpand(node.id);
@@ -212,13 +244,17 @@ function DirectoryRow({
           aria-label={isExpanded ? 'Collapse' : 'Expand'}
         >
           <ChevronRight
-            className={cn('size-4 text-muted-foreground transition-transform', isExpanded && 'rotate-90')}
+            className={cn(
+              'size-4 transition-transform',
+              isSelected ? 'text-primary-foreground' : 'text-muted-foreground',
+              isExpanded && 'rotate-90'
+            )}
           />
         </button>
         {hasChildren && isExpanded ? (
-          <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
+          <FolderOpen className={cn('size-4 shrink-0', isSelected ? 'text-primary-foreground' : 'text-muted-foreground')} />
         ) : (
-          <Folder className="size-4 shrink-0 text-muted-foreground" />
+          <Folder className={cn('size-4 shrink-0', isSelected ? 'text-primary-foreground' : 'text-muted-foreground')} />
         )}
         <span className="whitespace-nowrap" title={node.name}>{node.name}</span>
         <DropdownMenu>
@@ -350,6 +386,12 @@ export default function DirectoryTreeSidebar({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
 
+  const [searchQuery, setSearchQuery] = useState('');
+  const { filtered: filteredTree, matchedAncestors } = useMemo(
+    () => filterTreeBySearch(tree, searchQuery),
+    [tree, searchQuery]
+  );
+
   const pathToSelected = useMemo(() => {
     if (!selectedId) return new Set<string>();
     const path = findPathToFolder(tree, selectedId);
@@ -371,8 +413,9 @@ export default function DirectoryTreeSidebar({
   const expandedIds = useMemo(() => {
     const merged = new Set(expandedIdsState);
     pathToSelected.forEach((id) => merged.add(id));
+    if (searchQuery.trim()) matchedAncestors.forEach((id) => merged.add(id));
     return merged;
-  }, [expandedIdsState, pathToSelected]);
+  }, [expandedIdsState, pathToSelected, matchedAncestors, searchQuery]);
 
   const handleExpandAll = useCallback(() => {
     const idsToExpand = subtreeFolderIds ?? allFolderIds;
@@ -475,16 +518,42 @@ export default function DirectoryTreeSidebar({
             </Button>
           </div>
         </div>
+        <div className="p-2 border-b">
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
+            <Input
+              type="text"
+              placeholder="Search folders..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8 pr-8 h-8 text-sm"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-muted"
+                aria-label="Clear search"
+              >
+                <X className="size-3.5 text-muted-foreground" />
+              </button>
+            )}
+          </div>
+        </div>
         <ScrollAreaZag className="flex-1">
           <div className="min-w-max p-1 py-2">
-            <AllAttachmentsDropTarget
-              isSelected={selectedId === null}
-              onSelect={() => onSelect(null)}
-            />
+            {!searchQuery && (
+              <AllAttachmentsDropTarget
+                isSelected={selectedId === null}
+                onSelect={() => onSelect(null)}
+              />
+            )}
             {isLoading ? (
               <div className="px-2 py-2 text-sm text-muted-foreground">Loading…</div>
+            ) : filteredTree.length === 0 && searchQuery ? (
+              <div className="px-2 py-2 text-sm text-muted-foreground">No folders match &quot;{searchQuery}&quot;</div>
             ) : (
-              tree.map((node) => (
+              filteredTree.map((node) => (
                 <DirectoryRow
                   key={node.id}
                   node={node}

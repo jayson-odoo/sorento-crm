@@ -598,11 +598,39 @@ class PortalService:
         self.db.delete(row)
         self.db.commit()
 
+    def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
+        """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{respond_io_id}.
+
+        Accepts internal RespondContact.id (UUID stored on PortalToken) and resolves
+        it to the Respond.io contact identifier required by the inbox URL.
+        """
+        if not contact_id or not space_id:
+            return None
+        base = (settings.respond_app_base_url or "").rstrip("/")
+        if not base:
+            return None
+        contact = (
+            self.db.query(RespondContact)
+            .filter(
+                or_(
+                    RespondContact.id == contact_id.strip(),
+                    RespondContact.respond_io_id == contact_id.strip(),
+                )
+            )
+            .first()
+        )
+        respond_io_id = (contact.respond_io_id or "").strip() if contact else ""
+        if not respond_io_id:
+            return None
+        return f"{base}/space/{space_id.strip()}/inbox/{respond_io_id}"
+
     def _instantiate(self, kind: str, token: PortalToken, payload: dict) -> Any:
+        respond_inbox_url = self._build_respond_inbox_url(token.contact_id, token.space_id)
         if kind == "complaint":
             row = Complaint(
                 contact_id=token.contact_id,
                 space_id=token.space_id,
+                respond_inbox_url=respond_inbox_url,
                 status="draft",
             )
             self._apply_payload(kind, row, payload)
@@ -611,6 +639,7 @@ class PortalService:
             row = StockInquiry(
                 contact_id=token.contact_id,
                 space_id=token.space_id,
+                respond_inbox_url=respond_inbox_url,
                 status="draft",
             )
             self._apply_payload(kind, row, payload)
@@ -619,6 +648,7 @@ class PortalService:
             row = PurchaseRequestHeader(
                 contact_id=token.contact_id,
                 space_id=token.space_id,
+                respond_inbox_url=respond_inbox_url,
                 request_type=kind,
                 status="draft",
                 source="portal",

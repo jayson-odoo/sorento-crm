@@ -13,19 +13,23 @@ export const options = resolveOptions({
   scenarioOverrides: { peakRps: 10, preAllocatedVUs: 20, maxVUs: 100 },
 });
 
+let logged = false;
+
 export function createOrder() {
   const be = requireBeUrl();
-  const ref = unique('LOADTEST-ORD');
   const body = {
-    customer_name: ref,
-    notes: `LOADTEST VU=${__VU} ITER=${__ITER}`,
-    items: [{ description: 'loadtest item', quantity: 1, unit_price: 1.0 }],
+    order_number: unique('LOADTEST-ORD'),
+    remarks: `LOADTEST VU=${__VU} ITER=${__ITER}`,
   };
   const res = http.post(
-    `${be}/api/v1/order-management/orders`,
+    `${be}/api/v1/order-management/orders/`,
     JSON.stringify(body),
     { headers: authHeaders(), tags: { name: 'orders_create' } },
   );
+  if (!logged && __ITER === 0) {
+    logged = true;
+    console.log(`[orders_create] POST ${be}/api/v1/order-management/orders/ status=${res.status} body=${(res.body || '').toString().slice(0, 300)}`);
+  }
   isOk(res, 'orders_create');
   sleep(1);
 }

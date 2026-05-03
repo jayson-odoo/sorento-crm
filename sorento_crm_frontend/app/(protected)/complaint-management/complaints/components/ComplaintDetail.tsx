@@ -524,6 +524,8 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                   complaint.technical_team_response,
                 )}
                 replyComposePrefill={replyComposePrefill}
+                contactName={complaint.contact_person || complaint.customer_name}
+                contactPhone={complaint.contact_number}
                 onGetViewLink={
                   publicViewLinksEnabled
                     ? async () => {

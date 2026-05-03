@@ -678,9 +678,6 @@ export default function AttachmentsInFolderPanel({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Rename file</DialogTitle>
-            <DialogDescription>
-              Renames the display label and the filename used when downloading. The underlying storage object and CDN URL are not changed.
-            </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
             <Label htmlFor="rename-input-folder">

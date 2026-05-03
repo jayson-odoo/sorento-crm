@@ -1,59 +1,65 @@
-# Shared upload flow — Resource Management → Attachments
+# Shared upload flow — Resource Management → Files
 
-This page describes the generic file-upload flow that several departments use (purchasing, marketing, project sales). Department guides link here instead of repeating the same steps.
+This page describes the generic file-upload flow that several departments use (purchasing, warehouse, marketing, project sales). Department guides link here instead of repeating the same steps.
 
 There are **two distinct upload patterns** in the CRM. Use the right one for the task:
 
 | Pattern | When to use | Where |
-|---|---|---|
-| **A. Generic attachment upload** (this page) | Uploading a file that needs to be tagged with an attachment type — packing list, product attachment, promotion, product photo, marketing form, etc. | Resource Management → Attachments |
-| **B. Module-specific Excel import** | Bulk-loading structured data into a specific module (products, SPO, GRN, order tracking, stock). | The upload button on each module's list page |
+|----|----|----|
+| **A. File upload tagged by Attachment Type** (this page) | Uploading a file that needs to be tagged with an attachment type — packing list, product attachments, promotion, marketing form, etc. The system links it to the right business record automatically. | [**Resource Management → Files**](/resource-management/attachment-directories) |
+| **B. Module-specific Excel import** | Bulk-loading structured data into a specific module (products, SPO, GRN, order tracking, stock). | The **Import** / **Upload** button on each module's list page |
 
-If you are uploading **a single file or a folder of files** that the system links to a product/promotion/packing list/etc., use **Pattern A** (this page). If you are uploading **an Excel spreadsheet of records** to create or update many rows in one shot, see the module-specific guide instead.
+If you are uploading **a single file or a folder of files** that the system should link to a product / promotion / packing list / etc., use **Pattern A** (this page). If you are uploading **an Excel spreadsheet of records** to create or update many rows in one shot, use the relevant Pattern B guide instead.
+
 
 ---
 
 ## Pattern A — Single-file upload
 
-1. Open **Resource Management → Attachments** in the left menu (URL: `/resource-management/attachments`).
-2. Click **Create Attachment** (top toolbar, plus icon).
-3. In the dialog, select the **Attachment Type** from the dropdown (required). The list comes from your tenant's configured types — for example *Promotion*, *Complaint Document*, etc. If the type you need is missing, ask an admin to add it under **Resource Management → Attachment Types**.
-4. (Optional) Pick a **folder** if you want the file filed under a specific directory.
-5. (Optional) Set **access levels** — controls which contact-access groups can see this file.
-6. Drag your file(s) into the drop zone, or click to browse. You will see a per-file progress bar while uploading.
-7. Click **Upload**. A toast confirms `Successfully uploaded N file(s)`.
+
+1. Open [**Resource Management → Files**](/resource-management/attachment-directories) in the left menu (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
+2. (Optional) Click a folder in the **Folders** sidebar on the left so the new file is filed under that folder. Otherwise the file lives at the root.
+3. Click **Upload** in the top toolbar of the attachments table.
+4. The **Create Attachment** dialog opens.
+5. Pick the **Attachment Type** from the dropdown (required) — for example *Packing List*, *Product Attachments*, *Promotion*, *Marketing Form*. The list comes from your tenant's configured types. If the type you need is missing, ask an admin to add it under [**Resource Management → Attachment Types**](/resource-management/attachment-types) (the only types seeded by default are *Promotion* and *Complaint Document*).
+6. Drag your file(s) into the **Files** drop zone, or click **Select Files** to browse.
+7. (Optional) Tick / untick **Access Levels** — these control which contact-access groups (e.g. *End User*, *Dealer*, *Manager*) can see this file from the portal. All three are ticked by default.
+8. Click **Upload N Attachments**. A toast confirms the upload, and the file appears in the table.
 
 ## Pattern A — Bulk ZIP import
 
-1. Open **Resource Management → Attachments**.
+
+1. Open [**Resource Management → Files**](/resource-management/attachment-directories).
 2. Click **Bulk import (ZIP)** (top toolbar, archive icon).
-3. Choose the attachment type — every file inside the ZIP will be tagged with this type.
+3. Pick the attachment type — every file inside the ZIP will be tagged with this type.
 4. Upload your `.zip`. The system extracts files in the background.
-5. The dialog closes when the import job is queued. Progress is visible from the same page.
+5. The dialog closes when the import job is queued. Progress shows on the same page.
 
-## How files are processed and what's "captured"
+## How files are linked to business records (auto-link)
 
-When you upload an attachment with a given **Attachment Type**, the backend stores the file and fires an outbound webhook to the integration layer (n8n) with the attachment metadata, signed file URL, and the type name. The integration workflow attached to that type is what reads the file and creates the corresponding business records (e.g. parses a packing-list Excel into shipment lines).
+When you upload an attachment, the backend stores the file and **fires a webhook to the integration layer (n8n)** with the file URL and the attachment-type name. The n8n workflow attached to that type does the work — it parses the file (if it's a packing list, a marketing form, etc.), creates the business records, and **calls back into the CRM** to attach the file to the right product / packing list / promotion / complaint.
 
-> **Important:** the columns the parser expects (e.g. ETA, product code, quantity for a packing list) are defined in the n8n workflow for that attachment type, not in this CRM codebase. Ask your integrations administrator for the current template if you are unsure of the expected columns.
+You do **not** need to link the file manually after upload. As soon as the integration finishes, the file shows up on the related record (e.g. Product → Attachments, Packing List → Files) automatically.
+
+> **Important:** the columns the parser expects (e.g. ETA, product code, quantity for a packing list) are defined in the n8n workflow for that attachment type, **not** in this CRM codebase. If a parser fails, ask your integrations administrator for the current template.
 
 ## How you'll be notified
 
-- **In-app toast** appears immediately when the upload completes (`Successfully uploaded N file(s)`).
-- **Asynchronous processing** (parsing, linking) happens after the upload. When the integration workflow finishes, you receive a follow-up notification depending on how the workflow for that attachment type is configured (in-app and/or email).
+* **In-app toast** appears immediately when the upload completes (e.g. `Successfully uploaded 1 file(s)`).
+* **Asynchronous processing** (parsing + linking) happens after the upload. When the integration workflow finishes, you receive a follow-up notification depending on how the workflow for that attachment type is configured (in-app and/or email).
+* If parsing fails, an integration log is recorded — admins can review it under [**System Management → Integration Logs**](/system-management/integration-logs).
 
 ## Folder management
 
-Folder operations live on **Resource Management → Attachment Directories** (URL: `/resource-management/attachment-directories`).
+Folder operations live on the same **Files** page, on the left sidebar.
 
-- **Add subfolder** — click the row's `⋯` menu → **Add subfolder**.
-- **Rename folder** — `⋯` menu → **Rename**.
-- **Delete folder** — `⋯` menu → **Delete**.
-- **Pin folder to Quick Access** — `⋯` menu → **Pin to Quick Access** (handy for folders you visit often).
-- **Adjust access levels** — `⋯` menu → **Adjust access levels**.
+* **Create a top-level folder:** click **Add** at the top of the **Folders** sidebar.
+* **Add a subfolder, rename, delete, or adjust access levels:** click **Folder actions** (`⋯`) on the folder row → pick the action.
+* **Pin a folder to Quick Access:** **Folder actions** (`⋯`) → **Pin to Quick Access**.
+* **Search folders:** type into the **Search folders…** box at the top of the sidebar.
 
-To **rename a file**, open the attachment row in **Resource Management → Attachments** and click the pencil icon in the actions column. The dialog is titled **Rename file**.
+To **rename a single file**, click the pencil icon on the file row in the attachments table — the dialog is titled **Rename file**.
 
 ## Quick Access (menu pinning)
 
-The left sidebar has a **Quick Access** section. Click **+ Add shortcut** to pin any menu item; reorder by drag-and-drop; click the unpin icon to remove. Pinning a folder is done from the folder's `⋯` menu (above).
+The left sidebar has a **Quick Access** section near the top. Click **Add shortcut** to pin a menu item, drag-and-drop to reorder, or click the unpin icon on a shortcut to remove it. Folders can be pinned the same way through their **Folder actions** menu.

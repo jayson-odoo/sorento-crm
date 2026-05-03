@@ -1,20 +1,13 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Send, ExternalLink, RefreshCw, Link2 } from 'lucide-react';
 import { usePurchaseRequestConversation, useUpdatePurchaseRequestAndReply } from '../hooks/usePurchaseRequests';
-import type { RespondMessageItem } from '../services/purchaseRequestService';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { getRespondMessageDisplayTimeMs, getRespondMessageSortTimeMs } from '@/lib/respondIoMessage';
-import {
-  getNormalizedRespondSource,
-  getOutgoingBubbleClass,
-  getOutgoingSenderLabel,
-} from '@/lib/respondIoOutgoingMessage';
+import RespondChatList from '@/components/common/RespondChatList';
 
 interface PurchaseRequestConversationPanelProps {
   requestId: string;
@@ -30,16 +23,9 @@ interface PurchaseRequestConversationPanelProps {
   replyComposePrefill?: { key: number; text: string } | null;
   /** Called when "Attach view link" is clicked; return value is appended to the reply. */
   onGetViewLink?: () => Promise<string>;
-}
-
-function parseCursorFromNext(nextUrl: string | undefined): string | undefined {
-  if (!nextUrl) return undefined;
-  try {
-    const u = new URL(nextUrl);
-    return u.searchParams.get('cursorId') ?? undefined;
-  } catch {
-    return undefined;
-  }
+  /** Contact display in WhatsApp-style header. */
+  contactName?: string | null;
+  contactPhone?: string | null;
 }
 
 export default function PurchaseRequestConversationPanel({
@@ -50,28 +36,17 @@ export default function PurchaseRequestConversationPanel({
   requestNumber,
   replyComposePrefill,
   onGetViewLink,
+  contactName,
+  contactPhone,
 }: PurchaseRequestConversationPanelProps) {
   const [replyText, setReplyText] = useState('');
   const [viewLinkLoading, setViewLinkLoading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const replyTextareaRef = useRef<HTMLTextAreaElement>(null);
   const appliedPrefillKeyRef = useRef(0);
   const { data, isLoading, refetch, isRefetching } = usePurchaseRequestConversation(requestId, { limit: 50 });
   const updateAndReplyMutation = useUpdatePurchaseRequestAndReply();
 
-  const items: RespondMessageItem[] = data?.items ?? [];
-  const sortedItems = useMemo(() => {
-    return [...items].sort((a, b) => {
-      const ta = getRespondMessageSortTimeMs(a);
-      const tb = getRespondMessageSortTimeMs(b);
-      if (ta !== tb) return ta - tb;
-      return (a.messageId ?? 0) - (b.messageId ?? 0);
-    });
-  }, [items]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [sortedItems.length]);
+  const items = data?.items ?? [];
 
   useEffect(() => {
     if (!replyComposePrefill) return;
@@ -153,42 +128,12 @@ export default function PurchaseRequestConversationPanel({
             <Skeleton className="h-16 w-full" />
           </div>
         ) : (
-          <div className={`flex flex-col gap-3 overflow-y-auto rounded-md border bg-muted/30 p-3 ${showAsPopup ? 'max-h-[60vh]' : 'max-h-[400px]'}`}>
-            {items.length === 0 && !data?.error && (
-              <p className="text-sm text-muted-foreground py-4 text-center">No messages yet.</p>
-            )}
-            {sortedItems.map((item, idx) => {
-              const isOutgoing = item.traffic === 'outgoing';
-              const text = item.message?.text ?? '';
-              const displayMs = getRespondMessageDisplayTimeMs(item);
-              const dateStr =
-                displayMs > 0 && !Number.isNaN(displayMs)
-                  ? formatDateTimeInMalaysia(displayMs)
-                  : '';
-              const sourceNorm = getNormalizedRespondSource(item);
-              const senderLabel = isOutgoing ? getOutgoingSenderLabel(sourceNorm) : 'Contact';
-              const bubbleClass = isOutgoing
-                ? getOutgoingBubbleClass(sourceNorm)
-                : 'bg-muted';
-              return (
-                <div
-                  key={item.messageId != null ? String(item.messageId) : `msg-${idx}`}
-                  className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}
-                >
-                  <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${bubbleClass}`}>
-                    <div className="text-xs font-medium opacity-90 mb-0.5">{senderLabel}</div>
-                    <div className="whitespace-pre-wrap break-words">{text || '(no text)'}</div>
-                    {dateStr && (
-                      <div className={`text-xs mt-1 ${isOutgoing ? 'opacity-80' : 'text-muted-foreground'}`}>
-                        {dateStr}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-            <div ref={messagesEndRef} />
-          </div>
+          <RespondChatList
+            items={items}
+            contactName={data?.contact?.name ?? contactName}
+            contactPhone={data?.contact?.phone ?? contactPhone}
+            maxHeightClass={showAsPopup ? 'max-h-[60vh]' : 'max-h-[400px]'}
+          />
         )}
 
         {canReply && (

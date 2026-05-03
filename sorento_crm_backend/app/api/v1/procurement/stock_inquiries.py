@@ -80,6 +80,7 @@ async def get_stock_inquiries(
     query: Optional[str] = Query(None),
     contact_id: Optional[str] = Query(None),
     space_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="Comma-separated status values to filter by"),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -96,6 +97,7 @@ async def get_stock_inquiries(
             contact_id=contact_id,
             space_id=space_id,
         )
+        statuses = [s.strip() for s in status.split(",") if s and s.strip()] if status else None
         result = service.list_inquiries(
             page=page,
             limit=limit,
@@ -104,6 +106,7 @@ async def get_stock_inquiries(
             sort_dir=sort_dir,
             contact_id=filter_contact_id,
             space_id=filter_space_id,
+            statuses=statuses,
         )
         return result
     except Exception as e:
@@ -154,16 +157,37 @@ async def get_stock_inquiry_conversation(
     """Get Respond.io conversation messages for this stock inquiry (contact from respond_inbox_url)."""
     try:
         from app.services.integration_service import RespondClient
+        from app.models.access import RespondContact
         service = StockInquiryService(db)
         inquiry = service.get_inquiry(inquiry_id)
         respond_inbox_url = getattr(inquiry, "respond_inbox_url", None)
         identifier = service._identifier_from_respond_inbox_url(
             str(respond_inbox_url) if respond_inbox_url is not None else None
         )
+        contact_meta: Optional[dict] = None
+        contact_id_val = getattr(inquiry, "contact_id", None)
+        if contact_id_val:
+            row = (
+                db.query(RespondContact)
+                .filter(
+                    (RespondContact.id == contact_id_val)
+                    | (RespondContact.respond_io_id == contact_id_val)
+                )
+                .first()
+            )
+            if row is not None:
+                contact_meta = {"name": row.name, "phone": row.phone_number}
         if not identifier:
-            return {"items": [], "pagination": {}, "error": "No Respond.io contact linked"}
+            return {
+                "items": [],
+                "pagination": {},
+                "error": "No Respond.io contact linked",
+                "contact": contact_meta,
+            }
         client = RespondClient()
         data = client.list_messages(identifier, limit=limit, cursor=cursor)
+        if isinstance(data, dict):
+            data["contact"] = contact_meta
         return data
     except HTTPException:
         raise

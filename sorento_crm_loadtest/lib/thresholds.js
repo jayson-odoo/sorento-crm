@@ -1,14 +1,18 @@
 // Canonical threshold presets. Import the right one per scenario; never inline.
+//
+// Baselines from prod smoke (1 VU, unloaded) for the CRM listings:
+//   list endpoints p95 ≈ 60-90ms, p99 ≈ 70-200ms.
+// Rule: under-load SLA = baseline × 3-4. So p95 target ≈ 300ms.
 
 export const standard = {
   http_req_failed: ['rate<0.01'],
-  http_req_duration: ['p(95)<800', 'p(99)<2000'],
+  http_req_duration: ['p(95)<300', 'p(99)<800'],
   checks: ['rate>0.99'],
 };
 
 export const heavyWrite = {
   http_req_failed: ['rate<0.02'],
-  http_req_duration: ['p(95)<1500', 'p(99)<4000'],
+  http_req_duration: ['p(95)<800', 'p(99)<2500'],
   checks: ['rate>0.99'],
 };
 

@@ -20,7 +20,7 @@ import {
 } from '../services/stockInquiryService';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
 
-export function useStockInquiries(params: DataGridApiFetchParams) {
+export function useStockInquiries(params: DataGridApiFetchParams & { statuses?: string[] }) {
   return useQuery({
     queryKey: [
       'stock-inquiries',
@@ -28,6 +28,7 @@ export function useStockInquiries(params: DataGridApiFetchParams) {
       params.pageSize,
       params.sorting,
       params.searchQuery,
+      params.statuses,
     ],
     queryFn: () => getStockInquiries(params),
     staleTime: Infinity,

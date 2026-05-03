@@ -1,0 +1,62 @@
+name: Outline user-guides sync
+
+on:
+  schedule:
+    # Every 6 hours. Adjust as needed.
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Sync direction'
+        required: true
+        default: 'pull'
+        type: choice
+        options:
+          - pull
+          - push
+          - status
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests python-dotenv
+
+      - name: Run Outline sync
+        env:
+          OUTLINE_API_TOKEN: ${{ secrets.OUTLINE_API_TOKEN }}
+          OUTLINE_BASE_URL: ${{ secrets.OUTLINE_BASE_URL || 'https://doc.foundryx.my' }}
+          OUTLINE_COLLECTION_ID: ${{ secrets.OUTLINE_COLLECTION_ID || '18f78b01-bf5a-4032-934c-d5679609d553' }}
+        run: |
+          MODE="${{ github.event.inputs.mode || 'pull' }}"
+          python scripts/sync_user_guides_outline.py "$MODE"
+
+      - name: Open PR if pull produced diffs
+        if: ${{ github.event.inputs.mode != 'push' && github.event.inputs.mode != 'status' }}
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: bot/outline-user-guides-sync
+          base: main
+          title: 'docs(user-guides): sync from Outline'
+          commit-message: 'docs(user-guides): sync from Outline'
+          body: |
+            Automated pull of Sorento CRM user guides from Outline
+            (`https://doc.foundryx.my/collection/sorento-crm-BOoUtlxxTH`).
+
+            Review the diff before merging — these reflect edits made directly
+            in Outline since the last sync.
+          add-paths: |
+            docs/user-guides/**

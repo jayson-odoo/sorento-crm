@@ -1,0 +1,156 @@
+'use client';
+
+import { useEffect, useMemo, useRef } from 'react';
+import { Check, CheckCheck, AlertCircle, Clock } from 'lucide-react';
+import {
+  dateKeyFromMs,
+  extractSelectionOptions,
+  formatBubbleTime,
+  formatDatePillLabel,
+  getReceiptTier,
+  type RespondMessageRenderable,
+} from '@/lib/respondIoChatRender';
+import { getRespondMessageDisplayTimeMs, getRespondMessageSortTimeMs } from '@/lib/respondIoMessage';
+import {
+  getNormalizedRespondSource,
+  getOutgoingSenderLabel,
+} from '@/lib/respondIoOutgoingMessage';
+
+interface RespondChatListProps {
+  items: RespondMessageRenderable[];
+  contactName?: string | null;
+  contactPhone?: string | null;
+  emptyHint?: string;
+  /** Caps message-list scroll height; chat header sits above. */
+  maxHeightClass?: string;
+}
+
+function ReceiptTicks({ tier }: { tier: ReturnType<typeof getReceiptTier> }) {
+  if (tier === 'none') return null;
+  if (tier === 'sending') return <Clock className="size-3.5 opacity-70" aria-label="Sending" />;
+  if (tier === 'failed') return <AlertCircle className="size-3.5 text-red-500" aria-label="Failed" />;
+  if (tier === 'sent') return <Check className="size-3.5 opacity-70" aria-label="Sent" />;
+  if (tier === 'delivered')
+    return <CheckCheck className="size-3.5 opacity-70" aria-label="Delivered" />;
+  return <CheckCheck className="size-3.5 text-sky-500" aria-label="Read" />;
+}
+
+export default function RespondChatList({
+  items,
+  contactName,
+  contactPhone,
+  emptyHint = 'No messages yet.',
+  maxHeightClass = 'max-h-[60vh]',
+}: RespondChatListProps) {
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const sortedItems = useMemo(() => {
+    return [...items].sort((a, b) => {
+      const ta = getRespondMessageSortTimeMs(a);
+      const tb = getRespondMessageSortTimeMs(b);
+      if (ta !== tb) return ta - tb;
+      return (a.messageId ?? 0) - (b.messageId ?? 0);
+    });
+  }, [items]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
+  }, [sortedItems.length]);
+
+  const contactInitial = (contactName?.trim()?.charAt(0) || '?').toUpperCase();
+  const headerName = contactName?.trim() || 'Unknown contact';
+  const headerPhone = contactPhone?.trim() || '';
+
+  let lastDateKey = '';
+
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center gap-3 rounded-t-md border border-b-0 bg-[#f0f2f5] dark:bg-[#202c33] px-3 py-2">
+        <div className="flex size-9 items-center justify-center rounded-full bg-emerald-600 text-sm font-semibold text-white">
+          {contactInitial}
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            {headerName}
+          </div>
+          {headerPhone && (
+            <div className="truncate text-xs text-zinc-500 dark:text-zinc-400">{headerPhone}</div>
+          )}
+        </div>
+      </div>
+
+      <div
+        className={`flex flex-col gap-2 overflow-y-auto rounded-b-md border bg-[#efeae2] dark:bg-[#0b141a] p-3 ${maxHeightClass}`}
+      >
+        {sortedItems.length === 0 && (
+          <p className="py-4 text-center text-sm text-zinc-500 dark:text-zinc-400">{emptyHint}</p>
+        )}
+        {sortedItems.map((item, idx) => {
+          const isOutgoing = item.traffic === 'outgoing';
+          const text = item.message?.text ?? '';
+          const displayMs = getRespondMessageDisplayTimeMs(item);
+          const key = item.messageId != null ? String(item.messageId) : `msg-${idx}`;
+
+          const dKey = displayMs > 0 ? dateKeyFromMs(displayMs) : '';
+          const dividerLabel =
+            dKey && dKey !== lastDateKey ? formatDatePillLabel(displayMs) : '';
+          if (dKey) lastDateKey = dKey;
+
+          const sourceNorm = getNormalizedRespondSource(item);
+          const senderLabel = isOutgoing ? getOutgoingSenderLabel(sourceNorm) : 'Contact';
+
+          const bubbleClass = isOutgoing
+            ? 'bg-[#d9fdd3] text-zinc-900 dark:bg-[#005c4b] dark:text-zinc-50'
+            : 'bg-white text-zinc-900 dark:bg-[#202c33] dark:text-zinc-50';
+
+          const options = extractSelectionOptions(item);
+          const tier = getReceiptTier(item);
+
+          return (
+            <div key={key}>
+              {dividerLabel && (
+                <div className="sticky top-0 z-10 my-2 flex justify-center">
+                  <span className="rounded-md bg-[#e1f3fb] dark:bg-[#1d282f] px-3 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 shadow-sm">
+                    {dividerLabel}
+                  </span>
+                </div>
+              )}
+              <div className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm shadow-sm ${bubbleClass}`}
+                >
+                  <div className="mb-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                    {senderLabel}
+                  </div>
+                  {text && (
+                    <div className="whitespace-pre-wrap break-words leading-snug">{text}</div>
+                  )}
+                  {options.length > 0 && (
+                    <div className="mt-2 flex flex-col divide-y divide-zinc-200 overflow-hidden rounded border border-zinc-200 bg-white/70 dark:divide-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/40">
+                      {options.map((opt, i) => (
+                        <div
+                          key={`${key}-opt-${i}`}
+                          className="px-2.5 py-1.5 text-xs text-zinc-800 dark:text-zinc-200"
+                        >
+                          {opt}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {!text && options.length === 0 && (
+                    <div className="italic opacity-70">(no text)</div>
+                  )}
+                  <div className="mt-1 flex items-center justify-end gap-1 text-[10px] text-zinc-500 dark:text-zinc-300/80">
+                    {displayMs > 0 && <span>{formatBubbleTime(displayMs)}</span>}
+                    <ReceiptTicks tier={tier} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        <div ref={messagesEndRef} />
+      </div>
+    </div>
+  );
+}
