@@ -21,9 +21,23 @@ export interface TopUserItem {
   tokens: number;
 }
 
+export interface TopContactItem {
+  contact_id: string;
+  name: string | null;
+  phone_number: string | null;
+  messages: number;
+  tokens: number;
+}
+
+export type AIUsageFeature = 'ai_assistant' | 'ai_extract';
+
 export interface RecentQueryItem {
   message_id: string;
-  user_name: string;
+  user_name: string | null;
+  contact_name?: string | null;
+  contact_phone?: string | null;
+  feature?: AIUsageFeature | string | null;
+  form_key?: string | null;
   query_preview: string;
   response_time_ms: number;
   tokens: number;
@@ -54,12 +68,17 @@ async function unwrap<T>(res: Response, fallback: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-function buildRange(from?: Date, to?: Date, extra?: Record<string, string | number>): string {
+function buildRange(
+  from?: Date,
+  to?: Date,
+  extra?: Record<string, string | number | undefined>,
+): string {
   const params = new URLSearchParams();
   if (from) params.set('from', from.toISOString());
   if (to) params.set('to', to.toISOString());
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
+      if (v === undefined || v === null || v === '') continue;
       params.set(k, String(v));
     }
   }
@@ -67,13 +86,25 @@ function buildRange(from?: Date, to?: Date, extra?: Record<string, string | numb
   return s ? `?${s}` : '';
 }
 
-export async function getUsageSummary(from?: Date, to?: Date): Promise<UsageSummary> {
-  const res = await apiFetch(`/api/v1/system/ai-assistant/usage/summary${buildRange(from, to)}`);
+export async function getUsageSummary(
+  from?: Date,
+  to?: Date,
+  feature?: string,
+): Promise<UsageSummary> {
+  const res = await apiFetch(
+    `/api/v1/system/ai-assistant/usage/summary${buildRange(from, to, { feature })}`,
+  );
   return unwrap(res, 'Failed to load usage summary.');
 }
 
-export async function getUsageByDay(from?: Date, to?: Date): Promise<UsageByDayItem[]> {
-  const res = await apiFetch(`/api/v1/system/ai-assistant/usage/by-day${buildRange(from, to)}`);
+export async function getUsageByDay(
+  from?: Date,
+  to?: Date,
+  feature?: string,
+): Promise<UsageByDayItem[]> {
+  const res = await apiFetch(
+    `/api/v1/system/ai-assistant/usage/by-day${buildRange(from, to, { feature })}`,
+  );
   return unwrap(res, 'Failed to load usage by-day.');
 }
 
@@ -81,20 +112,34 @@ export async function getTopUsers(
   from?: Date,
   to?: Date,
   limit = 10,
+  feature?: string,
 ): Promise<TopUserItem[]> {
   const res = await apiFetch(
-    `/api/v1/system/ai-assistant/usage/top-users${buildRange(from, to, { limit })}`,
+    `/api/v1/system/ai-assistant/usage/top-users${buildRange(from, to, { limit, feature })}`,
   );
   return unwrap(res, 'Failed to load top users.');
+}
+
+export async function getTopContacts(
+  from?: Date,
+  to?: Date,
+  limit = 10,
+  feature: string = 'ai_extract',
+): Promise<TopContactItem[]> {
+  const res = await apiFetch(
+    `/api/v1/system/ai-assistant/usage/top-contacts${buildRange(from, to, { limit, feature })}`,
+  );
+  return unwrap(res, 'Failed to load top contacts.');
 }
 
 export async function getRecentQueries(
   from?: Date,
   to?: Date,
   limit = 50,
+  feature?: string,
 ): Promise<RecentQueryItem[]> {
   const res = await apiFetch(
-    `/api/v1/system/ai-assistant/usage/recent-queries${buildRange(from, to, { limit })}`,
+    `/api/v1/system/ai-assistant/usage/recent-queries${buildRange(from, to, { limit, feature })}`,
   );
   return unwrap(res, 'Failed to load recent queries.');
 }

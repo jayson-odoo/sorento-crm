@@ -128,8 +128,146 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
 ]
 
 
+_PORTAL_STOCK_INQUIRY: list[ExtractFieldSpec] = [
+    ExtractFieldSpec(
+        name="product_code",
+        label="Product code",
+        kind="fk_product",
+        note=(
+            "SKU as it appears in the product master. Examples will be supplied; "
+            "follow that pattern. If the document only shows a product name, return "
+            "the closest matching code from the examples."
+        ),
+    ),
+    ExtractFieldSpec(
+        name="item_description",
+        label="Item description",
+        kind="textarea",
+        note="Free-text description of the requested item, as printed on the inquiry.",
+    ),
+    ExtractFieldSpec(
+        name="quantity",
+        label="Quantity",
+        kind="number",
+        note="Numeric quantity requested. Strip units and commas.",
+    ),
+    ExtractFieldSpec(
+        name="delivery_date",
+        label="Required delivery date",
+        kind="date",
+        note="ISO date YYYY-MM-DD when the item is required on site.",
+    ),
+    ExtractFieldSpec(
+        name="project_customer",
+        label="Project customer",
+        kind="fk_customer",
+        note="End customer / debtor name as printed on the inquiry header.",
+    ),
+    ExtractFieldSpec(name="project_name", label="Project name", kind="text"),
+    ExtractFieldSpec(name="salesperson", label="Salesperson", kind="text"),
+    ExtractFieldSpec(name="remark", label="Remark", kind="textarea"),
+    ExtractFieldSpec(name="additional_remark", label="Additional remark", kind="textarea"),
+]
+
+
+_PORTAL_PURCHASE_REQUEST: list[ExtractFieldSpec] = [
+    ExtractFieldSpec(
+        name="customer_name",
+        label="Customer name",
+        kind="fk_customer",
+        note="End customer / debtor name printed on the request header.",
+    ),
+    ExtractFieldSpec(name="project_title", label="Project title", kind="text"),
+    ExtractFieldSpec(
+        name="purpose",
+        label="Purpose",
+        kind="textarea",
+        note="One- or two-sentence summary of why the items are being requested.",
+    ),
+    ExtractFieldSpec(
+        name="request_date",
+        label="Request date",
+        kind="date",
+        note="ISO date YYYY-MM-DD the request was raised.",
+    ),
+    ExtractFieldSpec(
+        name="expected_delivery_date",
+        label="Expected delivery date",
+        kind="date",
+        note="ISO date YYYY-MM-DD the items are expected on site.",
+    ),
+    ExtractFieldSpec(
+        name="expected_po_date",
+        label="Expected PO date",
+        kind="date",
+        note="ISO date YYYY-MM-DD the PO is expected to be issued.",
+    ),
+    ExtractFieldSpec(name="requested_by", label="Requested by", kind="text"),
+    ExtractFieldSpec(
+        name="external_reference",
+        label="External reference",
+        kind="text",
+        note="External PO / quote / RFQ reference number, if printed.",
+    ),
+]
+
+
+_PORTAL_SPONSORSHIP_FORM: list[ExtractFieldSpec] = [
+    ExtractFieldSpec(
+        name="customer_name",
+        label="Customer name",
+        kind="fk_customer",
+        note="End customer / debtor name printed on the sponsorship request header.",
+    ),
+    ExtractFieldSpec(name="project_title", label="Project title", kind="text"),
+    ExtractFieldSpec(
+        name="sponsor_subject",
+        label="Sponsor subject",
+        kind="text",
+        note="Short subject of the sponsorship — e.g. showroom, mockup, others.",
+    ),
+    ExtractFieldSpec(
+        name="purpose",
+        label="Purpose",
+        kind="textarea",
+        note="One- or two-sentence summary of why sponsorship is being requested.",
+    ),
+    ExtractFieldSpec(
+        name="delivery_address",
+        label="Delivery address",
+        kind="textarea",
+        note="Full delivery / site address as printed on the request.",
+    ),
+    ExtractFieldSpec(
+        name="total_project_value",
+        label="Total project value",
+        kind="text",
+        note=(
+            "Free-text total project value as printed (may be descriptive, e.g. "
+            "'BULK ORDER EST RM1.6MIL'). Do not strip non-numeric fragments."
+        ),
+    ),
+    ExtractFieldSpec(
+        name="request_date",
+        label="Request date",
+        kind="date",
+        note="ISO date YYYY-MM-DD the request was raised.",
+    ),
+    ExtractFieldSpec(
+        name="expected_delivery_date",
+        label="Expected delivery date",
+        kind="date",
+        note="ISO date YYYY-MM-DD the items are expected on site.",
+    ),
+    ExtractFieldSpec(name="requested_by", label="Requested by", kind="text"),
+]
+
+
 FORM_SCHEMAS: dict[str, list[ExtractFieldSpec]] = {
     "portal.complaint": _PORTAL_COMPLAINT,
+    "portal.stock_inquiry": _PORTAL_STOCK_INQUIRY,
+    "portal.purchase_request": _PORTAL_PURCHASE_REQUEST,
+    "portal.sponsorship_form": _PORTAL_SPONSORSHIP_FORM,
 }
 
 

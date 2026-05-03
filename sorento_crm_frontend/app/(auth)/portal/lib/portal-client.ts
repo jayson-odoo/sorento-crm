@@ -412,6 +412,8 @@ export interface AIExtractedProductLine {
   product_code?: string | null;
   product_name?: string | null;
   quantity?: number | null;
+  unit_price?: number | null;
+  total?: number | null;
   notes?: string | null;
 }
 

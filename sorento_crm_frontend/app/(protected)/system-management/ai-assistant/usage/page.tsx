@@ -18,6 +18,13 @@ import {
 } from '@/components/ui/card';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Container } from '@/components/common/container';
 import { Toolbar, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
 import {
@@ -31,10 +38,18 @@ import {
 import {
   useQueryDetail,
   useRecentQueries,
+  useTopContacts,
   useTopUsers,
   useUsageByDay,
   useUsageSummary,
 } from '../hooks/useAIUsage';
+
+const FEATURE_ALL = 'all';
+const FEATURE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: FEATURE_ALL, label: 'All AI usage' },
+  { value: 'ai_assistant', label: 'AI Assistant (chat)' },
+  { value: 'ai_extract', label: 'AI Extract (portal forms)' },
+];
 
 const PERMISSION = 'system.ai_assistant_settings.view';
 
@@ -64,14 +79,17 @@ export default function AIUsagePage() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>(defaultRange());
   const [pendingRange, setPendingRange] = useState<DateRange | undefined>(dateRange);
   const [datePopoverOpen, setDatePopoverOpen] = useState(false);
+  const [featureFilter, setFeatureFilter] = useState<string>(FEATURE_ALL);
 
   const from = dateRange?.from;
   const to = dateRange?.to;
+  const featureForApi = featureFilter === FEATURE_ALL ? undefined : featureFilter;
 
-  const summaryQuery = useUsageSummary(from, to);
-  const byDayQuery = useUsageByDay(from, to);
-  const topUsersQuery = useTopUsers(from, to, 10);
-  const recentQueriesQuery = useRecentQueries(from, to, 50);
+  const summaryQuery = useUsageSummary(from, to, featureForApi);
+  const byDayQuery = useUsageByDay(from, to, featureForApi);
+  const topUsersQuery = useTopUsers(from, to, 10, featureForApi);
+  const topContactsQuery = useTopContacts(from, to, 10, featureForApi ?? 'ai_extract');
+  const recentQueriesQuery = useRecentQueries(from, to, 50, featureForApi);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const queryDetail = useQueryDetail(expandedId);
@@ -182,6 +200,18 @@ export default function AIUsagePage() {
               </div>
             </PopoverContent>
           </Popover>
+          <Select value={featureFilter} onValueChange={setFeatureFilter}>
+            <SelectTrigger className="w-60" data-testid="ai-usage-feature-filter">
+              <SelectValue placeholder="All AI usage" />
+            </SelectTrigger>
+            <SelectContent>
+              {FEATURE_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="grid gap-3 md:grid-cols-4">
@@ -252,7 +282,7 @@ export default function AIUsagePage() {
           <Card>
             <CardHeader>
               <CardTitle>Top users</CardTitle>
-              <CardDescription>Highest message volume in range</CardDescription>
+              <CardDescription>Internal staff — highest message volume in range</CardDescription>
             </CardHeader>
             <CardContent>
               {topUsersQuery.isLoading ? (
@@ -289,6 +319,53 @@ export default function AIUsagePage() {
 
           <Card>
             <CardHeader>
+              <CardTitle>Top contacts</CardTitle>
+              <CardDescription>
+                Portal contacts (by phone) — defaults to AI Extract spend
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {topContactsQuery.isLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  Loading...
+                </div>
+              ) : (topContactsQuery.data || []).length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No portal contact activity in range.
+                </p>
+              ) : (
+                <table className="w-full text-sm" data-testid="ai-usage-top-contacts">
+                  <thead>
+                    <tr className="border-b text-xs text-muted-foreground">
+                      <th className="py-2 text-left font-medium">#</th>
+                      <th className="py-2 text-left font-medium">Phone</th>
+                      <th className="py-2 text-left font-medium">Name</th>
+                      <th className="py-2 text-right font-medium">Calls</th>
+                      <th className="py-2 text-right font-medium">Tokens</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(topContactsQuery.data || []).map((c, i) => (
+                      <tr key={c.contact_id} className="border-b last:border-0">
+                        <td className="py-2 text-muted-foreground">{i + 1}</td>
+                        <td className="py-2 font-mono text-xs">{c.phone_number || '—'}</td>
+                        <td className="py-2">{c.name || <span className="text-muted-foreground italic">unknown</span>}</td>
+                        <td className="py-2 text-right tabular-nums">{formatNumber(c.messages)}</td>
+                        <td className="py-2 text-right tabular-nums">{formatNumber(c.tokens)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-1">
+
+          <Card>
+            <CardHeader>
               <CardTitle>Recent queries</CardTitle>
               <CardDescription>Most recent assistant turns</CardDescription>
             </CardHeader>
@@ -307,7 +384,8 @@ export default function AIUsagePage() {
                       <tr className="border-b text-xs text-muted-foreground">
                         <th className="w-6 py-2"></th>
                         <th className="py-2 text-left font-medium">Time</th>
-                        <th className="py-2 text-left font-medium">User</th>
+                        <th className="py-2 text-left font-medium">Feature</th>
+                        <th className="py-2 text-left font-medium">Principal</th>
                         <th className="py-2 text-left font-medium">Query</th>
                         <th className="py-2 text-right font-medium">ms</th>
                         <th className="py-2 text-right font-medium">Tokens</th>
@@ -315,24 +393,46 @@ export default function AIUsagePage() {
                     </thead>
                     <tbody>
                       {(recentQueriesQuery.data || []).map((q) => {
-                        const isExpanded = expandedId === q.message_id;
+                        // message_id is null for ai_extract rows; key on a stable composite.
+                        const rowKey = q.message_id ?? `${q.created_at}-${q.contact_phone ?? q.user_name ?? ''}`;
+                        const isExpanded = q.message_id != null && expandedId === q.message_id;
+                        const featureLabel = q.feature === 'ai_extract'
+                          ? 'AI Extract'
+                          : q.feature === 'ai_assistant'
+                            ? 'AI Assistant'
+                            : '—';
+                        const principal =
+                          q.contact_phone || q.contact_name
+                            ? `${q.contact_name ?? 'unknown'} · ${q.contact_phone ?? ''}`.trim()
+                            : q.user_name || '—';
                         return (
-                          <Fragment key={q.message_id}>
+                          <Fragment key={rowKey}>
                             <tr
-                              className="cursor-pointer border-b hover:bg-muted/40"
-                              onClick={() => setExpandedId(isExpanded ? null : q.message_id)}
+                              className={cn(
+                                'border-b hover:bg-muted/40',
+                                q.message_id ? 'cursor-pointer' : '',
+                              )}
+                              onClick={() =>
+                                q.message_id &&
+                                setExpandedId(isExpanded ? null : q.message_id)
+                              }
                             >
                               <td className="py-2 align-top">
-                                {isExpanded ? (
-                                  <ChevronDown className="size-3.5 text-muted-foreground" />
-                                ) : (
-                                  <ChevronRight className="size-3.5 text-muted-foreground" />
-                                )}
+                                {q.message_id ? (
+                                  isExpanded ? (
+                                    <ChevronDown className="size-3.5 text-muted-foreground" />
+                                  ) : (
+                                    <ChevronRight className="size-3.5 text-muted-foreground" />
+                                  )
+                                ) : null}
                               </td>
                               <td className="py-2 align-top text-xs whitespace-nowrap text-muted-foreground">
                                 {formatDateTime(q.created_at)}
                               </td>
-                              <td className="py-2 align-top">{q.user_name}</td>
+                              <td className="py-2 align-top text-xs">{featureLabel}</td>
+                              <td className="py-2 align-top" title={principal}>
+                                {principal}
+                              </td>
                               <td
                                 className="max-w-[240px] truncate py-2 align-top"
                                 title={q.query_preview}
@@ -349,7 +449,7 @@ export default function AIUsagePage() {
                             {isExpanded ? (
                               <tr className="border-b bg-muted/20">
                                 <td></td>
-                                <td colSpan={5} className="space-y-2 py-3 pe-3">
+                                <td colSpan={6} className="space-y-2 py-3 pe-3">
                                   {queryDetail.isLoading ? (
                                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                       <Loader2 className="size-3 animate-spin" /> Loading detail...

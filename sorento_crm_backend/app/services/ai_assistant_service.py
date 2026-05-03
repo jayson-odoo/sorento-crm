@@ -513,6 +513,7 @@ class AIAssistantChatService:
             self.db.add(
                 AIAssistantUsageLog(
                     user_id=user_id,
+                    feature="ai_assistant",
                     conversation_id=str(conv.id),
                     message_id=str(assistant_msg.id),
                     model=config.model,

@@ -439,6 +439,29 @@ export function SubmissionForm({ kind, submissionId }: Props) {
       setPendingFiles((prev) => [...prev, ...payload.files]);
     }
 
+    if (HAS_LINES.includes(kind) && payload.productLines && payload.productLines.length > 0) {
+      const numToString = (n: number | null | undefined): string | undefined =>
+        n === null || n === undefined ? undefined : String(n);
+      const aiLines: ProductLine[] = payload.productLines.map((p) => ({
+        item_code: p.product_code ?? undefined,
+        quantity: numToString(p.quantity),
+        unit_price: numToString(p.unit_price),
+        total: numToString(p.total),
+        remark: p.notes ?? undefined,
+      }));
+      setProducts((prev) => {
+        const isPrevEmpty =
+          prev.length === 0 ||
+          (prev.length === 1 &&
+            !prev[0].item_code &&
+            !prev[0].quantity &&
+            !prev[0].unit_price &&
+            !prev[0].total &&
+            !prev[0].remark);
+        return isPrevEmpty ? aiLines : [...prev, ...aiLines];
+      });
+    }
+
     if (kind !== 'complaint') return;
     const aiDOsRaw = aiValues.delivery_order_number;
     if (!aiDOsRaw) return;
@@ -602,7 +625,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
           </Link>
         </Button>
         <div className="flex items-center gap-3">
-          {kind === 'complaint' && isEditable && (
+          {isEditable && (
             <Button
               type="button"
               variant="outline"
