@@ -156,7 +156,7 @@ export default function EntityActivitiesLayout({
       {/* Floating launcher — pinned bottom-right while panel is closed. */}
       {!open && (
         <Button
-          variant="default"
+          variant="primary"
           size="icon"
           className="fixed right-4 bottom-4 z-30 size-12 rounded-full shadow-xl bg-red-600 hover:bg-red-700 animate-pulse"
           aria-label="Open activities & notes"

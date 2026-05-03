@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { generalSettings } from '@/config/general.config';
 import { Container } from '@/components/common/container';
 
@@ -35,13 +36,12 @@ export function Footer() {
             >
               FAQ
             </a>
-            <a
-              href="https://devs.keenthemes.com"
-              target="_blank"
+            <Link
+              href="/ticket-management/tickets"
               className="hover:text-primary"
             >
               Support
-            </a>
+            </Link>
             <a
               href={generalSettings.licenseLink}
               target="_blank"

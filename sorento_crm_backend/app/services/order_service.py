@@ -111,23 +111,47 @@ class OrderService:
         
         query_filter = None
         if query and (query := (query or "").strip()):
-            query_filter = or_(
-                Order.order_number.ilike(f"%{query}%"),
-                Order.debtor_name.ilike(f"%{query}%"),
-                Order.debtor_code.ilike(f"%{query}%"),
-                Order.customer.has(Customer.customer_name.ilike(f"%{query}%")),
-                Order.customer.has(Customer.customer_code.ilike(f"%{query}%"))
+            term = f"%{query}%"
+            # Split into UNION of matching id sets. The original OR-with-EXISTS-on-customers
+            # forces a Seq Scan on orders even with pg_trgm indexes; pulling the cross-table
+            # match into its own subquery lets each branch use its trigram index independently.
+            direct_ids = self.db.query(Order.id).filter(
+                or_(
+                    Order.order_number.ilike(term),
+                    Order.debtor_name.ilike(term),
+                    Order.debtor_code.ilike(term),
+                )
             )
+            customer_ids = (
+                self.db.query(Order.id)
+                .join(Customer, Order.customer_id == Customer.id)
+                .filter(
+                    or_(
+                        Customer.customer_name.ilike(term),
+                        Customer.customer_code.ilike(term),
+                    )
+                )
+            )
+            query_filter = Order.id.in_(direct_ids.union(customer_ids))
         if customer_query and (customer_query := (customer_query or "").strip()):
             term = f"%{customer_query}%"
-            filters.append(
+            direct_ids = self.db.query(Order.id).filter(
                 or_(
                     Order.debtor_name.ilike(term),
                     Order.debtor_code.ilike(term),
-                    Order.customer.has(Customer.customer_name.ilike(term)),
-                    Order.customer.has(Customer.customer_code.ilike(term)),
                 )
             )
+            customer_ids = (
+                self.db.query(Order.id)
+                .join(Customer, Order.customer_id == Customer.id)
+                .filter(
+                    or_(
+                        Customer.customer_name.ilike(term),
+                        Customer.customer_code.ilike(term),
+                    )
+                )
+            )
+            filters.append(Order.id.in_(direct_ids.union(customer_ids)))
         if product_query and (product_query := (product_query or "").strip()):
             term = f"%{product_query}%"
             filters.append(

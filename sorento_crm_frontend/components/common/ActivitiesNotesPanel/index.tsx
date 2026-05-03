@@ -99,7 +99,7 @@ export default function ActivitiesNotesPanel({ entityType, entityId }: Props) {
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
         <Button
-          variant="default"
+          variant="primary"
           size="icon"
           className="fixed right-4 bottom-4 z-30 size-12 rounded-full shadow-xl bg-red-600 hover:bg-red-700 animate-pulse"
           aria-label="Open activities & notes"

@@ -9,12 +9,12 @@ const STATUS_LABEL: Record<TicketStatus, string> = {
   resolved: 'Resolved',
 };
 
-const STATUS_VARIANT: Record<TicketStatus, 'secondary' | 'default' | 'outline' | 'destructive'> = {
+const STATUS_VARIANT: Record<TicketStatus, 'secondary' | 'primary' | 'outline' | 'success'> = {
   draft: 'outline',
   submitted: 'secondary',
-  assigned: 'default',
-  responded: 'default',
-  resolved: 'secondary',
+  assigned: 'primary',
+  responded: 'primary',
+  resolved: 'success',
 };
 
 export function TicketStatusBadge({ status }: { status: TicketStatus }) {
@@ -30,10 +30,10 @@ export function TicketPriorityBadge({
 }: {
   priority: 'low' | 'medium' | 'high' | 'urgent';
 }) {
-  const variant: Record<typeof priority, 'secondary' | 'default' | 'destructive'> = {
+  const variant: Record<typeof priority, 'secondary' | 'info' | 'warning' | 'destructive'> = {
     low: 'secondary',
-    medium: 'default',
-    high: 'default',
+    medium: 'info',
+    high: 'warning',
     urgent: 'destructive',
   };
   const label = priority.charAt(0).toUpperCase() + priority.slice(1);
