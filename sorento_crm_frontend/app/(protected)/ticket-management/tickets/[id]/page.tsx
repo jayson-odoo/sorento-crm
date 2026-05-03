@@ -29,6 +29,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import ActivitiesNotesPanel from '@/components/common/ActivitiesNotesPanel';
 import {
   changeTicketStatus,
   getTicket,
@@ -387,6 +388,9 @@ export default function TicketDetailPage({ params }: PageProps) {
           </Card>
         </div>
       </Container>
+
+      {/* Generic Activities & Notes panel keyed on ('ticket', ticket.id). */}
+      <ActivitiesNotesPanel entityType="ticket" entityId={ticket.id} />
     </>
   );
 }
