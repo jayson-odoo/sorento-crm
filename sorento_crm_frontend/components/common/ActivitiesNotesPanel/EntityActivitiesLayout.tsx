@@ -29,7 +29,11 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import { RichTextEditor } from '@/components/ui/rich-text-editor';
+import {
+  RichTextEditor,
+  extractMentionedUserIds,
+} from '@/components/ui/rich-text-editor';
+import { getUsersSelect } from '@/services/userSelectService';
 import {
   Tabs,
   TabsContent,
@@ -276,6 +280,7 @@ function ActivitiesTab({
       await postActivity(entityType, entityId, {
         body_html: draft,
         body_text: htmlToText(draft),
+        mentioned_user_ids: extractMentionedUserIds(draft),
       });
       setDraft('');
       await reload();
@@ -334,8 +339,9 @@ function ActivitiesTab({
         <RichTextEditor
           value={draft}
           onChange={setDraft}
-          placeholder="Share an update… Use **bold**, *italic*, lists, links."
+          placeholder="Share an update… Use **bold**, *italic*, lists, links, @mention."
           minHeight={120}
+          mentionUsersFetcher={getUsersSelect}
         />
         <div className="flex justify-end">
           <Button size="sm" disabled={!htmlToText(draft) || posting} onClick={submit}>
