@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Textarea } from '@/components/ui/textarea';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { Container } from '@/components/common/container';
 import {
   Toolbar,
@@ -46,6 +46,12 @@ import {
   TicketStatusBadge,
 } from '../components/TicketStatusBadge';
 import TicketWatchersSection from '../components/TicketWatchersSection';
+
+function htmlToText(html: string): string {
+  if (typeof window === 'undefined') return html.replace(/<[^>]+>/g, '').trim();
+  const doc = new DOMParser().parseFromString(html || '', 'text/html');
+  return (doc.body.textContent || '').trim();
+}
 
 function formatDuration(hours: number | string | null | undefined): string {
   if (hours === null || hours === undefined) return '—';
@@ -75,8 +81,8 @@ export default function TicketDetailPage({ params }: PageProps) {
     try {
       const t = await getTicket(id);
       setTicket(t);
-      setResponseDraft(t.response_text ?? '');
-      setResolutionDraft(t.resolution_text ?? '');
+      setResponseDraft(t.response_html ?? '');
+      setResolutionDraft(t.resolution_html ?? '');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -108,8 +114,8 @@ export default function TicketDetailPage({ params }: PageProps) {
     setBusy(true);
     try {
       const updated = await updateTicketResponse(ticket.id, {
-        response_text: responseDraft,
-        response_html: `<p>${responseDraft.replace(/\n/g, '<br>')}</p>`,
+        response_text: htmlToText(responseDraft),
+        response_html: responseDraft,
       });
       setTicket(updated);
       setEditingResponse(false);
@@ -126,8 +132,8 @@ export default function TicketDetailPage({ params }: PageProps) {
     setBusy(true);
     try {
       const updated = await updateTicketResolution(ticket.id, {
-        resolution_text: resolutionDraft,
-        resolution_html: `<p>${resolutionDraft.replace(/\n/g, '<br>')}</p>`,
+        resolution_text: htmlToText(resolutionDraft),
+        resolution_html: resolutionDraft,
       });
       setTicket(updated);
       setEditingResolution(false);
@@ -197,9 +203,16 @@ export default function TicketDetailPage({ params }: PageProps) {
                   </span>
                 </div>
                 <h2 className="text-xl font-semibold mb-2">{ticket.title}</h2>
-                <div className="prose prose-sm max-w-none whitespace-pre-wrap text-sm">
-                  {ticket.description_text ?? <span className="text-muted-foreground">No description.</span>}
-                </div>
+                {ticket.description_html ? (
+                  <div
+                    className="prose prose-sm max-w-none text-sm"
+                    dangerouslySetInnerHTML={{ __html: ticket.description_html }}
+                  />
+                ) : ticket.description_text ? (
+                  <div className="prose prose-sm max-w-none whitespace-pre-wrap text-sm">{ticket.description_text}</div>
+                ) : (
+                  <span className="text-muted-foreground text-sm">No description.</span>
+                )}
               </Card>
 
               {/* SLA strip */}
@@ -238,23 +251,26 @@ export default function TicketDetailPage({ params }: PageProps) {
                 </div>
                 {editingResponse ? (
                   <div className="flex flex-col gap-2">
-                    <Textarea
-                      rows={5}
+                    <RichTextEditor
                       value={responseDraft}
-                      onChange={(e) => setResponseDraft(e.target.value)}
+                      onChange={setResponseDraft}
                       placeholder="Your reply to the submitter…"
+                      minHeight={140}
                     />
                     <div className="flex gap-2 justify-end">
-                      <Button variant="outline" size="sm" onClick={() => { setEditingResponse(false); setResponseDraft(ticket.response_text ?? ''); }} disabled={busy}>
+                      <Button variant="outline" size="sm" onClick={() => { setEditingResponse(false); setResponseDraft(ticket.response_html ?? ''); }} disabled={busy}>
                         Cancel
                       </Button>
-                      <Button size="sm" onClick={saveResponse} disabled={busy || !responseDraft.trim()}>
+                      <Button size="sm" onClick={saveResponse} disabled={busy || !htmlToText(responseDraft)}>
                         Save
                       </Button>
                     </div>
                   </div>
-                ) : ticket.response_text ? (
-                  <div className="text-sm whitespace-pre-wrap">{ticket.response_text}</div>
+                ) : ticket.response_html ? (
+                  <div
+                    className="text-sm prose prose-sm max-w-none"
+                    dangerouslySetInnerHTML={{ __html: ticket.response_html }}
+                  />
                 ) : (
                   <div className="text-sm text-muted-foreground">No response yet.</div>
                 )}
@@ -278,23 +294,26 @@ export default function TicketDetailPage({ params }: PageProps) {
                 </div>
                 {editingResolution ? (
                   <div className="flex flex-col gap-2">
-                    <Textarea
-                      rows={5}
+                    <RichTextEditor
                       value={resolutionDraft}
-                      onChange={(e) => setResolutionDraft(e.target.value)}
+                      onChange={setResolutionDraft}
                       placeholder="How was this resolved?"
+                      minHeight={140}
                     />
                     <div className="flex gap-2 justify-end">
-                      <Button variant="outline" size="sm" onClick={() => { setEditingResolution(false); setResolutionDraft(ticket.resolution_text ?? ''); }} disabled={busy}>
+                      <Button variant="outline" size="sm" onClick={() => { setEditingResolution(false); setResolutionDraft(ticket.resolution_html ?? ''); }} disabled={busy}>
                         Cancel
                       </Button>
-                      <Button size="sm" onClick={saveResolution} disabled={busy || !resolutionDraft.trim()}>
+                      <Button size="sm" onClick={saveResolution} disabled={busy || !htmlToText(resolutionDraft)}>
                         Save
                       </Button>
                     </div>
                   </div>
-                ) : ticket.resolution_text ? (
-                  <div className="text-sm whitespace-pre-wrap">{ticket.resolution_text}</div>
+                ) : ticket.resolution_html ? (
+                  <div
+                    className="text-sm prose prose-sm max-w-none"
+                    dangerouslySetInnerHTML={{ __html: ticket.resolution_html }}
+                  />
                 ) : (
                   <div className="text-sm text-muted-foreground">Not resolved yet.</div>
                 )}
