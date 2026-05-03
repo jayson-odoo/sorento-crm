@@ -1,0 +1,40 @@
+diff --git a/sorento_crm_frontend/config/menu.config.tsx b/sorento_crm_frontend/config/menu.config.tsx
+index d66fd9e..51fd9fc 100644
+--- a/sorento_crm_frontend/config/menu.config.tsx
++++ b/sorento_crm_frontend/config/menu.config.tsx
+@@ -393,6 +393,17 @@ export const MENU_SIDEBAR: MenuConfig = [
+       },
+     ],
+   },
++  {
++    title: 'Ticket Management',
++    icon: LifeBuoy,
++    moduleKey: 'tickets',
++    children: [
++      {
++        title: 'Tickets',
++        path: '/ticket-management/tickets',
++      },
++    ],
++  },
+   {
+     title: 'Complaint Management',
+     icon: AlertCircle,
+@@ -1152,6 +1163,17 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
+       },
+     ],
+   },
++  {
++    title: 'Ticket Management',
++    icon: LifeBuoy,
++    moduleKey: 'tickets',
++    children: [
++      {
++        title: 'Tickets',
++        path: '/ticket-management/tickets',
++      },
++    ],
++  },
+   {
+     title: 'Complaint Management',
+     icon: AlertCircle,

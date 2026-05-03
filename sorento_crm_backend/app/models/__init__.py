@@ -47,6 +47,8 @@ from app.models.ai_assistant import (
 from app.models.chat_history import ChatHistory
 from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
 from app.models.portal import PortalToken, PortalOtpCode
+from app.models.activities import ActivityEvent, InternalNote, ActivityMention
+from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
 
 __all__ = [
     "User",
@@ -151,6 +153,12 @@ __all__ = [
     "LookupBinding",
     "PortalToken",
     "PortalOtpCode",
+    "ActivityEvent",
+    "InternalNote",
+    "ActivityMention",
+    "Ticket",
+    "TicketWatcher",
+    "TicketRespondContactLink",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy

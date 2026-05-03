@@ -257,6 +257,27 @@ for _slug, _name in [
 ]:
     PERMISSION_REGISTRY.append({"slug": _slug, "name": _name, "description": _name})
 
+# Tickets — Jira-style internal ticketing.
+# Activities/notes for a ticket reuse `tickets.tickets.view` (anyone who can see
+# the ticket can read/post activities). `view_all` unlocks the full pool;
+# `assign` gates the assignee picker; `export` gates list-query CSV export.
+PERMISSION_REGISTRY.extend(_crud("tickets", "tickets", "Tickets"))
+PERMISSION_REGISTRY.append({
+    "slug": "tickets.tickets.view_all",
+    "name": "View all tickets",
+    "description": "Without this, tickets are scoped to raised_by / assigned_to / watcher.",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "tickets.tickets.assign",
+    "name": "Assign tickets",
+    "description": "Set or change the assignee on a ticket.",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "tickets.tickets.export",
+    "name": "Export tickets",
+    "description": "Permission to export tickets with dynamic fields.",
+})
+
 
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
     """

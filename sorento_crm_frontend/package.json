@@ -32,6 +32,8 @@
     "@tanstack/react-query-devtools": "^5.81.5",
     "@tanstack/react-table": "^8.21.3",
     "@tiptap/extension-link": "^3.22.4",
+    "@tiptap/extension-mention": "^3.22.4",
+    "@tiptap/suggestion": "^3.22.4",
     "@tiptap/extension-placeholder": "^3.22.4",
     "@tiptap/pm": "^3.22.4",
     "@tiptap/react": "^3.22.4",

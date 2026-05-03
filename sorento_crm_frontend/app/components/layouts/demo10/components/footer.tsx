@@ -43,8 +43,7 @@ export function Footer() {
               FAQ
             </a>
             <a
-              href="https://devs.keenthemes.com"
-              target="_blank"
+              href="/ticket-management/tickets"
               className="hover:text-primary"
             >
               Support

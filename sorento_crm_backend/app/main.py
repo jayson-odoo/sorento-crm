@@ -100,6 +100,44 @@ from app.services import lookup_eligibility_registrations as _lookup_eligibility
 from app.services.lookup_write_listener import register_lookup_write_listeners
 register_lookup_write_listeners()
 
+
+def _register_activities_adapters() -> None:
+    """Register per-entity Activities & Notes adapters at process boot.
+
+    Each consuming module hands its visibility / on_post / contacts hooks
+    to the activities service via this single registration point so the
+    generic ``/api/v1/activities/{entity_type}/{entity_id}/...`` routes
+    can route module-specific behaviour without coupling.
+    """
+    try:
+        from app.services.activities_registry import (
+            ActivitiesAdapter,
+            register_activities_adapter,
+        )
+        from app.services import tickets_service
+
+        register_activities_adapter(
+            ActivitiesAdapter(
+                entity_type="ticket",
+                permission_view="tickets.tickets.view",
+                permission_post="tickets.tickets.view",
+                get_respond_contacts=tickets_service.respond_contacts_for,
+                on_post=lambda db, ticket_id, actor_id, body_html: tickets_service.handle_activity_posted(
+                    db, ticket_id, actor_id, body_html
+                ),
+                can_view=tickets_service.can_view,
+            )
+        )
+        logging.info("Activities adapter registered: ticket")
+    except Exception as e:  # noqa: BLE001
+        logging.error(
+            f"Failed to register activities adapters: {str(e)}", exc_info=True
+        )
+
+
+# Run synchronously at import time so it precedes the first request.
+_register_activities_adapters()
+
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
 

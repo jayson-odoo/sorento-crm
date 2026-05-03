@@ -1,0 +1,1 @@
+"""Activities & Notes base module."""
