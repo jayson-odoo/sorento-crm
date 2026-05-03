@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { Container } from '@/components/common/container';
 import {
   Toolbar,
@@ -43,6 +43,12 @@ interface PendingFile {
   /** Stable per-pick id so removing one doesn't disturb others. */
   key: string;
   file: File;
+}
+
+function htmlToText(html: string): string {
+  if (typeof window === 'undefined') return html.replace(/<[^>]+>/g, '').trim();
+  const doc = new DOMParser().parseFromString(html || '', 'text/html');
+  return (doc.body.textContent || '').trim();
 }
 
 function formatBytes(n: number): string {
@@ -120,12 +126,12 @@ export default function NewTicketPage() {
     setSubmitting(true);
     try {
       const attachment_ids = await uploadAllPending();
+      const descriptionHtml = description || null;
+      const descriptionText = description ? htmlToText(description) || null : null;
       const t = await createTicket({
         title: title.trim(),
-        description_text: description || null,
-        description_html: description
-          ? `<p>${description.replace(/\n/g, '<br>')}</p>`
-          : null,
+        description_text: descriptionText,
+        description_html: descriptionHtml,
         priority,
         category,
         due_date: dueDate || null,
@@ -231,12 +237,11 @@ export default function NewTicketPage() {
 
           <div className="flex flex-col gap-2">
             <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
+            <RichTextEditor
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={8}
+              onChange={setDescription}
               placeholder="What's happening? Steps to reproduce, expected behaviour…"
+              minHeight={200}
             />
           </div>
 
