@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import {
   Tabs,
   TabsContent,
@@ -55,6 +56,12 @@ import type {
 } from './types';
 
 const PERSIST_KEY = 'sorento:activities-panel:tab';
+
+function htmlToText(html: string): string {
+  if (typeof window === 'undefined') return html.replace(/<[^>]+>/g, '').trim();
+  const doc = new DOMParser().parseFromString(html || '', 'text/html');
+  return (doc.body.textContent || '').trim();
+}
 
 function relativeTime(iso: string): string {
   const d = new Date(iso);
@@ -263,12 +270,12 @@ function ActivitiesTab({
   }, [active, entityType, entityId]);
 
   async function submit() {
-    if (!draft.trim()) return;
+    if (!htmlToText(draft)) return;
     setPosting(true);
     try {
       await postActivity(entityType, entityId, {
-        body_html: `<p>${draft.replace(/\n/g, '<br>')}</p>`,
-        body_text: draft,
+        body_html: draft,
+        body_text: htmlToText(draft),
       });
       setDraft('');
       await reload();
@@ -311,24 +318,27 @@ function ActivitiesTab({
                 <p className="text-sm">
                   {formatSystemEvent(it.system_template, it.system_payload)}
                 </p>
+              ) : it.body_html ? (
+                <div
+                  className="text-sm prose prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{ __html: it.body_html }}
+                />
               ) : (
-                <div className="text-sm whitespace-pre-wrap">
-                  {it.body_text ?? ''}
-                </div>
+                <div className="text-sm whitespace-pre-wrap">{it.body_text ?? ''}</div>
               )}
             </div>
           ))
         )}
       </div>
       <div className="border-t p-3 space-y-2">
-        <Textarea
-          placeholder="Share an update…"
+        <RichTextEditor
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          rows={3}
+          onChange={setDraft}
+          placeholder="Share an update… Use **bold**, *italic*, lists, links."
+          minHeight={120}
         />
         <div className="flex justify-end">
-          <Button size="sm" disabled={!draft.trim() || posting} onClick={submit}>
+          <Button size="sm" disabled={!htmlToText(draft) || posting} onClick={submit}>
             {posting ? 'Posting…' : 'Post'}
           </Button>
         </div>
@@ -371,12 +381,12 @@ function NotesTab({
   }, [active, entityType, entityId]);
 
   async function submit() {
-    if (!draft.trim()) return;
+    if (!htmlToText(draft)) return;
     setPosting(true);
     try {
       await postNote(entityType, entityId, {
-        body_html: `<p>${draft.replace(/\n/g, '<br>')}</p>`,
-        body_text: draft,
+        body_html: draft,
+        body_text: htmlToText(draft),
       });
       setDraft('');
       await reload();
@@ -417,20 +427,27 @@ function NotesTab({
                   Delete
                 </Button>
               </div>
-              <div className="text-sm whitespace-pre-wrap">{n.body_text ?? ''}</div>
+              {n.body_html ? (
+                <div
+                  className="text-sm prose prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{ __html: n.body_html }}
+                />
+              ) : (
+                <div className="text-sm whitespace-pre-wrap">{n.body_text ?? ''}</div>
+              )}
             </div>
           ))
         )}
       </div>
       <div className="border-t p-3 space-y-2">
-        <Textarea
-          placeholder="Private notes (only you can see these)…"
+        <RichTextEditor
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          rows={3}
+          onChange={setDraft}
+          placeholder="Private notes (only you can see these)…"
+          minHeight={120}
         />
         <div className="flex justify-end">
-          <Button size="sm" disabled={!draft.trim() || posting} onClick={submit}>
+          <Button size="sm" disabled={!htmlToText(draft) || posting} onClick={submit}>
             {posting ? 'Saving…' : 'Save note'}
           </Button>
         </div>
