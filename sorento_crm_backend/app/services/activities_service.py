@@ -578,11 +578,23 @@ def send_message(
 
     try:
         from app.services.integration_service import RespondClient  # local import
+        from app.services.respond_identifier import resolve_send_identifier
+
+        # contact_id arrives as the internal RespondContact.id (UUID); Respond.io
+        # API requires the numeric respond_io_id. Resolve before calling.
+        send_id = resolve_send_identifier(db, contact_id)
+        if not send_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Contact has no respond_io_id; cannot send to Respond.io.",
+            )
         client = RespondClient()
-        response = client.send_message(contact_id, text)
+        response = client.send_message(send_id, text)
     except ValueError as e:
         # API key not configured.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Respond.io send_message failed")
         log_status = "failed"

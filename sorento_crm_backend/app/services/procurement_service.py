@@ -2352,13 +2352,20 @@ class StockInquiryService:
         return {"message": "Revise request sent successfully. You may now open Whatsapp to revise the inquiry."}
 
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
-        """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""
+        """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{respond_io_id}.
+
+        Accepts internal RespondContact.id (UUID) and resolves it to the numeric
+        respond_io_id required by the Respond.io app URL + API.
+        """
         if not contact_id or not space_id:
             return None
-        base = (settings.respond_app_base_url or "").rstrip("/")
-        if not base:
-            return None
-        return f"{base}/space/{space_id.strip()}/inbox/{contact_id.strip()}"
+        from app.services.respond_identifier import (
+            format_respond_inbox_url,
+            resolve_respond_io_id,
+        )
+
+        rid = resolve_respond_io_id(self.db, contact_id)
+        return format_respond_inbox_url(settings.respond_app_base_url, space_id, rid)
 
     # Allowed initial statuses when creating via API (e.g. external flow can start in pending_project_sales).
     _CREATE_ALLOWED_STATUSES = ("new", "pending_project_sales", "pending_purchasing")
@@ -2612,11 +2619,21 @@ class StockInquiryService:
         return link
 
     def _identifier_from_respond_inbox_url(self, respond_inbox_url: Optional[str]) -> Optional[str]:
-        """Extract contact identifier from respond_inbox_url (last path segment)."""
+        """Resolve contact identifier from respond_inbox_url to a numeric respond_io_id.
+
+        The URL's last segment may be either a numeric respond_io_id (correct, new
+        rows) or an internal RespondContact.id UUID (legacy rows pre-migration).
+        Always resolve via DB so RespondClient.send_message receives the value
+        Respond.io expects.
+        """
         if not respond_inbox_url or not respond_inbox_url.strip():
             return None
         parts = [p for p in respond_inbox_url.rstrip("/").split("/") if p]
-        return parts[-1] if parts else None
+        if not parts:
+            return None
+        from app.services.respond_identifier import resolve_send_identifier
+
+        return resolve_send_identifier(self.db, parts[-1])
 
     def _send_stock_inquiry_contact_message(
         self,
@@ -3349,20 +3366,37 @@ class PurchaseRequestService:
         self.entity_attachment_service = EntityAttachmentService(db)
 
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
-        """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{contact_id}."""
+        """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{respond_io_id}.
+
+        Accepts internal RespondContact.id (UUID) and resolves it via DB to the
+        numeric respond_io_id required by the Respond.io app URL + API.
+        """
         if not contact_id or not space_id:
             return None
-        base = (settings.respond_app_base_url or "").rstrip("/")
-        if not base:
-            return None
-        return f"{base}/space/{space_id.strip()}/inbox/{contact_id.strip()}"
+        from app.services.respond_identifier import (
+            format_respond_inbox_url,
+            resolve_respond_io_id,
+        )
+
+        rid = resolve_respond_io_id(self.db, contact_id)
+        return format_respond_inbox_url(settings.respond_app_base_url, space_id, rid)
 
     def _identifier_from_respond_inbox_url(self, respond_inbox_url: Optional[str]) -> Optional[str]:
-        """Extract contact identifier from respond_inbox_url (last path segment)."""
+        """Resolve contact identifier from respond_inbox_url to a numeric respond_io_id.
+
+        The URL's last segment may be either a numeric respond_io_id (correct, new
+        rows) or an internal RespondContact.id UUID (legacy rows pre-migration).
+        Always resolve via DB so RespondClient.send_message receives the value
+        Respond.io expects.
+        """
         if not respond_inbox_url or not respond_inbox_url.strip():
             return None
         parts = [p for p in respond_inbox_url.rstrip("/").split("/") if p]
-        return parts[-1] if parts else None
+        if not parts:
+            return None
+        from app.services.respond_identifier import resolve_send_identifier
+
+        return resolve_send_identifier(self.db, parts[-1])
 
     def _build_request_view_url(self, header_id: str, base_url_override: Optional[str] = None) -> str:
         """Build a shareable (no-auth) frontend link for a purchase request / sponsorship form."""

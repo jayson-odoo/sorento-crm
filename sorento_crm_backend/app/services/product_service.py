@@ -546,6 +546,79 @@ class ProductService:
                 out.add(pid)
         return out
 
+    def _bulk_publish_product_embedding_events(
+        self,
+        touched: List[Tuple[str, str, Any, Any]],
+        user_id: str,
+    ) -> None:
+        """
+        Bulk-insert embedding queue rows for many products in one commit, then enqueue RQ jobs.
+        The per-row publish_embedding_event path does add+flush+enqueue+commit+refresh per call,
+        which dominates wall time for 10k-row imports. This batched path: 1 INSERT + 1 commit, then
+        N (cheap) RQ enqueues with no DB roundtrips.
+        """
+        if not touched:
+            return
+        from app.models.embeddings import EmbeddingQueue
+        from app.services.queue_service import get_queue
+        from app.services.embedding_service import _get_embedding_worker
+        from app.config import settings as _settings
+
+        now = datetime.utcnow()
+        rows: List[dict] = []
+        enqueue_payload: List[str] = []  # queue row ids to enqueue post-commit
+        for pid, pcode, updated_at, created_at in touched:
+            sua = updated_at or created_at
+            event_id = str(uuid.uuid4())
+            correlation_id = str(uuid.uuid4())
+            queue_id = str(uuid.uuid4())
+            payload = {
+                "event_id": event_id,
+                "event_type": "product.updated",
+                "event_version": 1,
+                "occurred_at": now.isoformat(),
+                "source_type": "product",
+                "source_id": str(pid),
+                "source_key": pcode,
+                "source_updated_at": sua.isoformat() if sua else None,
+                "changed_fields": ["bulk_import"],
+                "correlation_id": correlation_id,
+                "triggered_by": user_id,
+                "payload": {},
+            }
+            rows.append({
+                "id": queue_id,
+                "source_type": "product",
+                "source_id": str(pid),
+                "event_type": "product.updated",
+                "event_version": 1,
+                "source_updated_at": sua,
+                "payload": payload,
+                "status": "pending",
+                "correlation_id": correlation_id,
+            })
+            enqueue_payload.append(queue_id)
+
+        try:
+            self.db.bulk_insert_mappings(EmbeddingQueue, rows)
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
+        try:
+            queue = get_queue(_settings.embedding_queue_name)
+            worker = _get_embedding_worker()
+            for q_id in enqueue_payload:
+                queue.enqueue(worker, q_id, job_timeout=900)
+        except Exception:
+            # Embedding side effects must never block the import; rows are persisted
+            # and can be picked up by a sweeper. Log and move on.
+            import logging
+            logging.getLogger(__name__).exception(
+                "Failed to bulk-enqueue embedding events after product import"
+            )
+
     def bulk_import_products(
         self,
         products_data: List[dict],
@@ -728,25 +801,18 @@ class ProductService:
                         on_progress(idx, created + updated, len(errors), 0)
 
         self.db.commit()
+        # Report 100% progress BEFORE embedding fan-out so the UI doesn't appear stuck
+        # while we batch-write embedding queue rows + enqueue RQ jobs.
+        if on_progress:
+            on_progress(len(products_data), created + updated, len(errors), 0)
+
         if created or updated:
             touched = (
                 self.db.query(Product.id, Product.product_code, Product.updated_at, Product.created_at)
                 .filter(Product.product_code.in_(all_codes))
                 .all()
             )
-            for pid, pcode, updated_at, created_at in touched:
-                publish_embedding_event(
-                    self.db,
-                    source_type="product",
-                    source_id=pid,
-                    source_key=pcode,
-                    source_updated_at=updated_at or created_at,
-                    event_type="product.updated",
-                    changed_fields=["bulk_import"],
-                    triggered_by=user_id,
-                )
-        if on_progress:
-            on_progress(len(products_data), created + updated, len(errors), 0)
+            self._bulk_publish_product_embedding_events(touched, user_id)
         return {"created": created, "updated": updated, "errors": errors}
 
     def validate_products_import(self, products_data: List[dict]) -> dict:
