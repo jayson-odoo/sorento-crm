@@ -334,6 +334,8 @@ export default function ComplaintsList() {
                 <SelectItem value="new">New</SelectItem>
                 <SelectItem value="updated">Updated</SelectItem>
                 <SelectItem value="responded">Responded</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="rejected">Rejected</SelectItem>
               </SelectContent>
             </Select>
           </div>

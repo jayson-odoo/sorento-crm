@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, B
 from sqlalchemy.orm import Session
 from typing import Optional, Union, List, Any
 from app.database import get_db
-from app.dependencies import get_current_user, get_current_user_or_api_key
+from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.complaints_service import ComplaintService
 from app.services.integration_service import IntegrationLogService
 from app.services.order_service import OrderService
@@ -1073,6 +1073,58 @@ async def update_complaint(
     try:
         service = ComplaintService(db)
         service.update_complaint(complaint_id, complaint_data)
+        db.commit()
+        return service.get_complaint_with_attachments(complaint_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{complaint_id}/approve", response_model=ComplaintResponse)
+async def approve_complaint(
+    complaint_id: str,
+    request: Request,
+    current_user: dict = Depends(require_permission("complaint_management.complaints.approve")),
+    db: Session = Depends(get_db),
+):
+    """Mark complaint as approved and notify the contact via Respond.io."""
+    try:
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = ComplaintService(db)
+        service.decide_complaint(
+            complaint_id,
+            "approved",
+            respond_user_id=respond_user_id,
+            request_url=str(request.url) if request else "",
+            crm_sender_user_id=current_user.get("id"),
+        )
+        db.commit()
+        return service.get_complaint_with_attachments(complaint_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{complaint_id}/reject", response_model=ComplaintResponse)
+async def reject_complaint(
+    complaint_id: str,
+    request: Request,
+    current_user: dict = Depends(require_permission("complaint_management.complaints.reject")),
+    db: Session = Depends(get_db),
+):
+    """Mark complaint as rejected and notify the contact via Respond.io."""
+    try:
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = ComplaintService(db)
+        service.decide_complaint(
+            complaint_id,
+            "rejected",
+            respond_user_id=respond_user_id,
+            request_url=str(request.url) if request else "",
+            crm_sender_user_id=current_user.get("id"),
+        )
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:

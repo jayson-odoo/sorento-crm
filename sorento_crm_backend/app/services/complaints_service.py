@@ -908,6 +908,136 @@ class ComplaintService:
         self.db.refresh(complaint)
         return complaint
 
+    _DECIDE_ALLOWED_DECISIONS: tuple[str, ...] = ("approved", "rejected")
+    # Statuses that may transition to approved/rejected. "updated" = customer-visible response saved
+    # but not yet replied; "responded" = reply sent. Either is a valid pre-decision state.
+    _DECIDE_ALLOWED_FROM_STATUSES: tuple[str, ...] = ("updated", "responded")
+
+    def decide_complaint(
+        self,
+        complaint_id: str,
+        decision: str,
+        respond_user_id: str,
+        request_url: str = "",
+        crm_sender_user_id: Optional[str] = None,
+    ):
+        """Mark complaint approved/rejected and notify the contact via Respond.io.
+
+        Mirrors update_complaint_and_reply but: (a) does not change technical_team_response,
+        (b) sends a status-change message instead of the technical body, (c) sets
+        ``complaint.status`` to the decision value.
+        """
+        from datetime import datetime, timezone
+        from app.services.error_handler import handle_validation_error
+        from app.services.integration_service import RespondClient, IntegrationLogService
+        from app.schemas.integration import IntegrationLogCreate
+
+        logger = logging.getLogger(__name__)
+        log_service = IntegrationLogService(self.db)
+
+        decision = (decision or "").strip().lower()
+        if decision not in self._DECIDE_ALLOWED_DECISIONS:
+            raise handle_validation_error(
+                f"decision must be one of {self._DECIDE_ALLOWED_DECISIONS}; got {decision!r}."
+            )
+
+        complaint = self.get_complaint(complaint_id)
+        current_status = (getattr(complaint, "status", None) or "").strip().lower()
+        if current_status not in self._DECIDE_ALLOWED_FROM_STATUSES:
+            raise handle_validation_error(
+                f"Cannot {decision} a complaint while status is {current_status!r}; "
+                f"expected one of {self._DECIDE_ALLOWED_FROM_STATUSES}."
+            )
+
+        do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
+        do_spec = f" for delivery order {do_number}" if do_number else ""
+        link_part = ""
+        if self._complaint_public_view_links_enabled():
+            view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
+            if view_url:
+                link_part = f" {view_url}"
+        display_message = (
+            f"There has been an update regarding your complaint{do_spec}{link_part}: "
+            f"status changed to {decision}."
+        )
+
+        identifier = self._identifier_from_respond_inbox_url(
+            getattr(complaint, "respond_inbox_url", None)
+        )
+
+        if identifier:
+            try:
+                client = RespondClient()
+                response = client.send_message(identifier, display_message)
+                from app.services.crm_chat_outbound_webhook import (
+                    enqueue_crm_chat_outbound_webhook,
+                    resolve_sla_assignee_respond_user_id,
+                )
+
+                enqueue_crm_chat_outbound_webhook(
+                    self.db,
+                    business_table="complaints",
+                    business_id=complaint_id,
+                    contact_respond_io_id=identifier,
+                    message_text=display_message,
+                    respond_api_response=response if isinstance(response, dict) else None,
+                    space_id=getattr(complaint, "space_id", None),
+                    crm_sender_user_id=crm_sender_user_id,
+                    respond_user_id_fallback=respond_user_id,
+                    assignee_respond_user_id=resolve_sla_assignee_respond_user_id(
+                        self.db, "complaint", complaint_id
+                    ),
+                )
+                log_service.create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="respond_io",
+                        business_table="complaints",
+                        business_id=complaint_id,
+                        external_reference=identifier,
+                        direction="outbound",
+                        endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                        http_method="POST",
+                        status="success",
+                        response_payload=str(response)[:50000] if response else None,
+                    ),
+                    request_payload_dict={"message": {"type": "text", "text": display_message}},
+                )
+            except Exception as e:
+                logger.exception(
+                    "Respond.io send_message failed for complaint %s decision=%s",
+                    complaint_id,
+                    decision,
+                )
+                log_service.create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="respond_io",
+                        business_table="complaints",
+                        business_id=complaint_id,
+                        external_reference=identifier or "",
+                        direction="outbound",
+                        endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                        http_method="POST",
+                        status="failed",
+                        error_message=str(e),
+                    ),
+                    request_payload_dict={"message": {"type": "text", "text": display_message}},
+                )
+                raise
+        else:
+            logger.info(
+                "Complaint %s decision=%s: no respond_inbox_url; status updated but message not sent.",
+                complaint_id,
+                decision,
+            )
+
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        complaint.status = decision
+        complaint.last_responded_by = respond_user_id
+        complaint.last_responded_at = now_utc
+        self.db.commit()
+        self.db.refresh(complaint)
+        return complaint
+
     def sync_assignee_from_respond(self, complaint_id: str) -> dict:
         """
         Fetch contact from Respond.io by complaint's contact_id, get assignee.id,

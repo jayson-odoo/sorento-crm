@@ -102,6 +102,34 @@ export async function updateComplaintAndReply(
   return response.json();
 }
 
+export async function approveComplaint(id: string): Promise<Complaint> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/${id}/approve`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to approve complaint' }));
+    throw new Error(error.detail || error.message || 'Failed to approve complaint');
+  }
+  return response.json();
+}
+
+export async function rejectComplaint(id: string): Promise<Complaint> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/${id}/reject`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to reject complaint' }));
+    throw new Error(error.detail || error.message || 'Failed to reject complaint');
+  }
+  return response.json();
+}
+
 export async function deleteComplaint(id: string): Promise<void> {
   const response = await apiFetch(
     `/api/v1/complaints-management/complaints/${id}`,

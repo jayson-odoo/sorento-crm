@@ -57,6 +57,16 @@ PERMISSION_REGISTRY.extend(_crud("order_management", "customers", "Customers"))
 
 # Complaint Management
 PERMISSION_REGISTRY.extend(_crud("complaint_management", "complaints", "Complaints"))
+PERMISSION_REGISTRY.append({
+    "slug": "complaint_management.complaints.approve",
+    "name": "Approve Complaints",
+    "description": "Permission to approve a complaint after technical team response and notify the contact via Respond.io.",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "complaint_management.complaints.reject",
+    "name": "Reject Complaints",
+    "description": "Permission to reject a complaint after technical team response and notify the contact via Respond.io.",
+})
 
 # SLA Management
 PERMISSION_REGISTRY.extend(_crud("sla_management", "sla_policies", "SLA Policies"))

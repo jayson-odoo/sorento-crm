@@ -8,6 +8,8 @@ import {
   createComplaint,
   updateComplaint,
   updateComplaintAndReply,
+  approveComplaint,
+  rejectComplaint,
   deleteComplaint,
   bulkDeleteComplaints,
   linkComplaintAttachment,
@@ -98,6 +100,36 @@ export function useUpdateComplaintAndReply() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to update and reply'),
+  });
+}
+
+export function useApproveComplaint() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => approveComplaint(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
+      toast.success('Complaint approved and customer notified.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to approve complaint'),
+  });
+}
+
+export function useRejectComplaint() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => rejectComplaint(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
+      toast.success('Complaint rejected and customer notified.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to reject complaint'),
   });
 }
 

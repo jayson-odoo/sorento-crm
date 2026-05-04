@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare } from 'lucide-react';
+import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -19,7 +19,24 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { useComplaint, useUpdateComplaint, useUpdateComplaintAndReply } from '../hooks/useComplaints';
+import {
+  useComplaint,
+  useUpdateComplaint,
+  useUpdateComplaintAndReply,
+  useApproveComplaint,
+  useRejectComplaint,
+} from '../hooks/useComplaints';
+import { useHasPermission } from '@/hooks/usePermissions';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   getOrCreateComplaintViewLink,
   displayComplaintTechnicalResponse,
@@ -46,6 +63,11 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const { data: complaint, isLoading } = useComplaint(isValidId ? complaintId : null);
   const updateComplaintMutation = useUpdateComplaint();
   const updateComplaintAndReplyMutation = useUpdateComplaintAndReply();
+  const approveComplaintMutation = useApproveComplaint();
+  const rejectComplaintMutation = useRejectComplaint();
+  const canApprove = useHasPermission('complaint_management.complaints.approve');
+  const canReject = useHasPermission('complaint_management.complaints.reject');
+  const [decideDialog, setDecideDialog] = useState<null | 'approved' | 'rejected'>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
@@ -163,6 +185,29 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             <Edit className="size-4 mr-1" />
             Edit technical team response
           </Button>
+          {complaint.status === 'updated' && canApprove && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={approveComplaintMutation.isPending}
+              onClick={() => setDecideDialog('approved')}
+            >
+              <CheckCircle2 className="size-4 mr-1" />
+              Approve
+            </Button>
+          )}
+          {complaint.status === 'updated' && canReject && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={rejectComplaintMutation.isPending}
+              onClick={() => setDecideDialog('rejected')}
+              className="text-destructive border-destructive/40 hover:bg-destructive/10"
+            >
+              <XCircle className="size-4 mr-1" />
+              Reject
+            </Button>
+          )}
           <DetailActionsMenu ariaLabel="Complaint actions">
             <DropdownMenuItem
               onClick={() =>
@@ -255,6 +300,56 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           }}
         />
       )}
+
+      <AlertDialog open={decideDialog !== null} onOpenChange={(o) => !o && setDecideDialog(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {decideDialog === 'approved' ? 'Approve complaint?' : 'Reject complaint?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              The contact will be notified via Respond.io that the complaint status changed to{' '}
+              <span className="font-medium">{decideDialog ?? ''}</span>. This cannot be undone from
+              this dialog.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={
+                approveComplaintMutation.isPending || rejectComplaintMutation.isPending
+              }
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={
+                approveComplaintMutation.isPending || rejectComplaintMutation.isPending
+              }
+              className={
+                decideDialog === 'rejected'
+                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                  : undefined
+              }
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!decideDialog) return;
+                try {
+                  if (decideDialog === 'approved') {
+                    await approveComplaintMutation.mutateAsync(complaintId);
+                  } else {
+                    await rejectComplaintMutation.mutateAsync(complaintId);
+                  }
+                  setDecideDialog(null);
+                } catch {
+                  // toast handled in hook
+                }
+              }}
+            >
+              {decideDialog === 'approved' ? 'Approve' : 'Reject'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={editTechnicalResponseOpen} onOpenChange={setEditTechnicalResponseOpen}>
         <DialogContent className="sm:max-w-md">
