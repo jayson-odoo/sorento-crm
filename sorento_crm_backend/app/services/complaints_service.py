@@ -909,9 +909,9 @@ class ComplaintService:
         return complaint
 
     _DECIDE_ALLOWED_DECISIONS: tuple[str, ...] = ("approved", "rejected")
-    # Statuses that may transition to approved/rejected. "updated" = customer-visible response saved
-    # but not yet replied; "responded" = reply sent. Either is a valid pre-decision state.
-    _DECIDE_ALLOWED_FROM_STATUSES: tuple[str, ...] = ("updated", "responded")
+    # Approve/Reject is a post-reply gate: the technical reply must already have been sent
+    # to the customer (status="responded") before a decision can be recorded.
+    _DECIDE_ALLOWED_FROM_STATUSES: tuple[str, ...] = ("responded",)
 
     def decide_complaint(
         self,
@@ -920,6 +920,7 @@ class ComplaintService:
         respond_user_id: str,
         request_url: str = "",
         crm_sender_user_id: Optional[str] = None,
+        rejection_reason: Optional[str] = None,
     ):
         """Mark complaint approved/rejected and notify the contact via Respond.io.
 
@@ -941,6 +942,10 @@ class ComplaintService:
                 f"decision must be one of {self._DECIDE_ALLOWED_DECISIONS}; got {decision!r}."
             )
 
+        normalized_reason = (rejection_reason or "").strip() or None
+        if decision == "rejected" and not normalized_reason:
+            raise handle_validation_error("rejection_reason is required when rejecting a complaint.")
+
         complaint = self.get_complaint(complaint_id)
         current_status = (getattr(complaint, "status", None) or "").strip().lower()
         if current_status not in self._DECIDE_ALLOWED_FROM_STATUSES:
@@ -956,9 +961,12 @@ class ComplaintService:
             view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
             if view_url:
                 link_part = f" {view_url}"
+        reason_part = (
+            f" Reason: {normalized_reason}." if decision == "rejected" and normalized_reason else ""
+        )
         display_message = (
             f"There has been an update regarding your complaint{do_spec}{link_part}: "
-            f"status changed to {decision}."
+            f"status changed to {decision}.{reason_part}"
         )
 
         identifier = self._identifier_from_respond_inbox_url(
@@ -1034,6 +1042,16 @@ class ComplaintService:
         complaint.status = decision
         complaint.last_responded_by = respond_user_id
         complaint.last_responded_at = now_utc
+        if decision == "rejected":
+            complaint.rejection_reason = normalized_reason
+            complaint.rejected_at = now_utc
+            complaint.rejected_by = respond_user_id
+        else:
+            # Approving clears any prior rejection metadata so the audit trail reflects
+            # the current decision; historical changes remain in the audit log.
+            complaint.rejection_reason = None
+            complaint.rejected_at = None
+            complaint.rejected_by = None
         self.db.commit()
         self.db.refresh(complaint)
         return complaint

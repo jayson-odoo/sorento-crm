@@ -116,10 +116,17 @@ export async function approveComplaint(id: string): Promise<Complaint> {
   return response.json();
 }
 
-export async function rejectComplaint(id: string): Promise<Complaint> {
+export async function rejectComplaint(
+  id: string,
+  rejection_reason: string,
+): Promise<Complaint> {
   const response = await apiFetch(
     `/api/v1/complaints-management/complaints/${id}/reject`,
-    { method: 'POST' },
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rejection_reason }),
+    },
   );
   if (!response.ok) {
     const error = await response

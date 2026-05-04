@@ -121,8 +121,9 @@ export function useApproveComplaint() {
 export function useRejectComplaint() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => rejectComplaint(id),
-    onSuccess: (_, id) => {
+    mutationFn: ({ id, rejection_reason }: { id: string; rejection_reason: string }) =>
+      rejectComplaint(id, rejection_reason),
+    onSuccess: (_, { id }) => {
       queryClient.invalidateQueries({ queryKey: ['complaints'] });
       queryClient.invalidateQueries({ queryKey: ['complaint'] });
       queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });

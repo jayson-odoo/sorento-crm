@@ -84,6 +84,11 @@ class BulkDeleteComplaintsRequest(BaseModel):
     ids: list[str]
 
 
+class ComplaintRejectRequest(BaseModel):
+    """Request body for rejecting a complaint; reason is mandatory."""
+    rejection_reason: str
+
+
 class ComplaintBase(BaseModel):
     complaint_number: Optional[str] = None
     delivery_order_number: Optional[str] = None
@@ -183,6 +188,9 @@ class ComplaintResponse(ComplaintBase):
     last_responded_by: Optional[str] = None
     last_responded_by_name: Optional[str] = None
     last_responded_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    rejected_at: Optional[datetime] = None
+    rejected_by: Optional[str] = None
     assigned_to_name: Optional[str] = None
     attachments: Optional[list[ComplaintAttachmentResponse]] = []
 

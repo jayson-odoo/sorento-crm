@@ -15,6 +15,7 @@ from app.schemas.complaints import (
     ComplaintResponse,
     ComplaintAttachmentLinkRequest,
     BulkDeleteComplaintsRequest,
+    ComplaintRejectRequest,
 )
 from app.schemas.external.complaints import ComplaintIntegrationCreate
 from app.schemas.integration import IntegrationLogCreate
@@ -1110,11 +1111,12 @@ async def approve_complaint(
 @router.post("/{complaint_id}/reject", response_model=ComplaintResponse)
 async def reject_complaint(
     complaint_id: str,
+    payload: ComplaintRejectRequest,
     request: Request,
     current_user: dict = Depends(require_permission("complaint_management.complaints.reject")),
     db: Session = Depends(get_db),
 ):
-    """Mark complaint as rejected and notify the contact via Respond.io."""
+    """Mark complaint as rejected (with mandatory reason) and notify the contact via Respond.io."""
     try:
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = ComplaintService(db)
@@ -1124,6 +1126,7 @@ async def reject_complaint(
             respond_user_id=respond_user_id,
             request_url=str(request.url) if request else "",
             crm_sender_user_id=current_user.get("id"),
+            rejection_reason=payload.rejection_reason,
         )
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)

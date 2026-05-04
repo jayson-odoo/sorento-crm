@@ -67,7 +67,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const rejectComplaintMutation = useRejectComplaint();
   const canApprove = useHasPermission('complaint_management.complaints.approve');
   const canReject = useHasPermission('complaint_management.complaints.reject');
-  const [decideDialog, setDecideDialog] = useState<null | 'approved' | 'rejected'>(null);
+  const [approveDialogOpen, setApproveDialogOpen] = useState(false);
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
@@ -185,23 +187,25 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             <Edit className="size-4 mr-1" />
             Edit technical team response
           </Button>
-          {complaint.status === 'updated' && canApprove && (
+          {complaint.status === 'responded' && canApprove && (
             <Button
-              variant="outline"
               size="sm"
               disabled={approveComplaintMutation.isPending}
-              onClick={() => setDecideDialog('approved')}
+              onClick={() => setApproveDialogOpen(true)}
             >
               <CheckCircle2 className="size-4 mr-1" />
               Approve
             </Button>
           )}
-          {complaint.status === 'updated' && canReject && (
+          {complaint.status === 'responded' && canReject && (
             <Button
               variant="outline"
               size="sm"
               disabled={rejectComplaintMutation.isPending}
-              onClick={() => setDecideDialog('rejected')}
+              onClick={() => {
+                setRejectReason('');
+                setRejectDialogOpen(true);
+              }}
               className="text-destructive border-destructive/40 hover:bg-destructive/10"
             >
               <XCircle className="size-4 mr-1" />
@@ -301,55 +305,91 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         />
       )}
 
-      <AlertDialog open={decideDialog !== null} onOpenChange={(o) => !o && setDecideDialog(null)}>
+      <AlertDialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              {decideDialog === 'approved' ? 'Approve complaint?' : 'Reject complaint?'}
-            </AlertDialogTitle>
+            <AlertDialogTitle>Approve complaint?</AlertDialogTitle>
             <AlertDialogDescription>
               The contact will be notified via Respond.io that the complaint status changed to{' '}
-              <span className="font-medium">{decideDialog ?? ''}</span>. This cannot be undone from
-              this dialog.
+              <span className="font-medium">approved</span>.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel
-              disabled={
-                approveComplaintMutation.isPending || rejectComplaintMutation.isPending
-              }
-            >
+            <AlertDialogCancel disabled={approveComplaintMutation.isPending}>
               Cancel
             </AlertDialogCancel>
             <AlertDialogAction
-              disabled={
-                approveComplaintMutation.isPending || rejectComplaintMutation.isPending
-              }
-              className={
-                decideDialog === 'rejected'
-                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
-                  : undefined
-              }
+              disabled={approveComplaintMutation.isPending}
               onClick={async (e) => {
                 e.preventDefault();
-                if (!decideDialog) return;
                 try {
-                  if (decideDialog === 'approved') {
-                    await approveComplaintMutation.mutateAsync(complaintId);
-                  } else {
-                    await rejectComplaintMutation.mutateAsync(complaintId);
-                  }
-                  setDecideDialog(null);
+                  await approveComplaintMutation.mutateAsync(complaintId);
+                  setApproveDialogOpen(false);
                 } catch {
                   // toast handled in hook
                 }
               }}
             >
-              {decideDialog === 'approved' ? 'Approve' : 'Reject'}
+              Approve
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reject complaint?</DialogTitle>
+            <DialogDescription>
+              Provide a reason. The contact will be notified via Respond.io that the complaint
+              status changed to <span className="font-medium">rejected</span>, including the reason
+              you enter.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="complaint-reject-reason">Rejection reason</Label>
+            <Textarea
+              id="complaint-reject-reason"
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Why is this complaint being rejected?"
+              rows={4}
+              className="resize-none"
+            />
+          </div>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="outline"
+              onClick={() => setRejectDialogOpen(false)}
+              disabled={rejectComplaintMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={rejectComplaintMutation.isPending || !rejectReason.trim()}
+              onClick={async () => {
+                const reason = rejectReason.trim();
+                if (!reason) {
+                  toast.error('Enter a rejection reason.');
+                  return;
+                }
+                try {
+                  await rejectComplaintMutation.mutateAsync({
+                    id: complaintId,
+                    rejection_reason: reason,
+                  });
+                  setRejectDialogOpen(false);
+                } catch {
+                  // toast handled in hook
+                }
+              }}
+            >
+              {rejectComplaintMutation.isPending ? 'Rejecting…' : 'Reject'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={editTechnicalResponseOpen} onOpenChange={setEditTechnicalResponseOpen}>
         <DialogContent className="sm:max-w-md">
