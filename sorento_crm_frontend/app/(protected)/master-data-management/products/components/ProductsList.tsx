@@ -867,6 +867,7 @@ const ProductsList = () => {
             },
           );
           queryClient.invalidateQueries({ queryKey: ['products'] });
+          queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
         }}
         accept=".xlsx,.xls"
       />

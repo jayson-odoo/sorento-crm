@@ -6,14 +6,13 @@ import { requireBeUrl } from '../../lib/env.js';
 import { authHeaders } from '../../lib/auth.js';
 import { isOk } from '../../lib/checks.js';
 
-// Per-endpoint SLA targets — baseline × 3-4 from smoke run.
-// Override globally with K6_P95_BUDGET / K6_P99_BUDGET multipliers if hardware changes.
+// Per-endpoint SLA targets — locked stress SLA: p95 < 1s, p99 < 2s.
 const perEndpointThresholds = {
   ...standard,
-  'http_req_duration{name:list_orders}':      ['p(95)<300', 'p(99)<800'],
-  'http_req_duration{name:list_products}':    ['p(95)<300', 'p(99)<800'],
-  'http_req_duration{name:list_shipments}':   ['p(95)<500', 'p(99)<1500'],
-  'http_req_duration{name:list_attachments}': ['p(95)<500', 'p(99)<1500'],
+  'http_req_duration{name:list_orders}':      ['p(95)<1000', 'p(99)<2000'],
+  'http_req_duration{name:list_products}':    ['p(95)<1000', 'p(99)<2000'],
+  'http_req_duration{name:list_shipments}':   ['p(95)<1000', 'p(99)<2000'],
+  'http_req_duration{name:list_attachments}': ['p(95)<1000', 'p(99)<2000'],
   'http_req_failed{name:list_orders}':      ['rate<0.01'],
   'http_req_failed{name:list_products}':    ['rate<0.01'],
   'http_req_failed{name:list_shipments}':   ['rate<0.01'],

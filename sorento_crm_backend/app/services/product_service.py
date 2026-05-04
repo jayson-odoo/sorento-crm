@@ -580,6 +580,45 @@ class ProductService:
             [p.id for p in existing_by_code.values()]
         )
 
+        # Cache default supplier + lead-time once (was N× per row inside _ensure_default_supplier_lead_time).
+        default_supplier = self._resolve_default_supplier_for_new_product()
+        default_supplier_id = default_supplier.id if default_supplier else None
+        default_lead_time_days = self._default_standard_lead_time_days()
+
+        # Pre-fetch existing ProductSupplier rows on the default supplier for every existing product
+        # we may touch, so per-row link decisions become an O(1) dict lookup.
+        existing_default_ps: dict[str, ProductSupplier] = {}
+        if default_supplier_id and existing_by_code:
+            existing_pids = list({p.id for p in existing_by_code.values()})
+            for i in range(0, len(existing_pids), self._BULK_FETCH_CODES_BATCH):
+                batch = existing_pids[i : i + self._BULK_FETCH_CODES_BATCH]
+                rows = (
+                    self.db.query(ProductSupplier)
+                    .filter(
+                        ProductSupplier.supplier_id == default_supplier_id,
+                        ProductSupplier.product_id.in_(batch),
+                    )
+                    .all()
+                )
+                for ps in rows:
+                    existing_default_ps[ps.product_id] = ps
+
+        def link_default_supplier(product_id: str) -> None:
+            if not default_supplier_id:
+                return
+            ps = existing_default_ps.get(product_id)
+            if ps is not None:
+                if ps.standard_lead_time_days != default_lead_time_days:
+                    ps.standard_lead_time_days = default_lead_time_days
+                return
+            new_ps = ProductSupplier(
+                product_id=product_id,
+                supplier_id=default_supplier_id,
+                standard_lead_time_days=default_lead_time_days,
+            )
+            self.db.add(new_ps)
+            existing_default_ps[product_id] = new_ps
+
         for idx, row in enumerate(products_data, start=1):
             try:
                 product_code = (row.get("product_code") or row.get("Product Code") or row.get("Item Code") or "").strip()
@@ -650,11 +689,13 @@ class ProductService:
                     if parsed_h is not None:
                         existing.dimensions_height = parsed_h
                     if existing.id not in products_with_lead_time:
-                        self._ensure_default_supplier_lead_time(existing.id)
+                        link_default_supplier(existing.id)
                         products_with_lead_time.add(existing.id)
                     updated += 1
                 else:
+                    # Generate UUID Python-side so we can link ProductSupplier without per-row flush().
                     product = Product(
+                        id=str(uuid.uuid4()),
                         product_code=product_code,
                         product_name=product_name,
                         description=description or None,
@@ -669,8 +710,7 @@ class ProductService:
                         created_by=user_id,
                     )
                     self.db.add(product)
-                    self.db.flush()  # get product.id for default supplier link
-                    self._ensure_default_supplier_lead_time(product.id)
+                    link_default_supplier(product.id)
                     products_with_lead_time.add(product.id)
                     existing_by_code[product_code] = product  # avoid duplicate add if same code again
                     created += 1
