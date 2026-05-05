@@ -20,7 +20,7 @@ export const FormSchema = z.object({
   purpose: z.string().max(2000, { message: 'Purpose must not exceed 2000 characters.' }).optional().nullable(),
   language: z.string().min(2, { message: 'Language is required.' }).max(10, { message: 'Language code must not exceed 10 characters.' }),
   is_active: z.boolean(),
-  attachment_id: z.string().uuid().optional().nullable(),
+  attachment_id: z.string().min(1).optional().nullable(),
 });
 
 export type FormSchemaInput = z.input<typeof FormSchema>;

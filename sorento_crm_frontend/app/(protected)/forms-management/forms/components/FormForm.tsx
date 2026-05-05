@@ -107,7 +107,16 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
     sorting: [],
     searchQuery: '',
   });
-  const attachments = attachmentsData?.data || [];
+  const attachmentsList = attachmentsData?.data || [];
+  const attachments = (() => {
+    if (!form?.attachment) return attachmentsList;
+    if (attachmentsList.some((a) => a.id === form.attachment!.id)) return attachmentsList;
+    const merged = {
+      ...form.attachment,
+      uploaded_at: form.created_at,
+    } as unknown as (typeof attachmentsList)[number];
+    return [merged, ...attachmentsList];
+  })();
 
   const onSubmit = async (data: FormSchemaType) => {
     try {
@@ -202,9 +211,23 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Form type</FormLabel>
-                    <FormControl>
-                      <Input placeholder="marketing" {...field} />
-                    </FormControl>
+                    <Select onValueChange={field.onChange} value={field.value || 'marketing'}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select form type" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="marketing">Marketing</SelectItem>
+                        <SelectItem value="registration">Registration</SelectItem>
+                        <SelectItem value="application">Application</SelectItem>
+                        <SelectItem value="feedback">Feedback</SelectItem>
+                        <SelectItem value="survey">Survey</SelectItem>
+                        <SelectItem value="complaint">Complaint</SelectItem>
+                        <SelectItem value="internal">Internal</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <FormDescription>
                       Category for search and integrations (e.g. marketing for downloadable application forms)
                     </FormDescription>
