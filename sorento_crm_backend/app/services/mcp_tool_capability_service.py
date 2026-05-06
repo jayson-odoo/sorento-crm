@@ -983,10 +983,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="Find application / marketing forms (flower stand, sponsorship, exhibition, renovation).",
         description=(
             "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
-            "List application forms with optional query, language, status, and form_type filter. "
-            "Supported form_type value now: `marketing` (not `marketing_form`). "
-            "Use `all` or omit form_type to avoid type filtering. "
-            "Free-text query matches code, name, purpose, and form_type. Each row includes form_type. "
+            "List application forms with optional query, language, and status filters. "
+            "Free-text query matches code, name, and purpose. "
             "Returns forms that can be attached via their attachment_id."
         ),
         typical_user_questions=(
@@ -996,6 +994,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Flower stand application form.",
             "Annual dinner sponsorship form in English / Chinese / Malay.",
             "Renovation form I can download.",
+            "I want to applly for renovation. Can I have the form?"
         ),
         aliases=("application form", "sponsorship form lookup", "flower stand form"),
     ),
