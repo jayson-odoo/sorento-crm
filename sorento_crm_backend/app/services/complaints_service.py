@@ -281,6 +281,10 @@ class ComplaintService:
             data["assigned_to_name"] = self._resolve_user_display_name(data["assigned_to"])
         else:
             data["assigned_to_name"] = None
+        rc = getattr(complaint, "root_cause", None)
+        data["root_cause_name"] = getattr(rc, "name", None) if rc is not None else None
+        res = getattr(complaint, "resolution", None)
+        data["resolution_name"] = getattr(res, "name", None) if res is not None else None
         return data
     
     def list_complaints(
@@ -340,7 +344,13 @@ class ComplaintService:
         space_filter = (space_id or "").strip()
         if space_filter:
             q = q.filter(Complaint.space_id == space_filter)
-        
+
+        from sqlalchemy.orm import joinedload
+        q = q.options(
+            joinedload(Complaint.root_cause),
+            joinedload(Complaint.resolution),
+        )
+
         sort_map = {
             "complaint_date": Complaint.complaint_date,
             "created_at": Complaint.created_at,
@@ -1054,6 +1064,44 @@ class ComplaintService:
             complaint.rejected_by = None
         self.db.commit()
         self.db.refresh(complaint)
+
+        if decision == "approved":
+            try:
+                from datetime import date as _date
+                from app.services.automation_service import AutomationService
+                from app.services.automation_triggers import _build_complaint_link
+
+                rc = getattr(complaint, "root_cause", None)
+                res = getattr(complaint, "resolution", None)
+                ctx = {
+                    "complaint": {
+                        "id": complaint_id,
+                        "complaint_number": getattr(complaint, "complaint_number", None),
+                        "delivery_order_number": getattr(complaint, "delivery_order_number", None),
+                        "customer_name": getattr(complaint, "customer_name", None),
+                        "salesperson": getattr(complaint, "salesperson", None),
+                        "product_code": getattr(complaint, "product_code", None),
+                        "complaint_type": getattr(complaint, "complaint_type", None),
+                        "status": "approved",
+                        "link": _build_complaint_link(complaint_id),
+                        "root_cause": getattr(rc, "name", None) if rc is not None else None,
+                        "resolution": getattr(res, "name", None) if res is not None else None,
+                    },
+                    "today": _date.today().isoformat(),
+                }
+                AutomationService(self.db).dispatch_event(
+                    "complaint_approved",
+                    context=ctx,
+                    source_kind="complaint",
+                    source_id=complaint_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Automation dispatch_event(complaint_approved) failed for %s",
+                    complaint_id,
+                )
+                # Approval already committed; never fail the whole flow on automation errors.
+
         return complaint
 
     def sync_assignee_from_respond(self, complaint_id: str) -> dict:
@@ -1197,3 +1245,170 @@ class ComplaintService:
         link = self.entity_attachment_service.delete_link(link_id, entity_type="complaint")
         self.db.commit()
         return link
+
+    # ----- Respond.io notify helpers (shared between status-change + field updates) -----
+
+    def _send_respond_message_for_complaint(
+        self,
+        complaint,
+        *,
+        identifier: str,
+        display_message: str,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str],
+    ) -> None:
+        """Send a Respond.io message for a complaint, enqueue the outbound webhook,
+        and write integration logs. Raises on failure (caller decides whether to swallow)."""
+        from app.services.integration_service import RespondClient, IntegrationLogService
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.crm_chat_outbound_webhook import (
+            enqueue_crm_chat_outbound_webhook,
+            resolve_sla_assignee_respond_user_id,
+        )
+
+        log_service = IntegrationLogService(self.db)
+        complaint_id = str(getattr(complaint, "id"))
+        try:
+            client = RespondClient()
+            response = client.send_message(identifier, display_message)
+            enqueue_crm_chat_outbound_webhook(
+                self.db,
+                business_table="complaints",
+                business_id=complaint_id,
+                contact_respond_io_id=identifier,
+                message_text=display_message,
+                respond_api_response=response if isinstance(response, dict) else None,
+                space_id=getattr(complaint, "space_id", None),
+                crm_sender_user_id=crm_sender_user_id,
+                respond_user_id_fallback=respond_user_id,
+                assignee_respond_user_id=resolve_sla_assignee_respond_user_id(
+                    self.db, "complaint", complaint_id
+                ),
+            )
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="complaints",
+                    business_id=complaint_id,
+                    external_reference=identifier,
+                    direction="outbound",
+                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                    http_method="POST",
+                    status="success",
+                    response_payload=str(response)[:50000] if response else None,
+                ),
+                request_payload_dict={"message": {"type": "text", "text": display_message}},
+            )
+        except Exception as e:
+            logging.getLogger(__name__).exception(
+                "Respond.io send_message failed for complaint %s", complaint_id
+            )
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table="complaints",
+                    business_id=complaint_id,
+                    external_reference=identifier or "",
+                    direction="outbound",
+                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                    http_method="POST",
+                    status="failed",
+                    error_message=str(e),
+                ),
+                request_payload_dict={"message": {"type": "text", "text": display_message}},
+            )
+            raise
+
+    def _notify_complaint_field(
+        self,
+        complaint_id: str,
+        kind: str,
+        *,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str],
+    ) -> dict:
+        """Send a Respond.io update message for either ``root_cause`` or ``resolution``.
+
+        Mirrors ``decide_complaint``'s status-change message format. Persists the
+        ``*_notified_at`` timestamp on the complaint so the show view can audit pings.
+        """
+        from datetime import datetime, timezone
+        from app.services.error_handler import handle_validation_error
+
+        if kind not in ("root_cause", "resolution"):
+            raise handle_validation_error(f"Unsupported notify field: {kind}")
+
+        complaint = self.get_complaint(complaint_id)
+        target = complaint.root_cause if kind == "root_cause" else complaint.resolution
+        target_fk = complaint.root_cause_id if kind == "root_cause" else complaint.resolution_id
+        if not target_fk or target is None:
+            label = "root cause" if kind == "root_cause" else "resolution"
+            raise handle_validation_error(
+                f"Cannot notify salesperson — no {label} is set on this complaint."
+            )
+
+        identifier = self._identifier_from_respond_inbox_url(
+            getattr(complaint, "respond_inbox_url", None)
+        )
+        if not identifier:
+            raise handle_validation_error(
+                "Cannot notify salesperson — no Respond.io contact is linked to this complaint."
+            )
+
+        do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
+        do_spec = f" for delivery order {do_number}" if do_number else ""
+        link_part = ""
+        if self._complaint_public_view_links_enabled():
+            view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
+            if view_url:
+                link_part = f" {view_url}"
+        label_word = "Root cause" if kind == "root_cause" else "Resolution"
+        display_message = (
+            f"There has been an update regarding your complaint{do_spec}{link_part}: "
+            f"{label_word} is identified as {target.name}."
+        )
+
+        self._send_respond_message_for_complaint(
+            complaint,
+            identifier=identifier,
+            display_message=display_message,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+        )
+
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        if kind == "root_cause":
+            complaint.root_cause_notified_at = now_utc
+        else:
+            complaint.resolution_notified_at = now_utc
+        self.db.commit()
+        self.db.refresh(complaint)
+        return {"sent": True, "message": display_message, "notified_at": now_utc.isoformat()}
+
+    def notify_root_cause_to_salesperson(
+        self,
+        complaint_id: str,
+        *,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str] = None,
+    ) -> dict:
+        return self._notify_complaint_field(
+            complaint_id,
+            "root_cause",
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+        )
+
+    def notify_resolution_to_salesperson(
+        self,
+        complaint_id: str,
+        *,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str] = None,
+    ) -> dict:
+        return self._notify_complaint_field(
+            complaint_id,
+            "resolution",
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+        )

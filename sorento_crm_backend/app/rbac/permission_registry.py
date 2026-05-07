@@ -90,6 +90,8 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product C
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
+PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_root_causes", "Complaint Root Causes"))
+PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Complaint Resolutions"))
 
 # Procurement
 PERMISSION_REGISTRY.extend(_crud("procurement", "suppliers", "Suppliers"))

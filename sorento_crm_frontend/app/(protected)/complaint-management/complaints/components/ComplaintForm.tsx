@@ -26,6 +26,8 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import LookupBoundField from '@/components/common/LookupBoundField';
 import { useCreateComplaint, useUpdateComplaint, useUpdateComplaintAndReply, useComplaint } from '../hooks/useComplaints';
+import { useComplaintRootCausesSelect } from '@/app/(protected)/complaint-management/complaint-root-causes/hooks/useComplaintRootCauses';
+import { useComplaintResolutionsSelect } from '@/app/(protected)/complaint-management/complaint-resolutions/hooks/useComplaintResolutions';
 import {
   getOrCreateComplaintViewLink,
   displayComplaintTechnicalResponse,
@@ -73,6 +75,8 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       contact_id: null,
       space_id: null,
       technical_team_response: null,
+      root_cause_id: null,
+      resolution_id: null,
       attachments: [],
     },
     mode: 'onSubmit',
@@ -81,17 +85,28 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
   const [formInitialized, setFormInitialized] = useState(false);
   const updateAndReplyMutation = useUpdateComplaintAndReply();
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
+  const { data: rootCauseOptions = [] } = useComplaintRootCausesSelect();
+  const { data: resolutionOptions = [] } = useComplaintResolutionsSelect();
 
   // Load complaint data when editing (normalize dates so schema validation passes)
   useEffect(() => {
     if (complaint && isEditMode && !formInitialized) {
+      const toDate = (v: unknown): Date | undefined => {
+        if (!v) return undefined;
+        if (v instanceof Date) return v;
+        const d = new Date(v as string);
+        return Number.isNaN(d.getTime()) ? undefined : d;
+      };
+      const toNum = (v: unknown): number | null | undefined => {
+        if (v === null || v === undefined || v === '') return v as null | undefined;
+        const n = typeof v === 'number' ? v : Number(v);
+        return Number.isFinite(n) ? n : null;
+      };
       const attachments = (complaint.attachments || []).map((att) => ({
         ...att,
-        uploaded_at: att.uploaded_at
-          ? att.uploaded_at instanceof Date
-            ? att.uploaded_at
-            : new Date(att.uploaded_at as unknown as string)
-          : undefined,
+        file_size_bytes: toNum(att.file_size_bytes) ?? null,
+        uploaded_at: toDate(att.uploaded_at),
+        created_at: toDate((att as { created_at?: unknown }).created_at),
       }));
       form.reset({
         delivery_order_number: complaint.delivery_order_number || null,
@@ -118,6 +133,8 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         space_id: complaint.space_id ?? null,
         technical_team_response:
           displayComplaintTechnicalResponse(complaint.technical_team_response) || null,
+        root_cause_id: complaint.root_cause_id ?? null,
+        resolution_id: complaint.resolution_id ?? null,
         attachments,
       });
       setFormInitialized(true);
@@ -164,6 +181,8 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         project_title: data.project_title || undefined,
         ...(isEditMode ? {} : { contact_id: data.contact_id || undefined, space_id: data.space_id || undefined }),
         technical_team_response: data.technical_team_response || undefined,
+        root_cause_id: data.root_cause_id || null,
+        resolution_id: data.resolution_id || null,
         attachments: validAttachments.length > 0 ? validAttachments : undefined,
       };
 
@@ -255,9 +274,31 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
   const isLoading = createMutation.isPending || updateMutation.isPending || updateAndReplyMutation.isPending;
 
   const onFormSubmit = form.handleSubmit(onSubmit, (errors) => {
-    const firstError = Object.values(errors)[0];
-    const message = firstError?.message ?? 'Please fix the errors in the form.';
-    toast.error(message);
+    // eslint-disable-next-line no-console
+    console.error('[ComplaintForm] validation errors', errors);
+    const flat: string[] = [];
+    const walk = (node: unknown, path: string) => {
+      if (!node || typeof node !== 'object') return;
+      const obj = node as Record<string, unknown>;
+      const msg = obj.message;
+      if (typeof msg === 'string' && msg.trim()) {
+        flat.push(`${path || 'form'}: ${msg}`);
+        return;
+      }
+      for (const [k, v] of Object.entries(obj)) {
+        if (k === 'ref' || k === 'type') continue;
+        walk(v, path ? `${path}.${k}` : k);
+      }
+    };
+    walk(errors, '');
+    const summary = flat.length ? flat.slice(0, 5).join('; ') : 'See console for details';
+    toast.error(`Please fix: ${summary}`);
+    const firstField = Object.keys(errors)[0];
+    if (firstField && typeof window !== 'undefined') {
+      const el = document.querySelector(`[name="${firstField}"]`) as HTMLElement | null;
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el?.focus?.();
+    }
   });
 
   return (
@@ -686,6 +727,62 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                     />
                   </>
                 )}
+                <FormField
+                  control={form.control}
+                  name="root_cause_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Root Cause</FormLabel>
+                      <Select
+                        value={field.value ?? '__unset__'}
+                        onValueChange={(v) => field.onChange(v === '__unset__' ? null : v)}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select root cause (optional)" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="__unset__">— None —</SelectItem>
+                          {rootCauseOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={opt.id}>
+                              {opt.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="resolution_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Resolution</FormLabel>
+                      <Select
+                        value={field.value ?? '__unset__'}
+                        onValueChange={(v) => field.onChange(v === '__unset__' ? null : v)}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select resolution (optional)" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="__unset__">— None —</SelectItem>
+                          {resolutionOptions.map((opt) => (
+                            <SelectItem key={opt.id} value={opt.id}>
+                              {opt.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <FormField
                   control={form.control}
                   name="technical_team_response"

@@ -1136,6 +1136,54 @@ async def reject_complaint(
         raise handle_internal_error(str(e))
 
 
+@router.post("/{complaint_id}/notify-root-cause", response_model=ComplaintResponse)
+async def notify_complaint_root_cause(
+    complaint_id: str,
+    request: Request,
+    current_user: dict = Depends(require_permission("complaint_management.complaints.edit")),
+    db: Session = Depends(get_db),
+):
+    """Send a Respond.io update message announcing the complaint's root cause."""
+    try:
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = ComplaintService(db)
+        service.notify_root_cause_to_salesperson(
+            complaint_id,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=current_user.get("id"),
+        )
+        db.commit()
+        return service.get_complaint_with_attachments(complaint_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{complaint_id}/notify-resolution", response_model=ComplaintResponse)
+async def notify_complaint_resolution(
+    complaint_id: str,
+    request: Request,
+    current_user: dict = Depends(require_permission("complaint_management.complaints.edit")),
+    db: Session = Depends(get_db),
+):
+    """Send a Respond.io update message announcing the complaint's resolution."""
+    try:
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = ComplaintService(db)
+        service.notify_resolution_to_salesperson(
+            complaint_id,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=current_user.get("id"),
+        )
+        db.commit()
+        return service.get_complaint_with_attachments(complaint_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.post("/{complaint_id}/update-and-reply", response_model=ComplaintResponse)
 async def update_complaint_and_reply(
     complaint_id: str,

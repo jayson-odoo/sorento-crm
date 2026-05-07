@@ -131,6 +131,8 @@ class ComplaintBase(BaseModel):
     created_at: Optional[datetime] = None
     assigned_to: Optional[str] = None
     assigned_to_name: Optional[str] = None
+    root_cause_id: Optional[str] = None
+    resolution_id: Optional[str] = None
 
 
 class ComplaintCreate(ComplaintBase):
@@ -176,6 +178,8 @@ class ComplaintUpdate(BaseModel):
     status: Optional[str] = None
     last_responded_by: Optional[str] = None
     last_responded_at: Optional[datetime] = None
+    root_cause_id: Optional[str] = None
+    resolution_id: Optional[str] = None
 
 
 class ComplaintResponse(ComplaintBase):
@@ -192,6 +196,12 @@ class ComplaintResponse(ComplaintBase):
     rejected_at: Optional[datetime] = None
     rejected_by: Optional[str] = None
     assigned_to_name: Optional[str] = None
+    root_cause_id: Optional[str] = None
+    resolution_id: Optional[str] = None
+    root_cause_name: Optional[str] = None
+    resolution_name: Optional[str] = None
+    root_cause_notified_at: Optional[datetime] = None
+    resolution_notified_at: Optional[datetime] = None
     attachments: Optional[list[ComplaintAttachmentResponse]] = []
 
     class Config:

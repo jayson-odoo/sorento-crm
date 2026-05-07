@@ -42,6 +42,12 @@ export interface Complaint {
   created_at?: string | null;
   assigned_to?: string | null;
   assigned_to_name?: string | null;
+  root_cause_id?: string | null;
+  resolution_id?: string | null;
+  root_cause_name?: string | null;
+  resolution_name?: string | null;
+  root_cause_notified_at?: string | null;
+  resolution_notified_at?: string | null;
   attachments: ComplaintAttachment[];
 }
 
@@ -68,6 +74,8 @@ export interface ComplaintFormData {
   status?: string;
   last_responded_by?: string;
   last_responded_at?: string;
+  root_cause_id?: string | null;
+  resolution_id?: string | null;
   attachments?: ComplaintAttachment[];
 }
 

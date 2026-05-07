@@ -10,6 +10,8 @@ import {
   updateComplaintAndReply,
   approveComplaint,
   rejectComplaint,
+  notifyComplaintRootCause,
+  notifyComplaintResolution,
   deleteComplaint,
   bulkDeleteComplaints,
   linkComplaintAttachment,
@@ -131,6 +133,36 @@ export function useRejectComplaint() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to reject complaint'),
+  });
+}
+
+export function useNotifyComplaintRootCause() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => notifyComplaintRootCause(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
+      toast.success('Salesperson notified.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to notify salesperson on root cause'),
+  });
+}
+
+export function useNotifyComplaintResolution() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => notifyComplaintResolution(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
+      toast.success('Salesperson notified.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to notify salesperson on resolution'),
   });
 }
 

@@ -29,6 +29,8 @@ export const ComplaintSchema = z.object({
   status: z.string().max(50).optional().nullable(),
   last_responded_by: z.string().max(255).optional().nullable(),
   last_responded_at: z.string().optional().nullable(),
+  root_cause_id: z.string().optional().nullable(),
+  resolution_id: z.string().optional().nullable(),
   attachments: z.array(
     z.object({
       id: z.string().optional(),

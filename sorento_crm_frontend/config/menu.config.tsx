@@ -402,6 +402,16 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Complaints',
         path: '/complaint-management/complaints',
       },
+      {
+        title: 'Root Causes',
+        path: '/complaint-management/complaint-root-causes',
+        permission: 'master_data.complaint_root_causes.view',
+      },
+      {
+        title: 'Resolutions',
+        path: '/complaint-management/complaint-resolutions',
+        permission: 'master_data.complaint_resolutions.view',
+      },
     ],
   },
   {
@@ -1170,6 +1180,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Complaints',
         path: '/complaint-management/complaints',
+      },
+      {
+        title: 'Root Causes',
+        path: '/complaint-management/complaint-root-causes',
+        permission: 'master_data.complaint_root_causes.view',
+      },
+      {
+        title: 'Resolutions',
+        path: '/complaint-management/complaint-resolutions',
+        permission: 'master_data.complaint_resolutions.view',
       },
     ],
   },

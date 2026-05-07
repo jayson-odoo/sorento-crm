@@ -74,6 +74,13 @@ def _build_promotion_link(promotion_id: str) -> str:
     return f"{base}/marketing-management/promotions/{promotion_id}"
 
 
+def _build_complaint_link(complaint_id: str) -> str:
+    base = (settings.frontend_base_url or "").rstrip("/")
+    if not base:
+        return f"/complaint-management/complaints/{complaint_id}"
+    return f"{base}/complaint-management/complaints/{complaint_id}"
+
+
 def _trigger_days_before_promotion_end(
     db: Session,
     config: dict[str, Any],
@@ -132,4 +139,33 @@ register(
         },
     ),
     _trigger_days_before_promotion_end,
+)
+
+
+def _trigger_complaint_approved(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven trigger; pull-mode evaluation yields nothing.
+
+    Matches are produced via :meth:`AutomationService.dispatch_event` from the
+    complaint approval code path, so scheduled ``evaluate_due`` runs deliberately
+    return no matches here.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="complaint_approved",
+        label="Complaint approved",
+        description="Fires when a complaint transitions to 'approved' (event-driven, dispatched from the approval flow).",
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_complaint_approved,
 )

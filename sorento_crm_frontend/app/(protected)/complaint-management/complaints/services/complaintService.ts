@@ -137,6 +137,38 @@ export async function rejectComplaint(
   return response.json();
 }
 
+export async function notifyComplaintRootCause(id: string): Promise<Complaint> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/${id}/notify-root-cause`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to notify salesperson on root cause' }));
+    throw new Error(
+      error.detail || error.message || 'Failed to notify salesperson on root cause',
+    );
+  }
+  return response.json();
+}
+
+export async function notifyComplaintResolution(id: string): Promise<Complaint> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/${id}/notify-resolution`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to notify salesperson on resolution' }));
+    throw new Error(
+      error.detail || error.message || 'Failed to notify salesperson on resolution',
+    );
+  }
+  return response.json();
+}
+
 export async function deleteComplaint(id: string): Promise<void> {
   const response = await apiFetch(
     `/api/v1/complaints-management/complaints/${id}`,

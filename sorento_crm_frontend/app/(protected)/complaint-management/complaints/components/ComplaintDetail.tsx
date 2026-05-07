@@ -25,6 +25,8 @@ import {
   useUpdateComplaintAndReply,
   useApproveComplaint,
   useRejectComplaint,
+  useNotifyComplaintRootCause,
+  useNotifyComplaintResolution,
 } from '../hooks/useComplaints';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
@@ -65,10 +67,14 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const updateComplaintAndReplyMutation = useUpdateComplaintAndReply();
   const approveComplaintMutation = useApproveComplaint();
   const rejectComplaintMutation = useRejectComplaint();
+  const notifyRootCauseMutation = useNotifyComplaintRootCause();
+  const notifyResolutionMutation = useNotifyComplaintResolution();
   const canApprove = useHasPermission('complaint_management.complaints.approve');
   const canReject = useHasPermission('complaint_management.complaints.reject');
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [notifyRootCauseOpen, setNotifyRootCauseOpen] = useState(false);
+  const [notifyResolutionOpen, setNotifyResolutionOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
@@ -304,6 +310,70 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           }}
         />
       )}
+
+      <AlertDialog open={notifyRootCauseOpen} onOpenChange={setNotifyRootCauseOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Notify salesperson on root cause?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to update the salesperson on{' '}
+              <span className="font-medium">{complaint.root_cause_name ?? '—'}</span>? A
+              Respond.io message will be sent to the customer&apos;s conversation.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={notifyRootCauseMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={notifyRootCauseMutation.isPending}
+              onClick={async (e) => {
+                e.preventDefault();
+                try {
+                  await notifyRootCauseMutation.mutateAsync(complaintId);
+                  setNotifyRootCauseOpen(false);
+                } catch {
+                  /* toast in hook */
+                }
+              }}
+            >
+              Notify
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={notifyResolutionOpen} onOpenChange={setNotifyResolutionOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Notify salesperson on resolution?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to update the salesperson on{' '}
+              <span className="font-medium">{complaint.resolution_name ?? '—'}</span>? A
+              Respond.io message will be sent to the customer&apos;s conversation.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={notifyResolutionMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={notifyResolutionMutation.isPending}
+              onClick={async (e) => {
+                e.preventDefault();
+                try {
+                  await notifyResolutionMutation.mutateAsync(complaintId);
+                  setNotifyResolutionOpen(false);
+                } catch {
+                  /* toast in hook */
+                }
+              }}
+            >
+              Notify
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
         <AlertDialogContent>
@@ -586,6 +656,54 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               <p className="font-medium capitalize">{complaint.status}</p>
             </div>
           )}
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm text-muted-foreground">Root Cause</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setNotifyRootCauseOpen(true)}
+                disabled={
+                  !complaint.root_cause_id ||
+                  !complaint.respond_inbox_url ||
+                  notifyRootCauseMutation.isPending
+                }
+                aria-label="Notify salesperson on root cause"
+              >
+                Notify salesperson
+              </Button>
+            </div>
+            <p className="font-medium">{complaint.root_cause_name ?? '-'}</p>
+            {complaint.root_cause_notified_at && (
+              <p className="text-xs text-muted-foreground">
+                Last notified {formatDateTimeInMalaysia(complaint.root_cause_notified_at)}
+              </p>
+            )}
+          </div>
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm text-muted-foreground">Resolution</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setNotifyResolutionOpen(true)}
+                disabled={
+                  !complaint.resolution_id ||
+                  !complaint.respond_inbox_url ||
+                  notifyResolutionMutation.isPending
+                }
+                aria-label="Notify salesperson on resolution"
+              >
+                Notify salesperson
+              </Button>
+            </div>
+            <p className="font-medium">{complaint.resolution_name ?? '-'}</p>
+            {complaint.resolution_notified_at && (
+              <p className="text-xs text-muted-foreground">
+                Last notified {formatDateTimeInMalaysia(complaint.resolution_notified_at)}
+              </p>
+            )}
+          </div>
           <div>
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm text-muted-foreground">Technical Team Response</p>

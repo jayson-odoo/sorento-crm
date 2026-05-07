@@ -45,17 +45,25 @@ class Complaint(Base):
     rejection_reason = Column(Text, nullable=True)
     rejected_at = Column(DateTime(timezone=False), nullable=True)
     rejected_by = Column(Text, nullable=True)
+    root_cause_id = Column(UUID(as_uuid=False), ForeignKey("complaint_root_causes.id", ondelete="RESTRICT"), nullable=True)
+    resolution_id = Column(UUID(as_uuid=False), ForeignKey("complaint_resolutions.id", ondelete="RESTRICT"), nullable=True)
+    root_cause_notified_at = Column(DateTime(timezone=False), nullable=True)
+    resolution_notified_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     assigned_to = Column(Text, nullable=True)  # Respond.io assignee user id; display name resolved via User.respond_user_id
     portal_draft_at = Column(DateTime(timezone=False), nullable=True)  # set while user is editing in submission portal; cleared on Submit
 
     attachments = relationship("ComplaintAttachment", back_populates="complaint")
+    root_cause = relationship("ComplaintRootCause", foreign_keys=[root_cause_id])
+    resolution = relationship("ComplaintResolution", foreign_keys=[resolution_id])
     
     __table_args__ = (
         Index("ix_complaints_delivery_order_number", "delivery_order_number"),
         Index("ix_complaints_complaint_date", "complaint_date"),
         Index("ix_complaints_customer_name", "customer_name"),
         Index("ix_complaints_complaint_number", "complaint_number"),
+        Index("ix_complaints_root_cause_id", "root_cause_id"),
+        Index("ix_complaints_resolution_id", "resolution_id"),
     )
 
 

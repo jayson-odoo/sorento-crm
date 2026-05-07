@@ -205,6 +205,51 @@ class AutomationService:
             raise AppException(status_code=404, message="Automation not found")
         return self._execute(automation, run_mode=run_mode)
 
+    def dispatch_event(
+        self,
+        trigger_type: str,
+        *,
+        context: dict[str, Any],
+        source_kind: str,
+        source_id: str,
+    ) -> dict[str, Any]:
+        """Run every enabled automation for ``trigger_type`` against a single match.
+
+        Used by domain code (e.g. complaint approval) to fire on-event automations
+        immediately, bypassing the daily ``evaluate_due`` scheduler. Failures are
+        per-automation; one bad rule does not block the rest.
+        """
+        automations = (
+            self.db.query(Automation)
+            .filter(
+                Automation.enabled.is_(True),
+                Automation.trigger_type == trigger_type,
+            )
+            .all()
+        )
+        match = automation_triggers.TriggerMatch(
+            context=dict(context or {}),
+            source_kind=source_kind,
+            source_id=source_id,
+        )
+        results: list[dict[str, Any]] = []
+        for automation in automations:
+            try:
+                results.append(
+                    self._execute(
+                        automation,
+                        run_mode="event",
+                        prebuilt_matches=[match],
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "dispatch_event(%s) failed for automation %s",
+                    trigger_type,
+                    automation.id,
+                )
+        return {"trigger_type": trigger_type, "fired": len(results), "results": results}
+
     def evaluate_due(self) -> dict[str, Any]:
         """Master scheduler entrypoint: run every enabled automation whose next_run_at is due."""
         now = datetime.utcnow()
@@ -270,7 +315,13 @@ class AutomationService:
             "extra_emails": [str(x).strip() for x in (data.get("extra_emails") or []) if str(x).strip()],
         }
 
-    def _execute(self, automation: Automation, *, run_mode: str) -> dict[str, Any]:
+    def _execute(
+        self,
+        automation: Automation,
+        *,
+        run_mode: str,
+        prebuilt_matches: Optional[list["automation_triggers.TriggerMatch"]] = None,
+    ) -> dict[str, Any]:
         run = AutomationRun(
             automation_id=str(automation.id),
             run_mode=run_mode,
@@ -294,12 +345,15 @@ class AutomationService:
             if not template:
                 raise AppException(status_code=400, message="Template missing")
 
-            matches = automation_triggers.fire(
-                self.db,
-                str(automation.trigger_type),
-                dict(automation.trigger_config or {}),
-                str(automation.timezone or "Asia/Kuala_Lumpur"),
-            )
+            if prebuilt_matches is not None:
+                matches = list(prebuilt_matches)
+            else:
+                matches = automation_triggers.fire(
+                    self.db,
+                    str(automation.trigger_type),
+                    dict(automation.trigger_config or {}),
+                    str(automation.timezone or "Asia/Kuala_Lumpur"),
+                )
 
             template_service = EmailTemplateService(self.db)
             attempted = 0

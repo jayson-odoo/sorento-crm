@@ -17,6 +17,7 @@ from app.models.workflow_forms import (
     WorkflowSubmissionTransitionLog,
 )
 from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment
+from app.models.complaint_master_data import ComplaintRootCause, ComplaintResolution
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog
 from app.models.resources import Attachment, AttachmentType
