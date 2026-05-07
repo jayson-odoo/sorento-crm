@@ -119,6 +119,7 @@ class PromotionResponse(PromotionBase):
     products_count: Optional[int] = 0
     products: Optional[list["PromotionProductResponse"]] = None
     promotion_groups: Optional[list["PromotionGroupResponse"]] = None
+    attachments: list["PromotionAttachmentResponse"] = []
 
     @field_serializer("start_date", "end_date")
     def _serialize_promotion_boundary_dates(self, v: date) -> str:
@@ -144,6 +145,7 @@ class PromotionListItemResponse(PromotionBase):
     created_at: datetime
     updated_at: datetime
     products_count: Optional[int] = 0
+    attachments: list["PromotionAttachmentResponse"] = []
 
     @field_serializer("start_date", "end_date")
     def _serialize_promotion_boundary_dates_list(self, v: date) -> str:
@@ -422,3 +424,7 @@ class PromotionAttachmentResponse(PromotionAttachmentBase):
     
     class Config:
         from_attributes = True
+
+
+PromotionResponse.model_rebuild()
+PromotionListItemResponse.model_rebuild()

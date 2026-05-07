@@ -23,6 +23,7 @@ class ListResponse(BaseModel, Generic[T]):
     data: List[T]
     pagination: PaginationResponse
     empty: bool = False
+    fallback_used: bool = False
 
 
 class ErrorResponse(BaseModel):

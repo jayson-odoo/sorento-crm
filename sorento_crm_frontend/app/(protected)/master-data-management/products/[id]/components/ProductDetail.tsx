@@ -299,7 +299,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
                   <div>
                     <h3 className="font-semibold mb-2">Tracking Flags</h3>
-                    <div className="flex gap-4">
+                    <div className="flex flex-wrap gap-4">
                       <Badge
                         variant={product.has_serial_tracking ? 'success' : 'secondary'}
                       >
@@ -309,6 +309,12 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                         variant={product.has_batch_tracking ? 'success' : 'secondary'}
                       >
                         Batch Tracking: {product.has_batch_tracking ? 'Yes' : 'No'}
+                      </Badge>
+                      <Badge
+                        variant={product.is_discontinued ? 'destructive' : 'secondary'}
+                        title="Auto-derived: True when description starts with ****"
+                      >
+                        Discontinued: {product.is_discontinued ? 'Yes' : 'No'}
                       </Badge>
                     </div>
                   </div>

@@ -13,7 +13,7 @@ import uuid
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, exists, select, text
+from sqlalchemy import and_, func, or_, exists, select, text
 from sqlalchemy.exc import IntegrityError
 from typing import Any, Optional
 from decimal import Decimal
@@ -189,6 +189,35 @@ class PromotionService:
             return tuple()
         return tuple(sorted({(a or "").strip() for a in access_levels if (a or "").strip()}))
 
+    def _load_attachments_for_promotion_ids(
+        self, promotion_ids: list[str]
+    ) -> dict[str, list[PromotionAttachment]]:
+        """Eager-load promotion attachments for a batch of promotions, grouped by promotion_id.
+
+        Used by both list_promotions (to inline attachments per row without N+1) and
+        get_promotion (to inline attachments on the detail response).
+        """
+        from sqlalchemy.orm import joinedload as _joinedload
+
+        result: dict[str, list[PromotionAttachment]] = {pid: [] for pid in promotion_ids}
+        if not promotion_ids:
+            return result
+        rows = (
+            self.db.query(PromotionAttachment)
+            .options(
+                _joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
+            )
+            .filter(PromotionAttachment.promotion_id.in_(promotion_ids))
+            .order_by(
+                PromotionAttachment.sort_order.asc().nulls_last(),
+                PromotionAttachment.created_at.asc(),
+            )
+            .all()
+        )
+        for row in rows:
+            result.setdefault(row.promotion_id, []).append(row)
+        return result
+
     def _ensure_promo_code_access_levels_unique(
         self,
         promo_code: str,
@@ -218,51 +247,81 @@ class PromotionService:
         query: Optional[str] = None,
         status: Optional[str] = None,
         promo_type: Optional[str] = None,
+        active: Optional[bool] = None,
+        period_from: Optional[date] = None,
+        period_to: Optional[date] = None,
         sort_field: Optional[str] = None,
         sort_dir: Optional[str] = "desc",
         advanced_filter_clause: Optional[Any] = None,
     ):
-        """List promotions. When query is set, filter by promo_code, name, or product code of linked products."""
-        q = self.db.query(Promotion)
+        """List promotions with active-first fallback semantics.
 
-        if query and (query := (query or "").strip()):
-            search_term = f"%{query}%"
-            # Correlated exists: promotions that have at least one product whose product_code matches
-            has_product_match = exists().where(
-                PromotionProduct.promotion_id == Promotion.id
-            ).where(
-                PromotionProduct.product_id == Product.id
-            ).where(
-                Product.product_code.ilike(search_term)
-            )
-            q = q.filter(
-                or_(
-                    Promotion.promo_code.ilike(search_term),
-                    Promotion.name.ilike(search_term),
-                    has_product_match,
-                )
-            )
+        active=None (default): return active rows; if a narrowing filter is
+        present and zero active match, fall back to inactive rows.
+        active=True: same as default — find active first, fall back to inactive
+        when narrowing filter is present and active set is empty.
+        active=False: return only inactive rows (no fallback).
 
-        if status and status != "all":
+        Active definition: Promotion.is_active is True AND today falls within
+        [start_date, end_date]. Anything outside that window — even if the
+        boolean flag is True — is treated as inactive.
+
+        period_from/period_to: optional date bounds. Filters to promotions
+        whose [start_date, end_date] overlaps with the requested window.
+        """
+        # Back-compat: legacy `status` query param translates to `active`.
+        if active is None and status and status != "all":
             if status == "active":
-                q = q.filter(Promotion.is_active.is_(True))
+                active = True
             elif status == "inactive":
-                q = q.filter(Promotion.is_active.is_(False))
+                active = False
 
-        if promo_type and (promo_type := (promo_type or "").strip()):
-            q = q.filter(Promotion.promo_type == promo_type)
+        query_norm = (query or "").strip() or None
+        promo_type_norm = (promo_type or "").strip() or None
+        narrowing_filter_present = bool(
+            query_norm or promo_type_norm or user_type or period_from or period_to
+        )
 
-        if user_type:
-            q = q.filter(Promotion.access_levels.contains([user_type]))
+        today = datetime.utcnow().date()
+        is_within_window = and_(
+            Promotion.start_date <= today,
+            Promotion.end_date >= today,
+        )
+        active_clause = and_(Promotion.is_active.is_(True), is_within_window)
 
-        if advanced_filter_clause is not None:
-            q = q.filter(advanced_filter_clause)
+        def _apply_common_filters(q):
+            if query_norm:
+                search_term = f"%{query_norm}%"
+                has_product_match = exists().where(
+                    PromotionProduct.promotion_id == Promotion.id
+                ).where(
+                    PromotionProduct.product_id == Product.id
+                ).where(
+                    Product.product_code.ilike(search_term)
+                )
+                q = q.filter(
+                    or_(
+                        Promotion.promo_code.ilike(search_term),
+                        Promotion.name.ilike(search_term),
+                        has_product_match,
+                    )
+                )
+            if promo_type_norm:
+                q = q.filter(Promotion.promo_type == promo_type_norm)
+            if user_type:
+                q = q.filter(Promotion.access_levels.contains([user_type]))
+            if period_from is not None:
+                q = q.filter(Promotion.end_date >= period_from)
+            if period_to is not None:
+                q = q.filter(Promotion.start_date <= period_to)
+            if advanced_filter_clause is not None:
+                q = q.filter(advanced_filter_clause)
+            return q
 
         sort_key = (sort_field or "created_at").strip() or "created_at"
         dir_norm = (sort_dir or "desc").lower()
         if dir_norm not in ("asc", "desc"):
             dir_norm = "desc"
-
         sort_map = {
             "promo_code": Promotion.promo_code,
             "name": Promotion.name,
@@ -274,39 +333,56 @@ class PromotionService:
             "access_levels": Promotion.access_levels,
         }
 
-        pc_subq = None
-        if sort_key == "products_count":
-            pc_subq = (
-                select(
-                    PromotionProduct.promotion_id.label("pid"),
-                    func.count(PromotionProduct.id).label("pcnt"),
+        def _ordered_query(active_mode: Optional[bool]):
+            q = self.db.query(Promotion)
+            q = _apply_common_filters(q)
+            if active_mode is True:
+                q = q.filter(active_clause)
+            elif active_mode is False:
+                q = q.filter(~active_clause)
+            if sort_key == "products_count":
+                pc_subq = (
+                    select(
+                        PromotionProduct.promotion_id.label("pid"),
+                        func.count(PromotionProduct.id).label("pcnt"),
+                    )
+                    .group_by(PromotionProduct.promotion_id)
+                    .subquery()
                 )
-                .group_by(PromotionProduct.promotion_id)
-                .subquery()
-            )
-            q = q.outerjoin(pc_subq, Promotion.id == pc_subq.c.pid)
-            order_col = func.coalesce(pc_subq.c.pcnt, 0)
-        else:
-            order_col = sort_map.get(sort_key, Promotion.created_at)
+                q = q.outerjoin(pc_subq, Promotion.id == pc_subq.c.pid)
+                order_col = func.coalesce(pc_subq.c.pcnt, 0)
+            else:
+                order_col = sort_map.get(sort_key, Promotion.created_at)
+            return q.order_by(order_col.asc() if dir_norm == "asc" else order_col.desc())
 
-        q = q.order_by(order_col.asc() if dir_norm == "asc" else order_col.desc())
-
+        primary_active_mode: Optional[bool] = True if active is None else active
+        q = _ordered_query(primary_active_mode)
         total = q.count()
+        fallback_used = False
+
+        if total == 0 and narrowing_filter_present and active is not False:
+            q = _ordered_query(False)
+            total = q.count()
+            fallback_used = total > 0
+
         offset = (page - 1) * limit
         promotions = q.offset(offset).limit(limit).all()
-        
-        # Add product counts to each promotion object
+
+        attachments_by_promotion = self._load_attachments_for_promotion_ids(
+            [p.id for p in promotions]
+        )
         for promotion in promotions:
             products_count = self.db.query(func.count(PromotionProduct.id)).filter(
                 PromotionProduct.promotion_id == promotion.id
             ).scalar() or 0
-            # Set products_count as an attribute on the promotion object
             promotion.products_count = products_count
-        
+            promotion.attachments = attachments_by_promotion.get(promotion.id, [])
+
         return {
             "data": promotions,
             "pagination": {"total": total, "page": page, "limit": limit},
-            "empty": total == 0
+            "empty": total == 0,
+            "fallback_used": fallback_used,
         }
     
     def get_promotion(self, promotion_id: str, *, include_products: bool = True):
@@ -343,6 +419,7 @@ class PromotionService:
             )
             promotion.products = None
             promotion.promotion_groups = groups
+            promotion.attachments = self._load_attachments_for_promotion_ids([resolved_pid]).get(resolved_pid, [])
             return promotion
 
         promotion = (
@@ -368,6 +445,7 @@ class PromotionService:
         promotion.products = flat
         # Expose sorted groups for API (nested products on each group)
         promotion.promotion_groups = groups
+        promotion.attachments = self._load_attachments_for_promotion_ids([resolved_pid]).get(resolved_pid, [])
 
         return promotion
     

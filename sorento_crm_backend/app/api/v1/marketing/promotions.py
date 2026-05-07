@@ -1,4 +1,5 @@
 """Promotions API routes."""
+from datetime import date
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Path, Body
 from typing import Optional
 from pydantic import BaseModel
@@ -39,14 +40,30 @@ async def get_promotions(
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
     user_type: Optional[str] = Query(None, description="Filter by access level: dealer, end_user"),
-    status: Optional[str] = Query(None, description="Filter by status: active, inactive, all"),
+    status: Optional[str] = Query(None, description="Legacy filter: active, inactive, all. Prefer `active` (bool)."),
+    active: Optional[bool] = Query(
+        None,
+        description=(
+            "Active filter. Omit (default) or pass true: return active promotions "
+            "(is_active and today within start/end); fall back to inactive when a "
+            "narrowing filter yields zero matches. Pass false for historical only."
+        ),
+    ),
+    period_from: Optional[date] = Query(
+        None,
+        description="Start of period window (YYYY-MM-DD). Filters promotions whose date range overlaps.",
+    ),
+    period_to: Optional[date] = Query(
+        None,
+        description="End of period window (YYYY-MM-DD). Filters promotions whose date range overlaps.",
+    ),
     promo_type: Optional[str] = Query(None, description="Filter by promotion type e.g. price_override"),
     sort: Optional[str] = Query(None, description="Sort field e.g. created_at, promo_code, products_count"),
     dir: Optional[str] = Query("desc", description="asc or desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get promotions with pagination. Search and filter by status, access level, type."""
+    """Get promotions with pagination. Search by query/period, filter by access level, type, active state."""
     try:
         service = PromotionService(db)
         result = service.list_promotions(
@@ -55,6 +72,9 @@ async def get_promotions(
             user_type=user_type,
             query=query,
             status=status,
+            active=active,
+            period_from=period_from,
+            period_to=period_to,
             promo_type=promo_type,
             sort_field=sort,
             sort_dir=dir,

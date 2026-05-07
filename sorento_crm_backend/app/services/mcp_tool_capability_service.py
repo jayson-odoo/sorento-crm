@@ -102,7 +102,9 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "(LEAST(L,W,H) per row). Combine with dir=asc|desc. NULL dimensions sort to the bottom either way. "
             "Each row carries an ISO 4217 `currency` (default MYR for all Sorento catalog rows). "
             "When showing prices to a user, ALWAYS render the currency code from the row "
-            "(e.g. 'RM 1,250.00' or 'MYR 1,250.00'). Never assume USD/$."
+            "(e.g. 'RM 1,250.00' or 'MYR 1,250.00'). Never assume USD/$. "
+            "Each row also carries `is_discontinued` (auto-derived from descriptions that start "
+            "with `****`). When True, surface the SKU as discontinued / end-of-life in the answer."
         ),
         typical_user_questions=(
             "What products do you sell?",
@@ -151,7 +153,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Get one product record by UUID id, returning code, name, description, brand/category "
             "relations, and full pricing fields. Use AFTER crm_master_products_list has resolved a "
             "product's UUID, or when the user pastes a UUID. For keyword / SKU / name searches use "
-            "crm_master_products_list instead."
+            "crm_master_products_list instead. The response includes `is_discontinued` (auto-derived "
+            "from descriptions starting with `****`) — surface this in the answer when True."
         ),
         typical_user_questions=(
             "Show full product detail for this product id.",
@@ -167,7 +170,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="Lightweight product picker for dropdowns / typeaheads.",
         description=(
             "Minimal active-only product list intended for dropdown or select-control population. "
-            "Prefer crm_master_products_list for user-facing catalog questions."
+            "Prefer crm_master_products_list for user-facing catalog questions. "
+            "Rows include `is_discontinued` (auto-derived from descriptions starting with `****`)."
         ),
         typical_user_questions=(
             "Give me a lightweight product list for a dropdown.",
@@ -297,33 +301,46 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     "crm_marketing_promotions_list": ToolIntent(
         category="general_enquiries.promotion",
-        intent="List and search promotions by promo code, status, or type.",
+        intent="List and search promotions; defaults to active with auto-fallback to historical when none match.",
         description=(
-            "List promotion headers (summary fields and products_count only; no product lines). "
-            "Use for promotion discovery — browsing active promotions, searching by promo_code, "
-            "filtering by status or promo_type. For promotion line items / SKU coverage, use "
-            "crm_marketing_promotion_products_list or the nested products tool."
+            "List promotion headers (summary fields + linked attachments inline; no product lines). "
+            "Each row carries its `attachments` array — the agent does NOT need to call "
+            "crm_marketing_promotion_attachments_* afterwards to get the promotion document. "
+            "Default returns ACTIVE promotions (is_active=true AND today within start_date/end_date); "
+            "when the caller passes a narrowing filter (query, promo_type, period_from/period_to, "
+            "user_type) and zero active match, the tool automatically falls back to INACTIVE matches "
+            "and sets fallback_used=true on the response so the agent can phrase the answer accordingly. "
+            "Pass active=false for HISTORICAL-only retrieval (no fallback). Use period_from / period_to "
+            "(YYYY-MM-DD) to scope by overlap with the promotion's [start_date, end_date] window — useful "
+            "when the user asks about promotions that ran during a specific period. For SKU coverage / "
+            "promotion line items use crm_marketing_promotion_products_list."
         ),
         typical_user_questions=(
             "What promotions are active now?",
-            "List current Sorento promotions.",
-            "Show active promo codes.",
-            "Any promotions running this month?",
+            "Any promotions for product PRD123?",
+            "Show me current Sorento promotions.",
+            "Are there any historical promotions for this product?",
+            "List historical promotions between 2025-01-01 and 2025-03-31.",
+            "What promotions ran in Q1 2025?",
             "Find the promotion with code MIX01.",
+            "Did we run a promo for this SKU last year?",
         ),
-        aliases=("list promotions", "active promos"),
+        aliases=("list promotions", "active promos", "historical promotions", "past promotions"),
     ),
     "crm_marketing_promotions_get": ToolIntent(
         category="general_enquiries.promotion",
-        intent="Fetch one promotion's metadata by id.",
+        intent="Fetch one promotion's metadata, groups, and attachments by id.",
         description=(
-            "Get promotion metadata (name, promo_type, start/end dates, FOC tiers/groups). "
-            "Does not include product lines by default — set include_products=true only if needed."
+            "Get promotion metadata (name, promo_type, start/end dates, FOC tiers/groups) AND linked "
+            "attachments inline on the same response — no second tool call needed for the promotion "
+            "document. Does not include product lines by default — set include_products=true only if "
+            "the user is asking specifically about the SKU coverage."
         ),
         typical_user_questions=(
             "Give me the full metadata for this promo.",
             "Open promotion details for this id.",
             "When does this promotion start and end?",
+            "Show me the promotion document / attachment for this promo.",
         ),
     ),
     "crm_marketing_promotion_products_list": ToolIntent(

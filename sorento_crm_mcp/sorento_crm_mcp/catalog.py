@@ -196,14 +196,29 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- marketing ---
     ToolSpec(
         "crm_marketing_promotions_list",
-        "List promotions (summary: promo fields and products_count only; no product lines). For lines use crm_marketing_promotion_products_list or nested products tool.",
+        (
+            "List promotions (summary fields + linked attachments inline; no product lines). "
+            "Each row already carries its `attachments` array — no second tool call needed for "
+            "promotion documents. Default returns ACTIVE promotions (is_active=true AND today "
+            "within start_date/end_date); when a narrowing filter (query, promo_type, period, "
+            "user_type) yields zero active matches, falls back to INACTIVE matches automatically "
+            "and sets fallback_used=true on the response. Pass active=false to fetch "
+            "historical-only (no fallback). Use period_from / period_to (YYYY-MM-DD) to scope by "
+            "overlap with the promotion's [start_date, end_date] window. For product lines use "
+            "crm_marketing_promotion_products_list."
+        ),
         "/api/v1/marketing/promotions",
         (),
-        ("page", "limit", "query", "user_type", "status", "promo_type", "sort", "dir"),
+        ("page", "limit", "query", "user_type", "active", "promo_type", "period_from", "period_to", "sort", "dir"),
     ),
     ToolSpec(
         "crm_marketing_promotions_get",
-        "Get one promotion metadata and groups (FOC tiers, etc.). Does NOT include product lines by default; set include_products=true only if you need nested SKU lines.",
+        (
+            "Get one promotion: metadata, groups (FOC tiers), AND linked attachments inline. "
+            "No second tool call needed for attachments — they come back on the same response. "
+            "Does NOT include product lines by default; set include_products=true only if you need "
+            "nested SKU lines."
+        ),
         "/api/v1/marketing/promotions/{promotion_id}",
         ("promotion_id",),
         ("user_type", "include_products"),

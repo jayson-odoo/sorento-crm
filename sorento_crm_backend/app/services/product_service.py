@@ -49,6 +49,20 @@ def parse_dimensions_from_description(
         )
     except Exception:
         return (None, None, None)
+
+
+def is_discontinued_from_description(description: Optional[str]) -> bool:
+    """True when description starts with `****` (after lstrip).
+
+    Auto-derived flag: a product whose description begins with four asterisks
+    is considered discontinued. Recomputed on every save (single create/edit
+    and bulk import) — never edited manually.
+    """
+    if not description:
+        return False
+    return description.lstrip().startswith("****")
+
+
 from app.models.procurement import ProductSupplier, Supplier
 from app.models.resources import Attachment, AttachmentType
 from app.schemas.product import (
@@ -361,6 +375,7 @@ class ProductService:
             data["dimensions_width"] = parsed_w
         if parsed_h is not None and data.get("dimensions_height") is None:
             data["dimensions_height"] = parsed_h
+        data["is_discontinued"] = is_discontinued_from_description(data.get("description"))
         product = Product(**data, created_by=created_by)
         self.db.add(product)
         self.db.commit()
@@ -398,6 +413,7 @@ class ProductService:
                     update_data["dimensions_width"] = parsed_w
                 if parsed_h is not None and "dimensions_height" not in update_data:
                     update_data["dimensions_height"] = parsed_h
+                update_data["is_discontinued"] = is_discontinued_from_description(update_data.get("description"))
             for key, value in update_data.items():
                 setattr(product, key, value)
             
@@ -744,6 +760,7 @@ class ProductService:
                     continue
 
                 parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(description)
+                discontinued = is_discontinued_from_description(description)
 
                 existing = existing_by_code.get(product_code)
                 if existing:
@@ -753,6 +770,7 @@ class ProductService:
                     existing.brand_id = brand_id
                     existing.list_price = list_price
                     existing.is_active = is_active
+                    existing.is_discontinued = discontinued
                     existing.updated_by = user_id
                     existing.updated_at = datetime.utcnow()
                     if parsed_l is not None:
@@ -777,6 +795,7 @@ class ProductService:
                         base_uom_id=default_uom_id,
                         list_price=list_price,
                         is_active=is_active,
+                        is_discontinued=discontinued,
                         dimensions_length=parsed_l,
                         dimensions_width=parsed_w,
                         dimensions_height=parsed_h,

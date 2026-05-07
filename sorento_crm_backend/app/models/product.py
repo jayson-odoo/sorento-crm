@@ -112,11 +112,12 @@ class Product(Base):
     reorder_level = Column(Integer, nullable=True)
     reorder_quantity = Column(Integer, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    is_discontinued = Column(Boolean, default=False, nullable=False, server_default="false")
     created_by = Column(String, nullable=True)
     updated_by = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
-    
+
     category = relationship("ProductCategory", back_populates="products")
     brand = relationship("Brand", back_populates="products")
     base_uom = relationship("UnitOfMeasure", back_populates="products", foreign_keys=[base_uom_id])

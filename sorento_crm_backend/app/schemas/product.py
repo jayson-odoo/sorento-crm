@@ -242,6 +242,7 @@ class UnitOfMeasureSimple(BaseModel):
 
 class ProductResponse(ProductBase):
     id: str
+    is_discontinued: bool = False
     created_at: datetime
     updated_at: Optional[datetime] = None
     created_by: Optional[str] = None

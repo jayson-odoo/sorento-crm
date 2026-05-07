@@ -33,6 +33,7 @@ export interface Product {
   reorder_quantity: number;
   item_type?: ProductItemType | null;
   is_active: boolean;
+  is_discontinued: boolean;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
