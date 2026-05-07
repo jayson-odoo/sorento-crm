@@ -67,7 +67,8 @@ class ProductSimple(BaseModel):
     id: str
     product_code: str
     product_name: str
-    
+    is_discontinued: bool = False
+
     class Config:
         from_attributes = True
 

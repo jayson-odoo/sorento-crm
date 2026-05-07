@@ -225,14 +225,24 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_marketing_promotion_products_nested",
-        "Products linked to a promotion (nested under promotion). Optional page/limit (default limit 1000, max 5000).",
+        (
+            "Products linked to a promotion (nested under promotion). Each row also carries the "
+            "parent promotion's `promotion_attachments` inline — no second call needed to fetch the "
+            "promotion document. Optional page/limit (default limit 1000, max 5000)."
+        ),
         "/api/v1/marketing/promotions/{promotion_id}/products",
         ("promotion_id",),
         ("page", "limit"),
     ),
     ToolSpec(
         "crm_marketing_promotion_products_list",
-        "Promotion product lines (paginated). Optional promotion_id (UUID or promo_code) scopes to one promotion. Optional query does text search by SKU/product name/promo code and can be used without promotion_id to find which promotions a product appears in.",
+        (
+            "Promotion product lines (paginated). Each row carries the parent promotion's "
+            "`promotion_attachments` inline — no second call needed for the promotion document. "
+            "Optional promotion_id (UUID or promo_code) scopes to one promotion. Optional query does "
+            "text search by SKU/product name/promo code and can be used without promotion_id to find "
+            "which promotions a product appears in."
+        ),
         "/api/v1/marketing/promotion-products",
         (),
         ("page", "limit", "sort", "dir", "query", "promotion_id"),

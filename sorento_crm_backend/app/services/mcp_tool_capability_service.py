@@ -347,10 +347,13 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="general_enquiries.promotion",
         intent="Paged promotion product lines (which SKUs are under which promo).",
         description=(
-            "Promotion product lines, paginated. Optional promotion_id scopes to one promotion "
-            "(UUID or promo_code). Optional query filters by SKU/name/promo code and can run without "
-            "promotion_id to discover which promotions a product participates in. Use when the user "
-            "asks for the SKUs included in a promotion, or which promotions a product participates in."
+            "Promotion product lines, paginated. Each row carries the parent promotion's "
+            "`promotion_attachments` array inline — the agent does NOT need to call "
+            "crm_marketing_promotion_attachments_* afterwards to surface the promotion document. "
+            "Optional promotion_id scopes to one promotion (UUID or promo_code). Optional query "
+            "filters by SKU/name/promo code and can run without promotion_id to discover which "
+            "promotions a product participates in. Use when the user asks for the SKUs included "
+            "in a promotion, or which promotions a product participates in."
         ),
         typical_user_questions=(
             "Which products are included in promo MIX01?",
@@ -362,7 +365,11 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     "crm_marketing_promotion_products_nested": ToolIntent(
         category="general_enquiries.promotion",
         intent="All product lines for one promotion, nested under the promotion id.",
-        description="Products linked to a promotion, returned nested under the promotion id.",
+        description=(
+            "Products linked to a promotion, returned nested under the promotion id. Each line "
+            "carries the parent promotion's `promotion_attachments` inline so the agent has the "
+            "promotion document on the same response — no follow-up tool call required."
+        ),
         typical_user_questions=(
             "Give me every product under this one promotion.",
             "Show all SKUs nested under this promo.",

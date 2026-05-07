@@ -204,6 +204,7 @@ class ProductSimple(BaseModel):
     product_code: str
     product_name: str
     list_price: Optional[Decimal] = None
+    is_discontinued: bool = False
 
     @field_validator("id", mode="before")
     @classmethod
@@ -246,6 +247,7 @@ class PromotionProductResponse(BaseModel):
     updated_at: Optional[datetime] = None
     product: Optional[ProductSimple] = None
     promotion: Optional[PromotionSimple] = None
+    promotion_attachments: list["PromotionAttachmentResponse"] = []
     display_order: int = 0  # Default for compatibility
 
     @field_validator("id", "promotion_id", "promotion_group_id", "product_id", mode="before")
@@ -267,7 +269,7 @@ class PromotionProductResponse(BaseModel):
             for key in [
                 'id', 'promotion_id', 'promotion_group_id', 'product_id', 'discount_amount', 'discount_percent',
                 'dealer_discount_percent', 'dealer_cost', 'list_to_dealer_margin_amount',
-                'created_at', 'updated_at', 'product', 'promotion',
+                'created_at', 'updated_at', 'product', 'promotion', 'promotion_attachments',
             ]:
                 if hasattr(obj, key):
                     value = getattr(obj, key)
@@ -428,3 +430,4 @@ class PromotionAttachmentResponse(PromotionAttachmentBase):
 
 PromotionResponse.model_rebuild()
 PromotionListItemResponse.model_rebuild()
+PromotionProductResponse.model_rebuild()

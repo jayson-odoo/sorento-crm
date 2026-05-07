@@ -129,6 +129,37 @@ def raise_promotion_product_unique_violation(db: Session, exc: Exception) -> Non
 _MAX_DISCOUNT_PERCENT = 999.99
 
 
+def _load_attachments_by_promotion_ids(
+    db: Session, promotion_ids: list[str]
+) -> dict[str, list[PromotionAttachment]]:
+    """Eager-load promotion attachments for a batch of promotions, grouped by promotion_id.
+
+    Shared between PromotionService (list/get) and PromotionProductService
+    (line listings) so any tool that surfaces a promotion can carry the
+    promotion document inline without a follow-up call.
+    """
+    from sqlalchemy.orm import joinedload as _joinedload
+
+    result: dict[str, list[PromotionAttachment]] = {pid: [] for pid in promotion_ids}
+    if not promotion_ids:
+        return result
+    rows = (
+        db.query(PromotionAttachment)
+        .options(
+            _joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
+        )
+        .filter(PromotionAttachment.promotion_id.in_(promotion_ids))
+        .order_by(
+            PromotionAttachment.sort_order.asc().nulls_last(),
+            PromotionAttachment.created_at.asc(),
+        )
+        .all()
+    )
+    for row in rows:
+        result.setdefault(row.promotion_id, []).append(row)
+    return result
+
+
 def _tiers_from_create_data(data: PromotionGroupCreate) -> Optional[list[dict]]:
     """Build normalized foc_tiers JSON from create payload."""
     if not data.foc_tiers:
@@ -192,31 +223,7 @@ class PromotionService:
     def _load_attachments_for_promotion_ids(
         self, promotion_ids: list[str]
     ) -> dict[str, list[PromotionAttachment]]:
-        """Eager-load promotion attachments for a batch of promotions, grouped by promotion_id.
-
-        Used by both list_promotions (to inline attachments per row without N+1) and
-        get_promotion (to inline attachments on the detail response).
-        """
-        from sqlalchemy.orm import joinedload as _joinedload
-
-        result: dict[str, list[PromotionAttachment]] = {pid: [] for pid in promotion_ids}
-        if not promotion_ids:
-            return result
-        rows = (
-            self.db.query(PromotionAttachment)
-            .options(
-                _joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
-            )
-            .filter(PromotionAttachment.promotion_id.in_(promotion_ids))
-            .order_by(
-                PromotionAttachment.sort_order.asc().nulls_last(),
-                PromotionAttachment.created_at.asc(),
-            )
-            .all()
-        )
-        for row in rows:
-            result.setdefault(row.promotion_id, []).append(row)
-        return result
+        return _load_attachments_by_promotion_ids(self.db, promotion_ids)
 
     def _ensure_promo_code_access_levels_unique(
         self,
@@ -818,13 +825,21 @@ class PromotionProductService:
         total = q.count()
         offset = (page - 1) * limit
         products = q.offset(offset).limit(limit).all()
-        
+
+        # Inline parent-promotion attachments per line so callers (esp. MCP
+        # agents) don't need a follow-up tool call to fetch the promotion
+        # document for the SKU they just asked about.
+        parent_pids = list({p.promotion_id for p in products})
+        attachments_map = _load_attachments_by_promotion_ids(self.db, parent_pids)
+        for line in products:
+            line.promotion_attachments = attachments_map.get(line.promotion_id, [])
+
         return {
             "data": products,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
-    
+
     def get_promotion_line(self, promotion_id: str, line_id: str):
         """Get a promotion product row by junction id (supports same SKU in multiple groups)."""
         from sqlalchemy.orm import joinedload

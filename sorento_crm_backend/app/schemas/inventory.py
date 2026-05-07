@@ -105,7 +105,8 @@ class ProductSimple(BaseModel):
     product_code: str
     product_name: str
     reorder_level: Optional[int] = None
-    
+    is_discontinued: bool = False
+
     class Config:
         from_attributes = True
 

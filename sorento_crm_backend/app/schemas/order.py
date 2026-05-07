@@ -255,6 +255,7 @@ class ProductSimpleRef(BaseModel):
     id: str
     product_code: Optional[str] = None
     product_name: Optional[str] = None
+    is_discontinued: bool = False
 
     class Config:
         from_attributes = True
