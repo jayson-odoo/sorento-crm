@@ -651,6 +651,16 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'system.outgoing_mails.view',
       },
       {
+        title: 'Email Templates',
+        path: '/system-management/email-templates',
+        permission: 'email_templates.templates.view',
+      },
+      {
+        title: 'Automation',
+        path: '/system-management/automation',
+        permission: 'automation.automations.view',
+      },
+      {
         title: 'Work Calendar',
         path: '/system-management/work-calendar',
       },
@@ -1408,6 +1418,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Outgoing Mails',
         path: '/system-management/outgoing-mails',
         permission: 'system.outgoing_mails.view',
+      },
+      {
+        title: 'Email Templates',
+        path: '/system-management/email-templates',
+        permission: 'email_templates.templates.view',
+      },
+      {
+        title: 'Automation',
+        path: '/system-management/automation',
+        permission: 'automation.automations.view',
       },
       {
         title: 'Work Calendar',

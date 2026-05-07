@@ -159,7 +159,8 @@ Two paths, pick one:
 Use the `mcp__plugin_playwright_playwright__*` tools to drive Chromium against the running dev server.
 
 - Ensure FE dev server runs at `http://localhost:3000` (`npm run dev` in `sorento_crm_frontend/`) and BE at `http://localhost:8000`.
-- Tool flow: `browser_navigate` → `browser_snapshot` (gets accessibility tree + element refs) → `browser_click` / `browser_fill_form` / `browser_type` → re-snapshot to assert state.
+- **Always navigate to a feature by clicking through the sidebar / top nav from the home page — never `browser_navigate` directly to a deep URL.** Direct URL navigation hides nav-config bugs (missing entries, wrong `moduleKey`, broken permission gating, hidden behind a collapsed group). The first verification step for any new page is "open the sidebar group it belongs to and confirm the entry renders, then click it."
+- Tool flow: land on `/`, `browser_snapshot` to find the relevant sidebar group button, `browser_click` to expand, then `browser_click` the leaf entry → `browser_snapshot` the destination → continue with `browser_click` / `browser_fill_form` / `browser_type` → re-snapshot to assert state.
 - Always check `browser_console_messages` after the interaction. Treat unexpected `error` / `warning` as a regression.
 - Use `browser_take_screenshot` for visual confirmation of CRUD flows (list → modal create → row appears → row edit → confirm-delete dialog → row gone).
 - Use `browser_network_requests` to verify the FE hit the expected `/api/v1/*` endpoint with the right method/payload — confirms the hook → service → api-client chain wired correctly.

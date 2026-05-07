@@ -204,6 +204,7 @@ class ProductSimple(BaseModel):
     product_code: str
     product_name: str
     list_price: Optional[Decimal] = None
+    currency: str = "MYR"
     is_discontinued: bool = False
 
     @field_validator("id", mode="before")

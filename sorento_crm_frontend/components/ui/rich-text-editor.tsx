@@ -8,6 +8,7 @@ import {
   Heading3,
   Italic,
   Link as LinkIcon,
+  Link2Off,
   List,
   ListOrdered,
   Quote,
@@ -33,6 +34,9 @@ import {
   useRef,
   useState,
 } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
 import { Toggle } from '@/components/ui/toggle';
 import { cn } from '@/lib/utils';
@@ -60,6 +64,12 @@ export type RichTextEditorProps = {
    * ``extractMentionedUserIds(html)``.
    */
   mentionUsersFetcher?: () => Promise<MentionItem[]>;
+  /**
+   * Receives the underlying TipTap editor once it's ready. Useful when the
+   * caller needs to programmatically insert content (e.g. Jinja2 placeholders)
+   * at the current cursor position.
+   */
+  onEditorReady?: (editor: Editor) => void;
 };
 
 const ToolbarButton = ({
@@ -86,6 +96,93 @@ const ToolbarButton = ({
     {children}
   </Toggle>
 );
+
+function LinkPopoverButton({ editor }: { editor: Editor }) {
+  const [open, setOpen] = useState(false);
+  const [href, setHref] = useState('');
+  const isActive = editor.isActive('link');
+
+  function openPopover() {
+    const current = (editor.getAttributes('link').href as string | undefined) ?? '';
+    setHref(current);
+    setOpen(true);
+  }
+
+  function apply() {
+    const value = href.trim();
+    if (!value) {
+      editor.chain().focus().extendMarkRange('link').unsetLink().run();
+    } else {
+      editor
+        .chain()
+        .focus()
+        .extendMarkRange('link')
+        .setLink({ href: value })
+        .run();
+    }
+    setOpen(false);
+  }
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) openPopover();
+        else setOpen(false);
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Toggle
+          size="sm"
+          pressed={isActive}
+          title={isActive ? 'Edit link' : 'Add link'}
+          aria-label={isActive ? 'Edit link' : 'Add link'}
+        >
+          <LinkIcon className="size-4" />
+        </Toggle>
+      </PopoverTrigger>
+      <PopoverContent className="w-[320px] p-3" align="start">
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            Paste a URL or a Jinja2 placeholder like{' '}
+            <code className="rounded bg-muted px-1">{`{{ promotion.link }}`}</code>.
+          </p>
+          <Input
+            autoFocus
+            value={href}
+            onChange={(e) => setHref(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                apply();
+              }
+            }}
+            placeholder="https://example.com or {{ promotion.link }}"
+          />
+          <div className="flex justify-end gap-2">
+            {isActive && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  editor.chain().focus().extendMarkRange('link').unsetLink().run();
+                  setOpen(false);
+                }}
+              >
+                Remove
+              </Button>
+            )}
+            <Button type="button" size="sm" onClick={apply}>
+              Apply
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 
 function Toolbar({ editor }: { editor: Editor }) {
   return (
@@ -169,21 +266,15 @@ function Toolbar({ editor }: { editor: Editor }) {
 
       <Separator orientation="vertical" className="mx-1 h-5" />
 
+      <LinkPopoverButton editor={editor} />
       <ToolbarButton
-        title="Link"
-        active={editor.isActive('link')}
+        title="Remove link"
+        disabled={!editor.isActive('link')}
         onClick={() => {
-          const prev = editor.getAttributes('link').href as string | undefined;
-          const url = window.prompt('Enter URL', prev || 'https://');
-          if (url === null) return;
-          if (url === '') {
-            editor.chain().focus().extendMarkRange('link').unsetLink().run();
-            return;
-          }
-          editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+          editor.chain().focus().extendMarkRange('link').unsetLink().run();
         }}
       >
-        <LinkIcon className="size-4" />
+        <Link2Off className="size-4" />
       </ToolbarButton>
 
       <Separator orientation="vertical" className="mx-1 h-5" />
@@ -325,6 +416,7 @@ export function RichTextEditor({
   className,
   editable = true,
   mentionUsersFetcher,
+  onEditorReady,
 }: RichTextEditorProps) {
   // Stash the fetcher in a ref so the Mention extension's closure can read
   // the latest version without re-creating the editor when the prop changes.
@@ -340,7 +432,15 @@ export function RichTextEditor({
       Link.configure({
         openOnClick: false,
         autolink: true,
-        HTMLAttributes: { rel: 'noopener noreferrer nofollow', target: '_blank' },
+        // Allow Jinja2 placeholders (and any other non-URL string) as href so
+        // template authors can do `<a href="{{ promotion.link }}">`. The
+        // default `validate` rejects anything that doesn't parse as a URL.
+        validate: () => true,
+        HTMLAttributes: {
+          rel: 'noopener noreferrer nofollow',
+          target: '_blank',
+          class: 'text-primary underline underline-offset-2',
+        },
       }),
       Placeholder.configure({ placeholder: placeholder || 'Type here...' }),
     ];
@@ -464,6 +564,10 @@ export function RichTextEditor({
     if (!editor) return;
     editor.setEditable(editable);
   }, [editable, editor]);
+
+  useEffect(() => {
+    if (editor && onEditorReady) onEditorReady(editor);
+  }, [editor, onEditorReady]);
 
   if (!editor) return null;
 

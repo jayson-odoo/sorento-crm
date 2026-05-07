@@ -14,6 +14,8 @@ from app.api.v1.system import (
     mcp_tools,
     mcp_access,
     respond_workspaces,
+    email_templates,
+    automation,
 )
 from app.modules.runtime.guards import require_module_enabled_with_api_key
 
@@ -32,3 +34,5 @@ router.include_router(tool_capabilities.router, tags=["tool-capabilities"])
 router.include_router(mcp_tools.router, tags=["mcp-tools"])
 router.include_router(mcp_access.router, tags=["mcp-access"])
 router.include_router(respond_workspaces.router, tags=["respond-workspaces"])
+router.include_router(email_templates.router, tags=["email-templates"])
+router.include_router(automation.router, tags=["automation"])

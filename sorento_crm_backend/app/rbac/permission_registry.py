@@ -289,6 +289,24 @@ PERMISSION_REGISTRY.append({
 })
 
 
+# Email Templates — designable HTML emails with Jinja2 placeholders.
+PERMISSION_REGISTRY.extend(_crud("email_templates", "templates", "Email Templates"))
+PERMISSION_REGISTRY.append({
+    "slug": "email_templates.templates.preview",
+    "name": "Preview Email Templates",
+    "description": "Render a template against sample context to verify the layout.",
+})
+
+
+# Automation — rule-driven scheduled email sends.
+PERMISSION_REGISTRY.extend(_crud("automation", "automations", "Automations"))
+PERMISSION_REGISTRY.append({
+    "slug": "automation.automations.run",
+    "name": "Run Automation",
+    "description": "Trigger an automation manually outside its schedule.",
+})
+
+
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
     """
     Idempotent sync: ensure every slug in PERMISSION_REGISTRY exists in user_permissions.

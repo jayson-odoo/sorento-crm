@@ -49,6 +49,8 @@ from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, Look
 from app.models.portal import PortalToken, PortalOtpCode
 from app.models.activities import ActivityEvent, InternalNote, ActivityMention
 from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
+from app.models.email_template import EmailTemplate
+from app.models.automation import Automation, AutomationRun
 
 __all__ = [
     "User",
@@ -159,6 +161,9 @@ __all__ = [
     "Ticket",
     "TicketWatcher",
     "TicketRespondContactLink",
+    "EmailTemplate",
+    "Automation",
+    "AutomationRun",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy

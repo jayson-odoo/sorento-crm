@@ -12,6 +12,7 @@ from app.services.scheduled_task_service import (
 from app.services.respond_sync_handler import run_respond_contacts_sync
 from app.services.user_sla_daily_summary_service import run_user_sla_daily_summary
 from app.services.marketing_service import PromotionService
+from app.services.automation_service import AutomationService
 from app.config import settings
 from datetime import datetime
 
@@ -105,6 +106,11 @@ def _handler_user_sla_daily_summary(db, task):
 def _handler_promotion_active_window(db, task):
     """Set promotion is_active from Malaysia today vs inclusive [start_date, end_date]."""
     return PromotionService(db).sync_promotion_active_by_calendar_window()
+
+
+def _handler_automation_runner(db, task):
+    """Heartbeat for automations: dispatch every enabled automation whose next_run_at is due."""
+    return AutomationService(db).evaluate_due()
 
 
 def _run_notification_delivery_jobs_impl():
@@ -363,6 +369,7 @@ def start_scheduler():
     register_handler("user_sla_daily_summary", _handler_user_sla_daily_summary)
     register_handler("promotion_active_window", _handler_promotion_active_window)
     register_handler("respond_contacts_sync", run_respond_contacts_sync)
+    register_handler("automation_runner", _handler_automation_runner)
 
     scheduler = BackgroundScheduler()
 

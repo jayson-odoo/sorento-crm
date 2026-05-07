@@ -1,0 +1,135 @@
+"""Trigger registry for automations.
+
+A trigger turns an automation row into a list of {context} payloads, one per
+match. The first concrete trigger watches promotion expiry: ``X days before
+promotion end``.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, timedelta
+from typing import Any, Callable, Iterable
+from zoneinfo import ZoneInfo
+
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.models.marketing import Promotion
+
+
+@dataclass(frozen=True)
+class TriggerSpec:
+    type: str
+    label: str
+    description: str
+    config_schema: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class TriggerMatch:
+    context: dict[str, Any]
+    source_kind: str
+    source_id: str
+
+
+TriggerFn = Callable[[Session, dict[str, Any], str], Iterable[TriggerMatch]]
+
+_REGISTRY: dict[str, tuple[TriggerSpec, TriggerFn]] = {}
+
+
+def register(spec: TriggerSpec, fn: TriggerFn) -> None:
+    _REGISTRY[spec.type] = (spec, fn)
+
+
+def list_specs() -> list[TriggerSpec]:
+    return [s for s, _ in _REGISTRY.values()]
+
+
+def fire(
+    db: Session,
+    trigger_type: str,
+    config: dict[str, Any],
+    timezone: str,
+) -> list[TriggerMatch]:
+    pair = _REGISTRY.get(trigger_type)
+    if not pair:
+        raise ValueError(f"Unknown trigger type: {trigger_type}")
+    _, fn = pair
+    return list(fn(db, config or {}, timezone))
+
+
+def _today_in_tz(timezone: str) -> date:
+    try:
+        from datetime import datetime as _dt
+
+        return _dt.now(ZoneInfo(timezone)).date()
+    except Exception:
+        return date.today()
+
+
+def _build_promotion_link(promotion_id: str) -> str:
+    base = (settings.frontend_base_url or "").rstrip("/")
+    if not base:
+        return f"/marketing-management/promotions/{promotion_id}"
+    return f"{base}/marketing-management/promotions/{promotion_id}"
+
+
+def _trigger_days_before_promotion_end(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    days_before = int(config.get("days_before", 7) or 7)
+    today = _today_in_tz(timezone)
+    target_end = today + timedelta(days=days_before)
+
+    rows = (
+        db.query(Promotion)
+        .filter(Promotion.end_date == target_end, Promotion.is_active.is_(True))
+        .all()
+    )
+    for promo in rows:
+        end_date = getattr(promo, "end_date")
+        start_date = getattr(promo, "start_date")
+        days_until_end = (end_date - today).days if end_date else None
+        ctx = {
+            "promotion": {
+                "id": str(getattr(promo, "id")),
+                "code": str(getattr(promo, "promo_code", "")),
+                "name": str(getattr(promo, "name", "")),
+                "promo_type": str(getattr(promo, "promo_type", "")),
+                "start_date": start_date.isoformat() if start_date else None,
+                "end_date": end_date.isoformat() if end_date else None,
+                "link": _build_promotion_link(str(getattr(promo, "id"))),
+                "days_until_end": days_until_end,
+                "created_by": getattr(promo, "created_by", None),
+            },
+            "today": today.isoformat(),
+        }
+        yield TriggerMatch(
+            context=ctx,
+            source_kind="promotion",
+            source_id=str(getattr(promo, "id")),
+        )
+
+
+register(
+    TriggerSpec(
+        type="days_before_promotion_end",
+        label="Days before promotion end",
+        description="Fires for every active promotion whose end_date is exactly X days from today (in the automation's timezone).",
+        config_schema={
+            "type": "object",
+            "properties": {
+                "days_before": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 7,
+                    "title": "Days before promotion ends",
+                }
+            },
+            "required": ["days_before"],
+        },
+    ),
+    _trigger_days_before_promotion_end,
+)
