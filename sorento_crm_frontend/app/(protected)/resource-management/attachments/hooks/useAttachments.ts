@@ -29,6 +29,8 @@ export function useUploadAttachment() {
       entityId,
       accessLevels,
       directoryId,
+      targetEntityType,
+      targetFieldKeys,
     }: {
       file: File;
       attachmentTypeId?: string | null;
@@ -36,6 +38,8 @@ export function useUploadAttachment() {
       entityId?: string;
       accessLevels?: string[];
       directoryId?: string | null;
+      targetEntityType?: string | null;
+      targetFieldKeys?: string[] | null;
     }) =>
       uploadAttachment(file, {
         attachmentTypeId: attachmentTypeId ?? undefined,
@@ -43,6 +47,8 @@ export function useUploadAttachment() {
         entityId,
         accessLevels,
         directoryId,
+        targetEntityType,
+        targetFieldKeys,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });

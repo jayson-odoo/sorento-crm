@@ -251,6 +251,11 @@ class ProductResponse(ProductBase):
     category: Optional[ProductCategorySimple] = None
     brand: Optional[BrandSimple] = None
     base_uom: Optional[UnitOfMeasureSimple] = None
+    # Map of `field_key` -> linked attachments. Populated only when an
+    # attachment_field_links row exists for this product. Used by the
+    # detail-page Specifications tooltip and by the AI agent (so it can
+    # answer "how big is product X" without a second tool call).
+    field_attachments: Optional[dict] = None
 
     @field_validator('created_by', 'updated_by', mode='before')
     @classmethod

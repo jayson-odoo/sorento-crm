@@ -138,6 +138,75 @@ class AIExtractService:
             ],
         }
 
+    def extract_against_attachment(
+        self,
+        form_key: str,
+        attachment_id: str,
+        *,
+        field_subset: list[str] | None = None,
+        user_id: str | None = None,
+    ) -> ExtractResult:
+        """Run extract against an already-stored attachment.
+
+        Used by the per-product Specifications tooltip. Loads the attachment
+        bytes via ``storage_router``, optionally narrows the registered schema
+        to ``field_subset`` (so the LLM only emits requested fields), then runs
+        the same pipeline as :meth:`extract`.
+        """
+        from app.models.resources import Attachment
+        from app.services import storage_router
+
+        if not attachment_id:
+            raise AppException(
+                status_code=400,
+                message="attachment_id is required.",
+                code="ai_extract_no_attachment",
+            )
+        row = (
+            self.db.query(Attachment)
+            .filter(Attachment.id == attachment_id, Attachment.is_deleted.is_(False))
+            .first()
+        )
+        if row is None:
+            raise AppException(
+                status_code=404,
+                message="Attachment not found.",
+                code="ai_extract_attachment_not_found",
+            )
+        key = storage_router.extract_key(row.file_path)
+        if not key:
+            raise AppException(
+                status_code=400,
+                message="Attachment has no storage key.",
+                code="ai_extract_attachment_no_key",
+            )
+        try:
+            data = storage_router.get_backend(row.storage_provider).download_file(key)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "ai_extract attachment download failed (id=%s): %s", attachment_id, exc
+            )
+            raise AppException(
+                status_code=502,
+                message="Failed to load attachment bytes from storage.",
+                code="ai_extract_attachment_download_failed",
+            ) from exc
+
+        files = [
+            ExtractFile(
+                filename=row.original_filename or row.stored_filename or "attachment",
+                mime=(row.mime_type or "").lower(),
+                data=data,
+            )
+        ]
+        return self._run_extract(
+            form_key,
+            files,
+            field_subset=field_subset,
+            user_id=user_id,
+            portal_contact_id=None,
+        )
+
     def extract(
         self,
         form_key: str,
@@ -146,6 +215,23 @@ class AIExtractService:
         user_id: str | None = None,
         portal_contact_id: str | None = None,
     ) -> ExtractResult:
+        return self._run_extract(
+            form_key,
+            files,
+            field_subset=None,
+            user_id=user_id,
+            portal_contact_id=portal_contact_id,
+        )
+
+    def _run_extract(
+        self,
+        form_key: str,
+        files: list[ExtractFile],
+        *,
+        field_subset: list[str] | None,
+        user_id: str | None,
+        portal_contact_id: str | None,
+    ) -> ExtractResult:
         if not files:
             raise AppException(
                 status_code=400,
@@ -153,6 +239,18 @@ class AIExtractService:
                 code="ai_extract_no_files",
             )
         schema = get_form_schema(form_key)
+        if field_subset:
+            wanted = set(field_subset)
+            schema = [f for f in schema if f.name in wanted]
+            if not schema:
+                raise AppException(
+                    status_code=400,
+                    message=(
+                        f"None of the requested field_keys are registered for "
+                        f"{form_key}: {', '.join(sorted(wanted))}"
+                    ),
+                    code="ai_extract_unknown_fields",
+                )
         guidance = self._build_field_guidance(schema)
         image_parts = self._render_files(files)
         if not image_parts:

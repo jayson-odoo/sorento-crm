@@ -46,6 +46,26 @@ export interface Product {
   category?: ProductCategory;
   brand?: Brand;
   base_uom?: UnitOfMeasure;
+
+  // Map of product field name (e.g. "weight", "dimensions_length") to the
+  // attachments linked to that field. Populated by the backend when at least
+  // one attachment has been linked to a field on this row. Used by the
+  // Specifications tooltip to surface preview + AI Extract per field.
+  field_attachments?: Record<string, ProductFieldAttachment[]> | null;
+}
+
+export interface ProductFieldAttachment {
+  id: string;
+  original_filename: string;
+  stored_filename: string;
+  file_path: string;
+  file_size_bytes?: number | null;
+  mime_type?: string | null;
+  uploaded_at: string;
+  created_at: string;
+  attachment_type?: { id: string; type_name: string } | null;
+  full_directory_path?: string | null;
+  access_levels?: string[] | null;
 }
 
 // Product Category Interface

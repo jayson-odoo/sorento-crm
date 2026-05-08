@@ -40,7 +40,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "dimensions_width (alias: width), dimensions_height (alias: height), largest_dimension "
             "(GREATEST of L/W/H — use for 'biggest product on any side'), smallest_dimension. "
             "Combine with dir=asc|desc. NULL dimensions sort to the bottom either way. "
-            "Each row also returns `currency` (default MYR) — render prices using that code, never $."
+            "Each row also returns `currency` (default MYR) — render prices using that code, never $. "
+            "Each row may include `field_attachments` — a map of product field name (e.g. `weight`, "
+            "`dimensions_length`) to an array of linked docs ({id, original_filename, file_path, "
+            "mime_type, attachment_type}). When the user asks about a value that has linked docs, "
+            "answer from the value AND surface the doc in one go instead of fetching "
+            "`crm_product_attachments_*` separately."
         ),
         "/api/v1/master-data/products",
         (),
@@ -68,7 +73,13 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_master_products_get",
-        "Get one product full detail record. `product_id` accepts UUID or product_code (SKU). For keyword searches like 'bathtubs' or product names, use crm_master_products_list with query.",
+        (
+            "Get one product full detail record. `product_id` accepts UUID or product_code (SKU). "
+            "For keyword searches like 'bathtubs' or product names, use crm_master_products_list with query. "
+            "Response may include `field_attachments` — a map of product field name "
+            "(e.g. `weight`, `dimensions_length`) to an array of linked docs. Use it to answer "
+            "dimensions / weight / warranty questions without a second `crm_product_attachments_*` call."
+        ),
         "/api/v1/master-data/products/{product_id}",
         ("product_id",),
         (),
@@ -166,7 +177,13 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_master_product_attachments_by_product",
-        "All attachment links for a product. `product_id` accepts a product UUID or exact product code.",
+        (
+            "All attachment links for a product. `product_id` accepts a product UUID, an exact "
+            "product_code (SKU), or a free-text search term (LIKE on product_code, product_name, "
+            "description) — same matcher as crm_master_products_list. When the term resolves to a "
+            "single product, the attachments are returned; ambiguous matches return a candidate "
+            "list with `id` + `product_code` so the caller can re-issue with a precise reference."
+        ),
         "/api/v1/master-data/product-attachments/product/{product_id}",
         ("product_id",),
         ("user_type",),

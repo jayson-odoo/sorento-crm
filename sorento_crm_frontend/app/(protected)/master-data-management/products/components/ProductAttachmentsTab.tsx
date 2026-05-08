@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, LoaderCircleIcon, Eye, Download, Folder, ChevronDown, FolderOpen } from 'lucide-react';
+import { Plus, Trash2, LoaderCircleIcon, Eye, Download, Folder, ChevronDown, FolderOpen, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,8 +15,11 @@ import type { ProductAttachment } from '../../product-attachments/types/productA
 import { formatDate } from '@/lib/helpers';
 import LinkAttachmentBrowserDialog from './LinkAttachmentBrowserDialog';
 import AttachmentDetailModal from '@/app/(protected)/resource-management/attachments/components/AttachmentDetailModal';
+import ManageFieldLinksDialog from '@/app/(protected)/resource-management/attachments/components/ManageFieldLinksDialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
+import { useFieldLinkageSchema } from '../hooks/useFieldLinkageSchema';
+import { useProduct } from '../hooks/useProducts';
 
 function attachmentDirectoriesHref(directoryId: string | null | undefined): string {
   const base = '/resource-management/attachment-directories';
@@ -36,11 +39,39 @@ export default function ProductAttachmentsTab({
   const queryClient = useQueryClient();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [detailModalAttachmentId, setDetailModalAttachmentId] = useState<string | null>(null);
+  const [manageLinksFor, setManageLinksFor] = useState<{ attachmentId: string; initialKeys: string[] } | null>(null);
 
   // Fetch existing product attachments
   const { data: productAttachments, isLoading: isLoadingAttachments } = useProductAttachmentsByProduct(productId || null);
+  const { data: productDetail } = useProduct(productId || null);
+  const { data: fieldLinkageSchema } = useFieldLinkageSchema('product');
   const downloadMutation = useDownloadAttachment();
   const deleteMutation = useDeleteProductAttachment();
+
+  // Build a per-attachment field-key list from the product's `field_attachments`
+  // map. The map is keyed by field_key, so we invert it once.
+  const fieldKeysByAttachmentId = useMemo(() => {
+    const out = new Map<string, string[]>();
+    const fa = productDetail?.field_attachments;
+    if (!fa) return out;
+    for (const [fieldKey, atts] of Object.entries(fa)) {
+      for (const att of atts ?? []) {
+        const arr = out.get(att.id) ?? [];
+        if (!arr.includes(fieldKey)) arr.push(fieldKey);
+        out.set(att.id, arr);
+      }
+    }
+    return out;
+  }, [productDetail]);
+
+  // Map field_key -> human label from the registry; used to render badges.
+  const fieldLabelByKey = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const f of fieldLinkageSchema?.fields ?? []) {
+      out.set(f.name, f.label);
+    }
+    return out;
+  }, [fieldLinkageSchema]);
 
   const handleDownload = async (attachmentId: string, filename: string) => {
     try {
@@ -132,7 +163,10 @@ export default function ProductAttachmentsTab({
     return entries;
   }, [productAttachments]);
 
-  const renderAttachmentItem = (pa: ProductAttachment) => (
+  const renderAttachmentItem = (pa: ProductAttachment) => {
+    const attachmentId = pa.attachment?.id;
+    const fieldKeys = attachmentId ? (fieldKeysByAttachmentId.get(attachmentId) ?? []) : [];
+    return (
     <div
       key={pa.id}
       className="flex items-center justify-between rounded-lg border p-4"
@@ -151,6 +185,15 @@ export default function ProductAttachmentsTab({
             {pa.attachment?.uploaded_at && formatDate(new Date(pa.attachment.uploaded_at))}
           </p>
           {renderAccessLevels(pa.attachment?.access_levels ?? pa.access_levels)}
+          {fieldKeys.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5" data-testid={`attachment-field-badges-${pa.id}`}>
+              {fieldKeys.map((key) => (
+                <Badge key={key} variant="primary" className="text-[10px]">
+                  {fieldLabelByKey.get(key) ?? key}
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <div className="flex gap-2">
@@ -167,6 +210,24 @@ export default function ProductAttachmentsTab({
           </TooltipTrigger>
           <TooltipContent>View attachment details</TooltipContent>
         </Tooltip>
+        {isEditMode && attachmentId && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  setManageLinksFor({ attachmentId, initialKeys: fieldKeys })
+                }
+                data-testid={`manage-field-links-${pa.id}`}
+              >
+                <Settings2 className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Manage field links</TooltipContent>
+          </Tooltip>
+        )}
         <Button
           type="button"
           variant="ghost"
@@ -204,7 +265,8 @@ export default function ProductAttachmentsTab({
         )}
       </div>
     </div>
-  );
+    );
+  };
 
   const renderDirectoryGroups = () => (
     <div className="space-y-3">
@@ -269,6 +331,19 @@ export default function ProductAttachmentsTab({
           neighbourItems={attachmentNeighbourItems.map((id) => ({ id }))}
           onAttachmentChange={setDetailModalAttachmentId}
         />
+        {productId && manageLinksFor && (
+          <ManageFieldLinksDialog
+            open={manageLinksFor != null}
+            onOpenChange={(open) => !open && setManageLinksFor(null)}
+            productId={productId}
+            attachmentId={manageLinksFor.attachmentId}
+            initialFieldKeys={manageLinksFor.initialKeys}
+            onSaved={() => {
+              queryClient.invalidateQueries({ queryKey: ['product', productId] });
+              setManageLinksFor(null);
+            }}
+          />
+        )}
       </>
     );
   }
@@ -317,6 +392,19 @@ export default function ProductAttachmentsTab({
         neighbourItems={attachmentNeighbourItems.map((id) => ({ id }))}
         onAttachmentChange={setDetailModalAttachmentId}
       />
+      {productId && manageLinksFor && (
+        <ManageFieldLinksDialog
+          open={manageLinksFor != null}
+          onOpenChange={(open) => !open && setManageLinksFor(null)}
+          productId={productId}
+          attachmentId={manageLinksFor.attachmentId}
+          initialFieldKeys={manageLinksFor.initialKeys}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ['product', productId] });
+            setManageLinksFor(null);
+          }}
+        />
+      )}
     </>
   );
 }

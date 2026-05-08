@@ -4,9 +4,52 @@ import re
 import uuid
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func
-from typing import Any, Optional, List, Callable, Tuple
+from typing import Any, Optional, List, Callable, Tuple, Iterable
 from decimal import Decimal
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure, ProductAttachment
+
+
+def _populate_field_attachments(db: Session, products: Iterable[Product]) -> None:
+    """Attach a transient ``field_attachments`` dict to each product.
+
+    Pydantic ``ProductResponse`` reads it via ``from_attributes=True``. The map
+    has shape ``{field_key: [AttachmentSimple-shaped dict, ...]}`` and is set
+    only when at least one attachment is linked to a field on the row.
+    """
+    from app.services.attachment_field_link_service import AttachmentFieldLinkService
+    from app.schemas.product import AttachmentSimple
+
+    rows = list(products)
+    ids = [str(p.id) for p in rows if getattr(p, "id", None)]
+    if not ids:
+        return
+    by_row = AttachmentFieldLinkService(db).get_field_attachments_for_rows(
+        "product", ids
+    )
+    if not by_row:
+        for p in rows:
+            try:
+                setattr(p, "field_attachments", None)
+            except Exception:
+                pass
+        return
+    for p in rows:
+        per_field = by_row.get(str(p.id))
+        if not per_field:
+            try:
+                setattr(p, "field_attachments", None)
+            except Exception:
+                pass
+            continue
+        out: dict[str, list[dict]] = {}
+        for field_key, atts in per_field.items():
+            out[field_key] = [
+                AttachmentSimple.model_validate(a).model_dump() for a in atts
+            ]
+        try:
+            setattr(p, "field_attachments", out or None)
+        except Exception:
+            pass
 
 
 # Match three numbers separated by 'x' / 'X' / '×' (with optional spaces) and optional unit (mm/cm/m).
@@ -264,6 +307,7 @@ class ProductService:
             .limit(limit)
             .all()
         )
+        _populate_field_attachments(self.db, products)
 
         return {
             "data": products,
@@ -293,8 +337,9 @@ class ProductService:
         )
         if not product:
             raise handle_not_found("Product", product_id)
+        _populate_field_attachments(self.db, [product])
         return product
-    
+
     def _system_settings_row(self) -> Optional[SystemSetting]:
         return self.db.query(SystemSetting).first()
 

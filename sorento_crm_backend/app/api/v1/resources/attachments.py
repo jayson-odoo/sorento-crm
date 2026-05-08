@@ -314,6 +314,14 @@ async def create_attachment(
     entity_id: Optional[str] = Form(None),
     directory_id: Optional[str] = Form(None),
     access_levels: Optional[str] = Form(None),
+    target_entity_type: Optional[str] = Form(
+        None,
+        description="Field-linkage template: target table this doc describes (product/promotion/packing_list/form). Used to fan field links when later linked to a row.",
+    ),
+    target_field_keys: Optional[str] = Form(
+        None,
+        description="Field-linkage template: JSON array of field keys this doc answers (validated against the registry).",
+    ),
     current_user: dict = Depends(require_permission("resource.attachments.upload")),
     db: Session = Depends(get_db)
 ):
@@ -442,6 +450,27 @@ async def create_attachment(
         if not access_levels_payload:
             access_levels_payload = access_svc.get_default_access_levels()
 
+        # Field-linkage template: target_entity_type + target_field_keys (JSON array).
+        target_entity_type_clean = (target_entity_type or "").strip() or None
+        target_field_keys_parsed: Optional[list[str]] = None
+        if target_field_keys:
+            try:
+                parsed_keys = json.loads(target_field_keys)
+                if isinstance(parsed_keys, list):
+                    target_field_keys_parsed = [
+                        str(k).strip() for k in parsed_keys if str(k).strip()
+                    ] or None
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="target_field_keys must be a JSON array of strings.",
+                    )
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="target_field_keys must be valid JSON.",
+                )
+
         # Create attachment record. file_path stored as CDN base URL for consistency with other attachments.
         attachment_data = AttachmentCreate(
             attachment_type_id=type_id,
@@ -456,6 +485,8 @@ async def create_attachment(
             directory_id=directory_id,
             access_levels=access_levels_payload,
             storage_provider=provider,
+            target_entity_type=target_entity_type_clean,
+            target_field_keys=target_field_keys_parsed,
         )
 
         service = AttachmentService(db)

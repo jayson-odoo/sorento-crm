@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { ChevronDown, Download, ExternalLink, Eye, Link2, LoaderCircleIcon, Plus, RefreshCw, Trash2, Unlink } from 'lucide-react';
+import { ChevronDown, Download, ExternalLink, Eye, Link2, LoaderCircleIcon, Plus, RefreshCw, SlidersHorizontal, Trash2, Unlink } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -46,6 +46,7 @@ import type { Attachment } from '../types/attachment.types';
 import type { LinkedEntityRef } from '../types/attachment.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
+import ManageFieldLinksDialog from './ManageFieldLinksDialog';
 import { useCreateProductAttachment, useDeleteProductAttachment } from '@/app/(protected)/master-data-management/product-attachments/hooks/useProductAttachments';
 import { useCreatePromotionAttachment, useDeletePromotionAttachment } from '@/app/(protected)/marketing-management/promotion-attachments/hooks/usePromotionAttachments';
 import { useForms } from '@/app/(protected)/forms-management/forms/hooks/useForms';
@@ -83,6 +84,7 @@ function LinkagesTable({
   const hasLinkId = type === 'product' || type === 'promotion';
   const canUnlink = hasLinkId ? (item: LinkedEntityRef) => !!item.link_id : (item: LinkedEntityRef) => true;
   const canUnlinkPackingList = true;
+  const [manageFieldLinksFor, setManageFieldLinksFor] = useState<string | null>(null);
 
   return (
     <div className="space-y-3">
@@ -101,7 +103,7 @@ function LinkagesTable({
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Description</TableHead>
-              <TableHead className="w-[140px]">Action</TableHead>
+              <TableHead className="w-[180px]">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -122,6 +124,18 @@ function LinkagesTable({
                       View
                       <ExternalLink className="size-3.5 shrink-0" />
                     </Link>
+                    {type === 'product' && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setManageFieldLinksFor(item.id)}
+                        title="Manage field links"
+                        data-testid={`linkages-manage-field-links-${item.id}`}
+                      >
+                        <SlidersHorizontal className="size-3.5" />
+                        Fields
+                      </Button>
+                    )}
                     {onUnlink && (type === 'packing_list' ? canUnlinkPackingList : canUnlink(item)) && (
                       <Button
                         variant="ghost"
@@ -139,6 +153,18 @@ function LinkagesTable({
             ))}
           </TableBody>
         </Table>
+      )}
+      {type === 'product' && manageFieldLinksFor && (
+        <ManageFieldLinksDialog
+          open={!!manageFieldLinksFor}
+          onOpenChange={(open) => !open && setManageFieldLinksFor(null)}
+          productId={manageFieldLinksFor}
+          attachmentId={attachmentId}
+          onSaved={() => {
+            setManageFieldLinksFor(null);
+            refetch();
+          }}
+        />
       )}
     </div>
   );

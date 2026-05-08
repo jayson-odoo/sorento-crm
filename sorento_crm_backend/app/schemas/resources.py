@@ -87,10 +87,53 @@ class AttachmentBase(BaseModel):
     access_levels: Optional[list[str]] = None  # e.g. ["dealer", "end_user"]
     sort_order: Optional[int] = None
     storage_provider: Optional[str] = None  # 's3' or 'r2'; controls URL signing dispatch
+    # Field-linkage template applied when the attachment is later linked to a
+    # specific row via any link API. See app.services.field_linkage.registry.
+    target_entity_type: Optional[str] = None
+    target_field_keys: Optional[list[str]] = None
+
+
+def _validate_field_linkage_template(target_entity_type, target_field_keys):
+    """Shared validator used on both AttachmentCreate and AttachmentUpdate.
+
+    Empty inputs are tolerated: the template is opt-in. When a target_entity_type
+    is given without keys (or vice versa) we leave the row in a partial state —
+    it just won't fan out anything until a future PUT completes the pair.
+    """
+    from app.services.field_linkage import (
+        SUPPORTED_ENTITY_TYPES,
+        validate_field_keys,
+    )
+
+    et = (target_entity_type or "").strip() or None
+    if et and et not in SUPPORTED_ENTITY_TYPES:
+        raise ValueError(
+            f"Unsupported target_entity_type '{et}'. "
+            f"Expected one of: {', '.join(SUPPORTED_ENTITY_TYPES)}."
+        )
+    if target_field_keys and et:
+        ok, unknown = validate_field_keys(et, list(target_field_keys))
+        if unknown:
+            raise ValueError(
+                f"Unknown target_field_keys for {et}: {', '.join(unknown)}"
+            )
+        return et, ok
+    if target_field_keys and not et:
+        raise ValueError(
+            "target_entity_type is required when target_field_keys are provided."
+        )
+    return et, list(target_field_keys or [])
 
 
 class AttachmentCreate(AttachmentBase):
-    pass
+    @model_validator(mode="after")
+    def _check_field_linkage_template(self):
+        et, keys = _validate_field_linkage_template(
+            self.target_entity_type, self.target_field_keys
+        )
+        object.__setattr__(self, "target_entity_type", et)
+        object.__setattr__(self, "target_field_keys", keys or None)
+        return self
 
 
 class AttachmentUpdate(BaseModel):
@@ -105,6 +148,21 @@ class AttachmentUpdate(BaseModel):
     # Updating this does NOT touch S3 — the underlying object key (stored_filename / file_path)
     # is immutable so existing CDN URLs keep resolving.
     original_filename: Optional[str] = None
+    target_entity_type: Optional[str] = None
+    target_field_keys: Optional[list[str]] = None
+
+    @model_validator(mode="after")
+    def _check_field_linkage_template(self):
+        # Only validate when one of the two is explicitly provided. PATCH-style:
+        # both None means "don't touch the template".
+        if self.target_entity_type is None and self.target_field_keys is None:
+            return self
+        et, keys = _validate_field_linkage_template(
+            self.target_entity_type, self.target_field_keys
+        )
+        self.target_entity_type = et
+        self.target_field_keys = keys or None
+        return self
 
     @field_validator("original_filename", mode="before")
     @classmethod

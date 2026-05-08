@@ -157,7 +157,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h1 className="text-2xl font-bold">
-            {complaint.delivery_order_number || 'Complaint Details'}
+            {complaint.complaint_number || 'None'}
           </h1>
           <p className="text-sm text-muted-foreground">
             Complaint Date:{' '}

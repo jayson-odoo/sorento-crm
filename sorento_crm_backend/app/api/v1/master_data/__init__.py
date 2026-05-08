@@ -1,6 +1,17 @@
 """Master data API routes."""
 from fastapi import APIRouter
-from app.api.v1.master_data import products, brands, categories, units_of_measure, products_select, product_attachments, lookup_sets, lookup_eligibility
+from app.api.v1.master_data import (
+    products,
+    brands,
+    categories,
+    units_of_measure,
+    products_select,
+    product_attachments,
+    lookup_sets,
+    lookup_eligibility,
+    field_linkage,
+    ai_extract_field,
+)
 
 router = APIRouter()
 
@@ -12,3 +23,13 @@ router.include_router(units_of_measure.router, prefix="/units-of-measure", tags=
 router.include_router(product_attachments.router, prefix="/product-attachments", tags=["product-attachments"])
 router.include_router(lookup_sets.router, prefix="/lookup-sets", tags=["lookup-sets"])
 router.include_router(lookup_eligibility.router, prefix="/lookup-eligibility", tags=["lookup-eligibility"])
+router.include_router(
+    field_linkage.router,
+    prefix="/field-linkage-schema",
+    tags=["field-linkage-schema"],
+)
+router.include_router(
+    ai_extract_field.router,
+    prefix="/ai-extract-field",
+    tags=["ai-extract-field"],
+)

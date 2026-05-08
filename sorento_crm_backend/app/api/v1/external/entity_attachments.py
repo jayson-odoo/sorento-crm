@@ -9,8 +9,10 @@ from app.schemas.external.attachments import (
     EntityAttachmentLinkResponse,
 )
 from app.services.entity_attachment_service import EntityAttachmentService
+from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.models.complaints import Complaint
 from app.models.procurement import StockInquiry, PurchaseRequestHeader
+from app.models.resources import Attachment
 
 router = APIRouter()
 
@@ -76,6 +78,31 @@ def link_entity_attachment(
     )
     db.commit()
     db.refresh(link)
+
+    # Fan attachment template (or explicit field_keys override) into per-row
+    # attachment_field_links. Tolerated as best-effort — never fail the link.
+    try:
+        attachment_row = (
+            db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
+        )
+        AttachmentFieldLinkService(db).apply_template_to_row(
+            attachment_row or str(link.attachment_id),
+            entity_type,
+            entity_id,
+            override_keys=getattr(payload, "field_keys", None),
+            created_by=created_by,
+        )
+        db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Field-link fan-out failed for attachment=%s entity=%s/%s: %s",
+            link.attachment_id,
+            entity_type,
+            entity_id,
+            e,
+            exc_info=True,
+        )
     return EntityAttachmentLinkResponse(
         attachment_id=str(link.attachment_id),
         link_id=str(link.id),

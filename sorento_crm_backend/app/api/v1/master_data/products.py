@@ -3,11 +3,13 @@ import logging
 import time
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.product_service import ProductService
+from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, BulkImportProductsRequest, BulkDeleteProductsRequest
 from app.schemas.common import ListResponse, ErrorResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
@@ -236,6 +238,67 @@ async def delete_product(
         service = ProductService(db)
         result = service.delete_product(product_id)
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+class _FieldLinksBody(BaseModel):
+    field_keys: List[str] = []
+
+
+@router.get("/{product_id}/attachments/{attachment_id}/field-links", status_code=status.HTTP_200_OK)
+async def get_product_attachment_field_links(
+    product_id: str,
+    attachment_id: str,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Read the per-row field keys currently linked to one product +
+    attachment. Used by the FE Manage-field-links dialog to populate the
+    initial selection."""
+    try:
+        product = ProductService(db).get_product(product_id)
+        pid = str(product.get("id") if isinstance(product, dict) else getattr(product, "id"))
+        rows = AttachmentFieldLinkService(db).list_for_attachment_and_row(
+            attachment_id, "product", pid
+        )
+        return {
+            "product_id": pid,
+            "attachment_id": attachment_id,
+            "field_keys": sorted({r.field_key for r in rows}),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{product_id}/attachments/{attachment_id}/field-links", status_code=status.HTTP_200_OK)
+async def set_product_attachment_field_links(
+    product_id: str,
+    attachment_id: str,
+    body: _FieldLinksBody = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Idempotently replace the per-row field-link rows for one product +
+    attachment with ``body.field_keys``."""
+    try:
+        # Resolve product UUID — accept SKU like other endpoints.
+        product = ProductService(db).get_product(product_id)
+        pid = str(product.get("id") if isinstance(product, dict) else getattr(product, "id"))
+        service = AttachmentFieldLinkService(db)
+        keys = service.set_links(
+            "product",
+            pid,
+            attachment_id,
+            body.field_keys,
+            created_by=current_user.get("id") if isinstance(current_user, dict) else None,
+        )
+        db.commit()
+        return {"product_id": pid, "attachment_id": attachment_id, "field_keys": keys}
     except HTTPException:
         raise
     except Exception as e:

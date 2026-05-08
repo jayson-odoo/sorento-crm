@@ -15,6 +15,7 @@ export interface ComplaintAttachment {
 
 export interface Complaint {
   id: string;
+  complaint_number?: string | null;
   delivery_order_number?: string | null;
   complaint_date?: Date | null;
   customer_type?: string | null;

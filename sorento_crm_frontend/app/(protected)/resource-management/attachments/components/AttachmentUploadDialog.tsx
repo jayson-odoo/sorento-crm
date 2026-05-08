@@ -25,6 +25,11 @@ import { useUploadAttachment, useAttachmentTypesList } from '../hooks/useAttachm
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 import { toast } from 'sonner';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+import {
+  groupFieldSpecs,
+  useFieldLinkageSchema,
+  type FieldLinkageEntityType,
+} from '@/app/(protected)/master-data-management/products/hooks/useFieldLinkageSchema';
 
 interface AttachmentUploadDialogProps {
   open: boolean;
@@ -53,6 +58,14 @@ export default function AttachmentUploadDialog({
   const [validationError, setValidationError] = useState<string>('');
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [isUploading, setIsUploading] = useState(false);
+  // Field-linkage template (shown only when there's no entity_type forced
+  // by the parent; e.g. opened from Resource Management → Files).
+  const [targetEntityType, setTargetEntityType] = useState<FieldLinkageEntityType | ''>('');
+  const [targetFieldKeys, setTargetFieldKeys] = useState<string[]>([]);
+  const showFieldLinkageSection = !propEntityType;
+  const { data: fieldLinkageSchema } = useFieldLinkageSchema(
+    showFieldLinkageSection && targetEntityType ? targetEntityType : null,
+  );
 
   const { data: attachmentTypes = [], isLoading: isLoadingTypes } = useAttachmentTypesList();
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
@@ -72,8 +85,15 @@ export default function AttachmentUploadDialog({
       setValidationError('');
       setUploadProgress({});
       setIsUploading(false);
+      setTargetEntityType('');
+      setTargetFieldKeys([]);
     }
   }, [open, propEntityType, propEntityId, defaultAccessLevels.join(',')]);
+
+  // When the user changes target_entity_type, clear any stale field selection.
+  useEffect(() => {
+    setTargetFieldKeys([]);
+  }, [targetEntityType]);
 
   useEffect(() => {
     if (accessLevels.length === 0 && defaultAccessLevels.length > 0) {
@@ -270,6 +290,11 @@ export default function AttachmentUploadDialog({
             entityId: entityId || propEntityId || undefined,
             accessLevels,
             directoryId: defaultDirectoryId ?? undefined,
+            targetEntityType: showFieldLinkageSection && targetEntityType ? targetEntityType : null,
+            targetFieldKeys:
+              showFieldLinkageSection && targetEntityType && targetFieldKeys.length > 0
+                ? targetFieldKeys
+                : null,
           });
           
           uploadedIds.push(attachment.id);
@@ -440,6 +465,117 @@ export default function AttachmentUploadDialog({
               )}
             </div>
           </div>
+
+          {showFieldLinkageSection && (
+            <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+              <div className="space-y-2">
+                <Label htmlFor="link-to">Linked to</Label>
+                <Select
+                  value={targetEntityType || 'none'}
+                  onValueChange={(value) => {
+                    if (value === 'none') {
+                      setTargetEntityType('');
+                    } else {
+                      setTargetEntityType(value as FieldLinkageEntityType);
+                    }
+                  }}
+                >
+                  <SelectTrigger id="link-to" data-testid="upload-link-to-trigger">
+                    <SelectValue placeholder="(Optional) pick the table this document describes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Not linked</SelectItem>
+                    <SelectItem value="product">Product</SelectItem>
+                    <SelectItem value="promotion">Promotion</SelectItem>
+                    <SelectItem value="form">Form</SelectItem>
+                    <SelectItem value="packing_list">Packing List</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Sets the table only. The actual row link is established later by n8n
+                  (or manually from the attachment&apos;s Linkages tab).
+                </p>
+              </div>
+
+              {targetEntityType && fieldLinkageSchema && fieldLinkageSchema.fields.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Linked Fields</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Tag the fields this document answers — they appear on the row&apos;s
+                    detail page tooltip and inline in the AI agent response.
+                  </p>
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {groupFieldSpecs(fieldLinkageSchema.fields).map((group) => {
+                      const isComposite = group.specs.length > 1;
+                      const allSelected = group.specs.every((s) =>
+                        targetFieldKeys.includes(s.name),
+                      );
+                      const someSelected = group.specs.some((s) =>
+                        targetFieldKeys.includes(s.name),
+                      );
+                      return (
+                        <div key={group.groupKey}>
+                          {isComposite && (
+                            <label className="flex items-center gap-2 text-sm font-medium">
+                              <Checkbox
+                                checked={
+                                  allSelected
+                                    ? true
+                                    : someSelected
+                                      ? 'indeterminate'
+                                      : false
+                                }
+                                onCheckedChange={() => {
+                                  setTargetFieldKeys((prev) => {
+                                    const set = new Set(prev);
+                                    if (allSelected) {
+                                      for (const s of group.specs) set.delete(s.name);
+                                    } else {
+                                      for (const s of group.specs) set.add(s.name);
+                                    }
+                                    return Array.from(set);
+                                  });
+                                }}
+                                data-testid={`upload-field-link-group-${group.groupKey}`}
+                              />
+                              {group.label}
+                            </label>
+                          )}
+                          <div className={isComposite ? 'pl-6 mt-1 space-y-1' : 'space-y-1'}>
+                            {group.specs.map((spec) => (
+                              <label
+                                key={spec.name}
+                                className="flex items-center gap-2 text-sm"
+                              >
+                                <Checkbox
+                                  checked={targetFieldKeys.includes(spec.name)}
+                                  onCheckedChange={() => {
+                                    setTargetFieldKeys((prev) => {
+                                      const set = new Set(prev);
+                                      if (set.has(spec.name)) set.delete(spec.name);
+                                      else set.add(spec.name);
+                                      return Array.from(set);
+                                    });
+                                  }}
+                                  data-testid={`upload-field-link-key-${spec.name}`}
+                                />
+                                <span>{spec.label}</span>
+                                {spec.unit && (
+                                  <span className="text-xs text-muted-foreground">
+                                    ({spec.unit})
+                                  </span>
+                                )}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label>Access Levels</Label>

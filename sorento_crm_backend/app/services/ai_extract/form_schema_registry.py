@@ -263,6 +263,26 @@ _PORTAL_SPONSORSHIP_FORM: list[ExtractFieldSpec] = [
 ]
 
 
+def _build_master_schema_from_field_linkage(entity_type: str) -> list[ExtractFieldSpec]:
+    """Translate :mod:`app.services.field_linkage.registry` FieldSpecs into
+    AI-extract ``ExtractFieldSpec`` so the per-attachment extract endpoint
+    shares one source of truth with the upload-time field picker."""
+    from app.services.field_linkage import get_field_specs as _get
+
+    out: list[ExtractFieldSpec] = []
+    for f in _get(entity_type):
+        kind = f.kind if f.kind in ("text", "number", "date") else "text"
+        out.append(
+            ExtractFieldSpec(
+                name=f.name,
+                label=f.label,
+                kind=kind,
+                note=f.extract_note,
+            )
+        )
+    return out
+
+
 FORM_SCHEMAS: dict[str, list[ExtractFieldSpec]] = {
     "portal.complaint": _PORTAL_COMPLAINT,
     "portal.stock_inquiry": _PORTAL_STOCK_INQUIRY,
@@ -271,9 +291,23 @@ FORM_SCHEMAS: dict[str, list[ExtractFieldSpec]] = {
 }
 
 
+# Registry-driven master form keys — built lazily so we don't import the
+# field_linkage registry at module load time (avoids import cycles during
+# Alembic discovery).
+_MASTER_FORM_KEY_TO_ENTITY: dict[str, str] = {
+    "master.product_fields": "product",
+    "master.promotion_fields": "promotion",
+    "master.packing_list_fields": "packing_list",
+    "master.form_fields": "form",
+}
+
+
 def get_form_schema(form_key: str) -> list[ExtractFieldSpec]:
     """Return the registered schema for ``form_key`` or raise ``KeyError``."""
     schema = FORM_SCHEMAS.get(form_key)
-    if schema is None:
+    if schema is not None:
+        return schema
+    entity_type = _MASTER_FORM_KEY_TO_ENTITY.get(form_key)
+    if entity_type is None:
         raise KeyError(form_key)
-    return schema
+    return _build_master_schema_from_field_linkage(entity_type)

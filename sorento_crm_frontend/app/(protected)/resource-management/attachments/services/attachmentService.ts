@@ -33,9 +33,21 @@ export async function uploadAttachment(
     entityId?: string;
     accessLevels?: string[];
     directoryId?: string | null;
+    /** Field-linkage template: target table this doc describes. */
+    targetEntityType?: string | null;
+    /** Field-linkage template: list of field keys this doc answers. */
+    targetFieldKeys?: string[] | null;
   }
 ): Promise<Attachment> {
-  const { attachmentTypeId, entityType, entityId, accessLevels, directoryId } = options;
+  const {
+    attachmentTypeId,
+    entityType,
+    entityId,
+    accessLevels,
+    directoryId,
+    targetEntityType,
+    targetFieldKeys,
+  } = options;
   const formData = new FormData();
   formData.append('file', file);
   if (attachmentTypeId) formData.append('attachment_type_id', attachmentTypeId);
@@ -44,6 +56,12 @@ export async function uploadAttachment(
   if (directoryId) formData.append('directory_id', directoryId);
   if (accessLevels && accessLevels.length > 0) {
     formData.append('access_levels', JSON.stringify(accessLevels));
+  }
+  if (targetEntityType) {
+    formData.append('target_entity_type', targetEntityType);
+  }
+  if (targetFieldKeys && targetFieldKeys.length > 0) {
+    formData.append('target_field_keys', JSON.stringify(targetFieldKeys));
   }
 
   const response = await apiFetch('/api/v1/resource-management/attachments', {

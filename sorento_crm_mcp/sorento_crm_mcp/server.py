@@ -62,6 +62,10 @@ _INCOMING_SHIPMENT_DETAIL_TOOLS: set[str] = {
     "crm_incoming_stock_shipment_attachment",
 }
 
+_PRODUCT_CODE_RESOLVABLE_TOOLS: set[str] = {
+    "crm_master_product_attachments_by_product",
+}
+
 
 def _normalize_query_value(value: str | None) -> str | None:
     if value is None:
@@ -158,6 +162,45 @@ def _match_incoming_shipment_candidates(rows: list[dict[str, Any]], identifier: 
     if exact_matches:
         return exact_matches
     return partial_matches
+
+
+async def _resolve_product_reference(client: Any, identifier: str) -> tuple[str | None, list[dict[str, Any]]]:
+    """Resolve a product code/name to its UUID via the products list endpoint.
+
+    Mirrors the wildcard search behaviour of `crm_master_products_list` (ILIKE on
+    product_code, product_name, description). Returns (resolved_uuid, candidates).
+    Resolved UUID is non-None only when the input matches exactly one product code,
+    or the search yields exactly one row. Otherwise candidates is returned so the
+    caller can surface a disambiguation hint.
+    """
+    candidate = identifier.strip()
+    if not candidate:
+        return None, []
+
+    list_raw = await client.get(
+        "/api/v1/master-data/products",
+        path_params={},
+        query={"query": candidate, "page": "1", "limit": "20"},
+        tool_name="crm_master_products_list",
+    )
+    data = _json_loads_safe(list_raw)
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return None, []
+    candidates = [r for r in rows if isinstance(r, dict)]
+    if not candidates:
+        return None, []
+
+    key = candidate.lower()
+    exact = [
+        r for r in candidates
+        if isinstance(r.get("product_code"), str) and r["product_code"].strip().lower() == key
+    ]
+    if len(exact) == 1 and exact[0].get("id"):
+        return str(exact[0]["id"]), candidates
+    if len(candidates) == 1 and candidates[0].get("id"):
+        return str(candidates[0]["id"]), candidates
+    return None, candidates
 
 
 async def _resolve_incoming_shipment_reference(client: Any, identifier: str) -> str | None:
@@ -280,6 +323,32 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
                 # (shipment number / container / BOL / invoice) even when MCP
                 # cannot resolve this input to one candidate.
                 continue
+            if spec.name in _PRODUCT_CODE_RESOLVABLE_TOOLS and p_name == "product_id":
+                resolved_pid, candidates = await _resolve_product_reference(client, p_val)
+                if resolved_pid:
+                    path_params[p_name] = resolved_pid
+                    continue
+                suggestions = [
+                    {
+                        "id": str(r.get("id")) if r.get("id") else None,
+                        "product_code": r.get("product_code"),
+                        "product_name": r.get("product_name"),
+                    }
+                    for r in candidates[:10]
+                ]
+                return json.dumps(
+                    {
+                        "message": (
+                            f"Could not uniquely resolve product '{p_val}' for tool '{spec.name}'."
+                        ),
+                        "suggestion": (
+                            "Re-call with the product UUID from `id` below, or a more specific "
+                            "product_code. Use crm_master_products_list with query for broader search."
+                        ),
+                        "code": "AMBIGUOUS_PRODUCT_REFERENCE" if suggestions else "PRODUCT_NOT_FOUND",
+                        "candidates": suggestions,
+                    }
+                )
             base_path = spec.path.replace(f"/{{{p_name}}}", "")
             list_spec = _list_spec_by_path(base_path)
             if list_spec:

@@ -11,6 +11,9 @@ class ProductAttachmentLinkRequest(BaseModel):
     sort_order: Optional[int] = None
     is_primary: Optional[bool] = None
     access_levels: Optional[List[str]] = None
+    # Field-linkage override. None = use the attachment's saved
+    # `target_field_keys` template. Empty list = no per-field links.
+    field_keys: Optional[List[str]] = None
 
 
 class ProductAttachmentBulkLinkRequest(BaseModel):
@@ -18,6 +21,7 @@ class ProductAttachmentBulkLinkRequest(BaseModel):
     products: List[str]
     access_levels: Optional[List[str]] = None
     notify_user_id: Optional[str] = None
+    field_keys: Optional[List[str]] = None
 
 
 class ProductAttachmentLinkRequestAny(BaseModel):
@@ -28,6 +32,7 @@ class ProductAttachmentLinkRequestAny(BaseModel):
     is_primary: Optional[bool] = None
     access_levels: Optional[List[str]] = None
     notify_user_id: Optional[str] = None
+    field_keys: Optional[List[str]] = None
 
     @field_validator("products", mode="after")
     @classmethod
@@ -82,6 +87,7 @@ class EntityAttachmentLinkRequest(BaseModel):
     file_name: Optional[str] = None
     file_size_bytes: Optional[int] = None
     attachment_type_code: Optional[str] = None
+    field_keys: Optional[List[str]] = None
 
 
 class EntityAttachmentLinkResponse(BaseModel):

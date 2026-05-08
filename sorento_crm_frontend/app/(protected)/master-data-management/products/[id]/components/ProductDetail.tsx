@@ -16,6 +16,7 @@ import ProductSuppliersTab from './ProductSuppliersTab';
 import ProductDeleteDialog from '../../components/product-delete-dialog';
 import RecordNavigation from '../../../../../../components/common/RecordNavigation';
 import AuditTrail from '@/components/audit/AuditTrail';
+import FieldAttachmentTooltip from './FieldAttachmentTooltip';
 
 interface ProductDetailProps {
   productId: string;
@@ -270,29 +271,67 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                       </div>
                       <div>
                         <p className="text-muted-foreground">Weight</p>
-                        <p className="font-medium">{product.weight != null ? product.weight : '-'}</p>
+                        <p className="font-medium flex items-center">
+                          {product.weight != null ? product.weight : '-'}
+                          <FieldAttachmentTooltip
+                            productId={productId}
+                            fieldKeys={['weight']}
+                            fieldLabel="Weight"
+                            fieldAttachments={product.field_attachments}
+                          />
+                        </p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">Dimensions (L × W × H)</p>
-                        <p className="font-medium">
+                        <p className="font-medium flex items-center">
                           {product.dimensions_length != null &&
                           product.dimensions_width != null &&
                           product.dimensions_height != null
                             ? `${product.dimensions_length} × ${product.dimensions_width} × ${product.dimensions_height}`
                             : '-'}
+                          <FieldAttachmentTooltip
+                            productId={productId}
+                            fieldKeys={['dimensions_length', 'dimensions_width', 'dimensions_height']}
+                            fieldLabel="Dimensions (L × W × H)"
+                            fieldAttachments={product.field_attachments}
+                          />
                         </p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">Warranty (Months)</p>
-                        <p className="font-medium">{product.warranty_months != null ? product.warranty_months : '-'}</p>
+                        <p className="font-medium flex items-center">
+                          {product.warranty_months != null ? product.warranty_months : '-'}
+                          <FieldAttachmentTooltip
+                            productId={productId}
+                            fieldKeys={['warranty_months']}
+                            fieldLabel="Warranty (Months)"
+                            fieldAttachments={product.field_attachments}
+                          />
+                        </p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">Reorder Level</p>
-                        <p className="font-medium">{product.reorder_level != null ? product.reorder_level : '-'}</p>
+                        <p className="font-medium flex items-center">
+                          {product.reorder_level != null ? product.reorder_level : '-'}
+                          <FieldAttachmentTooltip
+                            productId={productId}
+                            fieldKeys={['reorder_level']}
+                            fieldLabel="Reorder Level"
+                            fieldAttachments={product.field_attachments}
+                          />
+                        </p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">Reorder Quantity</p>
-                        <p className="font-medium">{product.reorder_quantity != null ? product.reorder_quantity : '-'}</p>
+                        <p className="font-medium flex items-center">
+                          {product.reorder_quantity != null ? product.reorder_quantity : '-'}
+                          <FieldAttachmentTooltip
+                            productId={productId}
+                            fieldKeys={['reorder_quantity']}
+                            fieldLabel="Reorder Quantity"
+                            fieldAttachments={product.field_attachments}
+                          />
+                        </p>
                       </div>
                     </div>
                   </div>

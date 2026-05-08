@@ -68,6 +68,13 @@ class Attachment(Base):
     sort_order = Column(Integer, nullable=True)
     # 's3' (legacy AWS S3 + CloudFront) or 'r2' (Cloudflare R2 + CDN). Drives URL signing dispatch.
     storage_provider = Column(String(16), nullable=False, server_default="s3")
+    # Field-linkage template: at upload time the user picks a target table
+    # (product / promotion / packing_list / form) and the field keys this
+    # document is expected to answer. When the attachment is later linked to a
+    # specific row via any link API, AttachmentFieldLinkService.apply_template_to_row
+    # fans these out into per-row attachment_field_links rows.
+    target_entity_type = Column(String(50), nullable=True)
+    target_field_keys = Column(JSONB, nullable=True)
 
     attachment_type = relationship("AttachmentType", back_populates="attachments")
     directory = relationship("AttachmentDirectory", back_populates="attachments")

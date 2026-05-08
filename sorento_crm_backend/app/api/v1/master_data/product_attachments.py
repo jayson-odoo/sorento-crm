@@ -69,6 +69,33 @@ async def create_product_attachment(
         service = ProductAttachmentService(db)
         created_by = str(current_user.get("id", "")) if current_user else None
         product_attachment = service.create_product_attachment(product_attachment_data, created_by=created_by)
+        # Fan the attachment's field-linkage template (set at upload time) into
+        # per-row attachment_field_links rows. Best-effort; never fail the link.
+        try:
+            from app.services.attachment_field_link_service import AttachmentFieldLinkService
+            from app.models.resources import Attachment
+
+            attachment_row = (
+                db.query(Attachment)
+                .filter(Attachment.id == product_attachment_data.attachment_id)
+                .first()
+            )
+            AttachmentFieldLinkService(db).apply_template_to_row(
+                attachment_row or product_attachment_data.attachment_id,
+                "product",
+                product_attachment_data.product_id,
+                created_by=created_by,
+            )
+            db.commit()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Field-link fan-out failed for product=%s attachment=%s: %s",
+                product_attachment_data.product_id,
+                product_attachment_data.attachment_id,
+                e,
+                exc_info=True,
+            )
         return product_attachment
     except HTTPException:
         raise

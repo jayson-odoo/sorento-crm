@@ -16,6 +16,7 @@ from app.schemas.external.attachments import (
 )
 from app.schemas.product import ProductAttachmentCreate, ProductAttachmentResponse
 from app.services.product_service import ProductAttachmentService
+from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment
 from app.services.attachment_notification_helper import (
@@ -116,6 +117,7 @@ def create_product_attachment(
             current_user,
             payload.access_levels,
             notify_user_id=getattr(payload, "notify_user_id", None),
+            field_keys_override=getattr(payload, "field_keys", None),
         )
 
     # Single link: ILIKE search on product_code (input: spaces removed, then used as pattern)
@@ -143,9 +145,28 @@ def create_product_attachment(
         access_levels=payload.access_levels,
     )
     service = ProductAttachmentService(db)
-    result = service.create_product_attachment(
-        data, created_by=None if current_user.get("id") == "system" else current_user["id"]
-    )
+    created_by = None if current_user.get("id") == "system" else current_user["id"]
+    result = service.create_product_attachment(data, created_by=created_by)
+    try:
+        AttachmentFieldLinkService(db).apply_template_to_row(
+            attachment,
+            "product",
+            product_id,
+            override_keys=payload.field_keys,
+            created_by=created_by,
+        )
+        db.commit()
+    except Exception as e:
+        # Field-link fan-out must never fail the upstream link itself; the
+        # link row is already committed and the user can recover via the
+        # per-row Manage field links endpoint.
+        logger.warning(
+            "Field-link fan-out failed for attachment=%s product=%s: %s",
+            payload.attachment_id,
+            product_id,
+            e,
+            exc_info=True,
+        )
     try:
         _notify_product_attachment_external(
             db,
@@ -167,8 +188,13 @@ def _link_attachment_to_products_bulk(
     current_user: dict,
     access_levels: list[str] | None = None,
     notify_user_id: str | None = None,
+    field_keys_override: list[str] | None = None,
 ) -> ProductAttachmentBulkLinkResponse:
     service = ProductAttachmentService(db)
+    field_link_service = AttachmentFieldLinkService(db)
+    attachment_row = (
+        db.query(Attachment).filter(Attachment.id == attachment_id).first()
+    )
     created_by = None if current_user.get("id") == "system" else current_user["id"]
     linked: list[ProductAttachmentBulkLinkItem] = []
     skipped_product_codes: list[str] = []
@@ -207,6 +233,23 @@ def _link_attachment_to_products_bulk(
             access_levels=access_levels,
         )
         service.create_product_attachment(data, created_by=created_by)
+        try:
+            field_link_service.apply_template_to_row(
+                attachment_row or attachment_id,
+                "product",
+                product_id,
+                override_keys=field_keys_override,
+                created_by=created_by,
+            )
+            db.commit()
+        except Exception as e:
+            logger.warning(
+                "Field-link fan-out failed for attachment=%s product=%s: %s",
+                attachment_id,
+                product_id,
+                e,
+                exc_info=True,
+            )
         linked.append(
             ProductAttachmentBulkLinkItem(product_id=product_id, product_code=product_code or code)
         )
@@ -258,4 +301,5 @@ def link_attachment_to_products(
         current_user,
         payload.access_levels,
         notify_user_id=getattr(payload, "notify_user_id", None),
+        field_keys_override=getattr(payload, "field_keys", None),
     )

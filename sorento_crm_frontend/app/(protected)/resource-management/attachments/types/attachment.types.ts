@@ -39,7 +39,18 @@ export interface Attachment {
   };
   entity_name?: string;
   attachment_type?: AttachmentTypeSimple | null;
+  // Field-linkage template chosen at upload time. When the attachment is
+  // later linked to a row via any link API, the backend fans this template
+  // out into per-row attachment_field_links rows.
+  target_entity_type?: FieldLinkageEntityType | null;
+  target_field_keys?: string[] | null;
 }
+
+export type FieldLinkageEntityType =
+  | 'product'
+  | 'promotion'
+  | 'packing_list'
+  | 'form';
 
 export interface AttachmentType {
   id: string;
@@ -98,4 +109,6 @@ export interface AttachmentResponse {
   deleted_at?: Date | string | null;
   deleted_by?: string | null;
   attachment_type?: AttachmentTypeSimple | null;
+  target_entity_type?: FieldLinkageEntityType | null;
+  target_field_keys?: string[] | null;
 }
