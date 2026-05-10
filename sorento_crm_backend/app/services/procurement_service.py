@@ -3463,15 +3463,33 @@ class PurchaseRequestService:
             )
             raise
 
+    def _resolve_approver_display_name(self, header: PurchaseRequestHeader) -> str:
+        """Resolve ``approved_by`` (CRM user id) to a human-readable display name.
+
+        Falls back to ``approver_email`` (public approval link) and finally to
+        ``"unknown"`` so the outbound message never leaks a UUID.
+        """
+        from app.models.user import User
+
+        approver_id = (getattr(header, "approved_by", None) or "").strip()
+        if approver_id:
+            user = (
+                self.db.query(User)
+                .filter(User.id == approver_id)
+                .first()
+            )
+            if user:
+                return (user.name or user.email or approver_id).strip() or approver_id
+        email = (getattr(header, "approver_email", None) or "").strip()
+        if email:
+            return email
+        return "unknown"
+
     def _notify_contact_on_approval_rejected(self, header: PurchaseRequestHeader) -> None:
         """Notify the linked Respond.io contact when a public approval flow rejects the request."""
         request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
         reason = (getattr(header, "approval_comments", None) or "").strip() or "no reason provided"
-        approver = (getattr(header, "approved_by", None) or "").strip() or (
-            (getattr(header, "approver_email", None) or "").strip()
-        )
-        if not approver:
-            approver = "unknown"
+        approver = self._resolve_approver_display_name(header)
         view_url = self._build_request_view_url(str(header.id))
         rt = getattr(header, "request_type", None) or ""
         if rt == "sponsorship_form":
@@ -3489,11 +3507,7 @@ class PurchaseRequestService:
     def _notify_contact_on_approval_approved(self, header: PurchaseRequestHeader) -> None:
         """Notify the linked Respond.io contact when a public approval flow approves the request."""
         request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
-        approver = (getattr(header, "approved_by", None) or "").strip() or (
-            (getattr(header, "approver_email", None) or "").strip()
-        )
-        if not approver:
-            approver = "unknown"
+        approver = self._resolve_approver_display_name(header)
         note = (getattr(header, "approval_comments", None) or "").strip()
         note_part = f" Note: {note}." if note else ""
         view_url = self._build_request_view_url(str(header.id))
@@ -4817,8 +4831,19 @@ class PurchaseRequestService:
         return {"message": f"Deleted {len(headers)} record(s)", "deleted_count": len(headers)}
 
     def set_pending_approval(self, request_id: str, requested_by_user_id: Optional[str] = None):
-        """Set request to pending approval (clears approval fields if previously approved/rejected). Returns updated header."""
+        """Set request to pending approval. Refuses when approval_status='rejected':
+        a rejected request must go back through the salesperson's portal re-submit
+        loop, not be force-moved to pending by the reviewer.
+        """
+        from app.services.error_handler import handle_conflict
+
         header = self.get_request(request_id)
+        current = (getattr(header, "approval_status", None) or "").strip().lower()
+        if current == "rejected":
+            raise handle_conflict(
+                "Cannot change to pending approval: request was rejected. "
+                "Salesperson must edit and re-submit from the portal."
+            )
         header.approval_status = "pending"
         header.approved_at = None
         header.approved_by = None

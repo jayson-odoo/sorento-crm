@@ -306,6 +306,27 @@ class ITSupportTicketCreateRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    @field_validator(
+        "respond_contact_id",
+        "source_conversation_id",
+        "source_message_id",
+        "source_space_id",
+        "actor_user_id",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_id_to_str(cls, v: Any) -> Optional[str]:
+        # n8n / OpenAI-style tool calls forward Respond.io ids as JSON numbers.
+        # Pydantic ``str`` field rejects int; coerce here so the alias paths
+        # ``contact_id`` / ``space_id`` accept either form.
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return str(int(v))
+        if isinstance(v, (int, float)):
+            return str(int(v)) if isinstance(v, float) and v.is_integer() else str(v)
+        return str(v).strip() or None
+
     @model_validator(mode="after")
     def _validate_minimum_payload(self) -> "ITSupportTicketCreateRequest":
         if not (self.original_message or self.title):

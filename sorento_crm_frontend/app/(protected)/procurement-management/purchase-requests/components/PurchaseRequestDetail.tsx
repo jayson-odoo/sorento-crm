@@ -283,17 +283,20 @@ export default function PurchaseRequestDetail({
   const isRejected = approvalStatusNorm === 'rejected';
   const isPendingApproval = approvalStatusNorm === 'pending';
   const isApprovedStatus = approvalStatusNorm === 'approved';
-  // "Change to pending approval" + "Reject" only after the salesperson has submitted
-  // from the portal (status='submitted'); while still in draft, salesperson owns the row.
+  // "Change to pending approval" + "Reject" only when the salesperson has
+  // submitted from the portal (status='submitted') AND no approval decision has
+  // been recorded yet. Once rejected, only the salesperson re-submits via the
+  // portal — reviewer cannot bypass that loop by moving straight to pending.
   const showPrimaryChangeToPending =
     isSubmittedLifecycle &&
     !isApprovedStatus &&
     !isPendingApproval &&
-    (isDraftLike || isRejected);
+    !isRejected &&
+    isDraftLike;
   const showPrimarySendForApproval =
     isPendingApproval && !isApprovedStatus;
   const showRejectSubmitted =
-    canSendForApproval && isSubmittedLifecycle && isDraftLike;
+    canSendForApproval && isSubmittedLifecycle && isDraftLike && !isRejected;
 
   return (
     <div className="space-y-6">
