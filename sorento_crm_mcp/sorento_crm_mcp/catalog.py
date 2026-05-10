@@ -1065,35 +1065,25 @@ CATALOG: tuple[ToolSpec, ...] = (
     # the MCP server. They still appear in the persisted catalog so admins can
     # toggle them for an AI assistant just like any other tool.
     ToolSpec(
-        "user_guides_search",
-        (
-            "Search Sorento CRM end-user how-to guides (Outline collection 'Sorento CRM'). "
-            "Use this whenever the user asks 'how do I…?' / 'how to…?' questions about CRM "
-            "actions: uploading a packing list, filing a stock inquiry from the portal, "
-            "approving a purchase request, flowing a stock inquiry to purchasing, sending a "
-            "sponsorship form for approval, etc. Returns the top matching guides with a "
-            "short snippet — call user_guides_read with one of the returned ids to get the "
-            "full markdown body before answering the user."
-        ),
-        "/outline/documents.search",  # synthetic; not hit over HTTP
-        (),
-        ("query", "limit"),
-        method="POST",
-        module="user_guides",
-        external=True,
-    ),
-    ToolSpec(
         "user_guides_read",
         (
-            "Read the full markdown body of one Sorento CRM user guide. Pass the doc id "
-            "returned by user_guides_search (UUID or url-id like "
-            "'portal-overview-aBcDe'). Returns the title, canonical doc.foundryx.my URL, "
-            "and the full markdown text — quote the relevant steps verbatim when you "
-            "answer the user, including the exact UI labels mentioned in the guide."
+            "Single-call how-to tool. Pass the user's natural-language question as `query` "
+            "(e.g. 'How do I upload a packing list?'); the tool searches the Sorento CRM "
+            "Outline collection ('Sorento CRM') and returns the full markdown body of the "
+            "best-matching guide in one round trip — no separate search call is needed. "
+            "Use whenever the user asks 'how do I…?', 'how to…?', 'where do I find…?', "
+            "'what's the process for…?', 'steps to…?' about CRM features (uploading a "
+            "packing list, filing a stock inquiry from the portal, approving a purchase "
+            "request, flowing a stock inquiry to purchasing, sending a sponsorship form "
+            "for approval, OTP / portal access, etc.). Quote the returned steps verbatim "
+            "and preserve inline markdown links exactly when answering the user. "
+            "If the caller already has an Outline doc id (UUID) or url-id (e.g. "
+            "'portal-overview-aBcDe'), pass it as `query` and the tool fetches the body "
+            "directly."
         ),
         "/outline/documents.info",  # synthetic; not hit over HTTP
         (),
-        ("identifier",),
+        ("query",),
         method="POST",
         module="user_guides",
         external=True,
@@ -1128,8 +1118,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "submit / raise a ticket / open a support request / report a "
             "problem / log a complaint with IT / get tech support. "
             "DO NOT USE for how-to questions ('how do I…', 'where is…', "
-            "'what are the steps to…') — those belong to user_guides_search "
-            "/ user_guides_read."
+            "'what are the steps to…') — those belong to user_guides_read."
         ),
         "/api/v1/external/it-support/tickets/",
         (),

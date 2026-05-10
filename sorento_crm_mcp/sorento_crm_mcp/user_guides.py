@@ -1,25 +1,26 @@
-"""User-guide tools for the MCP server.
+"""User-guide tool for the MCP server.
 
-Wraps the Outline API (https://doc.foundryx.my) so an n8n / WhatsApp agent can
-answer "how do I…?" questions by searching and reading the user guides we
-publish at the **Sorento CRM** collection.
+Wraps the Outline API (https://doc.foundryx.my) so an n8n / WhatsApp agent (or
+the in-app AI assistant) can answer "how do I…?" questions in a single call.
 
-Two tools are registered:
+One tool is registered:
 
-- ``user_guides_search`` — full-text search over the collection. Returns the
-  top matches (title, doc id, snippet).
-- ``user_guides_read`` — fetch the full markdown body of a single guide by
-  doc id (UUID) or url-id (e.g. ``portal-overview-AbCd``).
+- ``user_guides_read`` — given a free-text query OR an Outline doc id / url-id,
+  return the full markdown body of the most relevant guide. Internally this
+  does ``documents.search`` against the Sorento CRM collection and fetches the
+  top hit's body via ``documents.info``. If the input already looks like a
+  UUID or url-id, it skips search and goes straight to fetch.
 
-Tools are read-only and unauthenticated from the agent's perspective — the
-MCP server holds the Outline API token. They're intentionally kept simple so
-a plain JSON contract works for any LLM caller.
+The standalone ``user_guides_search`` tool was removed: callers always wanted
+the body, never the snippet list, and forcing a two-call flow (search → read)
+just added latency and a chance for the LLM to pick a wrong id from snippets.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -28,9 +29,16 @@ from sorento_crm_mcp.settings import Settings
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_LIMIT = 5
-_MAX_LIMIT = 25
 _BODY_PREVIEW_CHARS = 240
+_SEARCH_TOP_K = 3
+
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+# Outline url-ids look like 'portal-overview-A1bC' — slug + trailing short
+# alphanumeric token. Treat any single token of length 4..120 with no spaces
+# and at least one '-' as a candidate id.
+_URL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-_]{3,119}$")
 
 
 async def _outline_post(
@@ -74,123 +82,136 @@ def _build_doc_url(settings: Settings, url: str | None) -> str | None:
     return f"{base}{url}"
 
 
-async def search_user_guides_impl(
-    settings: Settings, query: str, limit: int | None = None
-) -> str:
-    if not query or not query.strip():
+def _looks_like_id(s: str) -> bool:
+    s = s.strip()
+    if " " in s:
+        return False
+    if _UUID_RE.match(s):
+        return True
+    # Treat as url-id only when there's a '-' and no whitespace/punctuation
+    # typical of a question (?, !, /, comma, period). This avoids mistaking
+    # 'how-do-i-upload' style queries for ids — those are full sentences in
+    # practice, not slugs.
+    if any(ch in s for ch in "?!,.\n\t/"):
+        return False
+    return bool("-" in s and _URL_ID_RE.match(s))
+
+
+async def _fetch_doc_body(settings: Settings, identifier: str) -> dict[str, Any]:
+    data = await _outline_post(settings, "documents.info", {"id": identifier.strip()})
+    doc = data.get("data") or {}
+    return {
+        "id": doc.get("id"),
+        "title": doc.get("title"),
+        "url": _build_doc_url(settings, doc.get("url")),
+        "url_id": doc.get("urlId"),
+        "updated_at": doc.get("updatedAt"),
+        "text": doc.get("text", ""),
+    }
+
+
+async def read_user_guide_impl(settings: Settings, query: str) -> str:
+    """Resolve `query` to a single guide body.
+
+    - If `query` looks like a UUID / url-id, fetch directly via documents.info.
+    - Otherwise run documents.search (top 3) against the Sorento CRM
+      collection, take the best-ranked hit, and fetch its body.
+    """
+    q = (query or "").strip()
+    if not q:
         return json.dumps(
-            {"error": "Query is required.", "code": "MISSING_QUERY"}
+            {"error": "query is required.", "code": "MISSING_QUERY"}
         )
-    bounded_limit = max(1, min(int(limit or _DEFAULT_LIMIT), _MAX_LIMIT))
+
+    if _looks_like_id(q):
+        try:
+            body = await _fetch_doc_body(settings, q)
+            return json.dumps(body)
+        except Exception as e:
+            logger.warning("user_guides_read direct fetch failed for %r: %s", q, e)
+            # Fall through to search — caller may have passed a slug-shaped
+            # natural language phrase (e.g. 'upload-packing-list').
     try:
-        data = await _outline_post(
+        search = await _outline_post(
             settings,
             "documents.search",
             {
-                "query": query.strip(),
+                "query": q,
                 "collectionId": settings.outline_collection_id,
-                "limit": bounded_limit,
+                "limit": _SEARCH_TOP_K,
             },
         )
     except Exception as e:
-        logger.warning("user_guides_search failed: %s", e)
+        logger.warning("user_guides_read search failed for %r: %s", q, e)
         return json.dumps({"error": str(e), "code": "OUTLINE_ERROR"})
 
-    rows = []
-    for hit in data.get("data", []):
-        doc = hit.get("document") or {}
-        rows.append(
+    hits = search.get("data") or []
+    if not hits:
+        return json.dumps(
             {
-                "id": doc.get("id"),
-                "title": doc.get("title"),
-                "url": _build_doc_url(settings, doc.get("url")),
-                "url_id": doc.get("urlId"),
-                "ranking": hit.get("ranking"),
-                "snippet": _short_preview(hit.get("context") or doc.get("text", "")),
+                "error": "No matching user guide.",
+                "code": "NO_MATCH",
+                "query": q,
             }
         )
-    return json.dumps(
-        {
-            "query": query.strip(),
-            "limit": bounded_limit,
-            "count": len(rows),
-            "results": rows,
-        }
-    )
 
-
-async def read_user_guide_impl(settings: Settings, identifier: str) -> str:
-    if not identifier or not identifier.strip():
+    top = hits[0] or {}
+    top_doc = top.get("document") or {}
+    top_id = top_doc.get("id") or top_doc.get("urlId")
+    if not top_id:
         return json.dumps(
-            {"error": "Identifier (doc id or url-id) is required.", "code": "MISSING_ID"}
+            {"error": "Outline returned a hit with no id.", "code": "OUTLINE_ERROR"}
         )
-    payload: dict[str, Any] = {}
-    ident = identifier.strip()
-    # Heuristic: UUIDs use canonical 8-4-4-4-12 format. Outline url-ids are
-    # short alphanumeric (e.g. 'portal-overview-A1bC').
-    if len(ident) == 36 and ident.count("-") == 4:
-        payload["id"] = ident
-    else:
-        payload["id"] = ident  # Outline accepts both forms on `id` parameter.
     try:
-        data = await _outline_post(settings, "documents.info", payload)
+        body = await _fetch_doc_body(settings, str(top_id))
     except Exception as e:
-        logger.warning("user_guides_read failed: %s", e)
+        logger.warning("user_guides_read body fetch failed for %r: %s", top_id, e)
         return json.dumps({"error": str(e), "code": "OUTLINE_ERROR"})
-    doc = data.get("data") or {}
-    return json.dumps(
+
+    body["matched_via"] = "search"
+    body["matched_query"] = q
+    body["alternative_titles"] = [
         {
-            "id": doc.get("id"),
-            "title": doc.get("title"),
-            "url": _build_doc_url(settings, doc.get("url")),
-            "url_id": doc.get("urlId"),
-            "updated_at": doc.get("updatedAt"),
-            "text": doc.get("text", ""),
+            "id": (h.get("document") or {}).get("id"),
+            "title": (h.get("document") or {}).get("title"),
+            "snippet": _short_preview(h.get("context") or (h.get("document") or {}).get("text", "")),
         }
-    )
+        for h in hits[1:]
+    ]
+    return json.dumps(body)
 
 
 def register_user_guide_tools(mcp: Any, settings: Settings) -> None:
-    """Register the two user-guide tools on the given FastMCP instance."""
+    """Register the single user-guide tool on the given FastMCP instance."""
 
-    async def user_guides_search(query: str, limit: int = _DEFAULT_LIMIT) -> str:
-        """Search Sorento CRM user guides by free-text query.
+    async def user_guides_read(query: str) -> str:
+        """Read the most relevant Sorento CRM user guide for a question.
 
-        Use this whenever a user asks "how do I…?" / "how to…" questions about
-        the CRM. Returns up to ``limit`` matching guides with their title,
-        canonical URL on doc.foundryx.my, and a short snippet. Pass the
-        returned ``id`` (or ``url_id``) to ``user_guides_read`` to fetch the
-        full body before answering the user.
+        Pass the user's natural-language how-to question as ``query`` (e.g.
+        "How do I upload a packing list?"). The tool searches the Sorento CRM
+        Outline collection and returns the top match's full markdown body in
+        one round trip — no separate search call is needed.
+
+        If the caller already has an Outline doc id (UUID) or url-id (e.g.
+        ``portal-overview-aBcDe``), pass it as ``query`` and the tool fetches
+        the body directly.
         """
 
-        return await search_user_guides_impl(settings, query=query, limit=limit)
+        return await read_user_guide_impl(settings, query=query)
 
-    async def user_guides_read(identifier: str) -> str:
-        """Read the full markdown body of a Sorento CRM user guide.
-
-        Accepts either the Outline document UUID (e.g.
-        ``b8df43f6-9082-4625-a07b-393a9db18636``) or the human url-id (e.g.
-        ``portal-overview-aBcDe``) returned from ``user_guides_search``.
-        """
-
-        return await read_user_guide_impl(settings, identifier=identifier)
-
-    mcp.add_tool(
-        user_guides_search,
-        name="user_guides_search",
-        description=(
-            "Search Sorento CRM end-user how-to guides (Outline collection). "
-            "Use first whenever the user asks how to perform an action — "
-            "uploading a packing list, submitting a stock inquiry, approving a "
-            "purchase request, etc."
-        ),
-    )
     mcp.add_tool(
         user_guides_read,
         name="user_guides_read",
         description=(
-            "Read the full markdown body of a Sorento CRM user guide. "
-            "Pass an id from user_guides_search; returns the markdown so you "
-            "can answer the user with concrete steps and exact UI labels."
+            "Read the Sorento CRM user guide that best matches a how-to "
+            "question. Use whenever the user asks 'how do I…?', 'how to…?', "
+            "'where do I find…?', 'what's the process for…?', 'steps to…?' "
+            "about CRM features (uploading a packing list, submitting a stock "
+            "inquiry, sending a purchase request for approval, OTP / portal "
+            "access, approving via email link, etc.). Pass the user's "
+            "question verbatim as `query`; the tool searches Outline and "
+            "returns the full markdown body of the best match in one call. "
+            "Quote the steps verbatim and preserve inline markdown links "
+            "exactly when answering the user."
         ),
     )

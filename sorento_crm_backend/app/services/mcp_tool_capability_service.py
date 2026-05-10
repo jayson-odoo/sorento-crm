@@ -1495,20 +1495,21 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     # USER GUIDES (Outline-backed how-to retrieval)
     # ==================================================================
-    "user_guides_search": ToolIntent(
+    "user_guides_read": ToolIntent(
         category="user_guides",
         intent=(
-            "Find Sorento CRM how-to guides that explain a UI flow (uploading "
+            "Answer any 'how do I…?' / 'how to…?' question about a Sorento "
+            "CRM UI flow by reading the matching guide in one call (uploading "
             "a packing list, submitting a portal stock inquiry, sending a "
             "purchase request for approval, etc.)."
         ),
         description=(
-            "Free-text search over the Sorento CRM user-guide collection on "
-            "Outline (doc.foundryx.my). Use whenever the user asks "
-            "'how do I…' / 'how to…' / 'where do I find…' / 'what's the "
-            "process for…' about CRM features. Returns up to N matching "
-            "guides with title, snippet, and doc id. Always follow up with "
-            "user_guides_read on the most relevant id before answering."
+            "Single-call how-to tool. Pass the user's natural-language "
+            "question as `query`; the tool searches the Sorento CRM Outline "
+            "collection (doc.foundryx.my) and returns the full markdown body "
+            "of the best-matching guide in one round trip. No separate "
+            "search call is required. Quote the steps verbatim and preserve "
+            "inline markdown links exactly when answering the user."
         ),
         typical_user_questions=(
             "How do I upload a packing list?",
@@ -1530,29 +1531,6 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "How do I reopen a rejected stock inquiry?",
             "Where do folders live in Files?",
             "How do I pin a folder to Quick Access?",
-        ),
-        aliases=(
-            "search user guides",
-            "search how-to",
-            "find documentation",
-            "search docs",
-            "user guide search",
-            "outline docs search",
-            "how to guide",
-        ),
-    ),
-    "user_guides_read": ToolIntent(
-        category="user_guides",
-        intent="Read the full markdown body of a single Sorento CRM user guide.",
-        description=(
-            "Fetch the full markdown body of one Sorento CRM user guide by "
-            "Outline doc id (UUID) or url-id. Pass the id returned by "
-            "user_guides_search. Returns the title, the canonical "
-            "doc.foundryx.my URL, and the full markdown text — quote the "
-            "relevant steps verbatim when answering the user, including the "
-            "exact UI labels mentioned in the guide."
-        ),
-        typical_user_questions=(
             "Open this user guide.",
             "Read the full how-to article.",
             "Show me the full guide text.",
@@ -1563,7 +1541,12 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "open how-to",
             "fetch documentation",
             "read docs",
-            "user guide detail",
+            "user guide",
+            "user guide search",
+            "search user guides",
+            "find documentation",
+            "how to guide",
+            "outline docs",
             "outline doc info",
         ),
     ),

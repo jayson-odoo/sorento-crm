@@ -24,7 +24,7 @@ export const metadata: Metadata = {
 export default async function ContactsPage() {
   return (
     <>
-      <Container>
+      <Container width="fluid">
         <Toolbar>
           <ToolbarHeading>
             <ToolbarTitle>Internal Users</ToolbarTitle>
@@ -44,7 +44,7 @@ export default async function ContactsPage() {
         </Toolbar>
       </Container>
 
-      <Container>
+      <Container width="fluid">
         <ContactsList />
       </Container>
     </>
