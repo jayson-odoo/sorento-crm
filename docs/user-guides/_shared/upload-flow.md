@@ -19,7 +19,7 @@ If you are uploading **a single file or a folder of files** that the system shou
 
 1. Open **[Resource Management → Files](/resource-management/attachment-directories)** in the left menu (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
 2. (Optional) Click a folder in the **Folders** sidebar on the left so the new file is filed under that folder. Otherwise the file lives at the root.
-3. Click **Upload** in the top toolbar of the attachments table.
+3. Click [**Upload**](/resource-management/attachment-directories?guide_target=resource-management.files.upload-button) in the top toolbar of the attachments table.
 4. The **Create Attachment** dialog opens.
 5. Pick the **Attachment Type** from the dropdown (required) — for example *Packing List*, *Product Attachments*, *Promotion*, *Marketing Form*. The list comes from your tenant's configured types. If the type you need is missing, ask an admin to add it under **[Resource Management → Attachment Types](/resource-management/attachment-types)** (the only types seeded by default are *Promotion* and *Complaint Document*).
 6. Drag your file(s) into the **Files** drop zone, or click **Select Files** to browse.
@@ -30,7 +30,7 @@ If you are uploading **a single file or a folder of files** that the system shou
 
 
 1. Open **[Resource Management → Files](/resource-management/attachment-directories)**.
-2. Click **Bulk import (ZIP)** (top toolbar, archive icon).
+2. Click [**Bulk import (ZIP)**](/resource-management/attachment-directories?guide_target=resource-management.files.bulk-import-button) (top toolbar, archive icon).
 3. Pick the attachment type — every file inside the ZIP will be tagged with this type.
 4. Upload your `.zip`. The system extracts files in the background.
 5. The dialog closes when the import job is queued. Progress shows on the same page.
@@ -53,7 +53,7 @@ You do **not** need to link the file manually after upload. As soon as the integ
 
 Folder operations live on the same **Files** page, on the left sidebar.
 
-* **Create a top-level folder:** click **Add** at the top of the **Folders** sidebar.
+* **Create a top-level folder:** click [**Add**](/resource-management/attachment-directories?guide_target=resource-management.files.add-folder-button) at the top of the **Folders** sidebar.
 * **Add a subfolder, rename, delete, or adjust access levels:** click **Folder actions** (`⋯`) on the folder row → pick the action.
 * **Pin a folder to Quick Access:** **Folder actions** (`⋯`) → **Pin to Quick Access**.
 * **Search folders:** type into the **Search folders…** box at the top of the sidebar.

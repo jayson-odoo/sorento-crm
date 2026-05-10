@@ -757,6 +757,7 @@ const ProductsList = () => {
               <DropdownMenuItem
                 disabled={isLoading}
                 onClick={() => setUploadDialogOpen(true)}
+                data-guide-target="master-data.products.upload-button"
               >
                 <Upload className="size-4" />
                 Upload

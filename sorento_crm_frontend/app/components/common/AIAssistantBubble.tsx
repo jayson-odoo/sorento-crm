@@ -37,7 +37,7 @@ function clampSize(size: BubbleSize): BubbleSize {
     };
   }
   const maxW = Math.max(MIN_WIDTH, Math.floor(window.innerWidth * 0.5));
-  const maxH = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.5));
+  const maxH = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.8));
   return {
     width: Math.min(Math.max(size.width, MIN_WIDTH), maxW),
     height: Math.min(Math.max(size.height, MIN_HEIGHT), maxH),

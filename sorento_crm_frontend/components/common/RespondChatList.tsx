@@ -23,6 +23,16 @@ interface RespondChatListProps {
   emptyHint?: string;
   /** Caps message-list scroll height; chat header sits above. */
   maxHeightClass?: string;
+  /**
+   * If set, the bubble whose `messageId` matches gets a highlight ring + a
+   * "Ticket based on this message" badge, and the list scrolls to it on mount
+   * instead of to the latest message. String/number both accepted because the
+   * Respond.io message id is numeric on the wire but ticket.source_message_id
+   * is stored as text.
+   */
+  highlightMessageId?: string | number | null;
+  /** Label shown above the highlighted bubble. */
+  highlightLabel?: string;
 }
 
 function ReceiptTicks({ tier }: { tier: ReturnType<typeof getReceiptTier> }) {
@@ -41,8 +51,16 @@ export default function RespondChatList({
   contactPhone,
   emptyHint = 'No messages yet.',
   maxHeightClass = 'max-h-[60vh]',
+  highlightMessageId = null,
+  highlightLabel = 'Ticket based on this message',
 }: RespondChatListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
+
+  const normalizedHighlightId =
+    highlightMessageId != null && String(highlightMessageId).trim() !== ''
+      ? String(highlightMessageId)
+      : null;
 
   const sortedItems = useMemo(() => {
     return [...items].sort((a, b) => {
@@ -54,8 +72,12 @@ export default function RespondChatList({
   }, [items]);
 
   useEffect(() => {
+    if (normalizedHighlightId && highlightRef.current) {
+      highlightRef.current.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      return;
+    }
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
-  }, [sortedItems.length]);
+  }, [sortedItems.length, normalizedHighlightId]);
 
   const contactInitial = (contactName?.trim()?.charAt(0) || '?').toUpperCase();
   const headerName = contactName?.trim() || 'Unknown contact';
@@ -105,9 +127,11 @@ export default function RespondChatList({
 
           const options = extractSelectionOptions(item);
           const tier = getReceiptTier(item);
+          const isHighlighted =
+            normalizedHighlightId != null && String(item.messageId ?? '') === normalizedHighlightId;
 
           return (
-            <div key={key}>
+            <div key={key} ref={isHighlighted ? highlightRef : undefined}>
               {dividerLabel && (
                 <div className="sticky top-0 z-10 my-2 flex justify-center">
                   <span className="rounded-md bg-[#e1f3fb] dark:bg-[#1d282f] px-3 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 shadow-sm">
@@ -115,9 +139,18 @@ export default function RespondChatList({
                   </span>
                 </div>
               )}
+              {isHighlighted && (
+                <div className={`mb-1 flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-amber-300 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-700">
+                    {highlightLabel}
+                  </span>
+                </div>
+              )}
               <div className={`flex ${isOutgoing ? 'justify-end' : 'justify-start'}`}>
                 <div
-                  className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm shadow-sm ${bubbleClass}`}
+                  className={`max-w-[85%] rounded-lg px-2.5 py-1.5 text-sm shadow-sm ${bubbleClass}${
+                    isHighlighted ? ' ring-2 ring-amber-400 dark:ring-amber-500' : ''
+                  }`}
                 >
                   <div className="mb-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
                     {senderLabel}

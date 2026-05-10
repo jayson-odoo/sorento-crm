@@ -256,6 +256,7 @@ export default function StockInquiryDetail({
                   size="sm"
                   disabled={projectSalesApproveMutation.isPending}
                   onClick={() => projectSalesApproveMutation.mutate(inquiryId)}
+                  data-guide-target="procurement.stock-inquiries.approve-button"
                 >
                   <CheckCircle className="size-4 mr-1" />
                   {projectSalesApproveMutation.isPending ? 'Approving…' : 'Approve (send to purchasing)'}
@@ -271,6 +272,7 @@ export default function StockInquiryDetail({
                     setRejectReason('');
                     setRejectDialogOpen(true);
                   }}
+                  data-guide-target="procurement.stock-inquiries.reject-button"
                 >
                   <XCircle className="size-4 mr-1" />
                   Reject
@@ -287,6 +289,7 @@ export default function StockInquiryDetail({
                 setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
                 setEditPurchasingResponseOpen(true);
               }}
+              data-guide-target="procurement.stock-inquiries.edit-purchasing-response-button"
             >
               <Edit className="size-4 mr-1" />
               Edit purchasing response
@@ -302,6 +305,7 @@ export default function StockInquiryDetail({
                 setRejectReason('');
                 setRejectDialogOpen(true);
               }}
+              data-guide-target="procurement.stock-inquiries.reject-button"
             >
               <XCircle className="size-4 mr-1" />
               Reject
@@ -316,6 +320,7 @@ export default function StockInquiryDetail({
                 setReopenReason('');
                 setReopenDialogOpen(true);
               }}
+              data-guide-target="procurement.stock-inquiries.reopen-button"
             >
               <RotateCcw className="size-4 mr-1" />
               {inquiry.rejected_from === 'pending_purchasing'

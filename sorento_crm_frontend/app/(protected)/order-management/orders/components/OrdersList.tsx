@@ -453,6 +453,7 @@ export default function OrdersList() {
                   size="icon"
                   title="Import"
                   aria-label="Import"
+                  data-guide-target="order-management.delivery-orders.import-button"
                 >
                   <Upload className="size-4" />
                 </Button>

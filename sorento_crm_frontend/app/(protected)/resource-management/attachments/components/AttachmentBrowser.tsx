@@ -549,7 +549,10 @@ export default function AttachmentBrowser() {
               )}
               {!isTrashView && (
                 <>
-                  <Button onClick={() => setUploadDialogOpen(true)}>
+                  <Button
+                    onClick={() => setUploadDialogOpen(true)}
+                    data-guide-target="resource-management.files.upload-button"
+                  >
                     <Plus className="size-4 mr-2" />
                     Create Attachment
                   </Button>

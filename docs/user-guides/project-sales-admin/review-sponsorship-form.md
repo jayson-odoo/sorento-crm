@@ -19,11 +19,11 @@ Filter by **Approval Status**. Statuses: **Draft**, **Pending approval**, **Appr
 
 ## Move to "Pending approval"
 
-If the form is still in **Draft**, click **Change to pending approval** in the toolbar. Toast: *"Status set to Pending approval"*.
+If the form is still in **Draft**, click [**Change to pending approval**](/procurement-management/sponsorship-forms?guide_target=procurement.approvals.change-to-pending-approval-button) in the toolbar. Toast: *"Status set to Pending approval"*.
 
 ## Send for approval
 
-When the form is in **Pending approval**, click **Send for approval** in the toolbar.
+When the form is in **Pending approval**, click [**Send for approval**](/procurement-management/sponsorship-forms?guide_target=procurement.approvals.send-for-approval-button) in the toolbar.
 
 * **With a configured default approver:** the system immediately generates the one-time approval link and emails it. Toast: *"Approval link sent to {email}"*.
 * **Without a default approver:** the **Send for approval** dialog opens.

@@ -8,14 +8,14 @@ Open **[Procurement → GRN](/procurement-management/grn)** (URL: `/procurement-
 
 Toolbar:
 
-* **Import options** (the upload-icon button on the toolbar) — opens a dropdown with **Upload GRN** (header) and **Upload GRN Lines** (lines).
+* [**Import options**](/procurement-management/grn?guide_target=procurement.grn.import-options-button) (the upload-icon button on the toolbar) — opens a dropdown with **Upload GRN** (header) and **Upload GRN Lines** (lines).
 * **Create GRN** — manual single-record creation.
 * **Filters** / **Export** / **Columns** — DataGrid tools.
 
 ## Step 1 — Upload GRN header
 
 
-1. Click **Import options** → **Upload GRN**.
+1. Click [**Import options**](/procurement-management/grn?guide_target=procurement.grn.import-options-button) → **Upload GRN**.
 2. Drag in or browse to your GRN-header Excel file.
 3. Confirm. The job is queued (`grn_listing_import`). Toast: confirmation that the job started.
 
@@ -32,7 +32,7 @@ Toolbar:
 After the header import finishes:
 
 
-1. Click **Import options** → **Upload GRN Lines**.
+1. Click [**Import options**](/procurement-management/grn?guide_target=procurement.grn.import-options-button) → **Upload GRN Lines**.
 2. Drag in or browse to your GRN-lines Excel.
 3. Confirm. The job is queued (`grn_lines_import`).
 

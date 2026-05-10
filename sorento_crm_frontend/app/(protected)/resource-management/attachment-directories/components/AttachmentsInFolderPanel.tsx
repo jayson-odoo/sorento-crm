@@ -625,11 +625,18 @@ export default function AttachmentsInFolderPanel({
               )}
               {!isTrashView && (
                 <>
-                  <Button onClick={() => setUploadDialogOpen(true)}>
+                  <Button
+                    onClick={() => setUploadDialogOpen(true)}
+                    data-guide-target="resource-management.files.upload-button"
+                  >
                     <Plus className="size-4 mr-2" />
                     Upload
                   </Button>
-                  <Button variant="outline" onClick={() => setBulkImportDialogOpen(true)}>
+                  <Button
+                    variant="outline"
+                    onClick={() => setBulkImportDialogOpen(true)}
+                    data-guide-target="resource-management.files.bulk-import-button"
+                  >
                     <FileArchive className="size-4 mr-2" />
                     Bulk import (ZIP)
                   </Button>

@@ -437,7 +437,13 @@ export default function SPOAllocationsList() {
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon" className="h-8 w-8" title="Import options">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  title="Import options"
+                  data-guide-target="procurement.spo-allocations.import-options-button"
+                >
                   <Settings className="size-4" />
                 </Button>
               </DropdownMenuTrigger>

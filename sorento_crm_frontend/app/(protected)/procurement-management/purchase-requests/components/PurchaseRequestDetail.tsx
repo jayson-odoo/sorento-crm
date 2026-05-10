@@ -330,6 +330,7 @@ export default function PurchaseRequestDetail({
                   setSettingPending(false);
                 }
               }}
+              data-guide-target="procurement.approvals.change-to-pending-approval-button"
             >
               <Clock className="size-4" />
               {settingPending ? 'Updating…' : 'Change to pending approval'}
@@ -352,6 +353,7 @@ export default function PurchaseRequestDetail({
           {showPrimarySendForApproval && (
             <Button
               disabled={autoSendingApproval}
+              data-guide-target="procurement.approvals.send-for-approval-button"
               onClick={async () => {
                 setApprovalLink(null);
                 setApprovalError(null);

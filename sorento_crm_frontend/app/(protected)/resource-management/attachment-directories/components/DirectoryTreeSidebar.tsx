@@ -512,7 +512,12 @@ export default function DirectoryTreeSidebar({
             >
               <ChevronUp className="size-4" />
             </Button>
-            <Button variant="outline" size="sm" onClick={() => openAddDialog(null)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => openAddDialog(null)}
+              data-guide-target="resource-management.files.add-folder-button"
+            >
               <Plus className="size-4 mr-1" />
               Add
             </Button>

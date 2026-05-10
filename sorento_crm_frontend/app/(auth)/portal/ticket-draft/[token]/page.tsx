@@ -10,6 +10,16 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { CheckCircle2, AlertTriangle, Pencil } from 'lucide-react';
 import type { Ticket } from '@/app/(protected)/ticket-management/tickets/types/ticket.types';
+import RespondChatList from '@/components/common/RespondChatList';
+import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
+
+interface ConversationResponse {
+  items: RespondMessageRenderable[];
+  pagination?: { next?: string; previous?: string };
+  error?: string;
+  contact?: { name?: string | null; phone?: string | null } | null;
+  source_message_id?: string | null;
+}
 
 interface PageProps {
   params: Promise<{ token: string }>;
@@ -29,6 +39,8 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draftText, setDraftText] = useState('');
+  const [conversation, setConversation] = useState<ConversationResponse | null>(null);
+  const [conversationLoading, setConversationLoading] = useState(true);
 
   useEffect(() => {
     let cancel = false;
@@ -49,6 +61,31 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
       })
       .finally(() => {
         if (!cancel) setLoading(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    let cancel = false;
+    setConversationLoading(true);
+    fetch(`/api/v1/public/ticket-drafts/${encodeURIComponent(token)}/conversation?limit=50`)
+      .then(async (r) => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.detail || 'Failed to load conversation');
+        }
+        return r.json() as Promise<ConversationResponse>;
+      })
+      .then((data) => {
+        if (!cancel) setConversation(data);
+      })
+      .catch(() => {
+        if (!cancel) setConversation({ items: [], error: 'Could not load chat history.' });
+      })
+      .finally(() => {
+        if (!cancel) setConversationLoading(false);
       });
     return () => {
       cancel = true;
@@ -181,6 +218,38 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
           </AlertTitle>
         </Alert>
       )}
+
+      <Card className="mb-6">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Chat history</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            The highlighted message is what this draft was based on. Scroll to review the full conversation, then edit the description below if you want to add detail.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {conversationLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-3/4" />
+              <Skeleton className="h-12 w-2/3" />
+            </div>
+          ) : conversation && conversation.items.length > 0 ? (
+            <RespondChatList
+              items={conversation.items}
+              contactName={conversation.contact?.name ?? null}
+              contactPhone={conversation.contact?.phone ?? null}
+              maxHeightClass="max-h-[50vh]"
+              highlightMessageId={
+                conversation.source_message_id ?? ticket.source_message_id ?? null
+              }
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {conversation?.error ?? 'No chat history available for this draft.'}
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
