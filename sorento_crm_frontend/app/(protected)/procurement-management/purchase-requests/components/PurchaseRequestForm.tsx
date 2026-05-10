@@ -301,7 +301,7 @@ export default function PurchaseRequestForm({
             form={form}
             request={request}
             isSponsorship={isSponsorship}
-            showTypeSelect={defaultRequestType !== 'sponsorship_form'}
+            showTypeSelect
             fields={fields}
             append={append}
             remove={remove}

@@ -541,19 +541,6 @@ class StockInquiryBase(BaseModel):
     def coerce_quantity_to_string(cls, v: object) -> Optional[str]:
         return _coerce_numeric_or_text_to_string(v)
 
-    @field_validator("quantity")
-    @classmethod
-    def reject_negative_quantity(cls, v: Optional[str]) -> Optional[str]:
-        if v is None or v == "":
-            return v
-        try:
-            n = float(v)
-        except (TypeError, ValueError):
-            return v  # non-numeric free-text legacy values pass through
-        if n < 0:
-            raise ValueError("quantity must be a non-negative number")
-        return v
-
     @field_validator("contact_id", "space_id", mode="before")
     @classmethod
     def coerce_scope_ids(cls, v: object) -> Optional[str]:
@@ -575,6 +562,19 @@ class StockInquiryCreate(StockInquiryBase):
             "the final summary (e.g. OK, YES, CONFIRM). Not required for in-app CRM creates."
         ),
     )
+
+    @field_validator("quantity")
+    @classmethod
+    def reject_negative_quantity(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or v == "":
+            return v
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            return v  # non-numeric free-text legacy values pass through
+        if n < 0:
+            raise ValueError("quantity must be a non-negative number")
+        return v
 
 
 class StockInquiryUpdate(BaseModel):

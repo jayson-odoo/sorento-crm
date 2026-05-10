@@ -128,15 +128,17 @@ export function PurchaseRequestDocumentEditCard({
                       : 'secondary'
                 }
               >
-                {!request.approval_status || request.approval_status === ''
-                  ? 'Draft'
-                  : request.approval_status === 'pending'
-                    ? 'Pending approval'
-                    : request.approval_status === 'approved'
-                      ? 'Approved'
-                      : request.approval_status === 'rejected'
-                        ? 'Rejected'
-                        : request.approval_status}
+                {request.approval_status === 'pending'
+                  ? 'Pending approval'
+                  : request.approval_status === 'approved'
+                    ? 'Approved'
+                    : request.approval_status === 'rejected'
+                      ? 'Rejected'
+                      : (request.status ?? '').toLowerCase() === 'submitted'
+                        ? 'Submitted'
+                        : (request.status ?? '').toLowerCase() === 'draft'
+                          ? 'Draft'
+                          : (request.approval_status || request.status || 'Draft')}
               </Badge>
             </div>
           </div>
@@ -153,7 +155,7 @@ export function PurchaseRequestDocumentEditCard({
                   name="request_type"
                   render={({ field }) => (
                     <FormItem>
-                      <Select onValueChange={field.onChange} value={field.value ?? ''}>
+                      <Select onValueChange={field.onChange} value={field.value ?? ''} disabled>
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Select type" />
@@ -182,7 +184,7 @@ export function PurchaseRequestDocumentEditCard({
                         placeholder="e.g. PR26-0303"
                         {...field}
                         value={field.value ?? ''}
-                        onChange={(e) => field.onChange(e.target.value || null)}
+                        readOnly
                         className="font-medium tabular-nums"
                       />
                     </FormControl>

@@ -275,18 +275,25 @@ export default function PurchaseRequestDetail({
       : null);
 
   const approvalStatusNorm = (request.approval_status ?? '').trim();
+  const lifecycleStatusNorm = (request.status ?? '').trim().toLowerCase();
+  const isDraftLifecycle = lifecycleStatusNorm === 'draft';
+  const isSubmittedLifecycle = lifecycleStatusNorm === 'submitted';
   const isDraftLike =
     approvalStatusNorm === '' || approvalStatusNorm === 'draft';
   const isRejected = approvalStatusNorm === 'rejected';
   const isPendingApproval = approvalStatusNorm === 'pending';
   const isApprovedStatus = approvalStatusNorm === 'approved';
+  // "Change to pending approval" + "Reject" only after the salesperson has submitted
+  // from the portal (status='submitted'); while still in draft, salesperson owns the row.
   const showPrimaryChangeToPending =
+    isSubmittedLifecycle &&
     !isApprovedStatus &&
     !isPendingApproval &&
     (isDraftLike || isRejected);
   const showPrimarySendForApproval =
     isPendingApproval && !isApprovedStatus;
-  const showRejectSubmitted = canSendForApproval && isDraftLike;
+  const showRejectSubmitted =
+    canSendForApproval && isSubmittedLifecycle && isDraftLike;
 
   return (
     <div className="space-y-6">
@@ -702,15 +709,17 @@ export default function PurchaseRequestDetail({
                             : 'secondary'
                       }
                     >
-                      {!request.approval_status || request.approval_status === ''
-                        ? 'Draft'
-                        : request.approval_status === 'pending'
-                          ? 'Pending approval'
-                          : request.approval_status === 'approved'
-                            ? 'Approved'
-                            : request.approval_status === 'rejected'
-                              ? 'Rejected'
-                              : request.approval_status}
+                      {request.approval_status === 'pending'
+                        ? 'Pending approval'
+                        : request.approval_status === 'approved'
+                          ? 'Approved'
+                          : request.approval_status === 'rejected'
+                            ? 'Rejected'
+                            : isSubmittedLifecycle
+                              ? 'Submitted'
+                              : isDraftLifecycle
+                                ? 'Draft'
+                                : (request.approval_status || request.status || 'Draft')}
                     </Badge>
                   </div>
                 </div>
@@ -839,15 +848,17 @@ export default function PurchaseRequestDetail({
                             : 'secondary'
                       }
                     >
-                      {!request.approval_status || request.approval_status === ''
-                        ? 'Draft'
-                        : request.approval_status === 'pending'
-                          ? 'Pending approval'
-                          : request.approval_status === 'approved'
-                            ? 'Approved'
-                            : request.approval_status === 'rejected'
-                              ? 'Rejected'
-                              : request.approval_status}
+                      {request.approval_status === 'pending'
+                        ? 'Pending approval'
+                        : request.approval_status === 'approved'
+                          ? 'Approved'
+                          : request.approval_status === 'rejected'
+                            ? 'Rejected'
+                            : isSubmittedLifecycle
+                              ? 'Submitted'
+                              : isDraftLifecycle
+                                ? 'Draft'
+                                : (request.approval_status || request.status || 'Draft')}
                     </Badge>
                   </div>
                 </div>

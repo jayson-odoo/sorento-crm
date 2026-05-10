@@ -125,9 +125,16 @@ class TicketIntakeService:
             actor_user_id = str(user.id)
             respond_contact_id = None
         else:
+            from sqlalchemy import or_
+            ident = str(payload.respond_contact_id).strip()
             contact = (
                 self.db.query(RespondContact)
-                .filter(RespondContact.id == str(payload.respond_contact_id))
+                .filter(
+                    or_(
+                        RespondContact.id == ident,
+                        RespondContact.respond_io_id == ident,
+                    )
+                )
                 .first()
             )
             if not contact:
@@ -181,8 +188,14 @@ class TicketIntakeService:
         payload: ITSupportTicketCreateRequest,
         actor_user_id_fallback: Optional[str],
     ) -> None:
+        # Auto-detect WhatsApp/Respond intake when caller forwarded a respond
+        # contact (alias ``contact_id``) but no actor — typical MCP path from the
+        # n8n WhatsApp agent.
         if not payload.source_channel:
-            payload.source_channel = "ai_assistant"
+            if payload.respond_contact_id and not payload.actor_user_id:
+                payload.source_channel = "whatsapp_respond"
+            else:
+                payload.source_channel = "ai_assistant"
         if payload.source_channel == "ai_assistant" and not payload.actor_user_id:
             payload.actor_user_id = actor_user_id_fallback
 
@@ -197,13 +210,12 @@ class TicketIntakeService:
             if not payload.respond_contact_id:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="respond_contact_id is required when source_channel='whatsapp_respond'",
+                    detail="respond_contact_id (or contact_id) is required when source_channel='whatsapp_respond'",
                 )
-            if not payload.source_conversation_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="source_conversation_id is required when source_channel='whatsapp_respond'",
-                )
+            # source_conversation_id is optional for MCP IT-support intake — fall
+            # back to source_space_id so the ticket retains conversation scope.
+            if not payload.source_conversation_id and payload.source_space_id:
+                payload.source_conversation_id = payload.source_space_id
 
     # ---------- caller-drafted preview shortcut ----------
 

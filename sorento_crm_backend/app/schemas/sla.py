@@ -492,7 +492,7 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
         return self
 
 
-_FORM_SLA_TYPES = ("stock_inquiry", "purchase_request", "sponsorship_form", "complaint")
+_FORM_SLA_TYPES = ("stock_inquiry", "purchase_request", "sponsorship_form", "complaint", "ticket")
 
 
 class FormSLAConfigBase(BaseModel):

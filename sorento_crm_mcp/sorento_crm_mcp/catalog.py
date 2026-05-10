@@ -1135,7 +1135,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (),
         method="POST",
-        body_params=("payload_json",),
+        body_params=("payload_json", "contact_id", "space_id"),
         module="tickets",
     ),
 )

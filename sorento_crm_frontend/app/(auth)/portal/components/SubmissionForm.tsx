@@ -1038,13 +1038,15 @@ export function SubmissionForm({ kind, submissionId }: Props) {
         >
           Cancel
         </Button>
-        <Button
-          variant="outline"
-          onClick={handleSaveDraft}
-          disabled={!isEditable || saving || submitting}
-        >
-          {saving ? 'Saving...' : 'Save as draft'}
-        </Button>
+        {detail?.status !== 'rejected' && (
+          <Button
+            variant="outline"
+            onClick={handleSaveDraft}
+            disabled={!isEditable || saving || submitting}
+          >
+            {saving ? 'Saving...' : 'Save as draft'}
+          </Button>
+        )}
         <Button
           onClick={() => setConfirmOpen(true)}
           disabled={!isEditable || saving || submitting}
@@ -1433,6 +1435,7 @@ function FieldControl({
           id={field.name}
           type="number"
           inputMode="numeric"
+          min={0}
           value={stringValue}
           onChange={(e) => onChange(e.target.value)}
           placeholder={field.placeholder}

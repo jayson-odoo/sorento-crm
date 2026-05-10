@@ -2664,6 +2664,45 @@ class StockInquiryService:
 
         return resolve_send_identifier(self.db, parts[-1])
 
+    def _enqueue_stock_inquiry_respond_message(
+        self,
+        *,
+        inquiry_id: str,
+        identifier: str,
+        message_text: str,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str],
+        space_id: Optional[str],
+        verify_delivery: bool = True,
+    ) -> None:
+        """Push a Respond.io send into the RQ ``respond_io`` queue.
+
+        Decouples the external API call from the request lifecycle so a Respond.io
+        4xx/5xx (or failed delivery) does not roll back the surrounding business
+        write. Failed jobs land in RQ's FailedJobRegistry and a ``status='failed'``
+        integration_logs row.
+        """
+        from app.services.queue_service import enqueue_job
+        from app.tasks.respond_io_tasks import send_stock_inquiry_respond_message
+
+        job = enqueue_job(
+            send_stock_inquiry_respond_message,
+            inquiry_id,
+            identifier,
+            message_text,
+            respond_user_id,
+            crm_sender_user_id,
+            space_id,
+            verify_delivery,
+            queue_name="respond_io",
+            job_timeout=180,
+        )
+        logger.info(
+            "Enqueued respond.io send job %s for stock_inquiry %s",
+            job.id,
+            inquiry_id,
+        )
+
     def _send_stock_inquiry_contact_message(
         self,
         inquiry: StockInquiry,
@@ -2672,81 +2711,27 @@ class StockInquiryService:
         crm_sender_user_id: Optional[str] = None,
         respond_user_id_fallback: Optional[str] = None,
     ) -> None:
-        """Send a text message to the inquiry's Respond.io contact and mirror it to the outbound webhook."""
-        from app.schemas.integration import IntegrationLogCreate
-        from app.services.crm_chat_outbound_webhook import (
-            enqueue_crm_chat_outbound_webhook,
-            resolve_sla_assignee_respond_user_id,
-        )
+        """Enqueue a Respond.io text message for the inquiry's contact."""
         from app.services.error_handler import handle_validation_error
-        from app.services.integration_service import IntegrationLogService, RespondClient
 
-        log_service = IntegrationLogService(self.db)
         identifier = self._identifier_from_respond_inbox_url(getattr(inquiry, "respond_inbox_url", None))
         if not identifier:
             raise handle_validation_error(
                 "respond_inbox_url is missing or invalid; cannot send message. Set contact_id and space_id."
             )
-
         message_to_send = str(message_text or "").strip()
         if not message_to_send:
             raise handle_validation_error("message_text is required.")
 
-        assignee_rid = resolve_sla_assignee_respond_user_id(
-            self.db, "stock_inquiry", str(inquiry.id)
+        self._enqueue_stock_inquiry_respond_message(
+            inquiry_id=str(inquiry.id),
+            identifier=identifier,
+            message_text=message_to_send,
+            respond_user_id=(respond_user_id_fallback or "").strip() or identifier,
+            crm_sender_user_id=crm_sender_user_id,
+            space_id=getattr(inquiry, "space_id", None),
+            verify_delivery=False,
         )
-
-        response = None
-        try:
-            client = RespondClient()
-            response = client.send_message(identifier, message_to_send)
-
-            enqueue_crm_chat_outbound_webhook(
-                self.db,
-                business_table="stock_inquiries",
-                business_id=str(inquiry.id),
-                contact_respond_io_id=identifier,
-                message_text=message_to_send,
-                respond_api_response=response if isinstance(response, dict) else None,
-                space_id=getattr(inquiry, "space_id", None),
-                crm_sender_user_id=crm_sender_user_id,
-                respond_user_id_fallback=(respond_user_id_fallback or "").strip() or identifier,
-                assignee_respond_user_id=assignee_rid,
-            )
-
-            log_service.create_integration_log(
-                IntegrationLogCreate(
-                    integration_channel="respond_io",
-                    business_table="stock_inquiries",
-                    business_id=str(inquiry.id),
-                    external_reference=identifier,
-                    direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
-                    http_method="POST",
-                    status="success",
-                    response_payload=str(response)[:50000] if response else None,
-                    created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
-                ),
-                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
-            )
-        except Exception as e:
-            logger.exception("Respond.io send_message failed for stock_inquiry %s", getattr(inquiry, "id", None))
-            log_service.create_integration_log(
-                IntegrationLogCreate(
-                    integration_channel="respond_io",
-                    business_table="stock_inquiries",
-                    business_id=str(inquiry.id),
-                    external_reference=identifier or "",
-                    direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
-                    http_method="POST",
-                    status="failed",
-                    error_message=str(e),
-                    created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
-                ),
-                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
-            )
-            raise
 
     def _enqueue_public_revise_webhook_for_stock_inquiry(self, inquiry: StockInquiry) -> None:
         """Send an incoming-style webhook payload for a rejected stock inquiry revise request."""
@@ -2917,13 +2902,16 @@ class StockInquiryService:
         crm_sender_user_id: Optional[str] = None,
     ):
         """
-        Update inquiry, send message to Respond.io, update SLA tracking to responded, set status=responded.
-        All integration calls are logged via IntegrationLogService.
+        Update inquiry, mark SLA as responded (when applicable), set status=responded,
+        and queue the Respond.io message via RQ.
+
+        DB writes commit synchronously; the external Respond.io call is decoupled
+        through the ``respond_io`` queue so a downstream 4xx/5xx no longer rolls
+        back the business state. All integration calls are logged via IntegrationLogService.
         """
         import logging
-        import time
         from datetime import datetime, timezone
-        from app.services.integration_service import RespondClient, IntegrationLogService
+        from app.services.integration_service import IntegrationLogService
         from app.schemas.integration import IntegrationLogCreate
         from app.services.sla_service import ConversationSLATrackingService
         from app.schemas.sla import ConversationSLATrackingUpdate
@@ -2962,132 +2950,8 @@ class StockInquiryService:
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error("respond_inbox_url is missing or invalid; cannot send message.")
 
-        # Send the full composed message (e.g. with view link) to the contact; do not truncate
+        # Compose the full message (may include view link) — sent async via RQ after commit
         message_to_send = str(message_text).strip()
-
-        try:
-            client = RespondClient()
-            response = client.send_message(identifier, message_to_send)
-
-            # Verify delivery status from Respond message endpoint and surface failed delivery to UI.
-            message_id = response.get("messageId") if isinstance(response, dict) else None
-            delivery_failed_message = None
-            if message_id is not None:
-                for attempt in range(3):
-                    try:
-                        sent_message = client.get_message(identifier, message_id)
-                        log_service.create_integration_log(
-                            IntegrationLogCreate(
-                                integration_channel="respond_io",
-                                business_table="stock_inquiries",
-                                business_id=inquiry_id,
-                                external_reference=f"{identifier}:{message_id}",
-                                direction="outbound",
-                                endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message/{message_id}",
-                                http_method="GET",
-                                status="success",
-                                response_payload=str(sent_message)[:50000] if sent_message else None,
-                            ),
-                        )
-
-                        statuses = sent_message.get("status") if isinstance(sent_message, dict) else None
-                        if isinstance(statuses, list):
-                            failed_status = next(
-                                (
-                                    s for s in statuses
-                                    if isinstance(s, dict) and str(s.get("value", "")).lower() == "failed"
-                                ),
-                                None,
-                            )
-                            if failed_status:
-                                delivery_failed_message = (failed_status.get("message") or "").strip()
-                                break
-                            # Status array exists and no failure -> no need to poll longer.
-                            break
-                    except Exception as status_check_err:
-                        log_service.create_integration_log(
-                            IntegrationLogCreate(
-                                integration_channel="respond_io",
-                                business_table="stock_inquiries",
-                                business_id=inquiry_id,
-                                external_reference=f"{identifier}:{message_id}",
-                                direction="outbound",
-                                endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message/{message_id}",
-                                http_method="GET",
-                                status="failed",
-                                error_message=str(status_check_err),
-                            ),
-                        )
-                        if attempt == 2:
-                            logger.warning(
-                                "Unable to verify Respond message status for stock_inquiry %s (message_id=%s): %s",
-                                inquiry_id,
-                                message_id,
-                                status_check_err,
-                            )
-                    if attempt < 2:
-                        time.sleep(0.6)
-
-            if delivery_failed_message:
-                from app.services.error_handler import handle_validation_error
-                raise handle_validation_error(
-                    delivery_failed_message or "Respond.io failed to deliver the message."
-                )
-
-            from app.services.crm_chat_outbound_webhook import (
-                enqueue_crm_chat_outbound_webhook,
-                resolve_sla_assignee_respond_user_id,
-            )
-
-            enqueue_crm_chat_outbound_webhook(
-                self.db,
-                business_table="stock_inquiries",
-                business_id=inquiry_id,
-                contact_respond_io_id=identifier,
-                message_text=message_to_send,
-                respond_api_response=response if isinstance(response, dict) else None,
-                space_id=getattr(inquiry, "space_id", None),
-                crm_sender_user_id=crm_sender_user_id,
-                respond_user_id_fallback=respond_user_id,
-                assignee_respond_user_id=resolve_sla_assignee_respond_user_id(
-                    self.db, "stock_inquiry", inquiry_id
-                ),
-            )
-
-            log_service.create_integration_log(
-                IntegrationLogCreate(
-                    integration_channel="respond_io",
-                    business_table="stock_inquiries",
-                    business_id=inquiry_id,
-                    external_reference=identifier,
-                    direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
-                    http_method="POST",
-                    status="success",
-                    response_payload=str(response)[:50000] if response else None,
-                ),
-                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
-            )
-        except Exception as e:
-            from app.services.error_handler import AppException
-            if isinstance(e, AppException):
-                raise
-            logger.exception("Respond.io send_message failed for stock_inquiry %s", inquiry_id)
-            log_service.create_integration_log(
-                IntegrationLogCreate(
-                    integration_channel="respond_io",
-                    business_table="stock_inquiries",
-                    business_id=inquiry_id,
-                    external_reference=identifier or "",
-                    direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
-                    http_method="POST",
-                    status="failed",
-                    error_message=str(e),
-                ),
-                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
-            )
-            raise
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         if transition_to_responded_workflow:
@@ -3139,6 +3003,17 @@ class StockInquiryService:
         inquiry.last_responded_at = now_utc
         self.db.commit()
         self.db.refresh(inquiry)
+
+        self._enqueue_stock_inquiry_respond_message(
+            inquiry_id=inquiry_id,
+            identifier=identifier,
+            message_text=message_to_send,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+            space_id=getattr(inquiry, "space_id", None),
+            verify_delivery=True,
+        )
+
         if transition_to_responded_workflow:
             try:
                 from app.services.form_sla_service import emit_form_event

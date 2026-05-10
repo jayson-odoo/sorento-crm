@@ -923,7 +923,7 @@ async def delete_event_log(
 
 @router.get("/by-source", response_model=list[ConversationSLATrackingResponse])
 async def list_trackers_by_source(
-    source_entity_type: str = Query(..., description="stock_inquiry | purchase_request | sponsorship_form | complaint"),
+    source_entity_type: str = Query(..., description="stock_inquiry | purchase_request | sponsorship_form | complaint | ticket"),
     source_entity_id: str = Query(..., description="Form row id"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),

@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.tickets import (
     TICKET_CATEGORIES,
@@ -290,10 +290,21 @@ class ITSupportTicketCreateRequest(BaseModel):
     source_channel: Optional[Literal["ai_assistant", "whatsapp_respond"]] = None
 
     actor_user_id: Optional[str] = None
-    respond_contact_id: Optional[str] = None
+    # ``respond_contact_id`` accepts the internal ``respond_contacts.id`` (UUID) OR
+    # the Respond.io numeric ``respond_io_id``. The MCP intake tool forwards the
+    # latter under the alias ``contact_id``; the service resolves either.
+    respond_contact_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("respond_contact_id", "contact_id"),
+    )
     source_conversation_id: Optional[str] = None
     source_message_id: Optional[str] = None
-    source_space_id: Optional[str] = None
+    source_space_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("source_space_id", "space_id"),
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
 
     @model_validator(mode="after")
     def _validate_minimum_payload(self) -> "ITSupportTicketCreateRequest":

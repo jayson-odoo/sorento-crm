@@ -96,6 +96,11 @@ export function AttachmentDropzone({
     if (!submissionId && !onPendingFilesChange) return;
     const onPaste = (e: ClipboardEvent) => {
       if (!e.clipboardData) return;
+      // Skip when a Radix dialog is open — the dialog owns the paste (e.g. AI Extract).
+      if (typeof document !== 'undefined' &&
+          document.querySelector('[role="dialog"][data-state="open"]')) {
+        return;
+      }
       const items = Array.from(e.clipboardData.items);
       const files: File[] = [];
       for (const item of items) {

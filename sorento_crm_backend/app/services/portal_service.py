@@ -499,6 +499,18 @@ class PortalService:
             self.db.refresh(row)
         else:
             row = self._fetch_for_edit(kind, token, submission_id)
+            approval_rejected = (
+                (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
+            )
+            row_status_rejected = (
+                (getattr(row, "status", None) or "").strip().lower() == "rejected"
+            )
+            if approval_rejected or row_status_rejected:
+                # A rejected submission can only progress via Submit; salesperson cannot
+                # park it back in draft.
+                raise handle_validation_error(
+                    "This submission was rejected — use Submit to resend, draft saves are disabled."
+                )
             self._apply_payload(kind, row, payload)
             row.portal_draft_at = _utcnow()
             self._replace_request_lines_if_needed(kind, row, payload)
@@ -542,11 +554,22 @@ class PortalService:
             row.rejected_by = None
             row.rejected_from = None
         else:  # purchase_request / sponsorship_form
-            if previous_status not in ("draft", "rejected"):
+            approval_rejected = (
+                (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
+            )
+            if previous_status not in ("draft", "rejected") and not approval_rejected:
                 raise handle_validation_error(
                     f"Cannot submit {kind} with status {previous_status!r}."
                 )
             row.status = "submitted"
+            if approval_rejected:
+                # Salesperson is re-submitting a rejected approval — clear the rejection
+                # state so reviewers see a fresh submission.
+                row.approval_status = None
+                row.approval_comments = None
+                row.approved_at = None
+                row.approved_by = None
+                row.approval_signature_ref = None
 
         # Document number generation (skip complaint — no number column).
         self._assign_document_number_if_missing(kind, row)
@@ -585,19 +608,28 @@ class PortalService:
         return self.get_submission(token, kind, str(row.id))
 
     def _assign_document_number_if_missing(self, kind: str, row: Any) -> None:
-        """Assign a stable document number on submit, scoped to today (UTC).
+        """Assign a stable document number on submit using ``DocumentNumberingRule``.
 
-        Format: ``{prefix}-{YYYYMMDD}-{nnnn}`` where nnnn = 1 + count of rows
-        whose number already starts with the same prefix+date stem.
+        Falls back to the legacy ``{prefix}-{YYYYMMDD}-{nnnn}`` stem when no
+        configured rule exists for the doc_type, so installs without a rule still
+        produce a number.
 
-        - ``complaint`` -> ``complaint_number`` with prefix ``CMP``
-        - ``stock_inquiry`` -> ``inquiry_number`` with prefix ``SI``
-        - ``purchase_request`` -> ``request_number`` with prefix ``PR``
-        - ``sponsorship_form`` -> ``request_number`` with prefix ``SP``
+        - ``complaint`` -> ``complaint_number`` (legacy fallback prefix ``CMP``)
+        - ``stock_inquiry`` -> ``inquiry_number``
+        - ``purchase_request`` -> ``request_number``
+        - ``sponsorship_form`` -> ``request_number``
         """
+        from app.services.numbering_service import NumberingService
+
+        numbering = NumberingService(self.db)
         date_stem = _utcnow().strftime("%Y%m%d")
+
         if kind == "complaint":
             if getattr(row, "complaint_number", None):
+                return
+            generated = numbering.get_next_number("complaint", commit_rule=False)
+            if generated:
+                row.complaint_number = generated
                 return
             prefix = "CMP"
             stem = f"{prefix}-{date_stem}-"
@@ -611,6 +643,10 @@ class PortalService:
         if kind == "stock_inquiry":
             if getattr(row, "inquiry_number", None):
                 return
+            generated = numbering.get_next_number("stock_inquiry", commit_rule=False)
+            if generated:
+                row.inquiry_number = generated
+                return
             prefix = "SI"
             stem = f"{prefix}-{date_stem}-"
             existing = (
@@ -622,6 +658,10 @@ class PortalService:
             return
         if kind in ("purchase_request", "sponsorship_form"):
             if getattr(row, "request_number", None):
+                return
+            generated = numbering.get_next_number(kind, commit_rule=False)
+            if generated:
+                row.request_number = generated
                 return
             prefix = "PR" if kind == "purchase_request" else "SP"
             stem = f"{prefix}-{date_stem}-"
@@ -742,7 +782,10 @@ class PortalService:
                 raise handle_not_found("Purchase Request", submission_id)
         else:
             raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
-        if not (row.portal_draft_at or row.status == "rejected"):
+        approval_rejected = (
+            (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
+        )
+        if not (row.portal_draft_at or row.status == "rejected" or approval_rejected):
             raise handle_validation_error("This submission is not editable.")
         return row
 
@@ -974,6 +1017,7 @@ class PortalService:
             "reference": row.complaint_number or row.delivery_order_number,
             "document_number": row.complaint_number,
             "status": row.status,
+            "rejection_reason": row.rejection_reason,
             "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
             "is_draft": row.portal_draft_at is not None,
             "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -1044,15 +1088,24 @@ class PortalService:
         return base
 
     def _serialize_request_summary(self, row: PurchaseRequestHeader) -> dict:
+        approval_rejected = (
+            (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
+        )
+        # Approval rejection is the user-visible state on the portal — fold it into ``status``
+        # so the portal badge + editable gate behave like complaint/stock_inquiry rejections.
+        effective_status = "rejected" if approval_rejected else row.status
+        is_editable = bool(row.portal_draft_at) or row.status == "rejected" or approval_rejected
+        rejection_reason = row.approval_comments if approval_rejected else None
         return {
             "id": str(row.id),
             "kind": row.request_type,
             "title": row.project_title or row.sponsor_subject or "Request",
             "reference": row.request_number,
             "document_number": row.request_number,
-            "status": row.status,
+            "status": effective_status,
             "approval_status": row.approval_status,
-            "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
+            "rejection_reason": rejection_reason,
+            "is_editable": is_editable,
             "is_draft": row.portal_draft_at is not None,
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "project_title": row.project_title,
