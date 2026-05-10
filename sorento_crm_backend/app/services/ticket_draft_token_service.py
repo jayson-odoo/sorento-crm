@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import jwt
+from jose import ExpiredSignatureError, JWTError, jwt
 from fastapi import HTTPException, status
 
 from app.config import settings
@@ -43,12 +43,12 @@ def verify_draft_token(token: str) -> str:
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
         )
-    except jwt.ExpiredSignatureError as e:
+    except ExpiredSignatureError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Draft link has expired. Ask the assistant to create a new ticket.",
         ) from e
-    except jwt.InvalidTokenError as e:
+    except JWTError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid draft link.",
