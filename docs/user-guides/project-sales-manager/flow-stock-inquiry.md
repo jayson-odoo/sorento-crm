@@ -4,7 +4,7 @@ Project sales reps submit stock inquiries through the [portal](../project-sales-
 
 ## Where to find inquiries waiting on you
 
-Open [**Procurement → Stock Inquiries**](/procurement-management/stock-inquiries) (URL: `/procurement-management/stock-inquiries`). The page is titled **Stock Inquiries**.
+Open **[Procurement → Stock Inquiries](/procurement-management/stock-inquiries)** (URL: `/procurement-management/stock-inquiries`). The page is titled **Stock Inquiries**.
 
 Filter by **Status = Pending project sales** to see only the inquiries waiting on you. The full set of statuses is: **New**, **Pending project sales**, **Pending purchasing**, **Responded**, **Rejected**.
 

@@ -4,7 +4,7 @@ Folders help organise attachments (packing lists, product attachments, promotion
 
 ## Where to manage folders
 
-Open [**Resource Management → Files**](/resource-management/attachment-directories) (URL: `/resource-management/attachment-directories`). The page is titled **Files**. The folder tree is on the left; the attachments table is on the right.
+Open **[Resource Management → Files](/resource-management/attachment-directories)** (URL: `/resource-management/attachment-directories`). The page is titled **Files**. The folder tree is on the left; the attachments table is on the right.
 
 ## Folder operations
 
