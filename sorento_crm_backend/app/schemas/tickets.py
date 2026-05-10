@@ -100,6 +100,17 @@ class TicketUpdate(BaseModel):
         return v
 
 
+class TicketDraftPortalUpdate(BaseModel):
+    """Portal-side draft edit (token-gated, draft-only).
+
+    The portal review page lets the contact tweak the AI-extracted description
+    before submitting. We only expose description fields here — title /
+    priority / category come from the LLM extraction and stay server-owned."""
+
+    description_text: Optional[str] = None
+    description_html: Optional[str] = None
+
+
 class TicketStatusChangeRequest(BaseModel):
     new_status: str
     note: Optional[str] = None
@@ -297,8 +308,15 @@ class ITSupportTicketCreateRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("respond_contact_id", "contact_id"),
     )
+    # NOTE: Respond.io has one inbox per contact, so the contact id IS the
+    # conversation reference. We do not accept a separate conversation_id from
+    # callers — ticket_intake_service derives source_conversation_id from the
+    # resolved contact's respond_io_id automatically.
     source_conversation_id: Optional[str] = None
-    source_message_id: Optional[str] = None
+    source_message_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("source_message_id", "message_id"),
+    )
     source_space_id: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("source_space_id", "space_id"),

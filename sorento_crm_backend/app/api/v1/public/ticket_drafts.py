@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.tickets import Ticket
+from app.schemas.tickets import TicketDraftPortalUpdate
 from app.services import tickets_service
 from app.services.ticket_draft_token_service import verify_draft_token
 
@@ -42,6 +43,33 @@ def _system_actor() -> dict:
 def get_draft_via_token(token: str, db: Session = Depends(get_db)):
     ticket_id = verify_draft_token(token)
     ticket = _resolve_draft_or_404(db, ticket_id)
+    return tickets_service.ticket_to_response(db, ticket)
+
+
+@router.patch("/{token}")
+def update_draft_via_token(
+    token: str,
+    data: TicketDraftPortalUpdate,
+    db: Session = Depends(get_db),
+):
+    ticket_id = verify_draft_token(token)
+    ticket = _resolve_draft_or_404(db, ticket_id)
+    if ticket.status != "draft":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ticket is not a draft (status={ticket.status}); cannot edit.",
+        )
+    if data.description_html is not None:
+        ticket.description_html = data.description_html or None
+        ticket.description_text = (
+            data.description_text
+            or tickets_service._strip_html(data.description_html)
+        )
+    elif data.description_text is not None:
+        ticket.description_text = data.description_text or None
+        ticket.description_html = None
+    db.commit()
+    db.refresh(ticket)
     return tickets_service.ticket_to_response(db, ticket)
 
 

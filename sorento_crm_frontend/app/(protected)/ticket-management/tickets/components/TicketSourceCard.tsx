@@ -37,6 +37,14 @@ export default function TicketSourceCard({ ticket }: TicketSourceCardProps) {
     return `${pathname || '/'}?${sp.toString()}`;
   })();
 
+  const respondHref = (() => {
+    if (channel !== 'whatsapp_respond') return null;
+    const space = ticket.source_space_id;
+    const respondId = actor?.respond_io_id;
+    if (!space || !respondId) return null;
+    return `https://app.respond.io/space/${encodeURIComponent(space)}/inbox/${encodeURIComponent(respondId)}`;
+  })();
+
   return (
     <Card className="p-4 flex flex-wrap items-center gap-3 text-sm">
       <Icon className="size-4 text-muted-foreground" />
@@ -61,9 +69,30 @@ export default function TicketSourceCard({ ticket }: TicketSourceCardProps) {
         </Link>
       )}
       {channel === 'whatsapp_respond' && (
-        <span className="ms-auto text-xs text-muted-foreground">
-          Reply to this contact via the Messages tab on the right.
-        </span>
+        <div className="ms-auto flex items-center gap-3 text-xs">
+          {ticket.source_message_id && (
+            <span
+              className="text-muted-foreground font-mono"
+              title="Source WhatsApp message id"
+            >
+              msg {ticket.source_message_id.slice(0, 8)}…
+            </span>
+          )}
+          {respondHref ? (
+            <a
+              href={respondHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline"
+            >
+              Open Respond.io conversation →
+            </a>
+          ) : (
+            <span className="text-muted-foreground">
+              Reply via the Messages tab on the right.
+            </span>
+          )}
+        </div>
       )}
     </Card>
   );

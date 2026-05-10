@@ -7,11 +7,16 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
-import { CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
+import { CheckCircle2, AlertTriangle, Pencil } from 'lucide-react';
 import type { Ticket } from '@/app/(protected)/ticket-management/tickets/types/ticket.types';
 
 interface PageProps {
   params: Promise<{ token: string }>;
+}
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]+>/g, '').trim();
 }
 
 export default function TicketDraftPortalPage({ params }: PageProps) {
@@ -22,6 +27,8 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
   const [submitted, setSubmitted] = useState(false);
   const [cancelled, setCancelled] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draftText, setDraftText] = useState('');
 
   useEffect(() => {
     let cancel = false;
@@ -63,6 +70,43 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
       setTicket(updated);
       setSubmitted(true);
       toast.success('Ticket submitted to IT admin');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startEdit() {
+    if (!ticket) return;
+    setDraftText(ticket.description_text ?? stripHtml(ticket.description_html ?? '') ?? '');
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setEditing(false);
+    setDraftText('');
+  }
+
+  async function saveEdit() {
+    setBusy(true);
+    try {
+      const r = await fetch(
+        `/api/v1/public/ticket-drafts/${encodeURIComponent(token)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ description_text: draftText }),
+        },
+      );
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail || 'Save failed');
+      }
+      const updated = await r.json();
+      setTicket(updated);
+      setEditing(false);
+      toast.success('Description updated');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -148,10 +192,40 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
             <Badge variant="outline" className="capitalize">
               {ticket.category}
             </Badge>
+            {isDraft && !submitted && !editing && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ms-auto"
+                onClick={startEdit}
+                disabled={busy}
+              >
+                <Pencil className="size-4 me-1" />
+                Edit
+              </Button>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {ticket.description_html ? (
+          {editing ? (
+            <div className="space-y-3">
+              <Textarea
+                value={draftText}
+                onChange={(e) => setDraftText(e.target.value)}
+                rows={6}
+                placeholder="Describe the issue..."
+                disabled={busy}
+              />
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" size="sm" onClick={cancelEdit} disabled={busy}>
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={saveEdit} disabled={busy || !draftText.trim()}>
+                  Save
+                </Button>
+              </div>
+            </div>
+          ) : ticket.description_html ? (
             <div
               className="prose prose-sm max-w-none"
               dangerouslySetInnerHTML={{ __html: ticket.description_html }}
@@ -162,7 +236,7 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {isDraft && !submitted && (
+      {isDraft && !submitted && !editing && (
         <div className="flex gap-2 justify-end mt-6">
           <Button variant="outline" onClick={cancelDraft} disabled={busy}>
             Cancel

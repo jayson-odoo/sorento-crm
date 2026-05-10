@@ -1106,6 +1106,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "{title, priority (low|medium|high|urgent), category "
             "(bug|feature|question|other), description}. Server creates a "
             "DRAFT ticket and returns a draft_url. "
+            "ALSO pass `contact_id` (Respond.io contact id — this IS the "
+            "conversation reference; Respond.io has one inbox per contact, "
+            "so do NOT pass a separate conversation_id), `space_id` "
+            "(Respond.io workspace id), and `message_id` (Respond.io message "
+            "id of the inbound WhatsApp message that triggered this ticket) "
+            "at the TOP LEVEL of the tool arguments — NOT inside payload_json. "
+            "These three are forwarded as extra body fields and let the CRM "
+            "render an `Open Respond.io conversation` link plus a reference "
+            "to the source message on the ticket detail page. Omit any you "
+            "genuinely don't have; do not fabricate. "
             "3. Reply to the user with ONE short message containing the "
             "draft_url verbatim, e.g. 'I prepared a draft ticket — open "
             "<draft_url> to review and click Submit.' Do NOT echo the "
@@ -1124,7 +1134,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (),
         method="POST",
-        body_params=("payload_json", "contact_id", "space_id"),
+        body_params=("payload_json", "contact_id", "space_id", "message_id"),
         module="tickets",
     ),
 )

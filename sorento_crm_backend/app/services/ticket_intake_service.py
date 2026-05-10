@@ -146,6 +146,13 @@ class TicketIntakeService:
             raised_by_kind = "respond_contact"
             actor_user_id = None
             respond_contact_id = str(contact.id)
+            # Respond.io has one inbox per contact: the contact's respond_io_id
+            # is the conversation reference. Fill source_conversation_id from
+            # the resolved contact so callers don't need to pass it.
+            if not payload.source_conversation_id:
+                payload.source_conversation_id = (
+                    getattr(contact, "respond_io_id", None) or str(contact.id)
+                )
 
         ticket = tickets_service.create_ticket_from_mcp(
             self.db,
@@ -212,10 +219,10 @@ class TicketIntakeService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="respond_contact_id (or contact_id) is required when source_channel='whatsapp_respond'",
                 )
-            # source_conversation_id is optional for MCP IT-support intake — fall
-            # back to source_space_id so the ticket retains conversation scope.
-            if not payload.source_conversation_id and payload.source_space_id:
-                payload.source_conversation_id = payload.source_space_id
+            # source_conversation_id and source_message_id stay optional for MCP
+            # IT-support intake. Do NOT pollute source_conversation_id with
+            # source_space_id — they are different ids in Respond.io and
+            # conflating them breaks downstream conversation/message deep-linking.
 
     # ---------- caller-drafted preview shortcut ----------
 
