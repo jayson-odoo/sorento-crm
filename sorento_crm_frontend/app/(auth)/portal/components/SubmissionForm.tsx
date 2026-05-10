@@ -47,6 +47,7 @@ import { AttachmentDropzone } from './AttachmentDropzone';
 import { AsyncCombobox } from './AsyncCombobox';
 import { DOFilterMultiSelect } from './DOFilterMultiSelect';
 import { LookupSelect } from './LookupSelect';
+import { MultiPillInput } from './MultiPillInput';
 import {
   InquiryFormTableRow,
   ProductInquiryFormLayout,
@@ -68,7 +69,9 @@ type WidgetKind =
   | 'lookup-select'
   | 'product-async'
   | 'debtor-async'
-  | 'do-multi-filter';
+  | 'do-multi-filter'
+  | 'pill-product'
+  | 'pill-text';
 
 interface FieldDef {
   name: string;
@@ -78,6 +81,7 @@ interface FieldDef {
   defaultFromContact?: 'fullname' | 'first_name';
   defaultToday?: boolean;
   placeholder?: string;
+  required?: boolean;
 }
 
 const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
@@ -97,52 +101,75 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       name: 'delivery_order_number',
       label: 'Delivery order number(s)',
       widget: 'do-multi-filter',
+      required: true,
     },
-    { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
-    { name: 'contact_person', label: 'Contact person' },
-    { name: 'contact_number', label: 'Contact number' },
+    {
+      name: 'customer_name',
+      label: 'Customer name',
+      widget: 'debtor-async',
+      required: true,
+    },
+    { name: 'contact_person', label: 'Contact person', required: true },
+    { name: 'contact_number', label: 'Contact number', required: true },
     { name: 'customer_address', label: 'Customer address', widget: 'textarea' },
     {
       name: 'customer_type',
       label: 'Customer type',
       widget: 'lookup-select',
       setKey: 'complaints_customer_type',
+      required: true,
     },
     {
       name: 'complaint_date',
       label: 'Complaint date',
       widget: 'date',
       defaultToday: true,
+      required: true,
     },
-    { name: 'product_code', label: 'Product code', widget: 'product-async' },
-    { name: 'product_type', label: 'Product type' },
+    {
+      name: 'product_code',
+      label: 'Product code',
+      widget: 'pill-product',
+      required: true,
+    },
+    {
+      name: 'product_type',
+      label: 'Product type',
+      widget: 'pill-text',
+      required: true,
+    },
     {
       name: 'within_warranty',
       label: 'Within warranty',
       widget: 'lookup-select',
       setKey: 'complaints_within_warranty',
+      required: true,
     },
     {
       name: 'defects_discovered',
       label: 'Defects discovered',
       widget: 'lookup-select',
       setKey: 'complaints_defects_discovered',
+      required: true,
     },
     {
       name: 'complaint_type',
       label: 'Complaint type',
       widget: 'lookup-select',
       setKey: 'complaints_complaint_type',
+      required: true,
     },
     {
       name: 'defect_description',
       label: 'Defect description',
       widget: 'textarea',
+      required: true,
     },
     {
       name: 'salesperson',
       label: 'Salesperson',
       defaultFromContact: 'fullname',
+      required: true,
     },
     { name: 'project_title', label: 'Project title' },
   ],
@@ -204,6 +231,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [contact, setContact] = useState<PortalContact | null>(null);
+  const [invalidFields, setInvalidFields] = useState<Set<string>>(new Set());
 
   const fieldDefs = FIELDS[kind];
   const showLines = HAS_LINES.includes(kind);
@@ -374,6 +402,31 @@ export function SubmissionForm({ kind, submissionId }: Props) {
   };
 
   const handleSubmit = async () => {
+    const missing: { name: string; label: string }[] = [];
+    for (const f of fieldDefs) {
+      if (!f.required) continue;
+      const v = fields[f.name];
+      const empty = Array.isArray(v)
+        ? v.length === 0
+        : !(typeof v === 'string' && v.trim().length > 0);
+      if (empty) missing.push({ name: f.name, label: f.label });
+    }
+    if (missing.length > 0) {
+      setInvalidFields(new Set(missing.map((m) => m.name)));
+      toast.error(
+        `Missing ${missing.length} required field${missing.length === 1 ? '' : 's'}: ${missing
+          .map((m) => m.label)
+          .join(', ')}`,
+      );
+      setConfirmOpen(false);
+      setTimeout(() => {
+        const node = document.querySelector(
+          `[data-field-name="${missing[0].name}"]`,
+        ) as HTMLElement | null;
+        node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      }, 50);
+      return;
+    }
     setSubmitting(true);
     try {
       let id = submissionId;
@@ -420,6 +473,25 @@ export function SubmissionForm({ kind, submissionId }: Props) {
     setFields((prev) => ({ ...prev, [name]: value }));
   };
 
+  useEffect(() => {
+    setInvalidFields((prev) => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Set(prev);
+      prev.forEach((name) => {
+        const v = fields[name];
+        const empty = Array.isArray(v)
+          ? v.length === 0
+          : !(typeof v === 'string' && v.trim().length > 0);
+        if (!empty) {
+          next.delete(name);
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [fields]);
+
   const handleAIExtractApply = async (payload: AIExtractApplyPayload) => {
     // AI extract is an explicit user action ("Confirm and prefill"), so we
     // overwrite the affected fields rather than skipping non-empty ones.
@@ -428,10 +500,17 @@ export function SubmissionForm({ kind, submissionId }: Props) {
     // resolved DO rows. AI-provided values always take priority over the
     // DO-derived ones.
     const aiValues = payload.values;
+    const widgetByName: Record<string, WidgetKind | undefined> = {};
+    for (const f of fieldDefs) widgetByName[f.name] = f.widget;
     setFields((prev) => {
       const next = { ...prev };
       for (const [name, value] of Object.entries(aiValues)) {
-        next[name] = value;
+        const isMultiArray = widgetByName[name] === 'do-multi-filter';
+        if (Array.isArray(value) && !isMultiArray) {
+          next[name] = value.map((v) => String(v).trim()).filter(Boolean).join(', ');
+        } else {
+          next[name] = value;
+        }
       }
       return next;
     });
@@ -550,7 +629,16 @@ export function SubmissionForm({ kind, submissionId }: Props) {
     if (fieldName !== 'product_code') return;
     const derived = (item.category_code ?? item.category_name ?? '').trim();
     if (!derived) return;
-    setFields((prev) => ({ ...prev, product_type: derived }));
+    setFields((prev) => {
+      const current = typeof prev.product_type === 'string' ? prev.product_type : '';
+      const existing = current
+        .split(/[,\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (existing.includes(derived)) return prev;
+      const next = [...existing, derived].join(', ');
+      return { ...prev, product_type: next };
+    });
   };
 
   // For complaint kind: when DO multi-select changes, auto-populate customer
@@ -571,6 +659,44 @@ export function SubmissionForm({ kind, submissionId }: Props) {
         items
           .flatMap((i) => i.products ?? [])
           .map((p) => (p ?? '').trim())
+          .filter(Boolean),
+      ),
+    );
+    setFields((prev) => ({
+      ...prev,
+      customer_name: customerNames.join(', '),
+      product_code: productCodes.join(', '),
+    }));
+    if (productCodes.length > 0) {
+      try {
+        const cats = new Set<string>();
+        for (const code of productCodes) {
+          const matches = await lookupProducts(code, 5);
+          const exact = matches.find((m) => m.product_code === code);
+          const c = (exact?.category_code ?? exact?.category_name ?? '').trim();
+          if (c) cats.add(c);
+        }
+        if (cats.size > 0) {
+          setFields((prev) => ({ ...prev, product_type: Array.from(cats).join(', ') }));
+        }
+      } catch {
+        // Best-effort — leave product_type as-is on lookup failure.
+      }
+    }
+  };
+
+  const handleDOProductsConfirmed = async ({
+    items,
+    productCodes,
+  }: {
+    items: DOLookupItem[];
+    productCodes: string[];
+  }) => {
+    if (kind !== 'complaint') return;
+    const customerNames = Array.from(
+      new Set(
+        items
+          .map((i) => (i.debtor_name ?? i.customer_name ?? '').trim())
           .filter(Boolean),
       ),
     );
@@ -677,6 +803,8 @@ export function SubmissionForm({ kind, submissionId }: Props) {
           statusBadge={statusBadge}
           onProductItemSelected={handleProductItemSelected}
           onDOItemsChanged={handleDOItemsChanged}
+          onDOProductsConfirmed={handleDOProductsConfirmed}
+          invalidFields={invalidFields}
         />
       ) : (
         <PurchaseRequestFormSection
@@ -987,6 +1115,11 @@ interface SectionProps {
   statusBadge: { label: string; variant: 'warning' | 'destructive' | 'success' | 'secondary' } | null;
   onProductItemSelected: (fieldName: string, item: ProductLookupItem) => void;
   onDOItemsChanged?: (items: DOLookupItem[]) => void;
+  onDOProductsConfirmed?: (payload: {
+    items: DOLookupItem[];
+    productCodes: string[];
+  }) => void;
+  invalidFields?: Set<string>;
 }
 
 function StockInquiryFormSection({
@@ -1114,6 +1247,8 @@ function ComplaintFormSection({
   statusBadge,
   onProductItemSelected,
   onDOItemsChanged,
+  onDOProductsConfirmed,
+  invalidFields,
 }: SectionProps) {
   return (
     <Card>
@@ -1134,6 +1269,8 @@ function ComplaintFormSection({
                 onChange={(v) => setFieldValue(f.name, v)}
                 onItemSelect={(item) => onProductItemSelected(f.name, item)}
                 onDOItemsChange={onDOItemsChanged}
+                onDOProductsConfirmed={onDOProductsConfirmed}
+                invalid={invalidFields?.has(f.name)}
                 disabled={!isEditable}
               />
             </div>
@@ -1198,6 +1335,8 @@ function FieldInput({
   onChange,
   onItemSelect,
   onDOItemsChange,
+  onDOProductsConfirmed,
+  invalid,
   disabled,
 }: {
   field: FieldDef;
@@ -1205,21 +1344,39 @@ function FieldInput({
   onChange: (v: string | string[]) => void;
   onItemSelect?: (item: ProductLookupItem) => void;
   onDOItemsChange?: (items: DOLookupItem[]) => void;
+  onDOProductsConfirmed?: (payload: {
+    items: DOLookupItem[];
+    productCodes: string[];
+  }) => void;
+  invalid?: boolean;
   disabled?: boolean;
 }) {
   return (
-    <div className="space-y-1.5 min-w-0">
+    <div className="space-y-1.5 min-w-0" data-field-name={field.name}>
       <Label htmlFor={field.name} className="min-w-0">
         {field.label}
+        {field.required && <span className="ml-0.5 text-destructive">*</span>}
       </Label>
-      <FieldControl
-        field={field}
-        value={value}
-        onChange={onChange}
-        onItemSelect={onItemSelect}
-        onDOItemsChange={onDOItemsChange}
-        disabled={disabled}
-      />
+      <div
+        className={
+          invalid
+            ? '[&_input]:border-destructive [&_textarea]:border-destructive [&_[role=combobox]]:border-destructive [&_.pill-shell]:border-destructive'
+            : ''
+        }
+      >
+        <FieldControl
+          field={field}
+          value={value}
+          onChange={onChange}
+          onItemSelect={onItemSelect}
+          onDOItemsChange={onDOItemsChange}
+          onDOProductsConfirmed={onDOProductsConfirmed}
+          disabled={disabled}
+        />
+      </div>
+      {invalid && (
+        <p className="text-xs text-destructive">{field.label} is required.</p>
+      )}
     </div>
   );
 }
@@ -1230,6 +1387,7 @@ function FieldControl({
   onChange,
   onItemSelect,
   onDOItemsChange,
+  onDOProductsConfirmed,
   disabled,
 }: {
   field: FieldDef;
@@ -1237,6 +1395,10 @@ function FieldControl({
   onChange: (v: string | string[]) => void;
   onItemSelect?: (item: ProductLookupItem) => void;
   onDOItemsChange?: (items: DOLookupItem[]) => void;
+  onDOProductsConfirmed?: (payload: {
+    items: DOLookupItem[];
+    productCodes: string[];
+  }) => void;
   disabled?: boolean;
 }) {
   const widget: WidgetKind = field.widget ?? 'text';
@@ -1328,6 +1490,41 @@ function FieldControl({
             onChange(vs);
             if (items && onDOItemsChange) onDOItemsChange(items);
           }}
+          onProductsConfirmed={onDOProductsConfirmed}
+          disabled={disabled}
+        />
+      );
+    case 'pill-product':
+      return (
+        <MultiPillInput
+          id={field.name}
+          value={stringValue}
+          onChange={(csv) => onChange(csv)}
+          placeholder={field.placeholder ?? 'Type code, press Enter'}
+          disabled={disabled}
+          fetchOptions={async (q) => {
+            const items = await lookupProducts(q);
+            return items.map((p) => ({
+              value: p.product_code,
+              label: p.product_code,
+              meta: p.product_name ?? '',
+              data: p,
+            }));
+          }}
+          onItemSelect={(_v, opt) => {
+            if (!onItemSelect) return;
+            const data = opt.data as ProductLookupItem | undefined;
+            if (data) onItemSelect(data);
+          }}
+        />
+      );
+    case 'pill-text':
+      return (
+        <MultiPillInput
+          id={field.name}
+          value={stringValue}
+          onChange={(csv) => onChange(csv)}
+          placeholder={field.placeholder ?? 'Type and press Enter'}
           disabled={disabled}
         />
       );

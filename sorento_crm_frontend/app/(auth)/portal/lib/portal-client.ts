@@ -341,11 +341,18 @@ export interface DebtorLookupItem {
   debtor_name: string;
 }
 
+export interface DOProductLine {
+  product_code: string;
+  product_name?: string | null;
+  quantity?: number | null;
+}
+
 export interface DOLookupItem {
   order_number: string;
   debtor_name: string | null;
   customer_name: string | null;
   products: string[];
+  product_lines?: DOProductLine[];
   order_date?: string | null;
 }
 

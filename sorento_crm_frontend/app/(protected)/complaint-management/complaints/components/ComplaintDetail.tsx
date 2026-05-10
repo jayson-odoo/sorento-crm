@@ -726,6 +726,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               {displayComplaintTechnicalResponse(complaint.technical_team_response) || '-'}
             </p>
           </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Required on site support</p>
+            <p className="font-medium">
+              {complaint.required_on_site_support === true ? 'Yes' : 'No'}
+            </p>
+          </div>
           {complaint.last_responded_at && (
             <div>
               <p className="text-sm text-muted-foreground">Last responded</p>

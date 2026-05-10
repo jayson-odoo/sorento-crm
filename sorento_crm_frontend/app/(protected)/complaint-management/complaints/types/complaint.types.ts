@@ -49,6 +49,7 @@ export interface Complaint {
   resolution_name?: string | null;
   root_cause_notified_at?: string | null;
   resolution_notified_at?: string | null;
+  required_on_site_support?: boolean | null;
   attachments: ComplaintAttachment[];
 }
 
@@ -77,6 +78,7 @@ export interface ComplaintFormData {
   last_responded_at?: string;
   root_cause_id?: string | null;
   resolution_id?: string | null;
+  required_on_site_support?: boolean | null;
   attachments?: ComplaintAttachment[];
 }
 

@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import LookupBoundField from '@/components/common/LookupBoundField';
 import { useCreateComplaint, useUpdateComplaint, useUpdateComplaintAndReply, useComplaint } from '../hooks/useComplaints';
 import { useComplaintRootCausesSelect } from '@/app/(protected)/complaint-management/complaint-root-causes/hooks/useComplaintRootCauses';
@@ -77,6 +78,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       technical_team_response: null,
       root_cause_id: null,
       resolution_id: null,
+      required_on_site_support: false,
       attachments: [],
     },
     mode: 'onSubmit',
@@ -135,6 +137,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
           displayComplaintTechnicalResponse(complaint.technical_team_response) || null,
         root_cause_id: complaint.root_cause_id ?? null,
         resolution_id: complaint.resolution_id ?? null,
+        required_on_site_support: complaint.required_on_site_support ?? false,
         attachments,
       });
       setFormInitialized(true);
@@ -183,6 +186,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         technical_team_response: data.technical_team_response || undefined,
         root_cause_id: data.root_cause_id || null,
         resolution_id: data.resolution_id || null,
+        required_on_site_support: data.required_on_site_support ?? false,
         attachments: validAttachments.length > 0 ? validAttachments : undefined,
       };
 
@@ -253,6 +257,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       customer_address: data.customer_address || undefined,
       project_title: data.project_title || undefined,
       technical_team_response: technicalResponse,
+      required_on_site_support: data.required_on_site_support ?? true,
       attachments: validAttachments.length > 0 ? validAttachments : undefined,
     };
     try {
@@ -309,502 +314,519 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
             <ComplaintNavigation complaintId={complaintId} />
           </div>
         )}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left Column */}
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Complaint Information</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="delivery_order_number"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Delivery Order Number</FormLabel>
-                      <FormControl>
+        <Card>
+          <CardHeader>
+            <CardTitle>Complaint Information</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <FormField
+              control={form.control}
+              name="delivery_order_number"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Delivery Order Number</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Enter DO number"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="customer_name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Customer Name</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Enter customer name"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="contact_person"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Contact Person</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Enter contact person name"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="contact_number"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Contact Number</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Enter contact number"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="customer_address"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Customer Address</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="Enter customer address"
+                      {...field}
+                      value={field.value || ''}
+                      rows={3}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="customer_type"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Customer Type</FormLabel>
+                  <FormControl>
+                    <LookupBoundField
+                      table="complaints"
+                      column="customer_type"
+                      value={field.value}
+                      onChange={field.onChange}
+                      placeholder="Select customer type"
+                      renderFallback={() => (
+                        <Select
+                          key={field.value || 'empty'}
+                          onValueChange={field.onChange}
+                          value={field.value || undefined}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select customer type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Individual">Individual</SelectItem>
+                            <SelectItem value="Dealer">Dealer</SelectItem>
+                            <SelectItem value="Corporate">Corporate</SelectItem>
+                            <SelectItem value="Government">Government</SelectItem>
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      )}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            {form.watch('customer_type')?.toLowerCase() === 'other' && (
+              <FormField
+                control={form.control}
+                name="customer_type_others"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Customer Type (Other)</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="Specify customer type"
+                        {...field}
+                        value={field.value || ''}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
+            <FormField
+              control={form.control}
+              name="complaint_date"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Complaint Date</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="date"
+                      {...field}
+                      value={
+                        field.value
+                          ? new Date(field.value).toISOString().split('T')[0]
+                          : ''
+                      }
+                      onChange={(e) => {
+                        const date = e.target.value
+                          ? new Date(e.target.value)
+                          : null;
+                        field.onChange(date);
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="product_code"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Product Code</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Enter product code"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="product_type"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Product Type</FormLabel>
+                  <FormControl>
+                    <LookupBoundField
+                      table="complaints"
+                      column="product_type"
+                      value={field.value}
+                      onChange={field.onChange}
+                      placeholder="Select product type"
+                      renderFallback={() => (
                         <Input
-                          placeholder="Enter DO number"
+                          placeholder="Enter product type"
                           {...field}
                           value={field.value || ''}
                         />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                      )}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-                <FormField
-                  control={form.control}
-                  name="complaint_date"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Complaint Date</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="date"
-                          {...field}
-                          value={
-                            field.value
-                              ? new Date(field.value).toISOString().split('T')[0]
-                              : ''
-                          }
-                          onChange={(e) => {
-                            const date = e.target.value
-                              ? new Date(e.target.value)
-                              : null;
-                            field.onChange(date);
-                          }}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="customer_type"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Customer Type</FormLabel>
-                      <FormControl>
-                        <LookupBoundField
-                          table="complaints"
-                          column="customer_type"
-                          value={field.value}
-                          onChange={field.onChange}
-                          placeholder="Select customer type"
-                          renderFallback={() => (
-                            <Select
-                              onValueChange={field.onChange}
-                              value={field.value || ''}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select customer type" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="individual">Individual</SelectItem>
-                                <SelectItem value="corporate">Corporate</SelectItem>
-                                <SelectItem value="government">Government</SelectItem>
-                                <SelectItem value="other">Other</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          )}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {form.watch('customer_type') === 'other' && (
-                  <FormField
-                    control={form.control}
-                    name="customer_type_others"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Customer Type (Other)</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder="Specify customer type"
-                            {...field}
-                            value={field.value || ''}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
-
-                <FormField
-                  control={form.control}
-                  name="within_warranty"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Within Warranty</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value || ''}
-                      >
-                        <FormControl>
+            <FormField
+              control={form.control}
+              name="within_warranty"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Within Warranty</FormLabel>
+                  <FormControl>
+                    <LookupBoundField
+                      table="complaints"
+                      column="within_warranty"
+                      value={field.value}
+                      onChange={field.onChange}
+                      placeholder="Select warranty status"
+                      renderFallback={() => (
+                        <Select
+                          key={field.value || 'empty'}
+                          onValueChange={field.onChange}
+                          value={field.value || undefined}
+                        >
                           <SelectTrigger>
                             <SelectValue placeholder="Select warranty status" />
                           </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="yes">Yes</SelectItem>
-                          <SelectItem value="no">No</SelectItem>
-                          <SelectItem value="unknown">Unknown</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="product_type"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Product Type</FormLabel>
-                      <FormControl>
-                        <LookupBoundField
-                          table="complaints"
-                          column="product_type"
-                          value={field.value}
-                          onChange={field.onChange}
-                          placeholder="Select product type"
-                          renderFallback={() => (
-                            <Input
-                              placeholder="Enter product type"
-                              {...field}
-                              value={field.value || ''}
-                            />
-                          )}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="defects_discovered"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Defects Discovered</FormLabel>
-                      <FormControl>
-                        <LookupBoundField
-                          table="complaints"
-                          column="defects_discovered"
-                          value={field.value}
-                          onChange={field.onChange}
-                          placeholder="Select defect"
-                          renderFallback={() => (
-                            <Input
-                              placeholder="Enter defects discovered"
-                              {...field}
-                              value={field.value || ''}
-                            />
-                          )}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="complaint_type"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Complaint Type</FormLabel>
-                      <FormControl>
-                        <LookupBoundField
-                          table="complaints"
-                          column="complaint_type"
-                          value={field.value}
-                          onChange={field.onChange}
-                          placeholder="Select complaint type"
-                          renderFallback={() => (
-                            <Input
-                              placeholder="Enter complaint type"
-                              {...field}
-                              value={field.value || ''}
-                            />
-                          )}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="defect_description"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Defect Description</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Enter detailed defect description"
-                          {...field}
-                          value={field.value || ''}
-                          rows={4}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Right Column */}
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Product & Customer Details</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="product_code"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Product Code</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter product code"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="salesperson"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Salesperson</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter salesperson name"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="customer_name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Customer Name</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter customer name"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="contact_person"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Contact Person</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter contact person name"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="contact_number"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Contact Number</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter contact number"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="customer_address"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Customer Address</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Enter customer address"
-                          {...field}
-                          value={field.value || ''}
-                          rows={3}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="project_title"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Project Title</FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="Enter project title"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Tecnical Team</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {!isEditMode && (
-                  <>
-                    <FormField
-                      control={form.control}
-                      name="contact_id"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Contact ID</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="Respond.io contact ID"
-                              {...field}
-                              value={field.value ?? ''}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
+                          <SelectContent>
+                            <SelectItem value="Yes">Yes</SelectItem>
+                            <SelectItem value="No">No</SelectItem>
+                            <SelectItem value="Unknown">Unknown</SelectItem>
+                          </SelectContent>
+                        </Select>
                       )}
                     />
-                    <FormField
-                      control={form.control}
-                      name="space_id"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Space ID</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder="Respond.io space ID"
-                              {...field}
-                              value={field.value ?? ''}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="defects_discovered"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Defects Discovered</FormLabel>
+                  <FormControl>
+                    <LookupBoundField
+                      table="complaints"
+                      column="defects_discovered"
+                      value={field.value}
+                      onChange={field.onChange}
+                      placeholder="Select defect"
+                      renderFallback={() => (
+                        <Input
+                          placeholder="Enter defects discovered"
+                          {...field}
+                          value={field.value || ''}
+                        />
                       )}
                     />
-                  </>
-                )}
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="complaint_type"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Complaint Type</FormLabel>
+                  <FormControl>
+                    <LookupBoundField
+                      table="complaints"
+                      column="complaint_type"
+                      value={field.value}
+                      onChange={field.onChange}
+                      placeholder="Select complaint type"
+                      renderFallback={() => (
+                        <Input
+                          placeholder="Enter complaint type"
+                          {...field}
+                          value={field.value || ''}
+                        />
+                      )}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="defect_description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Defect Description</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="Enter detailed defect description"
+                      {...field}
+                      value={field.value || ''}
+                      rows={4}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="salesperson"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Salesperson</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Enter salesperson name"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="project_title"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Project Title</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Enter project title"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Tecnical Team</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {!isEditMode && (
+              <>
                 <FormField
                   control={form.control}
-                  name="root_cause_id"
+                  name="contact_id"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Root Cause</FormLabel>
-                      <Select
-                        value={field.value ?? '__unset__'}
-                        onValueChange={(v) => field.onChange(v === '__unset__' ? null : v)}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select root cause (optional)" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="__unset__">— None —</SelectItem>
-                          {rootCauseOptions.map((opt) => (
-                            <SelectItem key={opt.id} value={opt.id}>
-                              {opt.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="resolution_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Resolution</FormLabel>
-                      <Select
-                        value={field.value ?? '__unset__'}
-                        onValueChange={(v) => field.onChange(v === '__unset__' ? null : v)}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select resolution (optional)" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="__unset__">— None —</SelectItem>
-                          {resolutionOptions.map((opt) => (
-                            <SelectItem key={opt.id} value={opt.id}>
-                              {opt.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="technical_team_response"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Technical Team Response</FormLabel>
+                      <FormLabel>Contact ID</FormLabel>
                       <FormControl>
-                        <Textarea
-                          placeholder="Enter technical team response to send to customer"
+                        <Input
+                          placeholder="Respond.io contact ID"
                           {...field}
                           value={field.value ?? ''}
-                          rows={4}
                         />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-              </CardContent>
-            </Card>
-          </div>
-        </div>
+                <FormField
+                  control={form.control}
+                  name="space_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Space ID</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="Respond.io space ID"
+                          {...field}
+                          value={field.value ?? ''}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </>
+            )}
+            <FormField
+              control={form.control}
+              name="root_cause_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Root Cause</FormLabel>
+                  <Select
+                    key={`root-${field.value ?? 'unset'}-${rootCauseOptions.length}`}
+                    value={field.value ?? '__unset__'}
+                    onValueChange={(v) => field.onChange(v === '__unset__' ? null : v)}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select root cause (optional)" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="__unset__">— None —</SelectItem>
+                      {rootCauseOptions.map((opt) => (
+                        <SelectItem key={opt.id} value={opt.id}>
+                          {opt.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="resolution_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Resolution</FormLabel>
+                  <Select
+                    key={`res-${field.value ?? 'unset'}-${resolutionOptions.length}`}
+                    value={field.value ?? '__unset__'}
+                    onValueChange={(v) => field.onChange(v === '__unset__' ? null : v)}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select resolution (optional)" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="__unset__">— None —</SelectItem>
+                      {resolutionOptions.map((opt) => (
+                        <SelectItem key={opt.id} value={opt.id}>
+                          {opt.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="technical_team_response"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Technical Team Response</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="Enter technical team response to send to customer"
+                      {...field}
+                      value={field.value ?? ''}
+                      rows={4}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="required_on_site_support"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center gap-2 space-y-0">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value ?? false}
+                      onCheckedChange={(v) => field.onChange(v === true)}
+                    />
+                  </FormControl>
+                  <FormLabel className="!mt-0 cursor-pointer">
+                    Required on site support
+                  </FormLabel>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </CardContent>
+        </Card>
 
         {isEditMode && complaintId && (
           <ComplaintManualAttachmentsSection

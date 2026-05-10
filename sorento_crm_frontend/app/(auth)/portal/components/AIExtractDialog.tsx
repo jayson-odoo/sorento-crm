@@ -61,6 +61,11 @@ type Stage = 'upload' | 'review';
 
 const PREVIEWABLE = /^image\//;
 
+const KINDS_WITH_LINE_ITEMS: PortalSubmissionKind[] = [
+  'purchase_request',
+  'sponsorship_form',
+];
+
 export function AIExtractDialog({
   open,
   onOpenChange,
@@ -233,7 +238,9 @@ export function AIExtractDialog({
       values: out,
       files,
       alsoAttach,
-      productLines: result.products ?? [],
+      productLines: KINDS_WITH_LINE_ITEMS.includes(kind)
+        ? (result.products ?? [])
+        : [],
     });
     toast.success(
       `Applied ${remainingFieldEntries.length} field${remainingFieldEntries.length === 1 ? '' : 's'}.`,
@@ -415,7 +422,7 @@ export function AIExtractDialog({
                 </div>
               )}
 
-              {result.products && result.products.length > 0 && (
+              {KINDS_WITH_LINE_ITEMS.includes(kind) && result.products && result.products.length > 0 && (
                 <div className="rounded-md border border-border">
                   <div className="px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
                     Line items ({result.products.length}) — will be applied to the items list

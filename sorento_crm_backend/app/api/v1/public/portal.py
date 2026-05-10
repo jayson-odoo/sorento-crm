@@ -229,11 +229,18 @@ def lookup_debtors(
     return [DebtorLookupItem(debtor_name=r[0]) for r in rows if r[0]]
 
 
+class DOProductLine(BaseModel):
+    product_code: str
+    product_name: Optional[str] = None
+    quantity: Optional[float] = None
+
+
 class DOLookupItem(BaseModel):
     order_number: str
     debtor_name: Optional[str] = None
     customer_name: Optional[str] = None
     products: list[str] = []
+    product_lines: list[DOProductLine] = []
     order_date: Optional[str] = None
 
 
@@ -303,18 +310,30 @@ def lookup_delivery_orders(
     for o in rows:
         customer_name = o.customer.customer_name if getattr(o, "customer", None) else None
         products: list[str] = []
+        product_lines: list[DOProductLine] = []
         try:
             from app.models.order import OrderLine as _OrderLine
             from app.models.product import Product as _Product
 
             lines = (
-                db.query(_Product.product_code)
+                db.query(_Product.product_code, _Product.product_name, _OrderLine.quantity)
                 .join(_OrderLine, _OrderLine.product_id == _Product.id)
                 .filter(_OrderLine.order_id == o.id)
-                .limit(5)
+                .order_by(_OrderLine.line_sequence.asc())
+                .limit(200)
                 .all()
             )
-            products = [code for (code,) in lines if code]
+            for code, name, qty in lines:
+                if not code:
+                    continue
+                products.append(code)
+                product_lines.append(
+                    DOProductLine(
+                        product_code=code,
+                        product_name=name,
+                        quantity=float(qty) if qty is not None else None,
+                    )
+                )
         except Exception:
             pass
         od = o.order_date
@@ -332,6 +351,7 @@ def lookup_delivery_orders(
                 debtor_name=o.debtor_name,
                 customer_name=customer_name,
                 products=products,
+                product_lines=product_lines,
                 order_date=order_date_iso,
             )
         )

@@ -36,7 +36,7 @@ from app.models.lookup import (
     LookupOptionKeyword,
     LookupSet,
 )
-from app.models.product import Product
+from app.models.product import Product, ProductCategory
 from app.services.ai_extract.form_schema_registry import (
     ExtractFieldSpec,
     get_form_schema,
@@ -60,6 +60,17 @@ PDF_RENDER_DPI = 144
 PRODUCT_HINT_LIMIT = 30
 ALLOWED_IMAGE_MIMES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 ALLOWED_PDF_MIMES = {"application/pdf"}
+
+# Forms that ship a separate items-list section. Other forms (complaint,
+# stock_inquiry, master.*) must NOT receive a `products` array — distinct
+# product codes belong inline in `product_code`.
+FORMS_WITH_LINE_ITEMS: frozenset[str] = frozenset(
+    {"portal.purchase_request", "portal.sponsorship_form"}
+)
+
+
+def _form_has_line_items(form_key: str) -> bool:
+    return form_key in FORMS_WITH_LINE_ITEMS
 
 
 # ---- Result schemas -------------------------------------------------------
@@ -261,7 +272,9 @@ class AIExtractService:
             )
 
         provider, provider_name, model_name = self._resolve_provider()
-        messages = self._build_messages(form_key, schema, guidance)
+        messages = self._build_messages(
+            form_key, schema, guidance, has_line_items=_form_has_line_items(form_key)
+        )
         started = time.perf_counter()
         try:
             result: ChatResult = provider.chat(
@@ -283,7 +296,11 @@ class AIExtractService:
 
         parsed = self._parse_json(result.content)
         values, per_field = self._validate_and_canonicalize(parsed, schema)
-        products = self._extract_products(parsed)
+        products = (
+            self._extract_products(parsed)
+            if _form_has_line_items(form_key)
+            else []
+        )
 
         self._log_usage(
             provider_name=provider_name,
@@ -498,6 +515,7 @@ class AIExtractService:
         form_key: str,
         schema: list[ExtractFieldSpec],
         guidance: dict[str, dict[str, Any]],
+        has_line_items: bool = True,
     ) -> list[dict]:
         field_specs = []
         for f in schema:
@@ -537,17 +555,29 @@ class AIExtractService:
             "(4) For `date` fields, use ISO-8601 (YYYY-MM-DD). "
             "(5) For `fk_product`, return the closest-matching product_code "
             "from the supplied examples; if nothing matches, return the raw "
-            "code as printed in the document. "
-            "(6) Never invent values. Never include explanations or prose."
+            "code as printed in the document. If multiple distinct product "
+            "codes apply, return them as a single comma-separated string "
+            "(e.g. \"TPE-9201, TPE-9203\") — never as a JSON array. "
+            "(6) For `text`, `textarea`, and `fk_customer` fields, if the "
+            "document shows multiple distinct values for the same field, "
+            "return them as a single comma-separated string. "
+            "(7) Never invent values. Never include explanations or prose."
+        )
+        line_items_clause = (
+            " Optionally include a top-level `products` array of "
+            "{product_code, product_name, quantity, unit_price, total, notes} "
+            "when the document lists line items. Only include `unit_price` and "
+            "`total` when the document actually shows them; omit otherwise."
+            if has_line_items
+            else " Do NOT include a top-level `products` array — this form has "
+            "no line-item table. Distinct product codes belong in the "
+            "`product_code` field as a comma-separated string."
         )
         user_text = (
             f"Form: {form_key}\n"
             f"Fields:\n{json.dumps(field_specs, ensure_ascii=False, indent=2)}\n\n"
-            "Return ONLY a single JSON object keyed by field name. "
-            "Optionally include a top-level `products` array of "
-            "{product_code, product_name, quantity, unit_price, total, notes} "
-            "when the document lists line items. Only include `unit_price` and "
-            "`total` when the document actually shows them; omit otherwise."
+            "Return ONLY a single JSON object keyed by field name."
+            + line_items_clause
         )
         return [
             {"role": "system", "content": system},
@@ -633,13 +663,27 @@ class AIExtractService:
                         raw=raw, canonical=items, source="llm"
                     )
             elif f.kind == "fk_product":
-                code = self._canonical_product_code(str(raw))
-                values[f.name] = code
-                per_field[f.name] = ExtractFieldMeta(
-                    raw=raw,
-                    canonical=code,
-                    source="product_master" if code != str(raw).strip() else "llm",
-                )
+                if isinstance(raw, list):
+                    codes = [
+                        self._canonical_product_code(str(x))
+                        for x in raw
+                        if str(x).strip()
+                    ]
+                    csv = ", ".join(c for c in codes if c)
+                    if not csv:
+                        continue
+                    values[f.name] = csv
+                    per_field[f.name] = ExtractFieldMeta(
+                        raw=raw, canonical=csv, source="product_master"
+                    )
+                else:
+                    code = self._canonical_product_code(str(raw))
+                    values[f.name] = code
+                    per_field[f.name] = ExtractFieldMeta(
+                        raw=raw,
+                        canonical=code,
+                        source="product_master" if code != str(raw).strip() else "llm",
+                    )
             elif f.kind == "date":
                 s = str(raw).strip()
                 if s:
@@ -649,11 +693,52 @@ class AIExtractService:
                 values[f.name] = raw
                 per_field[f.name] = ExtractFieldMeta(raw=raw, canonical=raw, source="llm")
             else:  # text, textarea, fk_customer, multi_text
-                s = str(raw).strip()
+                if isinstance(raw, list):
+                    parts = [str(x).strip() for x in raw if str(x).strip()]
+                    s = ", ".join(parts)
+                else:
+                    s = str(raw).strip()
                 if s:
                     values[f.name] = s
                     per_field[f.name] = ExtractFieldMeta(raw=raw, canonical=s, source="llm")
+
+        # Derive product_type from product master categories so portal forms
+        # (complaint, stock_inquiry, ...) don't rely on the LLM's freeform
+        # taxonomy. Only fires when both fields are in the schema and
+        # product_code resolved to one or more codes in the master.
+        has_product_type = any(f.name == "product_type" for f in schema)
+        if has_product_type and isinstance(values.get("product_code"), str):
+            derived = self._derive_product_type_csv(values["product_code"])
+            if derived:
+                values["product_type"] = derived
+                per_field["product_type"] = ExtractFieldMeta(
+                    raw=parsed.get("product_type"),
+                    canonical=derived,
+                    source="product_master",
+                )
         return values, per_field
+
+    def _derive_product_type_csv(self, codes_csv: str) -> str:
+        codes = [c.strip() for c in codes_csv.split(",") if c.strip()]
+        if not codes:
+            return ""
+        try:
+            rows = (
+                self.db.query(Product.product_code, ProductCategory.category_code, ProductCategory.category_name)
+                .join(ProductCategory, Product.category_id == ProductCategory.id)
+                .filter(Product.product_code.in_(codes))
+                .all()
+            )
+        except Exception:  # noqa: BLE001
+            return ""
+        seen: list[str] = []
+        for _code, ccode, cname in rows:
+            label = (ccode or cname or "").strip()
+            if not label:
+                continue
+            if label not in seen:
+                seen.append(label)
+        return ", ".join(seen)
 
     def _set_key_for(self, f: ExtractFieldSpec) -> str | None:
         if f.set_key:

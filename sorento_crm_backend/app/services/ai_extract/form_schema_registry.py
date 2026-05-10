@@ -91,7 +91,10 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
         name="product_type",
         label="Product type",
         kind="text",
-        note="Generic category, e.g. bathtub, basin, water closet, kitchen sink, faucet, shower, accessory.",
+        note=(
+            "Do not extract — auto-derived server-side from the product master "
+            "category for the resolved product_code(s). Omit this field."
+        ),
     ),
     ExtractFieldSpec(
         name="within_warranty",

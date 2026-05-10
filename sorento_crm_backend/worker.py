@@ -15,6 +15,6 @@ logger = logging.getLogger(__name__)
 
 if __name__ == '__main__':
     with Connection(redis_conn):
-        worker = Worker(['imports'])
-        logger.info("Starting RQ worker for 'imports' queue...")
+        worker = Worker(['imports', 'respond_io'])
+        logger.info("Starting RQ worker for 'imports' and 'respond_io' queues...")
         worker.work()

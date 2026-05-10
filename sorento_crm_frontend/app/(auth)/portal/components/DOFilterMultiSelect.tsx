@@ -13,7 +13,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { DOLookupItem, lookupDeliveryOrders } from '../lib/portal-client';
+import { DOLookupItem, DOProductLine, lookupDeliveryOrders } from '../lib/portal-client';
 import {
   PeriodPicker,
   PeriodValue,
@@ -24,7 +24,17 @@ interface Props {
   id?: string;
   value: string[];
   onChange: (next: string[], items?: DOLookupItem[]) => void;
+  onProductsConfirmed?: (payload: {
+    items: DOLookupItem[];
+    productCodes: string[];
+  }) => void;
   disabled?: boolean;
+}
+
+interface ConfirmProductRow {
+  code: string;
+  name?: string | null;
+  matched: boolean;
 }
 
 /**
@@ -34,7 +44,13 @@ interface Props {
  * dialog where the user can filter by date range, product code, and customer
  * (debtor) name to narrow down results, then check rows to select.
  */
-export function DOFilterMultiSelect({ id, value, onChange, disabled }: Props) {
+export function DOFilterMultiSelect({
+  id,
+  value,
+  onChange,
+  onProductsConfirmed,
+  disabled,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [period, setPeriod] = useState<PeriodValue>({ granularity: 'day' });
   const [productCode, setProductCode] = useState('');
@@ -44,6 +60,13 @@ export function DOFilterMultiSelect({ id, value, onChange, disabled }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [draftSelected, setDraftSelected] = useState<Set<string>>(new Set());
   const [draftItems, setDraftItems] = useState<DOLookupItem[]>([]);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmRows, setConfirmRows] = useState<ConfirmProductRow[]>([]);
+  const [confirmSelected, setConfirmSelected] = useState<Set<string>>(new Set());
+  const [pendingItems, setPendingItems] = useState<DOLookupItem[]>([]);
+  const [pendingOrderNumbers, setPendingOrderNumbers] = useState<string[]>([]);
+  const [pendingFilter, setPendingFilter] = useState<string>('');
 
   const runSearch = useCallback(async () => {
     const bounds = periodToIsoBounds(period);
@@ -90,14 +113,85 @@ export function DOFilterMultiSelect({ id, value, onChange, disabled }: Props) {
 
   const handleApply = () => {
     const orderNumbers = Array.from(draftSelected);
-    // Keep DOLookupItems aligned with the final selection order.
     const itemMap = new Map<string, DOLookupItem>();
     for (const r of results) itemMap.set(r.order_number, r);
     for (const r of draftItems) if (!itemMap.has(r.order_number)) itemMap.set(r.order_number, r);
     const orderedItems = orderNumbers
       .map((n) => itemMap.get(n))
       .filter((x): x is DOLookupItem => Boolean(x));
-    onChange(orderNumbers, orderedItems);
+
+    if (!onProductsConfirmed || orderedItems.length === 0) {
+      onChange(orderNumbers, orderedItems);
+      setOpen(false);
+      return;
+    }
+
+    const filter = productCode.trim().toLowerCase();
+    const seen = new Map<string, ConfirmProductRow>();
+    for (const it of orderedItems) {
+      const lines = it.product_lines ?? [];
+      if (lines.length > 0) {
+        for (const pl of lines) {
+          if (!pl.product_code) continue;
+          if (!seen.has(pl.product_code)) {
+            seen.set(pl.product_code, {
+              code: pl.product_code,
+              name: pl.product_name ?? null,
+              matched:
+                filter === '' || pl.product_code.toLowerCase().includes(filter),
+            });
+          }
+        }
+      } else {
+        for (const c of it.products ?? []) {
+          if (!c) continue;
+          if (!seen.has(c)) {
+            seen.set(c, {
+              code: c,
+              matched: filter === '' || c.toLowerCase().includes(filter),
+            });
+          }
+        }
+      }
+    }
+    const rows = Array.from(seen.values()).sort((a, b) => {
+      if (a.matched !== b.matched) return a.matched ? -1 : 1;
+      return a.code.localeCompare(b.code);
+    });
+    if (rows.length === 0) {
+      onChange(orderNumbers);
+      onProductsConfirmed?.({ items: orderedItems, productCodes: [] });
+      setOpen(false);
+      return;
+    }
+    setConfirmRows(rows);
+    setConfirmSelected(new Set(rows.filter((r) => r.matched).map((r) => r.code)));
+    setPendingItems(orderedItems);
+    setPendingOrderNumbers(orderNumbers);
+    setPendingFilter(productCode.trim());
+    setConfirmOpen(true);
+  };
+
+  const toggleConfirmRow = (code: string) => {
+    setConfirmSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  };
+
+  const handleConfirmCancel = () => {
+    setConfirmOpen(false);
+  };
+
+  const handleConfirmProceed = () => {
+    const codes = confirmRows
+      .map((r) => r.code)
+      .filter((c) => confirmSelected.has(c));
+    onChange(pendingOrderNumbers);
+    onProductsConfirmed?.({ items: pendingItems, productCodes: codes });
+    setConfirmOpen(false);
     setOpen(false);
   };
 
@@ -250,6 +344,78 @@ export function DOFilterMultiSelect({ id, value, onChange, disabled }: Props) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Confirm products</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {pendingFilter
+                ? `Products from ${pendingItems.length} selected DO${pendingItems.length === 1 ? '' : 's'} matching “${pendingFilter}” are pre-selected. Adjust if needed before proceeding.`
+                : `Products from ${pendingItems.length} selected DO${pendingItems.length === 1 ? '' : 's'}. Adjust if needed before proceeding.`}
+            </p>
+            <div className="max-h-[320px] overflow-auto rounded-md border border-border">
+              {confirmRows.length === 0 ? (
+                <p className="p-4 text-sm text-muted-foreground">
+                  No products found in the selected delivery orders.
+                </p>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {confirmRows.map((r) => {
+                    const checked = confirmSelected.has(r.code);
+                    return (
+                      <li
+                        key={r.code}
+                        className="flex items-start gap-3 px-3 py-2 hover:bg-accent/40 cursor-pointer select-none"
+                        onClick={() => toggleConfirmRow(r.code)}
+                      >
+                        <Checkbox
+                          checked={checked}
+                          aria-label={`Select ${r.code}`}
+                          className="mt-1 pointer-events-none"
+                          tabIndex={-1}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium break-words">
+                            {r.code}
+                            {r.matched && pendingFilter && (
+                              <span className="ml-2 text-xs font-normal text-primary">
+                                matched
+                              </span>
+                            )}
+                          </p>
+                          {r.name && (
+                            <p className="text-xs text-muted-foreground break-words">
+                              {r.name}
+                            </p>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {confirmSelected.size} of {confirmRows.length} selected
+            </p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={handleConfirmCancel}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmProceed}
+              disabled={confirmRows.length === 0}
+            >
+              Proceed
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -276,6 +442,7 @@ function DOResultRow({
     .filter(Boolean)
     .join(' • ');
   const productList = row.products ?? [];
+  const productLines = row.product_lines ?? [];
 
   const startPress = () => {
     longPressFired.current = false;
@@ -327,10 +494,26 @@ function DOResultRow({
         <p className={`text-xs text-muted-foreground ${expanded ? 'break-words' : 'truncate'}`}>
           {meta}
         </p>
-        {productList.length > 0 && (
-          <p className={`text-xs text-muted-foreground ${expanded ? 'break-words' : 'truncate'}`}>
+        {!expanded && productList.length > 0 && (
+          <p className="text-xs text-muted-foreground truncate">
             {productList.join(', ')}
           </p>
+        )}
+        {expanded && (productLines.length > 0 || productList.length > 0) && (
+          <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+            {(productLines.length > 0
+              ? productLines
+              : productList.map((c) => ({ product_code: c }) as DOProductLine)
+            ).map((line, idx) => (
+              <li key={`${line.product_code}-${idx}`} className="break-words">
+                <span className="font-medium text-foreground">{line.product_code}</span>
+                {line.product_name ? <span> — {line.product_name}</span> : null}
+                {line.quantity != null ? (
+                  <span className="ml-1 tabular-nums">× {line.quantity}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
       <button

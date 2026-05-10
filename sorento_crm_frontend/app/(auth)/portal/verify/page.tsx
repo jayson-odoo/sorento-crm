@@ -33,6 +33,7 @@ function PortalVerifyContent() {
   const [bootstrapping, setBootstrapping] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const otpFiredRef = useRef(false);
+  const lastAutoVerifiedRef = useRef<string | null>(null);
 
   const sendCode = useCallback(
     async (cid: string, sid: string, opts: { silent?: boolean } = {}) => {
@@ -173,6 +174,16 @@ function PortalVerifyContent() {
       setPending(false);
     }
   }, [code, contactId, router, spaceId]);
+
+  useEffect(() => {
+    const trimmed = code.trim();
+    if (trimmed.length !== 6) return;
+    if (pending || bootstrapping) return;
+    if (!contactId || !spaceId || !sentTo) return;
+    if (lastAutoVerifiedRef.current === trimmed) return;
+    lastAutoVerifiedRef.current = trimmed;
+    void handleVerify();
+  }, [code, pending, bootstrapping, contactId, spaceId, sentTo, handleVerify]);
 
   return (
     <div className="min-h-screen max-w-md mx-auto px-4 py-6 space-y-4">

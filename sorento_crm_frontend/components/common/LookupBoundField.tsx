@@ -36,18 +36,24 @@ export default function LookupBoundField({
   if (!hasBinding) return <>{renderFallback()}</>;
 
   const current = value ?? '';
-  const matches = options.some((o) => o.value === current);
+  const ciMatch = current
+    ? options.find((o) => o.value.toLowerCase() === current.toLowerCase())
+    : undefined;
+  const displayValue = ciMatch ? ciMatch.value : current || '';
+  const showLegacy = !ciMatch && !!current;
 
   return (
-    <Select value={matches ? current : ''} onValueChange={onChange}>
+    <Select
+      key={displayValue || 'empty'}
+      value={displayValue || undefined}
+      onValueChange={onChange}
+    >
       <SelectTrigger>
         <SelectValue placeholder={placeholder ?? 'Select…'} />
       </SelectTrigger>
       <SelectContent>
-        {!matches && current ? (
-          <SelectItem value={current} disabled>
-            {current} (legacy)
-          </SelectItem>
+        {showLegacy ? (
+          <SelectItem value={current}>{current} (legacy)</SelectItem>
         ) : null}
         {options.map((o) => (
           <SelectItem key={o.value} value={o.value}>

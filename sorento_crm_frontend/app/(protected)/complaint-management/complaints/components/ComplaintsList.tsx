@@ -203,6 +203,15 @@ export default function ComplaintsList() {
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
+        accessorKey: 'salesperson',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Salesperson" column={column} />
+        ),
+        cell: ({ row }) => row.original.salesperson || '-',
+        size: 160,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         accessorKey: 'status',
         header: ({ column }) => (
           <DataGridColumnHeader title="Status" column={column} />

@@ -52,6 +52,7 @@ class Complaint(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     assigned_to = Column(Text, nullable=True)  # Respond.io assignee user id; display name resolved via User.respond_user_id
     portal_draft_at = Column(DateTime(timezone=False), nullable=True)  # set while user is editing in submission portal; cleared on Submit
+    required_on_site_support = Column(Boolean, nullable=False, server_default="false")
 
     attachments = relationship("ComplaintAttachment", back_populates="complaint")
     root_cause = relationship("ComplaintRootCause", foreign_keys=[root_cause_id])

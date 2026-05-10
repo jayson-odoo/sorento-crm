@@ -7,7 +7,7 @@ from app.schemas.resources import AttachmentResponse
 
 
 def _parse_date_string(v: Any) -> Optional[date]:
-    """Parse date from string; accept yyyy-MM-dd, dd/mm/yyyy, dd-mm-yyyy."""
+    """Parse date from string; accept yyyy-MM-dd, dd/mm/yyyy, dd-mm-yyyy, ISO datetime."""
     if v is None:
         return None
     if isinstance(v, date):
@@ -23,7 +23,10 @@ def _parse_date_string(v: Any) -> Optional[date]:
             return dt.strptime(s, fmt).date()
         except ValueError:
             continue
-    return None
+    try:
+        return dt.fromisoformat(s.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
 
 
 def _coerce_scope_id(v: Any) -> Optional[str]:
@@ -133,6 +136,7 @@ class ComplaintBase(BaseModel):
     assigned_to_name: Optional[str] = None
     root_cause_id: Optional[str] = None
     resolution_id: Optional[str] = None
+    required_on_site_support: Optional[bool] = None
 
 
 class ComplaintCreate(ComplaintBase):
@@ -180,6 +184,7 @@ class ComplaintUpdate(BaseModel):
     last_responded_at: Optional[datetime] = None
     root_cause_id: Optional[str] = None
     resolution_id: Optional[str] = None
+    required_on_site_support: Optional[bool] = None
 
 
 class ComplaintResponse(ComplaintBase):

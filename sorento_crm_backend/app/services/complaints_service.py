@@ -17,6 +17,7 @@ from app.models.complaints import Complaint
 from app.models.order import Order, OrderLine
 from app.models.product import Product
 from app.models.procurement import ViewToken
+from app.models.sla import ConversationSLATracking
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.error_handler import handle_not_found
 from app.services.entity_attachment_service import EntityAttachmentService
@@ -238,6 +239,29 @@ class ComplaintService:
             return True
         return is_module_enabled(self.db, tenant_id, PUBLIC_VIEW_LINKS_MODULE_KEY)
 
+    def _latest_unresolved_sla_assignee_name(self, complaint_id: str) -> Optional[str]:
+        """Return display name of latest unresolved SLA tracker assignee for this complaint."""
+        from app.models.user import User
+        tracker = (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_entity_type == "complaint",
+                ConversationSLATracking.source_entity_id == complaint_id,
+                ConversationSLATracking.is_resolved.is_(False),
+            )
+            .order_by(ConversationSLATracking.initiated_at.desc())
+            .first()
+        )
+        if tracker is None:
+            return None
+        if tracker.assigned_to_id:
+            user = self.db.query(User).filter(User.id == tracker.assigned_to_id).first()
+            if user:
+                return user.name or user.email or None
+        if tracker.assigned_to:
+            return self._resolve_user_display_name(tracker.assigned_to) or tracker.assigned_to
+        return None
+
     def _resolve_user_display_name(self, user_id: Optional[str]) -> Optional[str]:
         """Resolve user id (CRM id or respond_user_id) to display name (name or email)."""
         if not user_id or not str(user_id).strip():
@@ -277,7 +301,10 @@ class ComplaintService:
             data["last_responded_by_name"] = self._resolve_user_display_name(data["last_responded_by"])
         else:
             data["last_responded_by_name"] = None
-        if data.get("assigned_to"):
+        sla_assignee_name = self._latest_unresolved_sla_assignee_name(str(complaint.id))
+        if sla_assignee_name:
+            data["assigned_to_name"] = sla_assignee_name
+        elif data.get("assigned_to"):
             data["assigned_to_name"] = self._resolve_user_display_name(data["assigned_to"])
         else:
             data["assigned_to_name"] = None
@@ -357,6 +384,7 @@ class ComplaintService:
             "delivery_order_number": Complaint.delivery_order_number,
             "customer_name": Complaint.customer_name,
             "product_code": Complaint.product_code,
+            "salesperson": Complaint.salesperson,
             "assigned_to": Complaint.assigned_to,
             "status": Complaint.status,
         }
@@ -765,12 +793,16 @@ class ComplaintService:
         crm_sender_user_id: Optional[str] = None,
     ):
         """
-        Update complaint, send technical team response to Respond.io, update SLA tracking to responded, set status=responded.
-        All integration calls are logged via IntegrationLogService.
+        Update complaint, set status=responded, mark SLA tracking as responded,
+        and queue the Respond.io technical-team message via RQ.
+
+        DB writes commit synchronously; the external Respond.io call is decoupled
+        through the ``respond_io`` queue so a downstream 4xx/5xx no longer rolls
+        back the business state. All integration calls are logged via IntegrationLogService.
         """
         import logging
         from datetime import datetime, timezone
-        from app.services.integration_service import RespondClient, IntegrationLogService
+        from app.services.integration_service import IntegrationLogService
         from app.schemas.integration import IntegrationLogCreate
         from app.services.sla_service import ConversationSLATrackingService
         from app.schemas.sla import ConversationSLATrackingUpdate
@@ -820,66 +852,6 @@ class ComplaintService:
             f"There has been an update regarding your complaint{do_spec}{link_part}: {stored_body}"
         )
 
-        if identifier:
-            try:
-                client = RespondClient()
-                response = client.send_message(identifier, display_message)
-                from app.services.crm_chat_outbound_webhook import (
-                    enqueue_crm_chat_outbound_webhook,
-                    resolve_sla_assignee_respond_user_id,
-                )
-
-                enqueue_crm_chat_outbound_webhook(
-                    self.db,
-                    business_table="complaints",
-                    business_id=complaint_id,
-                    contact_respond_io_id=identifier,
-                    message_text=display_message,
-                    respond_api_response=response if isinstance(response, dict) else None,
-                    space_id=getattr(complaint, "space_id", None),
-                    crm_sender_user_id=crm_sender_user_id,
-                    respond_user_id_fallback=respond_user_id,
-                    assignee_respond_user_id=resolve_sla_assignee_respond_user_id(
-                        self.db, "complaint", complaint_id
-                    ),
-                )
-                log_service.create_integration_log(
-                    IntegrationLogCreate(
-                        integration_channel="respond_io",
-                        business_table="complaints",
-                        business_id=complaint_id,
-                        external_reference=identifier,
-                        direction="outbound",
-                        endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
-                        http_method="POST",
-                        status="success",
-                        response_payload=str(response)[:50000] if response else None,
-                    ),
-                    request_payload_dict={"message": {"type": "text", "text": display_message}},
-                )
-            except Exception as e:
-                logger.exception("Respond.io send_message failed for complaint %s", complaint_id)
-                log_service.create_integration_log(
-                    IntegrationLogCreate(
-                        integration_channel="respond_io",
-                        business_table="complaints",
-                        business_id=complaint_id,
-                        external_reference=identifier or "",
-                        direction="outbound",
-                        endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
-                        http_method="POST",
-                        status="failed",
-                        error_message=str(e),
-                    ),
-                    request_payload_dict={"message": {"type": "text", "text": display_message}},
-                )
-                raise
-        else:
-            logger.info(
-                "Complaint %s update-and-reply: no respond_inbox_url; complaint updated but message not sent to Respond.",
-                complaint_id,
-            )
-
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         sla_service = ConversationSLATrackingService(self.db)
         tracking = sla_service.get_tracking_by_source_entity("complaint", complaint_id)
@@ -928,6 +900,22 @@ class ComplaintService:
         complaint.last_responded_at = now_utc
         self.db.commit()
         self.db.refresh(complaint)
+
+        if identifier:
+            self._enqueue_respond_message_for_complaint(
+                complaint_id=complaint_id,
+                identifier=identifier,
+                display_message=display_message,
+                respond_user_id=respond_user_id,
+                crm_sender_user_id=crm_sender_user_id,
+                space_id=getattr(complaint, "space_id", None),
+            )
+        else:
+            logger.info(
+                "Complaint %s update-and-reply: no respond_inbox_url; complaint updated but no message queued.",
+                complaint_id,
+            )
+
         try:
             from app.services.form_sla_service import emit_form_event
             emit_form_event(
@@ -964,11 +952,8 @@ class ComplaintService:
         """
         from datetime import datetime, timezone
         from app.services.error_handler import handle_validation_error
-        from app.services.integration_service import RespondClient, IntegrationLogService
-        from app.schemas.integration import IntegrationLogCreate
 
         logger = logging.getLogger(__name__)
-        log_service = IntegrationLogService(self.db)
 
         decision = (decision or "").strip().lower()
         if decision not in self._DECIDE_ALLOWED_DECISIONS:
@@ -1007,71 +992,6 @@ class ComplaintService:
             getattr(complaint, "respond_inbox_url", None)
         )
 
-        if identifier:
-            try:
-                client = RespondClient()
-                response = client.send_message(identifier, display_message)
-                from app.services.crm_chat_outbound_webhook import (
-                    enqueue_crm_chat_outbound_webhook,
-                    resolve_sla_assignee_respond_user_id,
-                )
-
-                enqueue_crm_chat_outbound_webhook(
-                    self.db,
-                    business_table="complaints",
-                    business_id=complaint_id,
-                    contact_respond_io_id=identifier,
-                    message_text=display_message,
-                    respond_api_response=response if isinstance(response, dict) else None,
-                    space_id=getattr(complaint, "space_id", None),
-                    crm_sender_user_id=crm_sender_user_id,
-                    respond_user_id_fallback=respond_user_id,
-                    assignee_respond_user_id=resolve_sla_assignee_respond_user_id(
-                        self.db, "complaint", complaint_id
-                    ),
-                )
-                log_service.create_integration_log(
-                    IntegrationLogCreate(
-                        integration_channel="respond_io",
-                        business_table="complaints",
-                        business_id=complaint_id,
-                        external_reference=identifier,
-                        direction="outbound",
-                        endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
-                        http_method="POST",
-                        status="success",
-                        response_payload=str(response)[:50000] if response else None,
-                    ),
-                    request_payload_dict={"message": {"type": "text", "text": display_message}},
-                )
-            except Exception as e:
-                logger.exception(
-                    "Respond.io send_message failed for complaint %s decision=%s",
-                    complaint_id,
-                    decision,
-                )
-                log_service.create_integration_log(
-                    IntegrationLogCreate(
-                        integration_channel="respond_io",
-                        business_table="complaints",
-                        business_id=complaint_id,
-                        external_reference=identifier or "",
-                        direction="outbound",
-                        endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
-                        http_method="POST",
-                        status="failed",
-                        error_message=str(e),
-                    ),
-                    request_payload_dict={"message": {"type": "text", "text": display_message}},
-                )
-                raise
-        else:
-            logger.info(
-                "Complaint %s decision=%s: no respond_inbox_url; status updated but message not sent.",
-                complaint_id,
-                decision,
-            )
-
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         complaint.status = decision
         complaint.last_responded_by = respond_user_id
@@ -1088,6 +1008,22 @@ class ComplaintService:
             complaint.rejected_by = None
         self.db.commit()
         self.db.refresh(complaint)
+
+        if identifier:
+            self._enqueue_respond_message_for_complaint(
+                complaint_id=complaint_id,
+                identifier=identifier,
+                display_message=display_message,
+                respond_user_id=respond_user_id,
+                crm_sender_user_id=crm_sender_user_id,
+                space_id=getattr(complaint, "space_id", None),
+            )
+        else:
+            logger.info(
+                "Complaint %s decision=%s: no respond_inbox_url; status updated but no message queued.",
+                complaint_id,
+                decision,
+            )
 
         try:
             from app.services.form_sla_service import emit_form_event
@@ -1285,6 +1221,42 @@ class ComplaintService:
 
     # ----- Respond.io notify helpers (shared between status-change + field updates) -----
 
+    def _enqueue_respond_message_for_complaint(
+        self,
+        *,
+        complaint_id: str,
+        identifier: str,
+        display_message: str,
+        respond_user_id: str,
+        crm_sender_user_id: Optional[str],
+        space_id: Optional[str],
+    ) -> None:
+        """Push a Respond.io send into the RQ ``respond_io`` queue.
+
+        Decouples the external API call from the request lifecycle so a Respond.io
+        4xx/5xx does not roll back the surrounding business write. Failed jobs land
+        in RQ's FailedJobRegistry and a ``status='failed'`` integration_logs row.
+        """
+        from app.services.queue_service import enqueue_job
+        from app.tasks.respond_io_tasks import send_complaint_respond_message
+
+        job = enqueue_job(
+            send_complaint_respond_message,
+            complaint_id,
+            identifier,
+            display_message,
+            respond_user_id,
+            crm_sender_user_id,
+            space_id,
+            queue_name="respond_io",
+            job_timeout=180,
+        )
+        logging.getLogger(__name__).info(
+            "Enqueued respond.io send job %s for complaint %s",
+            job.id,
+            complaint_id,
+        )
+
     def _send_respond_message_for_complaint(
         self,
         complaint,
@@ -1294,67 +1266,15 @@ class ComplaintService:
         respond_user_id: str,
         crm_sender_user_id: Optional[str],
     ) -> None:
-        """Send a Respond.io message for a complaint, enqueue the outbound webhook,
-        and write integration logs. Raises on failure (caller decides whether to swallow)."""
-        from app.services.integration_service import RespondClient, IntegrationLogService
-        from app.schemas.integration import IntegrationLogCreate
-        from app.services.crm_chat_outbound_webhook import (
-            enqueue_crm_chat_outbound_webhook,
-            resolve_sla_assignee_respond_user_id,
+        """Enqueue a Respond.io send for a complaint (compatibility wrapper)."""
+        self._enqueue_respond_message_for_complaint(
+            complaint_id=str(getattr(complaint, "id")),
+            identifier=identifier,
+            display_message=display_message,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+            space_id=getattr(complaint, "space_id", None),
         )
-
-        log_service = IntegrationLogService(self.db)
-        complaint_id = str(getattr(complaint, "id"))
-        try:
-            client = RespondClient()
-            response = client.send_message(identifier, display_message)
-            enqueue_crm_chat_outbound_webhook(
-                self.db,
-                business_table="complaints",
-                business_id=complaint_id,
-                contact_respond_io_id=identifier,
-                message_text=display_message,
-                respond_api_response=response if isinstance(response, dict) else None,
-                space_id=getattr(complaint, "space_id", None),
-                crm_sender_user_id=crm_sender_user_id,
-                respond_user_id_fallback=respond_user_id,
-                assignee_respond_user_id=resolve_sla_assignee_respond_user_id(
-                    self.db, "complaint", complaint_id
-                ),
-            )
-            log_service.create_integration_log(
-                IntegrationLogCreate(
-                    integration_channel="respond_io",
-                    business_table="complaints",
-                    business_id=complaint_id,
-                    external_reference=identifier,
-                    direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
-                    http_method="POST",
-                    status="success",
-                    response_payload=str(response)[:50000] if response else None,
-                ),
-                request_payload_dict={"message": {"type": "text", "text": display_message}},
-            )
-        except Exception as e:
-            logging.getLogger(__name__).exception(
-                "Respond.io send_message failed for complaint %s", complaint_id
-            )
-            log_service.create_integration_log(
-                IntegrationLogCreate(
-                    integration_channel="respond_io",
-                    business_table="complaints",
-                    business_id=complaint_id,
-                    external_reference=identifier or "",
-                    direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
-                    http_method="POST",
-                    status="failed",
-                    error_message=str(e),
-                ),
-                request_payload_dict={"message": {"type": "text", "text": display_message}},
-            )
-            raise
 
     def _notify_complaint_field(
         self,

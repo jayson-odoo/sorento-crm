@@ -31,6 +31,7 @@ export const ComplaintSchema = z.object({
   last_responded_at: z.string().optional().nullable(),
   root_cause_id: z.string().optional().nullable(),
   resolution_id: z.string().optional().nullable(),
+  required_on_site_support: z.boolean().optional().nullable(),
   attachments: z.array(
     z.object({
       id: z.string().optional(),
