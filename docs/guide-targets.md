@@ -1,11 +1,13 @@
 # Guide-target registry
 
-The AI assistant can deep-link a UI element by appending `?guide_target=<key>` to a route. When the page loads, `GuideTargetSpotlight` (mounted in the protected layout) finds the element with the matching `data-guide-target` attribute, scrolls to it, and pulses a glow ring around it for ~3 seconds.
+The AI assistant can deep-link a UI element by appending `#guide_target=<key>` (URL fragment) to a route. When the page loads, `GuideTargetSpotlight` (mounted in the protected layout) reads the fragment, finds the element with the matching `data-guide-target` attribute, scrolls to it, and pulses a glow ring around it for ~3 seconds.
+
+> **Why fragment, not query string?** Outline's editor (ProseMirror) silently strips query-bearing relative links from bold-wrapped link forms (`**[X](/path?q=v)**` → `**X**`) when a human opens the doc and ProseMirror re-serializes on auto-save. Fragments survive because they are URL-spec components and Outline's link validator leaves them alone. The component still accepts the legacy `?guide_target=` form for backward compatibility, but every guide should use the fragment form going forward.
 
 User-guide authors can use this in Outline by writing the deep link inline:
 
 ```markdown
-Click [**Upload**](/resource-management/attachment-directories?guide_target=resource-management.files.upload-button) to add a new file.
+Click [**Upload**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button) to add a new file.
 ```
 
 The annotation script (`scripts/annotate_user_guides_routes.py`) leaves explicit markdown links untouched, so this survives Outline pull/push round-trips. The system-prompt rule in `_user_guide_protocol_addendum` already mandates the AI assistant preserve inline markdown links verbatim.
@@ -32,6 +34,26 @@ The annotation script (`scripts/annotate_user_guides_routes.py`) leaves explicit
 | `/procurement-management/purchase-requests/{id}`, `/procurement-management/sponsorship-forms/{id}` | `procurement.approvals.change-to-pending-approval-button` | "Change to pending approval" — shared between PR and SF detail (same component) | `app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDetail.tsx` |
 | `/procurement-management/purchase-requests/{id}`, `/procurement-management/sponsorship-forms/{id}` | `procurement.approvals.send-for-approval-button` | "Send for approval" — shared | `app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDetail.tsx` |
 
+### Popup-internal targets (require user to open the parent dialog first)
+
+These keys live inside dialogs/modals. The spotlight component falls back to a `MutationObserver` (30s window) so they fire after the user clicks the parent trigger.
+
+| Page route | Target key | UI element | Source |
+|---|---|---|---|
+| `/resource-management/attachment-directories` | `resource-management.files.access-levels` | "Access Levels" checkbox group inside the Create Attachment dialog | `AttachmentUploadDialog.tsx` |
+| `/resource-management/attachment-directories` | `resource-management.files.upload-confirm-button` | "Upload N Attachment(s)" submit button inside the Create Attachment dialog | `AttachmentUploadDialog.tsx` |
+| `/resource-management/attachment-directories` | `resource-management.files.bulk-import-confirm-button` | "Import ZIP" submit button inside the Bulk Import dialog | `AttachmentBulkImportDialog.tsx` |
+| `/master-data-management/products`, `/order-management/orders`, `/inventory-management/stock` | `template-upload.confirm-button` | Generic "Upload" button on shared TemplateUploadDialog (one key, multiple consumers) | `components/template/TemplateUploadDialog.tsx` |
+| `/procurement-management/spo-allocations` | `procurement.spo-allocations.import-confirm-button` | "Import" button inside SPO Import dialog | `SPOImportDialog.tsx` |
+| `/procurement-management/grn` | `procurement.grn.import-confirm-button` | "Upload" button inside GRN Import dialog (used for both header + lines flow) | `GRNImportDialog.tsx` |
+| `/procurement-management/stock-inquiries/{id}` | `procurement.stock-inquiries.reject-confirm-button` | Confirm "Reject" inside the Reject stock inquiry dialog | `StockInquiryDetail.tsx` |
+| `/procurement-management/stock-inquiries/{id}` | `procurement.stock-inquiries.reopen-confirm-button` | Confirm "Reopen" inside the Reopen dialog | `StockInquiryDetail.tsx` |
+| `/procurement-management/stock-inquiries/{id}` | `procurement.stock-inquiries.save-response-button` | "Save only" inside Edit purchasing response dialog | `StockInquiryDetail.tsx` |
+| `/procurement-management/stock-inquiries/{id}` | `procurement.stock-inquiries.update-and-reply-button` | "Update & Reply" inside Edit purchasing response dialog | `StockInquiryDetail.tsx` |
+| `/procurement-management/purchase-requests/{id}`, `/procurement-management/sponsorship-forms/{id}` | `procurement.approvals.create-link-only-button` | "Create link only" inside Send for approval dialog | `PurchaseRequestDetail.tsx` |
+| `/procurement-management/purchase-requests/{id}`, `/procurement-management/sponsorship-forms/{id}` | `procurement.approvals.create-link-and-send-button` | "Create link & send email" inside Send for approval dialog | `PurchaseRequestDetail.tsx` |
+| `/procurement-management/purchase-requests/{id}` | `procurement.approvals.reject-confirm-button` | Confirm action inside the Reject this submission AlertDialog | `PurchaseRequestDetail.tsx` |
+
 ## Adding a new target
 
 1. Add `data-guide-target="<key>"` to the element in the FE (any `<Button>` accepts this via prop spread; for non-Button elements, add directly).
@@ -48,5 +70,6 @@ The annotation script (`scripts/annotate_user_guides_routes.py`) leaves explicit
 
 ## Known limitations
 
-- **Targets nested inside closed `DropdownMenu` / `Popover`** are not rendered until the trigger is clicked, so the 1s retry window expires and the spotlight no-ops. Example: `master-data.products.upload-button` (lives inside the Products list "Import" dropdown). Workaround: add the target on the visible **trigger** instead of the hidden item, OR write the guide to step 1 click the dropdown trigger first.
+- **Targets nested inside closed `DropdownMenu` / `Popover`** are not rendered until the trigger is clicked, so the 1s retry window expires. The MutationObserver fallback now keeps watching for 30s — if the user opens the dropdown within that window, the spotlight fires.
+- **Popup/dialog-internal targets** (every key in the section above) rely on the same MutationObserver fallback. The user must open the parent dialog within ~30 seconds of clicking the chat link, otherwise the spotlight quietly times out.
 - **Detail-page action targets** (`procurement.stock-inquiries.*`, `procurement.approvals.*`) are attached to buttons that only exist on a record's detail page. The current guide deep-links point to the **list** page (no canonical record id to encode). User lands on the list and must click into a record to see the glow. This is acceptable for v1 — the deep link still gets them to the right module.

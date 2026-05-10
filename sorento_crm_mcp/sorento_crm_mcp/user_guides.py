@@ -35,10 +35,11 @@ _SEARCH_TOP_K = 3
 _UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
-# Outline url-ids look like 'portal-overview-A1bC' — slug + trailing short
-# alphanumeric token. Treat any single token of length 4..120 with no spaces
-# and at least one '-' as a candidate id.
-_URL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-_]{3,119}$")
+# Outline url-ids are bare alphanumeric tokens of length 10-15 (e.g.
+# `6nHGiMmtcg`). Only treat the input as a url-id if it matches that exact
+# shape — random hyphenated phrases like `how-do-i-upload-a-packing-list`
+# previously matched and made us send junk ids to Outline.
+_URL_ID_RE = re.compile(r"^[A-Za-z0-9]{10,15}$")
 
 
 async def _outline_post(
@@ -88,13 +89,9 @@ def _looks_like_id(s: str) -> bool:
         return False
     if _UUID_RE.match(s):
         return True
-    # Treat as url-id only when there's a '-' and no whitespace/punctuation
-    # typical of a question (?, !, /, comma, period). This avoids mistaking
-    # 'how-do-i-upload' style queries for ids — those are full sentences in
-    # practice, not slugs.
-    if any(ch in s for ch in "?!,.\n\t/"):
+    if any(ch in s for ch in "?!,.\n\t/-_"):
         return False
-    return bool("-" in s and _URL_ID_RE.match(s))
+    return bool(_URL_ID_RE.match(s))
 
 
 async def _fetch_doc_body(settings: Settings, identifier: str) -> dict[str, Any]:
@@ -155,18 +152,37 @@ async def read_user_guide_impl(settings: Settings, query: str) -> str:
             }
         )
 
-    top = hits[0] or {}
-    top_doc = top.get("document") or {}
-    top_id = top_doc.get("id") or top_doc.get("urlId")
-    if not top_id:
+    # Try each hit until one returns a body. Some hits (e.g. virtual
+    # `__parent__` nodes from the sync script, or docs whose id was stripped
+    # by an upstream proxy) may fail with a 400 from documents.info. Don't
+    # let one bad hit poison an otherwise-valid result.
+    body: dict[str, Any] | None = None
+    matched_hit_index: int | None = None
+    last_err: Exception | None = None
+    for idx, hit in enumerate(hits):
+        doc = (hit or {}).get("document") or {}
+        candidate_id = (doc.get("id") or doc.get("urlId") or "").strip()
+        if not candidate_id:
+            continue
+        try:
+            body = await _fetch_doc_body(settings, candidate_id)
+            matched_hit_index = idx
+            break
+        except Exception as e:
+            last_err = e
+            logger.warning(
+                "user_guides_read body fetch failed for hit[%d] id=%r: %s",
+                idx,
+                candidate_id,
+                e,
+            )
+    if body is None:
         return json.dumps(
-            {"error": "Outline returned a hit with no id.", "code": "OUTLINE_ERROR"}
+            {
+                "error": str(last_err) if last_err else "All hits returned no body.",
+                "code": "OUTLINE_ERROR",
+            }
         )
-    try:
-        body = await _fetch_doc_body(settings, str(top_id))
-    except Exception as e:
-        logger.warning("user_guides_read body fetch failed for %r: %s", top_id, e)
-        return json.dumps({"error": str(e), "code": "OUTLINE_ERROR"})
 
     body["matched_via"] = "search"
     body["matched_query"] = q
@@ -176,7 +192,8 @@ async def read_user_guide_impl(settings: Settings, query: str) -> str:
             "title": (h.get("document") or {}).get("title"),
             "snippet": _short_preview(h.get("context") or (h.get("document") or {}).get("text", "")),
         }
-        for h in hits[1:]
+        for i, h in enumerate(hits)
+        if i != matched_hit_index
     ]
     return json.dumps(body)
 

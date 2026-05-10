@@ -7,11 +7,11 @@ Use this flow to upload technical product documents (datasheets, manuals, spec s
 
 1. Open **[Resource Management → Files](/resource-management/attachment-directories)** (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
 2. (Optional) Click a folder in the **Folders** sidebar (e.g. a brand-specific or product-specific subfolder) so the file is filed under it.
-3. Click **Upload** in the top toolbar of the attachments table.
+3. Click [**Upload**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button) in the top toolbar of the attachments table.
 4. In the **Create Attachment** dialog, set **Attachment Type** to your tenant's product-attachment type — usually **Product Attachments** (for datasheets, drawings, etc.) or *Product Photo* (for marketing-grade product images), depending on your tenant configuration.
 5. Drag the file(s) into the **Files** drop zone, or click **Select Files** to browse. You can upload several at once.
-6. (Optional) Adjust **Access Levels** (*End User*, *Dealer*, *Manager*) — these control who can see the file from the portal.
-7. Click **Upload N Attachments**.
+6. (Optional) Adjust [**Access Levels**](/resource-management/attachment-directories#guide_target=resource-management.files.access-levels) (*End User*, *Dealer*, *Manager*) — these control who can see the file from the portal.
+7. Click [**Upload N Attachments**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-confirm-button).
 
 ## Linking is automatic
 
@@ -25,7 +25,7 @@ For uploading many product attachments at once:
 
 
 1. Zip the files together (e.g. one ZIP per brand or product family).
-2. Click **Bulk import (ZIP)** in the toolbar.
+2. Click [**Bulk import (ZIP)**](/resource-management/attachment-directories#guide_target=resource-management.files.bulk-import-button) in the toolbar.
 3. Set the attachment type (e.g. **Product Attachments**) and upload the ZIP.
 4. Each file inside the archive is processed individually and auto-linked the same way as a single upload.
 

@@ -589,6 +589,7 @@ export default function PurchaseRequestDetail({
                 </Button>
                 <Button
                   variant="outline"
+                  data-guide-target="procurement.approvals.create-link-only-button"
                   disabled={!approverEmail.trim() || approvalSending}
                   onClick={async () => {
                     setApprovalError(null);
@@ -622,6 +623,7 @@ export default function PurchaseRequestDetail({
                   {approvalSending && approvalAction === 'create' ? 'Creating…' : 'Create link only'}
                 </Button>
                 <Button
+                  data-guide-target="procurement.approvals.create-link-and-send-button"
                   disabled={!approverEmail.trim() || approvalSending}
                   onClick={async () => {
                     setApprovalError(null);
@@ -1066,6 +1068,7 @@ export default function PurchaseRequestDetail({
             <AlertDialogFooter>
               <AlertDialogCancel disabled={rejecting}>Cancel</AlertDialogCancel>
               <AlertDialogAction
+                data-guide-target="procurement.approvals.reject-confirm-button"
                 disabled={rejecting || !rejectReason.trim()}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 onClick={async (e) => {

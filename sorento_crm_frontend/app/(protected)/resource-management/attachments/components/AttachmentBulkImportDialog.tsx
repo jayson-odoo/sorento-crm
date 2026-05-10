@@ -325,6 +325,7 @@ export default function AttachmentBulkImportDialog({
           <Button
             onClick={handleSubmit}
             disabled={!selectedTypeId || !zipFile || isUploading}
+            data-guide-target="resource-management.files.bulk-import-confirm-button"
           >
             {isUploading ? 'Starting…' : 'Import ZIP'}
           </Button>

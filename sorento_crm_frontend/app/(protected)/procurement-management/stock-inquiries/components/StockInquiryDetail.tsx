@@ -461,6 +461,7 @@ export default function StockInquiryDetail({
             <Button variant="outline" onClick={() => setRejectDialogOpen(false)}>Cancel</Button>
             <Button
               variant="destructive"
+              data-guide-target="procurement.stock-inquiries.reject-confirm-button"
               disabled={
                 !rejectReason.trim() ||
                 (rejectAction === 'project_sales' && projectSalesRejectMutation.isPending) ||
@@ -510,6 +511,7 @@ export default function StockInquiryDetail({
             <Button variant="outline" onClick={() => setReopenDialogOpen(false)}>Cancel</Button>
             <Button
               disabled={reopenMutation.isPending}
+              data-guide-target="procurement.stock-inquiries.reopen-confirm-button"
               onClick={async () => {
                 await reopenMutation.mutateAsync({ id: inquiryId, reason: reopenReason.trim() || undefined });
                 setReopenDialogOpen(false);
@@ -557,6 +559,7 @@ export default function StockInquiryDetail({
             </Button>
             <Button
               variant="outline"
+              data-guide-target="procurement.stock-inquiries.save-response-button"
               disabled={updateInquiryMutation.isPending}
               onClick={async () => {
                 try {
@@ -576,6 +579,7 @@ export default function StockInquiryDetail({
               (inquiry.status === 'pending_purchasing' || inquiry.status === 'responded') && (
                 <Button
                   variant="primary"
+                  data-guide-target="procurement.stock-inquiries.update-and-reply-button"
                   disabled={
                     updateInquiryMutation.isPending ||
                     openingReplySheet ||

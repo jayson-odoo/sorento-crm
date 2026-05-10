@@ -6,7 +6,7 @@ Use this flow to bulk-create or update products from an Excel file. This is **Pa
 
 
 1. Open **[Master Data Management → Products](/master-data-management/products)** (URL: `/master-data-management/products`). The page is titled **Products**.
-2. Click **Upload** in the toolbar (the **Import** dropdown contains the upload action).
+2. Click [**Upload**](/master-data-management/products#guide_target=master-data.products.upload-button) in the toolbar (the **Import** dropdown contains the upload action).
 3. The **Template Upload** dialog opens. Download the template if you don't already have it.
 4. Fill the template with your products. The expected columns are:
 
@@ -21,7 +21,7 @@ Use this flow to bulk-create or update products from an Excel file. This is **Pa
 | **Is Active** | Optional | Boolean (`yes`/`no`, `true`/`false`, `1`/`0`). |
 
 
-5. Drag the filled file in or click to browse, then confirm.
+5. Drag the filled file in or click to browse, then click [**Upload**](/master-data-management/products#guide_target=template-upload.confirm-button).
 6. The system queues a background import job (`product_import`) and toasts a confirmation.
 
 ## How you'll see progress

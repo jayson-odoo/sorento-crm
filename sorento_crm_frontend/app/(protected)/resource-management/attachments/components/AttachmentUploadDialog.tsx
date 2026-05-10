@@ -577,7 +577,7 @@ export default function AttachmentUploadDialog({
             </div>
           )}
 
-          <div className="space-y-2">
+          <div className="space-y-2" data-guide-target="resource-management.files.access-levels">
             <Label>Access Levels</Label>
             <div className="flex flex-wrap gap-4">
               {accessTypeOptions.map((opt) => {
@@ -621,9 +621,10 @@ export default function AttachmentUploadDialog({
           <Button
             onClick={handleUpload}
             disabled={!selectedTypeId || selectedFiles.length === 0 || (!!validationError && !validationError.includes('skipped')) || isUploading}
+            data-guide-target="resource-management.files.upload-confirm-button"
           >
-            {isUploading 
-              ? `Uploading ${selectedFiles.filter(file => uploadProgress[file.name] === 100).length + 1} of ${selectedFiles.length}...` 
+            {isUploading
+              ? `Uploading ${selectedFiles.filter(file => uploadProgress[file.name] === 100).length + 1} of ${selectedFiles.length}...`
               : `Upload ${selectedFiles.length} Attachment${selectedFiles.length !== 1 ? 's' : ''}`}
           </Button>
         </DialogFooter>

@@ -7,11 +7,11 @@ Use this flow when a supplier sends you a packing-list Excel. The CRM stores the
 
 1. Open **[Resource Management → Files](/resource-management/attachment-directories)** (URL: `/resource-management/attachment-directories`).
 2. (Optional) Click the folder you want the file filed under (e.g. a supplier-specific folder).
-3. Click **Upload** in the top toolbar.
+3. Click [**Upload**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button) in the top toolbar.
 4. In the **Create Attachment** dialog, set **Attachment Type** to your tenant's **Packing List** type. (If it's missing, ask an admin to add it under **[Resource Management → Attachment Types](/resource-management/attachment-types)** — only *Promotion* and *Complaint Document* are seeded by default.)
 5. Drag the packing-list Excel into the **Files** drop zone (or click **Select Files** to browse).
-6. (Optional) Adjust **Access Levels**.
-7. Click **Upload 1 Attachment**. A toast confirms the upload.
+6. (Optional) Adjust [**Access Levels**](/resource-management/attachment-directories#guide_target=resource-management.files.access-levels).
+7. Click [**Upload 1 Attachment**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-confirm-button). A toast confirms the upload.
 
 ## What the system does (auto-link)
 
@@ -37,7 +37,7 @@ For multiple packing lists in one go:
 
 
 1. Zip the Excel files together.
-2. Click **Bulk import (ZIP)** in the toolbar instead of **Upload**.
+2. Click [**Bulk import (ZIP)**](/resource-management/attachment-directories#guide_target=resource-management.files.bulk-import-button) in the toolbar instead of [**Upload**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button).
 3. Set the type to **Packing List** and upload the ZIP.
 
 Every file in the archive is tagged with the type and processed individually.

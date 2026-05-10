@@ -346,7 +346,7 @@ export function TemplateUploadDialog({
               )}
             </Button>
           )}
-          <Button onClick={handleUpload} disabled={!file || isUploading}>
+          <Button onClick={handleUpload} disabled={!file || isUploading} data-guide-target="template-upload.confirm-button">
             <Upload className="size-4 mr-2" />
             {isUploading ? 'Uploading...' : 'Upload'}
           </Button>

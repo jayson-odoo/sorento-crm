@@ -31,10 +31,12 @@
 @custom-variant light (&:not(.dark *));
 
 /* Guide-target spotlight (AI assistant deep-link → UI element).
-   Pulses 3 times then stops. Triggered by GuideTargetSpotlight.tsx. */
+   Pulses 3 times then stops. Triggered by GuideTargetSpotlight.tsx.
+   `--primary` resolves to an oklch color (Tailwind v4), so `hsl(var(--primary) / X)`
+   is invalid; use `color-mix` for transparency. */
 @keyframes guide-spotlight-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.55); }
-  50%      { box-shadow: 0 0 0 10px hsl(var(--primary) / 0); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 60%, transparent); }
+  50%      { box-shadow: 0 0 0 12px color-mix(in oklab, var(--primary) 0%, transparent); }
 }
 .guide-spotlight {
   animation: guide-spotlight-pulse 1s ease-in-out 3;

@@ -477,7 +477,10 @@ class AIAssistantChatService:
         # inline markdown links from the guide, re-wrap any bold menu paths
         # with their canonical FE route links. Cheap deterministic safety net
         # so the LLM doesn't have to be perfect about preserving links.
-        response_text = self._inject_route_links(response_text)
+        # `extra_map` adds button-level deep links (e.g. `?guide_target=...`)
+        # that the guide author wrote inline.
+        guide_link_map = self._extract_guide_link_map(tool_calls)
+        response_text = self._inject_route_links(response_text, guide_link_map)
         links = self._extract_links_from_text(response_text)
 
         # Smart suggestions: best-effort follow-up question generation. Always
@@ -1328,7 +1331,40 @@ class AIAssistantChatService:
         ("User Management → Contacts", "/user-management/contacts"),
     )
 
-    def _inject_route_links(self, text: str) -> str:
+    _GUIDE_LINK_PATTERN = re.compile(r"\[([^\[\]]+?)\]\(([^)\s]+)\)")
+
+    def _extract_guide_link_map(
+        self, tool_calls: list[MCPToolCallResult]
+    ) -> list[tuple[str, str]]:
+        """Scan `user_guides_read` outputs for inline markdown links
+        `[Label](URL)` (with or without bold markers) and return label→URL
+        pairs. Lets us re-wrap UI-element deep links (e.g.
+        `[**Upload**](/resource-management/attachment-directories?guide_target=...)`)
+        that the LLM paraphrased away. Static `_ROUTE_MAP` only covers menu
+        paths; this extends coverage to whatever the guide author wrote.
+        """
+        pairs: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for call in tool_calls:
+            if not call.ok or not call.output:
+                continue
+            for raw_label, url in self._GUIDE_LINK_PATTERN.findall(call.output):
+                label = raw_label.strip().strip("*").strip()
+                if not label or not url:
+                    continue
+                key = (label, url)
+                if key in seen:
+                    continue
+                seen.add(key)
+                pairs.append(key)
+        pairs.sort(key=lambda p: -len(p[0]))
+        return pairs
+
+    def _inject_route_links(
+        self,
+        text: str,
+        extra_map: list[tuple[str, str]] | None = None,
+    ) -> str:
         """Wrap bare bold menu paths (`**Resource Management → Files**`) and
         plain mentions (`Resource Management → Files`) with the canonical FE
         route link. Skips mentions that are already inside a markdown link.
@@ -1337,10 +1373,19 @@ class AIAssistantChatService:
         here: ..." trailing lines because the inline links are sufficient
         and the bare doc URLs land on the doc.foundryx.my surface (which
         the user said they don't want).
+
+        `extra_map` adds dynamic label→URL mappings extracted from the active
+        tool outputs (see `_extract_guide_link_map`) so guide-authored
+        button-level deep links survive paraphrase. Only the bold form is
+        re-injected for `extra_map` entries to avoid wrapping common verbs
+        like "Upload" in plain prose.
         """
         if not text:
             return text
         result = text
+        # Pass replacements as plain-text via a lambda so backslashes / `\g`
+        # / `\u` sequences inside the URL don't get parsed as regex
+        # back-references in `re.sub`'s replacement template.
         # 1) Wrap bold menu paths (bias the LLM to use bold for menu mentions
         # via the prompt, and we cover both with/without bold below).
         for label, route in self._ROUTE_MAP:
@@ -1349,7 +1394,8 @@ class AIAssistantChatService:
             bold_pat = re.compile(
                 r"(?<!\]\()(?<!`)\*\*" + esc + r"\*\*(?!\]\()"
             )
-            result = bold_pat.sub(f"[**{label}**]({route})", result)
+            replacement = f"[**{label}**]({route})"
+            result = bold_pat.sub(lambda _m, r=replacement: r, result)
         # 2) Wrap PLAIN (non-bold, non-linked) menu paths with bold + link
         # so the LLM's "Resource Management → Files in your CRM" still ends
         # up clickable. Skip mentions already inside markdown link parens.
@@ -1358,7 +1404,19 @@ class AIAssistantChatService:
             plain_pat = re.compile(
                 r"(?<!\*)(?<!\]\()(?<!`)\b" + esc + r"\b(?!\]\()(?!\*)"
             )
-            result = plain_pat.sub(f"[**{label}**]({route})", result)
+            replacement = f"[**{label}**]({route})"
+            result = plain_pat.sub(lambda _m, r=replacement: r, result)
+        # 2b) Re-inject guide-authored deep links (button targets, etc.).
+        # Bold-only — never plain — so a stray "upload" in prose does not
+        # become a button deep link.
+        if extra_map:
+            for label, url in extra_map:
+                esc = re.escape(label)
+                bold_pat = re.compile(
+                    r"(?<!\]\()(?<!`)\*\*" + esc + r"\*\*(?!\]\()"
+                )
+                replacement = f"[**{label}**]({url})"
+                result = bold_pat.sub(lambda _m, r=replacement: r, result)
         # 3) Strip trailing "Full guide" / "refer to the full guide" footers.
         # These are noisy: the inline links cover the same ground and the
         # raw doc.foundryx.my URLs add nothing.

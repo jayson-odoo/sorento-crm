@@ -252,7 +252,7 @@ export function GRNImportDialog({
               {isTesting ? 'Testing...' : 'Test'}
             </Button>
           )}
-          <Button onClick={handleUpload} disabled={!file}>
+          <Button onClick={handleUpload} disabled={!file} data-guide-target="procurement.grn.import-confirm-button">
             Upload
           </Button>
         </DialogFooter>

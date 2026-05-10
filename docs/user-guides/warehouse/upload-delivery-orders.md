@@ -8,16 +8,16 @@ Open **[Delivery Order Management → Delivery Orders](/order-management/orders)
 
 Toolbar:
 
-* [**Import**](/order-management/orders?guide_target=order-management.delivery-orders.import-button) — dropdown with **Import tracking** and **Import delivery order lines**.
+* [**Import**](/order-management/orders#guide_target=order-management.delivery-orders.import-button) — dropdown with **Import tracking** and **Import delivery order lines**.
 * **Create Delivery Order** — manual single-record creation.
 * **Quick filters** / **Filters** / **Export** / **Columns** / **Refresh** — DataGrid tools.
 
 ## Step 1 — Import tracking (order header)
 
 
-1. Click [**Import**](/order-management/orders?guide_target=order-management.delivery-orders.import-button) → **Import tracking**.
+1. Click [**Import**](/order-management/orders#guide_target=order-management.delivery-orders.import-button) → **Import tracking**.
 2. Drag in or browse to your tracking Excel file.
-3. Confirm. The job is queued (`order_tracking_import`).
+3. Click [**Upload**](/order-management/orders#guide_target=template-upload.confirm-button). The job is queued (`order_tracking_import`).
 
 ### Tracking columns
 
@@ -44,9 +44,9 @@ Accepted date formats: ISO, `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`. Numeric fi
 After the tracking import finishes:
 
 
-1. Click [**Import**](/order-management/orders?guide_target=order-management.delivery-orders.import-button) → **Import delivery order lines**.
+1. Click [**Import**](/order-management/orders#guide_target=order-management.delivery-orders.import-button) → **Import delivery order lines**.
 2. Drag in or browse to your lines Excel.
-3. Confirm. The job is queued (`delivery_order_detail_import`).
+3. Click [**Upload**](/order-management/orders#guide_target=template-upload.confirm-button). The job is queued (`delivery_order_detail_import`).
 
 ### Delivery order line columns
 

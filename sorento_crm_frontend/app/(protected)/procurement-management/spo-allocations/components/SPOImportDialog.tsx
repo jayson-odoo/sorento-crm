@@ -275,7 +275,7 @@ export function SPOImportDialog({
               {isTesting ? 'Testing...' : 'Test (first file)'}
             </Button>
           )}
-          <Button onClick={handleUpload} disabled={files.length === 0}>
+          <Button onClick={handleUpload} disabled={files.length === 0} data-guide-target="procurement.spo-allocations.import-confirm-button">
             Import
           </Button>
         </DialogFooter>

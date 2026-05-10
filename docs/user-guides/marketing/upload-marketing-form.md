@@ -7,11 +7,11 @@ Use this flow to upload a marketing-form submission (e.g. event registration, pr
 
 1. Open **[Resource Management → Files](/resource-management/attachment-directories)** (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
 2. (Optional) Click a folder in the **Folders** sidebar (e.g. *Marketing*) so the file is filed there.
-3. Click [**Upload**](/resource-management/attachment-directories?guide_target=resource-management.files.upload-button) in the top toolbar.
+3. Click [**Upload**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button) in the top toolbar.
 4. In the **Create Attachment** dialog, set **Attachment Type** to **Marketing Form** (your tenant's configured marketing-form type — ask an admin to add it under **[Resource Management → Attachment Types](/resource-management/attachment-types)** if it's missing).
 5. Drag the form file into the **Files** drop zone, or click **Select Files** to browse.
-6. (Optional) Adjust **Access Levels**.
-7. Click **Upload N Attachments**.
+6. (Optional) Adjust [**Access Levels**](/resource-management/attachment-directories#guide_target=resource-management.files.access-levels).
+7. Click [**Upload N Attachments**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-confirm-button).
 
 ## What the system does (auto-link)
 
@@ -36,7 +36,7 @@ For uploading multiple marketing-form files at once:
 
 
 1. Zip the files together.
-2. Click [**Bulk import (ZIP)**](/resource-management/attachment-directories?guide_target=resource-management.files.bulk-import-button) instead of [**Upload**](/resource-management/attachment-directories?guide_target=resource-management.files.upload-button).
+2. Click [**Bulk import (ZIP)**](/resource-management/attachment-directories#guide_target=resource-management.files.bulk-import-button) instead of [**Upload**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button).
 3. Set the type to **Marketing Form** and upload the ZIP.
 
 ## See also
