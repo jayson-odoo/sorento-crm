@@ -4,7 +4,7 @@ Use this flow to record incoming stock against a supplier purchase order. A GRN 
 
 ## Where to upload
 
-Open [**Procurement → GRN**](/procurement-management/grn) (URL: `/procurement-management/grn`). The page is titled **GRN**.
+Open **[Procurement → GRN](/procurement-management/grn)** (URL: `/procurement-management/grn`). The page is titled **GRN**.
 
 Toolbar:
 

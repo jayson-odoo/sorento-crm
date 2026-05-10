@@ -7,7 +7,7 @@ Use this flow to bulk-import **SPO allocations** from an Excel file. SPO allocat
 ## Steps
 
 
-1. Open [**Procurement → SPO Allocations**](/procurement-management/spo-allocations) (URL: `/procurement-management/spo-allocations`). The page is titled **SPO Allocations**.
+1. Open **[Procurement → SPO Allocations](/procurement-management/spo-allocations)** (URL: `/procurement-management/spo-allocations`). The page is titled **SPO Allocations**.
 2. Click the **Import options** button in the toolbar (upload icon).
 3. Pick **Import SPO** from the dropdown.
 4. The **SPO Import** dialog opens. Drag in or browse to your SPO Excel file.
@@ -29,7 +29,7 @@ Rows are grouped by `(SPO number, product, warehouse)` — duplicate rows for th
 
 ## How you'll see progress
 
-Once a job is queued, the **SPO Allocations** page shows a **Latest SPO import** panel above the table. It updates with the job status (queued, running, completed, failed) and row counts in real time. Refresh or check [**System Management → Import Jobs**](/system-management/import-jobs) for the full history.
+Once a job is queued, the **SPO Allocations** page shows a **Latest SPO import** panel above the table. It updates with the job status (queued, running, completed, failed) and row counts in real time. Refresh or check **[System Management → Import Jobs](/system-management/import-jobs)** for the full history.
 
 ## How you'll be notified
 

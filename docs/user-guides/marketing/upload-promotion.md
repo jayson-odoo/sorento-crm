@@ -5,7 +5,7 @@ Use this flow to upload a promotion file (flyer, brochure, campaign artwork, pro
 ## Steps
 
 
-1. Open [**Resource Management → Files**](/resource-management/attachment-directories) (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
+1. Open **[Resource Management → Files](/resource-management/attachment-directories)** (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
 2. (Optional) Click a folder in the **Folders** sidebar (e.g. *Marketing*) so the file is filed there.
 3. Click **Upload** in the top toolbar.
 4. In the **Create Attachment** dialog, set **Attachment Type** to **Promotion** (this is one of the two attachment types seeded by default — `code = 'promotion'`).
@@ -19,8 +19,8 @@ After upload, the backend fires a webhook to **n8n** with the file URL and the *
 
 
 1. Parses the file (extracts promotion title, validity dates, target audience, product list).
-2. Creates a **Promotion** record (visible at [**Marketing Management → Promotions**](/marketing-management/promotions)).
-3. Links it to **Promotion Products** as needed (visible at [**Marketing Management → Promotion Products**](/marketing-management/promotion-products)).
+2. Creates a **Promotion** record (visible at **[Marketing Management → Promotions](/marketing-management/promotions)**).
+3. Links it to **Promotion Products** as needed (visible at **[Marketing Management → Promotion Products](/marketing-management/promotion-products)**).
 4. Calls back into the CRM to attach the original file to the Promotion record.
 
 You don't need to create the promotion record by hand — the integration handles it. If anything is missing or wrong (e.g. a product code didn't match), open the promotion and edit it.
@@ -28,8 +28,8 @@ You don't need to create the promotion record by hand — the integration handle
 ## How you'll be notified
 
 * **Immediately:** in-app toast confirming the upload.
-* **When the integration finishes:** in-app and/or email notification (depending on tenant configuration). The new Promotion appears on [**Marketing Management → Promotions**](/marketing-management/promotions).
-* **On parser failure:** an integration log is recorded under [**System Management → Integration Logs**](/system-management/integration-logs) — admins can review and re-run.
+* **When the integration finishes:** in-app and/or email notification (depending on tenant configuration). The new Promotion appears on **[Marketing Management → Promotions](/marketing-management/promotions)**.
+* **On parser failure:** an integration log is recorded under **[System Management → Integration Logs](/system-management/integration-logs)** — admins can review and re-run.
 
 ## Bulk import
 
