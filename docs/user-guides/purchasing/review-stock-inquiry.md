@@ -4,7 +4,7 @@ When a project sales manager flows a stock inquiry to purchasing, the inquiry mo
 
 ## Where to find pending inquiries
 
-Open [**Procurement → Stock Inquiries**](/procurement-management/stock-inquiries) (URL: `/procurement-management/stock-inquiries`).
+Open **[Procurement → Stock Inquiries](/procurement-management/stock-inquiries)** (URL: `/procurement-management/stock-inquiries`).
 
 Filter the list by **Status = Pending purchasing** to see only inquiries waiting on your team. The full set of statuses is: **New**, **Pending project sales**, **Pending purchasing**, **Responded**, **Rejected**.
 

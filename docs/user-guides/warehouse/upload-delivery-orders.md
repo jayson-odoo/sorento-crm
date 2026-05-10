@@ -4,7 +4,7 @@ Use this flow to bulk-import delivery orders and their line items. The flow has 
 
 ## Where to upload
 
-Open [**Delivery Order Management → Delivery Orders**](/order-management/orders) (URL: `/order-management/orders`). The page is titled **Delivery Orders**.
+Open **[Delivery Order Management → Delivery Orders](/order-management/orders)** (URL: `/order-management/orders`). The page is titled **Delivery Orders**.
 
 Toolbar:
 

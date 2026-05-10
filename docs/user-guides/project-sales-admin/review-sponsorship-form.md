@@ -6,7 +6,7 @@ Project sales reps submit sponsorship forms through the [portal](../project-sale
 
 ## Where to find sponsorship forms
 
-Open [**Procurement → Sponsorship Forms**](/procurement-management/sponsorship-forms) (URL: `/procurement-management/sponsorship-forms`). The page is titled **Sponsorship Forms**.
+Open **[Procurement → Sponsorship Forms](/procurement-management/sponsorship-forms)** (URL: `/procurement-management/sponsorship-forms`). The page is titled **Sponsorship Forms**.
 
 Filter by **Approval Status**. Statuses: **Draft**, **Pending approval**, **Approved**, **Rejected**.
 

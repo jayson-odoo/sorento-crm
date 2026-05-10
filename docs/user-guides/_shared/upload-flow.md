@@ -6,7 +6,7 @@ There are **two distinct upload patterns** in the CRM. Use the right one for the
 
 | Pattern | When to use | Where |
 |----|----|----|
-| **A. File upload tagged by Attachment Type** (this page) | Uploading a file that needs to be tagged with an attachment type — packing list, product attachments, promotion, marketing form, etc. The system links it to the right business record automatically. | [**Resource Management → Files**](/resource-management/attachment-directories) |
+| **A. File upload tagged by Attachment Type** (this page) | Uploading a file that needs to be tagged with an attachment type — packing list, product attachments, promotion, marketing form, etc. The system links it to the right business record automatically. | **[Resource Management → Files](/resource-management/attachment-directories)** |
 | **B. Module-specific Excel import** | Bulk-loading structured data into a specific module (products, SPO, GRN, order tracking, stock). | The **Import** / **Upload** button on each module's list page |
 
 If you are uploading **a single file or a folder of files** that the system should link to a product / promotion / packing list / etc., use **Pattern A** (this page). If you are uploading **an Excel spreadsheet of records** to create or update many rows in one shot, use the relevant Pattern B guide instead.
@@ -17,11 +17,11 @@ If you are uploading **a single file or a folder of files** that the system shou
 ## Pattern A — Single-file upload
 
 
-1. Open [**Resource Management → Files**](/resource-management/attachment-directories) in the left menu (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
+1. Open **[Resource Management → Files](/resource-management/attachment-directories)** in the left menu (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
 2. (Optional) Click a folder in the **Folders** sidebar on the left so the new file is filed under that folder. Otherwise the file lives at the root.
 3. Click **Upload** in the top toolbar of the attachments table.
 4. The **Create Attachment** dialog opens.
-5. Pick the **Attachment Type** from the dropdown (required) — for example *Packing List*, *Product Attachments*, *Promotion*, *Marketing Form*. The list comes from your tenant's configured types. If the type you need is missing, ask an admin to add it under [**Resource Management → Attachment Types**](/resource-management/attachment-types) (the only types seeded by default are *Promotion* and *Complaint Document*).
+5. Pick the **Attachment Type** from the dropdown (required) — for example *Packing List*, *Product Attachments*, *Promotion*, *Marketing Form*. The list comes from your tenant's configured types. If the type you need is missing, ask an admin to add it under **[Resource Management → Attachment Types](/resource-management/attachment-types)** (the only types seeded by default are *Promotion* and *Complaint Document*).
 6. Drag your file(s) into the **Files** drop zone, or click **Select Files** to browse.
 7. (Optional) Tick / untick **Access Levels** — these control which contact-access groups (e.g. *End User*, *Dealer*, *Manager*) can see this file from the portal. All three are ticked by default.
 8. Click **Upload N Attachments**. A toast confirms the upload, and the file appears in the table.
@@ -29,7 +29,7 @@ If you are uploading **a single file or a folder of files** that the system shou
 ## Pattern A — Bulk ZIP import
 
 
-1. Open [**Resource Management → Files**](/resource-management/attachment-directories).
+1. Open **[Resource Management → Files](/resource-management/attachment-directories)**.
 2. Click **Bulk import (ZIP)** (top toolbar, archive icon).
 3. Pick the attachment type — every file inside the ZIP will be tagged with this type.
 4. Upload your `.zip`. The system extracts files in the background.
@@ -47,7 +47,7 @@ You do **not** need to link the file manually after upload. As soon as the integ
 
 * **In-app toast** appears immediately when the upload completes (e.g. `Successfully uploaded 1 file(s)`).
 * **Asynchronous processing** (parsing + linking) happens after the upload. When the integration workflow finishes, you receive a follow-up notification depending on how the workflow for that attachment type is configured (in-app and/or email).
-* If parsing fails, an integration log is recorded — admins can review it under [**System Management → Integration Logs**](/system-management/integration-logs).
+* If parsing fails, an integration log is recorded — admins can review it under **[System Management → Integration Logs](/system-management/integration-logs)**.
 
 ## Folder management
 

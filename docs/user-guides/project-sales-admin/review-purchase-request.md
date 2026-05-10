@@ -4,7 +4,7 @@ Project sales reps submit purchase requests through the [portal](../project-sale
 
 ## Where to find purchase requests
 
-Open [**Procurement → Purchase Requests**](/procurement-management/purchase-requests) (URL: `/procurement-management/purchase-requests`). The page is titled **Purchase Requests**.
+Open **[Procurement → Purchase Requests](/procurement-management/purchase-requests)** (URL: `/procurement-management/purchase-requests`). The page is titled **Purchase Requests**.
 
 The DataGrid lists every purchase request. Filter by **Approval Status** to find the ones waiting on you. The full set of statuses is: **Draft**, **Pending approval**, **Approved**, **Rejected**.
 

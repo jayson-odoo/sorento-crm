@@ -5,7 +5,7 @@ Use this flow to upload technical product documents (datasheets, manuals, spec s
 ## Steps
 
 
-1. Open [**Resource Management → Files**](/resource-management/attachment-directories) (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
+1. Open **[Resource Management → Files](/resource-management/attachment-directories)** (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
 2. (Optional) Click a folder in the **Folders** sidebar (e.g. a brand-specific or product-specific subfolder) so the file is filed under it.
 3. Click **Upload** in the top toolbar of the attachments table.
 4. In the **Create Attachment** dialog, set **Attachment Type** to your tenant's product-attachment type — usually **Product Attachments** (for datasheets, drawings, etc.) or *Product Photo* (for marketing-grade product images), depending on your tenant configuration.
@@ -33,7 +33,7 @@ For uploading many product attachments at once:
 
 * **Immediately:** in-app toast on successful upload.
 * **When the integration finishes:** in-app and/or email notification (depending on tenant configuration). Successful links appear on the product detail page.
-* **On parser failure:** the integration log is recorded under [**System Management → Integration Logs**](/system-management/integration-logs).
+* **On parser failure:** the integration log is recorded under **[System Management → Integration Logs](/system-management/integration-logs)**.
 
 ## Folder management
 
