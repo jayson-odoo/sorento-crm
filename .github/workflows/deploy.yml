@@ -43,25 +43,25 @@ jobs:
 
       - name: Smoke import app.main
         run: |
-          docker run --rm \
+          docker run --rm --entrypoint python \
             -e DATABASE_URL=postgresql://x:x@localhost/x \
             -e DIRECT_URL=postgresql://x:x@localhost/x \
             -e JWT_SECRET=ci-dummy-secret \
             -e JWT_ALGORITHM=HS256 \
             -e REDIS_URL=redis://localhost:6379/0 \
             sorento-backend:ci \
-            python -c "from app.main import app; print('import ok')"
+            -c "from app.main import app; print('import ok')"
 
       - name: Pytest collect-only (catches import errors in tests)
         run: |
-          docker run --rm \
+          docker run --rm --entrypoint python \
             -e DATABASE_URL=postgresql://x:x@localhost/x \
             -e DIRECT_URL=postgresql://x:x@localhost/x \
             -e JWT_SECRET=ci-dummy-secret \
             -e JWT_ALGORITHM=HS256 \
             -e REDIS_URL=redis://localhost:6379/0 \
             sorento-backend:ci \
-            python -m pytest --collect-only -q
+            -m pytest --collect-only -q
 
   validate-mcp:
     name: Validate MCP imports
