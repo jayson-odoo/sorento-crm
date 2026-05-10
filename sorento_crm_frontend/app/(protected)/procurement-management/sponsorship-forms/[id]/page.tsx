@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
 import PurchaseRequestDetail from '../../purchase-requests/components/PurchaseRequestDetail';
+import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
 
 export const metadata: Metadata = {
   title: 'Sponsorship Form Details',
@@ -57,9 +58,11 @@ async function SponsorshipFormDetailWrapper({
 }) {
   const { id } = await params;
   return (
-    <PurchaseRequestDetail
-      requestId={id}
-      basePath="/procurement-management/sponsorship-forms"
-    />
+    <FormDetailWithSLATabs sourceEntityType="sponsorship_form" sourceEntityId={id}>
+      <PurchaseRequestDetail
+        requestId={id}
+        basePath="/procurement-management/sponsorship-forms"
+      />
+    </FormDetailWithSLATabs>
   );
 }

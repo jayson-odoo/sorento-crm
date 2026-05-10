@@ -2490,6 +2490,19 @@ class StockInquiryService:
             self._stock_inquiry_row_as_submission_dict(inquiry),
             require_contact_scope=require_contact_scope,
         )
+        try:
+            if (inquiry.status or "").strip().lower() != "new":
+                from app.services.form_sla_service import emit_form_event
+                emit_form_event(
+                    self.db,
+                    "stock_inquiry",
+                    str(inquiry.id),
+                    "submit",
+                    contact_id=getattr(inquiry, "contact_id", None),
+                    actor_user_id=None,
+                )
+        except Exception as e:
+            logger.warning("Form SLA emit 'submit' (resubmit_rejected_inquiry) failed for %s: %s", inquiry.id, e)
         return inquiry
 
     def create_inquiry(
@@ -2575,6 +2588,22 @@ class StockInquiryService:
         self.db.add(inquiry)
         self.db.commit()
         self.db.refresh(inquiry)
+        # Portal/external submissions land here directly with status="pending_project_sales"
+        # (or "pending_purchasing" for internal flows), bypassing submit_inquiry_for_project_sales.
+        # Fire the SLA "submit" event for any non-"new" landing so form_sla_configs starts a tracker.
+        try:
+            if (inquiry.status or "").strip().lower() != "new":
+                from app.services.form_sla_service import emit_form_event
+                emit_form_event(
+                    self.db,
+                    "stock_inquiry",
+                    str(inquiry.id),
+                    "submit",
+                    contact_id=getattr(inquiry, "contact_id", None),
+                    actor_user_id=None,
+                )
+        except Exception as e:
+            logger.warning("Form SLA emit 'submit' (create_inquiry) failed for %s: %s", inquiry.id, e)
         return inquiry, "created"
 
     def delete_inquiry(self, inquiry_id: str) -> dict:
@@ -3110,9 +3139,22 @@ class StockInquiryService:
         inquiry.last_responded_at = now_utc
         self.db.commit()
         self.db.refresh(inquiry)
+        if transition_to_responded_workflow:
+            try:
+                from app.services.form_sla_service import emit_form_event
+                emit_form_event(
+                    self.db,
+                    "stock_inquiry",
+                    str(inquiry.id),
+                    "purchasing_respond",
+                    contact_id=getattr(inquiry, "contact_id", None),
+                    actor_user_id=crm_sender_user_id or respond_user_id,
+                )
+            except Exception as e:
+                logger.warning("Form SLA emit 'purchasing_respond' failed for stock_inquiry %s: %s", inquiry_id, e)
         return inquiry
 
-    def submit_inquiry_for_project_sales(self, inquiry_id: str) -> StockInquiry:
+    def submit_inquiry_for_project_sales(self, inquiry_id: str, actor_user_id: Optional[str] = None) -> StockInquiry:
         """Move inquiry from new to pending_project_sales."""
         inquiry = self.get_inquiry(inquiry_id)
         if inquiry.status != "new":
@@ -3121,9 +3163,21 @@ class StockInquiryService:
         inquiry.status = "pending_project_sales"
         self.db.commit()
         self.db.refresh(inquiry)
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                "stock_inquiry",
+                str(inquiry.id),
+                "submit",
+                contact_id=getattr(inquiry, "contact_id", None),
+                actor_user_id=actor_user_id,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'submit' failed for stock_inquiry %s: %s", inquiry_id, e)
         return inquiry
 
-    def project_sales_approve_inquiry(self, inquiry_id: str) -> StockInquiry:
+    def project_sales_approve_inquiry(self, inquiry_id: str, actor_user_id: Optional[str] = None) -> StockInquiry:
         """Move inquiry from pending_project_sales to pending_purchasing."""
         inquiry = self.get_inquiry(inquiry_id)
         if inquiry.status != "pending_project_sales":
@@ -3148,6 +3202,18 @@ class StockInquiryService:
             )
         except Exception as e:
             logger.warning("Failed to notify purchasing team for stock inquiry %s: %s", inquiry_id, e)
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                "stock_inquiry",
+                str(inquiry.id),
+                "project_sales_approve",
+                contact_id=getattr(inquiry, "contact_id", None),
+                actor_user_id=actor_user_id,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'project_sales_approve' failed for stock_inquiry %s: %s", inquiry_id, e)
         return inquiry
 
     def project_sales_reject_inquiry(
@@ -3187,6 +3253,18 @@ class StockInquiryService:
         inquiry.rejected_by = user_id
         self.db.commit()
         self.db.refresh(inquiry)
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                "stock_inquiry",
+                str(inquiry.id),
+                "project_sales_reject",
+                contact_id=getattr(inquiry, "contact_id", None),
+                actor_user_id=user_id,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'project_sales_reject' failed for stock_inquiry %s: %s", inquiry_id, e)
         return inquiry
 
     def purchasing_reject_inquiry(
@@ -3226,6 +3304,18 @@ class StockInquiryService:
         inquiry.rejected_by = user_id
         self.db.commit()
         self.db.refresh(inquiry)
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                "stock_inquiry",
+                str(inquiry.id),
+                "purchasing_decide",
+                contact_id=getattr(inquiry, "contact_id", None),
+                actor_user_id=user_id,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'purchasing_decide' failed for stock_inquiry %s: %s", inquiry_id, e)
         return inquiry
 
     def reopen_inquiry(
@@ -4019,6 +4109,18 @@ class PurchaseRequestService:
                 e,
                 exc_info=True,
             )
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                str(header_request_type) if header_request_type else "purchase_request",
+                header_id,
+                "submit",
+                contact_id=contact_id,
+                actor_user_id=None,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'submit' failed for %s %s: %s", header_request_type, header_id, e)
         return header
 
     def _update_external_request(self, header: PurchaseRequestHeader, payload) -> PurchaseRequestHeader:
@@ -4854,7 +4956,84 @@ class PurchaseRequestService:
         except Exception as e:
             self.db.rollback()
             raise
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                getattr(header, "request_type", None) or "purchase_request",
+                str(header.id),
+                "send_for_approval",
+                contact_id=getattr(header, "contact_id", None),
+                actor_user_id=requested_by_user_id,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'send_for_approval' failed for %s: %s", request_id, e)
         # Re-query with relationships loaded to avoid expired instance issues
+        return self.get_request(request_id)
+
+    def reject_submitted(
+        self,
+        request_id: str,
+        rejection_reason: str,
+        actor_user_id: Optional[str] = None,
+    ):
+        """Reject a submitted purchase request / sponsorship form before sending for approval.
+
+        Allowed only when the request has not yet been sent for approval (approval_status
+        is null/empty/draft). Mirrors public-approval rejection: writes approval_status,
+        approval_comments, and notifies the contact via Respond.io. Same permission as
+        Send for Approval.
+        """
+        from app.services.error_handler import handle_validation_error, handle_conflict
+
+        reason = (rejection_reason or "").strip()
+        if not reason:
+            raise handle_validation_error("Rejection reason is required.")
+
+        header = self.get_request(request_id)
+        current = (getattr(header, "approval_status", None) or "").strip().lower()
+        if current and current not in ("", "draft"):
+            raise handle_conflict(
+                f"Cannot reject submitted: approval_status is already '{current}'. "
+                "Reject is only available before sending for approval."
+            )
+
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        header.approval_status = "rejected"
+        header.approval_comments = reason
+        header.approved_at = now_utc
+        header.approved_by = actor_user_id or ""
+        header.approval_signature_ref = None
+        if actor_user_id is not None:
+            header.requested_approval_by_user_id = actor_user_id
+        self.db.commit()
+        self.db.refresh(header)
+
+        try:
+            self._notify_contact_on_approval_rejected(header)
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            logger.warning(
+                "Failed to send Respond.io rejection notice for %s %s: %s",
+                getattr(header, "request_type", None),
+                request_id,
+                e,
+            )
+
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                getattr(header, "request_type", None) or "purchase_request",
+                str(header.id),
+                "reject_submitted",
+                contact_id=getattr(header, "contact_id", None),
+                actor_user_id=actor_user_id,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'reject_submitted' failed for %s: %s", request_id, e)
+
         return self.get_request(request_id)
 
     def create_approval_token(
@@ -5236,4 +5415,16 @@ class PurchaseRequestService:
                     header.id,
                     e,
                 )
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                getattr(header, "request_type", None) or "purchase_request",
+                str(header.id),
+                "approved" if action == "approved" else "approval_rejected",
+                contact_id=getattr(header, "contact_id", None),
+                actor_user_id=None,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit '%s' failed for %s: %s", action, header.id, e)
         return header

@@ -12,6 +12,116 @@ from app.services.user_service import UserPermissionService
 # OAuth2 scheme for JWT token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
+IMPERSONATE_HEADER = "X-Impersonate-User-Id"
+
+
+def _decode_jwt_user(token: str) -> dict:
+    """Decode a NextAuth-issued JWT into our standard user dict. Raises HTTPException on failure."""
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    user_id_raw = payload.get("sub") or payload.get("id")
+    user_id: Optional[str] = str(user_id_raw) if user_id_raw is not None else None
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing user ID",
+        )
+    email_raw = payload.get("email")
+    role_raw = payload.get("roleId")
+    return {
+        "id": user_id,
+        "email": str(email_raw) if email_raw is not None else None,
+        "role_id": str(role_raw) if role_raw is not None else None,
+        "name": payload.get("name"),
+        "avatar": payload.get("avatar"),
+        "status": payload.get("status"),
+        "role_name": payload.get("roleName"),
+    }
+
+
+def _load_user_dict_from_db(db: Session, user_id: str) -> Optional[dict]:
+    """Load a user dict (same shape as JWT-derived) from DB, including primary role slug."""
+    from app.models.user import User, UserRoleAssignment, UserRole
+
+    row = db.query(User).filter(User.id == user_id, User.is_trashed.is_(False)).first()
+    if not row:
+        return None
+    role_slug = (
+        db.query(UserRole.slug)
+        .join(UserRoleAssignment, UserRoleAssignment.role_id == UserRole.id)
+        .filter(UserRoleAssignment.user_id == user_id)
+        .order_by(UserRoleAssignment.assigned_at.asc())
+        .first()
+    )
+    role_id = (
+        db.query(UserRoleAssignment.role_id)
+        .filter(UserRoleAssignment.user_id == user_id)
+        .order_by(UserRoleAssignment.assigned_at.asc())
+        .first()
+    )
+    return {
+        "id": row.id,
+        "email": row.email,
+        "role_id": role_id[0] if role_id else None,
+        "name": row.name,
+        "avatar": row.avatar,
+        "status": row.status,
+        "role_name": role_slug[0] if role_slug else None,
+    }
+
+
+def _maybe_apply_impersonation(
+    request: Request,
+    db: Session,
+    real_user: dict,
+) -> dict:
+    """If real user is admin/superadmin AND active session matches header, swap to target user dict.
+
+    Stash the real user on ``request.state.real_user`` regardless. Stale or invalid headers
+    are silently ignored — admin browses as themselves.
+    """
+    request.state.real_user = real_user
+    target_id = request.headers.get(IMPERSONATE_HEADER)
+    if not target_id:
+        return real_user
+    role_slugs = UserPermissionService(db).get_user_role_slugs(real_user["id"])
+    if not (role_slugs & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}):
+        return real_user
+    from app.models.impersonation import ImpersonationSession
+
+    session_row = (
+        db.query(ImpersonationSession)
+        .filter(
+            ImpersonationSession.admin_user_id == real_user["id"],
+            ImpersonationSession.target_user_id == target_id,
+            ImpersonationSession.ended_at.is_(None),
+        )
+        .first()
+    )
+    if not session_row:
+        return real_user
+    target_user = _load_user_dict_from_db(db, target_id)
+    if not target_user or target_user.get("status") != "ACTIVE":
+        return real_user
+    request.state.impersonation_session_id = session_row.id
+    # Refresh audit context so created_by/updated_by overrides know both ids.
+    from app.audit_context import set_audit_context
+
+    ip = request.client.host if request.client else None
+    set_audit_context(real_user["id"], ip, effective_user_id=target_user["id"])
+    return target_user
+
+
+def get_actor_user_id(request: Request, current_user: dict) -> str:
+    """Return the *real* user id for audit / created_by / updated_by purposes.
+
+    During impersonation ``current_user`` is the effective (target) user; the real admin
+    is on ``request.state.real_user``. Outside impersonation both are the same.
+    """
+    real = getattr(request.state, "real_user", None)
+    if isinstance(real, dict) and real.get("id"):
+        return str(real["id"])
+    return str(current_user["id"])
+
 
 def extract_token_from_request(request: Request) -> Optional[str]:
     """Extract JWT token from Authorization header or cookies."""
@@ -65,41 +175,15 @@ async def get_current_user(
         )
     
     try:
-        # Decode and validate JWT token
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm]
-        )
-        
-        # Extract user information from token
-        # NextAuth uses 'sub' for subject (user ID) or 'id' directly
-        user_id_raw = payload.get("sub") or payload.get("id")
-        user_id: Optional[str] = str(user_id_raw) if user_id_raw is not None else None
-        email_raw = payload.get("email")
-        email: Optional[str] = str(email_raw) if email_raw is not None else None
-        role_raw = payload.get("roleId")
-        role_id: Optional[str] = str(role_raw) if role_raw is not None else None
-        
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token: missing user ID"
-            )
-        
-        user = {
-            "id": user_id,
-            "email": email,
-            "role_id": role_id,
-            "name": payload.get("name"),
-            "avatar": payload.get("avatar"),
-            "status": payload.get("status"),
-            "role_name": payload.get("roleName"),
-        }
+        real_user = _decode_jwt_user(token)
         from app.audit_context import set_audit_context
         ip = request.client.host if request.client else None
-        set_audit_context(user_id, ip)
-        return user
+        # Audit context always uses the *real* user id, even when impersonating.
+        set_audit_context(real_user["id"], ip)
+        effective_user = _maybe_apply_impersonation(request, db, real_user)
+        return effective_user
+    except HTTPException:
+        raise
     except JWTError as e:
         # Log the error for debugging
         import logging
@@ -138,25 +222,16 @@ async def get_current_user_optional(
     if not token:
         return None
     try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
-        )
-        user_id = payload.get("sub") or payload.get("id")
-        if not user_id:
-            return None
-        return {
-            "id": user_id,
-            "email": payload.get("email"),
-            "role_id": payload.get("roleId"),
-            "name": payload.get("name"),
-            "avatar": payload.get("avatar"),
-            "status": payload.get("status"),
-            "role_name": payload.get("roleName"),
-        }
+        real_user = _decode_jwt_user(token)
     except Exception:
         return None
+    try:
+        from app.audit_context import set_audit_context
+        ip = request.client.host if request.client else None
+        set_audit_context(real_user["id"], ip)
+        return _maybe_apply_impersonation(request, db, real_user)
+    except Exception:
+        return real_user
 
 
 def get_api_key(
@@ -164,6 +239,38 @@ def get_api_key(
 ) -> Optional[str]:
     """Extract API key from X-API-Key header."""
     return x_api_key
+
+
+async def get_real_user(
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
+) -> dict:
+    """Like get_current_user but always returns the JWT-decoded user, ignoring any
+    X-Impersonate-User-Id header. Use for impersonation start/stop endpoints so
+    an impersonated session cannot end its own impersonation.
+    """
+    if not token:
+        token = extract_token_from_request(request)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        real_user = _decode_jwt_user(token)
+        from app.audit_context import set_audit_context
+        ip = request.client.host if request.client else None
+        set_audit_context(real_user["id"], ip)
+        request.state.real_user = real_user
+        return real_user
+    except HTTPException:
+        raise
+    except JWTError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token: {str(e)}",
+        )
 
 
 def require_permission(permission_slug: str):
@@ -486,40 +593,16 @@ def get_current_user_or_api_key(
         )
     
     try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm]
-        )
-        
-        user_id_raw = payload.get("sub") or payload.get("id")
-        user_id: Optional[str] = str(user_id_raw) if user_id_raw is not None else None
-        email_raw = payload.get("email")
-        email: Optional[str] = str(email_raw) if email_raw is not None else None
-        role_raw = payload.get("roleId")
-        role_id: Optional[str] = str(role_raw) if role_raw is not None else None
-
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token: missing user ID"
-            )
-
-        user = {
-            "id": user_id,
-            "email": email,
-            "role_id": role_id,
-            "name": payload.get("name"),
-            "avatar": payload.get("avatar"),
-            "status": payload.get("status"),
-            "role_name": payload.get("roleName"),
-        }
+        real_user = _decode_jwt_user(token)
         from app.audit_context import set_audit_context
         ip = request.client.host if request.client else None
-        set_audit_context(user_id, ip)
+        set_audit_context(real_user["id"], ip)
+        effective_user = _maybe_apply_impersonation(request, db, real_user)
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)
-        return user
+        return effective_user
+    except HTTPException:
+        raise
     except JWTError as e:
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.warning("auth.get_current_user_or_api_key failed mode=%s elapsed_ms=%.1f error=%s", auth_mode, elapsed_ms, str(e))

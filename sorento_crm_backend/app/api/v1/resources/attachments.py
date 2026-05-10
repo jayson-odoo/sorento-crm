@@ -26,6 +26,8 @@ from app.schemas.resources import (
     BulkAccessLevelsPreviewResponse,
     BulkAccessLevelsApplyRequest,
     BulkAccessLevelsApplyResponse,
+    BulkAttachmentTypeRequest,
+    BulkAttachmentTypeResponse,
 )
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -922,6 +924,31 @@ async def reorder_attachments(
         service = AttachmentService(db)
         result = service.reorder_attachments(body.attachment_ids, body.directory_id)
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post(
+    "/bulk-attachment-type",
+    response_model=BulkAttachmentTypeResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def bulk_set_attachment_type(
+    body: BulkAttachmentTypeRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set attachment_type_id on one or many attachments. No webhook resubmit.
+
+    Same endpoint serves single-edit (one ID) and bulk-edit (many IDs)."""
+    try:
+        service = AttachmentService(db)
+        return service.bulk_set_attachment_type(
+            body.attachment_ids,
+            body.attachment_type_id,
+        )
     except HTTPException:
         raise
     except Exception as e:

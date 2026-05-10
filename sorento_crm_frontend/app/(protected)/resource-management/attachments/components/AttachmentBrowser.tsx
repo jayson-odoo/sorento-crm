@@ -15,7 +15,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw, FolderOpen, RotateCcw, FileArchive, Pencil } from 'lucide-react';
+import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw, FolderOpen, RotateCcw, FileArchive, Pencil, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -57,6 +57,7 @@ import AttachmentUploadDialog from './AttachmentUploadDialog';
 import AttachmentBulkImportDialog from './AttachmentBulkImportDialog';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
 import AttachmentBulkDeleteDialog from './AttachmentBulkDeleteDialog';
+import EditAttachmentTypeDialog from './EditAttachmentTypeDialog';
 
 export default function AttachmentBrowser() {
   const router = useRouter();
@@ -67,6 +68,7 @@ export default function AttachmentBrowser() {
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Attachment | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -519,6 +521,14 @@ export default function AttachmentBrowser() {
                 <>
                   <Button
                     variant="outline"
+                    onClick={() => setBulkEditTypeOpen(true)}
+                    data-testid="bulk-attachment-type-trigger"
+                  >
+                    <Tag className="size-4 mr-2" />
+                    Attachment type ({selectedDeletableIds.length})
+                  </Button>
+                  <Button
+                    variant="outline"
                     onClick={handleBulkResubmit}
                     disabled={isResubmittingBulk}
                   >
@@ -588,6 +598,13 @@ export default function AttachmentBrowser() {
       attachmentIds={selectedDeletableIds}
       permanent={isTrashView}
       onSuccess={() => setRowSelection({})}
+    />
+
+    <EditAttachmentTypeDialog
+      open={bulkEditTypeOpen}
+      onOpenChange={setBulkEditTypeOpen}
+      attachmentIds={selectedDeletableIds}
+      onSaved={() => setRowSelection({})}
     />
 
     <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>

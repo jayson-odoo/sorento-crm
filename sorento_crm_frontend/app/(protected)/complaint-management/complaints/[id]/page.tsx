@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
 import ComplaintDetail from '../components/ComplaintDetail';
+import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
 
 export const metadata: Metadata = {
   title: 'Complaint Details',
@@ -61,6 +62,10 @@ async function ComplaintDetailWrapper({
       </div>
     );
   }
-  
-  return <ComplaintDetail complaintId={id} />;
+
+  return (
+    <FormDetailWithSLATabs sourceEntityType="complaint" sourceEntityId={id}>
+      <ComplaintDetail complaintId={id} />
+    </FormDetailWithSLATabs>
+  );
 }

@@ -155,12 +155,40 @@ def list_audit_logs(
     return items, total
 
 
+_ACTOR_FIELDS_INSERT = ("created_by_user_id", "created_by", "updated_by_user_id", "updated_by")
+_ACTOR_FIELDS_UPDATE = ("updated_by_user_id", "updated_by")
+
+
+def _swap_actor_fields_during_impersonation(session: Session) -> None:
+    """When the current request is impersonating, rewrite any ``created_by`` /
+    ``updated_by`` fields on new/dirty rows from the effective (target) user id
+    back to the real admin id. No-op outside impersonation.
+    """
+    from app.audit_context import get_real_and_effective_user_ids
+
+    real_id, effective_id = get_real_and_effective_user_ids()
+    if not real_id or not effective_id or real_id == effective_id:
+        return
+    for obj in session.new:
+        for field in _ACTOR_FIELDS_INSERT:
+            if hasattr(obj, field) and getattr(obj, field, None) == effective_id:
+                setattr(obj, field, real_id)
+    for obj in session.dirty:
+        for field in _ACTOR_FIELDS_UPDATE:
+            if hasattr(obj, field) and getattr(obj, field, None) == effective_id:
+                setattr(obj, field, real_id)
+
+
 def _session_before_flush(session: Session, _flush_context: Any, _instances: Any) -> None:
     """Collect audit payloads from session.new, session.dirty, session.deleted for tracked models."""
     pending = session.info.setdefault("audit_pending", [])
     # Skip if we're already inside an audit flush (avoid recursion)
     if session.info.get("audit_flushing"):
         return
+    # Rewrite created_by/updated_by from effective→real user during impersonation
+    # *before* we snapshot model state for audit, so the audit log captures the
+    # corrected actor too.
+    _swap_actor_fields_during_impersonation(session)
     skip_set = set(session.info.get("skip_audit_for") or [])
 
     def _should_skip(etype: str, eid: str) -> bool:

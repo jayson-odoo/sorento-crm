@@ -428,6 +428,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sla-management/conversation-sla-tracking',
       },
       {
+        title: 'Form SLA Configuration',
+        path: '/sla-management/form-sla-config',
+      },
+      {
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
       },
@@ -1205,6 +1209,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
+      },
+      {
+        title: 'Form SLA Configuration',
+        path: '/sla-management/form-sla-config',
       },
       {
         title: 'SLA Event Logs',

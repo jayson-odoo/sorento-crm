@@ -125,6 +125,13 @@ export async function proxyToFastAPI(
     headers['X-Portal-Token'] = portalToken;
   }
 
+  // Forward admin impersonation header so /api/v1/* dispatched via Next.js proxy
+  // routes still see the active session.
+  const impersonateUserId = request.headers.get('X-Impersonate-User-Id');
+  if (impersonateUserId) {
+    headers['X-Impersonate-User-Id'] = impersonateUserId;
+  }
+
   // Forward Authorization header if present (for API keys or Bearer tokens)
   const authHeader = request.headers.get('Authorization');
   if (authHeader) {

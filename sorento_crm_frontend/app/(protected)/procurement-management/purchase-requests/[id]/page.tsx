@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
 import PurchaseRequestDetail from '../components/PurchaseRequestDetail';
+import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
 
 export const metadata: Metadata = {
   title: 'Purchase Request Details',
@@ -56,5 +57,9 @@ async function PurchaseRequestDetailWrapper({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  return <PurchaseRequestDetail requestId={id} />;
+  return (
+    <FormDetailWithSLATabs sourceEntityType="purchase_request" sourceEntityId={id}>
+      <PurchaseRequestDetail requestId={id} />
+    </FormDetailWithSLATabs>
+  );
 }

@@ -47,6 +47,7 @@ import type { LinkedEntityRef } from '../types/attachment.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
 import ManageFieldLinksDialog from './ManageFieldLinksDialog';
+import EditAttachmentTypeDialog from './EditAttachmentTypeDialog';
 import { useCreateProductAttachment, useDeleteProductAttachment } from '@/app/(protected)/master-data-management/product-attachments/hooks/useProductAttachments';
 import { useCreatePromotionAttachment, useDeletePromotionAttachment } from '@/app/(protected)/marketing-management/promotion-attachments/hooks/usePromotionAttachments';
 import { useForms } from '@/app/(protected)/forms-management/forms/hooks/useForms';
@@ -855,6 +856,7 @@ export default function AttachmentDetailModal({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [descriptionEdit, setDescriptionEdit] = useState<string | null>(null);
   const [accessLevelsEdit, setAccessLevelsEdit] = useState<string[] | null>(null);
+  const [editAttachmentTypeOpen, setEditAttachmentTypeOpen] = useState(false);
 
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
@@ -1014,6 +1016,23 @@ export default function AttachmentDetailModal({
                       <div>
                         <p className="text-sm text-muted-foreground">File Type</p>
                         <p className="font-medium">{attachment.mime_type || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Attachment Type</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-medium">
+                            {attachment.attachment_type?.type_name ?? '-'}
+                          </p>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-primary"
+                            onClick={() => setEditAttachmentTypeOpen(true)}
+                            data-testid="attachment-type-edit"
+                          >
+                            Edit
+                          </Button>
+                        </div>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">File Size</p>
@@ -1176,6 +1195,18 @@ export default function AttachmentDetailModal({
           permanent={attachment.is_deleted}
           onSuccess={() => {
             onOpenChange(false);
+            queryClient.invalidateQueries({ queryKey: ['attachments'] });
+          }}
+        />
+      )}
+      {attachment && (
+        <EditAttachmentTypeDialog
+          open={editAttachmentTypeOpen}
+          onOpenChange={setEditAttachmentTypeOpen}
+          attachmentIds={[attachment.id]}
+          initialAttachmentTypeId={attachment.attachment_type_id ?? null}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ['attachment-metadata', attachment.id] });
             queryClient.invalidateQueries({ queryKey: ['attachments'] });
           }}
         />

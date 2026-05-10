@@ -50,7 +50,19 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink } from '../services/purchaseRequestService';
+import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest } from '../services/purchaseRequestService';
+import { useHasPermission } from '@/hooks/usePermissions';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Textarea } from '@/components/ui/textarea';
 import { exportPurchaseRequestOrSponsorshipToExcel } from '../lib/purchase-request-excel-export';
 import { toast } from 'sonner';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
@@ -82,6 +94,12 @@ export default function PurchaseRequestDetail({
   const router = useRouter();
   const isValidId = requestId && requestId !== 'new' && requestId !== 'edit';
   const queryClient = useQueryClient();
+  const canSendForApproval = useHasPermission(
+    'procurement.purchase_requests.send_for_approval',
+  );
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejecting, setRejecting] = useState(false);
   const { data: request, isLoading } = usePurchaseRequest(
     isValidId ? requestId : null,
   );
@@ -268,6 +286,7 @@ export default function PurchaseRequestDetail({
     (isDraftLike || isRejected);
   const showPrimarySendForApproval =
     isPendingApproval && !isApprovedStatus;
+  const showRejectSubmitted = canSendForApproval && isDraftLike;
 
   return (
     <div className="space-y-6">
@@ -304,6 +323,20 @@ export default function PurchaseRequestDetail({
             >
               <Clock className="size-4" />
               {settingPending ? 'Updating…' : 'Change to pending approval'}
+            </Button>
+          )}
+          {showRejectSubmitted && (
+            <Button
+              variant="outline"
+              className="border-destructive text-destructive hover:bg-destructive/10"
+              disabled={rejecting}
+              onClick={() => {
+                setRejectReason('');
+                setRejectDialogOpen(true);
+              }}
+            >
+              <Trash2 className="size-4" />
+              Reject
             </Button>
           )}
           {showPrimarySendForApproval && (
@@ -993,6 +1026,63 @@ export default function PurchaseRequestDetail({
         )}
 
         <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
+
+        <AlertDialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Reject this submission</AlertDialogTitle>
+              <AlertDialogDescription>
+                Provide a reason. This will mark the request as rejected and send an
+                update message to the contact via Respond.io. This action cannot be
+                undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-2 py-2">
+              <Label htmlFor="reject-reason">Reason</Label>
+              <Textarea
+                id="reject-reason"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Why is this submission being rejected?"
+                rows={4}
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={rejecting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={rejecting || !rejectReason.trim()}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={async (e) => {
+                  e.preventDefault();
+                  if (!rejectReason.trim()) {
+                    toast.error('Reason is required');
+                    return;
+                  }
+                  setRejecting(true);
+                  try {
+                    await rejectSubmittedPurchaseRequest(requestId, rejectReason.trim());
+                    queryClient.invalidateQueries({
+                      queryKey: ['purchase-request', requestId],
+                    });
+                    queryClient.invalidateQueries({
+                      queryKey: ['purchase-request-neighbours'],
+                    });
+                    toast.success('Submission rejected; contact has been notified.');
+                    setRejectDialogOpen(false);
+                  } catch (err) {
+                    toast.error(
+                      err instanceof Error ? err.message : 'Failed to reject',
+                    );
+                  } finally {
+                    setRejecting(false);
+                  }
+                }}
+              >
+                {rejecting ? 'Rejecting…' : 'Confirm reject'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );

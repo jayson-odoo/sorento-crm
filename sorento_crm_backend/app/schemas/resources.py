@@ -324,3 +324,23 @@ class BulkAccessLevelsApplyRequest(BaseModel):
 class BulkAccessLevelsApplyResponse(BaseModel):
     updated_attachments: int
     propagated: Optional[dict] = None
+
+
+class BulkAttachmentTypeRequest(BaseModel):
+    """Bulk-edit (or single-edit) attachment_type_id on N attachments.
+    Does NOT trigger any webhook resubmission — purely a metadata change."""
+
+    attachment_ids: list[str]
+    attachment_type_id: str
+
+    @field_validator("attachment_ids")
+    @classmethod
+    def at_least_one(cls, v: list[str]) -> list[str]:
+        if not v or len(v) == 0:
+            raise ValueError("At least one attachment ID is required.")
+        return v
+
+
+class BulkAttachmentTypeResponse(BaseModel):
+    updated_attachments: int
+    attachment_type_id: str

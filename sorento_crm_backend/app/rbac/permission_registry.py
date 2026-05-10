@@ -79,6 +79,10 @@ PERMISSION_REGISTRY.append(
     }
 )
 PERMISSION_REGISTRY.extend(_crud("sla_management", "escalation_logs", "SLA Event Logs"))
+PERMISSION_REGISTRY.extend([
+    {"slug": "sla_management.form_sla_config.view", "name": "View Form SLA Configurations", "description": "View per-form SLA stage configurations (start / respond / resolve trigger transitions, agent + chain)."},
+    {"slug": "sla_management.form_sla_config.manage", "name": "Manage Form SLA Configurations", "description": "Create, update, delete per-form SLA stage configurations."},
+])
 
 # Master Data (Products)
 PERMISSION_REGISTRY.extend(_crud("master_data", "products", "Products"))
@@ -114,6 +118,9 @@ PERMISSION_REGISTRY.extend([
 ])
 PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase Requests"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "sponsorship_forms", "Sponsorship Forms"))
+PERMISSION_REGISTRY.extend([
+    {"slug": "procurement.purchase_requests.send_for_approval", "name": "Send purchase request / sponsorship form for approval", "description": "Set request to pending approval and send approval link. Also grants Reject before sending for approval (mandatory reason)."},
+])
 
 # Inventory
 PERMISSION_REGISTRY.extend(_crud("inventory", "warehouses", "Warehouses"))

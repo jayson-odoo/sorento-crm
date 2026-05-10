@@ -490,3 +490,65 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
             self.agent_code = self.agent.code
 
         return self
+
+
+_FORM_SLA_TYPES = ("stock_inquiry", "purchase_request", "sponsorship_form", "complaint")
+
+
+class FormSLAConfigBase(BaseModel):
+    source_entity_type: str
+    stage_code: str
+    policy_id: str
+    agent_code: str
+    team_set_code: Optional[str] = None
+    start_event: str
+    respond_event: Optional[str] = None
+    resolve_event: Optional[str] = None
+    next_config_id: Optional[str] = None
+    is_active: bool = True
+
+    @field_validator("source_entity_type")
+    @classmethod
+    def _check_source_entity_type(cls, v: str) -> str:
+        v = (v or "").strip()
+        if v not in _FORM_SLA_TYPES:
+            raise ValueError(
+                f"source_entity_type must be one of {_FORM_SLA_TYPES}; got {v!r}"
+            )
+        return v
+
+    @field_validator("stage_code", "agent_code", "start_event")
+    @classmethod
+    def _strip_required(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("must be a non-empty string")
+        return v
+
+
+class FormSLAConfigCreate(FormSLAConfigBase):
+    pass
+
+
+class FormSLAConfigUpdate(BaseModel):
+    source_entity_type: Optional[str] = None
+    stage_code: Optional[str] = None
+    policy_id: Optional[str] = None
+    agent_code: Optional[str] = None
+    team_set_code: Optional[str] = None
+    start_event: Optional[str] = None
+    respond_event: Optional[str] = None
+    resolve_event: Optional[str] = None
+    next_config_id: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class FormSLAConfigResponse(FormSLAConfigBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    policy_code: Optional[str] = None
+    policy_name: Optional[str] = None
+    next_stage_code: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)

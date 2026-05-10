@@ -921,6 +921,34 @@ async def delete_event_log(
         raise handle_internal_error(str(e))
 
 
+@router.get("/by-source", response_model=list[ConversationSLATrackingResponse])
+async def list_trackers_by_source(
+    source_entity_type: str = Query(..., description="stock_inquiry | purchase_request | sponsorship_form | complaint"),
+    source_entity_id: str = Query(..., description="Form row id"),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """All SLA trackers attached to a form row, ordered oldest first (multi-stage chain)."""
+    try:
+        rows = (
+            db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_entity_type == source_entity_type,
+                ConversationSLATracking.source_entity_id == source_entity_id,
+            )
+            .order_by(ConversationSLATracking.initiated_at.asc())
+            .all()
+        )
+        return [
+            build_conversation_sla_tracking_response(db, t, include_event_logs=True)
+            for t in rows
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/event-logs", response_model=ListResponse[ConversationSLAEventLogResponse])
 async def get_event_logs(
     page: int = Query(1, ge=1),

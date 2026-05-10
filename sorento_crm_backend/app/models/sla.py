@@ -102,6 +102,43 @@ class ConversationSLATracking(Base):
     )
 
 
+class FormSLAConfig(Base):
+    """Per-form-type SLA stage configuration. One row = one stage of one form's SLA pipeline.
+
+    Multiple rows per source_entity_type model multi-stage chains
+    (e.g. stock_inquiry: stage `project_sales` -> stage `purchasing`).
+    `next_config_id` links current stage to the next stage to spawn on resolve.
+    """
+
+    __tablename__ = "form_sla_configs"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_entity_type = Column(String(50), nullable=False)
+    stage_code = Column(String(100), nullable=False)
+    policy_id = Column(UUID(as_uuid=False), ForeignKey("sla_policies.id", ondelete="RESTRICT"), nullable=False)
+    agent_code = Column(String(100), nullable=False)
+    team_set_code = Column(String(100), nullable=True)
+    start_event = Column(String(100), nullable=False)
+    respond_event = Column(String(100), nullable=True)
+    resolve_event = Column(String(100), nullable=True)
+    next_config_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("form_sla_configs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    policy = relationship("SLAPolicy", foreign_keys=[policy_id])
+    next_config = relationship("FormSLAConfig", remote_side=[id], foreign_keys=[next_config_id])
+
+    __table_args__ = (
+        Index("ix_form_sla_configs_source_entity_type", "source_entity_type"),
+        Index("ix_form_sla_configs_policy_id", "policy_id"),
+    )
+
+
 class ConversationSLAEventLog(Base):
     __tablename__ = "conversation_sla_event_log"
     

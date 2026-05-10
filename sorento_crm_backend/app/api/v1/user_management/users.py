@@ -15,11 +15,10 @@ from app.config import settings as app_settings
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission, require_any_permission
 from app.models.auth import VerificationToken
-from app.models.user import SystemSetting
 from app.schemas.common import ListResponse
 from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserSelectResponse, UserRoleResponse
 from app.services.error_handler import handle_internal_error
-from app.services.notification_email import send_notification_email, _smtp_config_from_settings
+from app.services.notification_service import NotificationService
 from app.services.user_service import UserService, UserPermissionService
 from app.services.user_avatar_url import resolve_avatar_url_for_client
 
@@ -186,18 +185,16 @@ def _send_invitation_link_for_user(db: Session, user) -> str:
     )
 
     try:
-        sys_settings = db.query(SystemSetting).first()
-        smtp_config = _smtp_config_from_settings(sys_settings) if sys_settings else None
-        err = send_notification_email(
-            to=user.email,
-            subject=subject,
-            body_text=body_text,
-            body_html=body_html,
-            smtp_config=smtp_config,
-            from_name="Sorento AI System",
+        NotificationService(db).create_with_channel_preferences(
+            user_id=str(user.id),
+            type="user_invitation",
+            title=subject,
+            body=body_text,
+            data={"body_html": body_html, "from_name": "Sorento AI System"},
+            send_in_app=False,
+            send_email=True,
+            send_web_push=False,
         )
-        if err:
-            logger.warning("Resend invitation email failed for %s: %s", user.email, err)
     except Exception as e:
         logger.warning("Resend invitation email error: %s", e)
 
@@ -452,51 +449,7 @@ async def invite_user(
     try:
         service = UserService(db)
         user = service.invite_user(user_data, invited_by_user_id=current_user["id"])
-
-        token = secrets.token_urlsafe(32)
-        expires = datetime.now(timezone.utc) + timedelta(days=7)
-        verification_token = VerificationToken(
-            identifier=user.id,
-            token=token,
-            expires=expires,
-        )
-        db.add(verification_token)
-        db.commit()
-
-        base_url = (app_settings.frontend_base_url or "").strip().rstrip("/")
-        set_password_path = "/change-password"
-        invite_link = f"{base_url}{set_password_path}?token={token}" if base_url else f"{set_password_path}?token={token}"
-        subject = "You're invited to join the platform"
-        body_text = (
-            f"Hello{f', {user.name}' if user.name else ''},\n\n"
-            "You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.\n\n"
-            f"{invite_link}\n\n"
-            "After setting your password, you can sign in with your email and the new password.\n\n"
-            "This is a system-generated email. Please do not reply."
-        )
-        body_html = (
-            f"<p>Hello{f', {user.name}' if user.name else ''},</p>\n"
-            "<p>You have been invited to join the platform. Use the link below to set your password. This link is valid for 7 days.</p>\n"
-            f'<p><a href="{invite_link}">{invite_link}</a></p>\n'
-            "<p>After setting your password, you can sign in with your email and the new password.</p>\n"
-            "<p><em>This is a system-generated email. Please do not reply.</em></p>"
-        )
-        try:
-            sys_settings = db.query(SystemSetting).first()
-            smtp_config = _smtp_config_from_settings(sys_settings) if sys_settings else None
-            err = send_notification_email(
-                to=user.email,
-                subject=subject,
-                body_text=body_text,
-                body_html=body_html,
-                smtp_config=smtp_config,
-                from_name="Sorento AI System",
-            )
-            if err:
-                logger.warning("Invitation email failed for %s: %s", user.email, err)
-        except Exception as e:
-            logger.warning("Invitation email error: %s", e)
-
+        _send_invitation_link_for_user(db, user)
         return user
     except HTTPException:
         raise

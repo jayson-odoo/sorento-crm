@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.database import get_db
-from app.dependencies import get_current_user, get_current_user_or_api_key
+from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.procurement_service import PurchaseRequestService
 from app.schemas.procurement import (
     PurchaseRequestHeaderCreate,
@@ -16,6 +16,7 @@ from app.schemas.procurement import (
     PurchaseRequestAttachmentLinkRequest,
     SendApprovalLinkRequest,
     SendApprovalLinkResponse,
+    RejectSubmittedRequest,
     ViewLinkRequest,
     ViewLinkResponse,
     BulkDeletePurchaseRequestsRequest,
@@ -317,6 +318,37 @@ async def set_pending_approval(
         raise
     except Exception as e:
         logger.error(f"Error in set_pending_approval for {request_id}: {type(e).__name__}: {str(e)}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{request_id}/reject-submitted", response_model=PurchaseRequestHeaderResponse)
+async def reject_submitted_purchase_request(
+    request_id: str,
+    body: RejectSubmittedRequest,
+    current_user: dict = Depends(require_permission("procurement.purchase_requests.send_for_approval")),
+    db: Session = Depends(get_db),
+):
+    """Reject a submitted PR / sponsorship form before sending for approval. Sends a Respond.io update message to the contact with the rejection reason. Same permission as Send for Approval."""
+    try:
+        service = PurchaseRequestService(db)
+        header = service.reject_submitted(
+            request_id,
+            rejection_reason=body.rejection_reason,
+            actor_user_id=current_user.get("id"),
+        )
+        if getattr(header, "approver_user_id", None):
+            from app.models.user import User
+            user = db.query(User).filter(User.id == header.approver_user_id).first()
+            if user:
+                setattr(
+                    header,
+                    "approver_display_name",
+                    (user.name and user.name.strip()) or user.email or "",
+                )
+        return header
+    except HTTPException:
+        raise
+    except Exception as e:
         raise handle_internal_error(str(e))
 
 

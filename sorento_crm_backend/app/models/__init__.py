@@ -20,7 +20,7 @@ from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManua
 from app.models.complaint_master_data import ComplaintRootCause, ComplaintResolution
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
-from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog
+from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
 from app.models.resources import Attachment, AttachmentType
 from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondAccessTypeMapping, RespondContact
 from app.models.respond_workspace import RespondWorkspace
@@ -53,6 +53,7 @@ from app.models.activities import ActivityEvent, InternalNote, ActivityMention
 from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
 from app.models.email_template import EmailTemplate
 from app.models.automation import Automation, AutomationRun
+from app.models.impersonation import ImpersonationSession
 
 __all__ = [
     "User",
@@ -112,6 +113,7 @@ __all__ = [
     "SLAPolicyTier",
     "ConversationSLATracking",
     "ConversationSLAEventLog",
+    "FormSLAConfig",
     "Attachment",
     "AttachmentType",
     "AccessAgent",
@@ -167,6 +169,7 @@ __all__ = [
     "EmailTemplate",
     "Automation",
     "AutomationRun",
+    "ImpersonationSession",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy

@@ -713,6 +713,42 @@ class AttachmentService:
 
         return {"attachment_count": len(unique_aids), "targets": targets}
 
+    def bulk_set_attachment_type(
+        self,
+        attachment_ids: List[str],
+        attachment_type_id: str,
+    ) -> dict:
+        """Set attachment_type_id on N attachments. No webhook side-effect.
+
+        Used by single-edit (one ID in the list) and bulk-edit toolbar.
+        """
+        unique_aids = list(dict.fromkeys([a for a in attachment_ids if a]))
+        if not unique_aids:
+            raise handle_validation_error("No attachments in scope.")
+
+        # Validate the type exists.
+        type_id = (attachment_type_id or "").strip()
+        if not type_id:
+            raise handle_validation_error("attachment_type_id is required.")
+        type_row = (
+            self.db.query(AttachmentType)
+            .filter(AttachmentType.id == type_id)
+            .first()
+        )
+        if not type_row:
+            raise handle_validation_error("Invalid attachment_type_id.")
+
+        count = (
+            self.db.query(Attachment)
+            .filter(Attachment.id.in_(unique_aids), Attachment.is_deleted == False)
+            .update({"attachment_type_id": type_id}, synchronize_session=False)
+        )
+        self.db.commit()
+        return {
+            "updated_attachments": int(count or 0),
+            "attachment_type_id": type_id,
+        }
+
     def apply_bulk_access_levels(
         self,
         attachment_ids: List[str],

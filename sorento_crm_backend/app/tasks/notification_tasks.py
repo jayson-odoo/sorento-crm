@@ -52,6 +52,7 @@ def send_notification_deliveries(notification_id: str) -> None:
                 notification_title = str(getattr(notification, "title", ""))
                 notification_body = getattr(notification, "body", None)
                 body_text = str(notification_body) if notification_body is not None else notification_title
+                from_name = data.get("from_name")
                 if data.get("single_email_to_all") and data.get("recipient_emails"):
                     body_html = data.get("body_html")
                     recipient_emails = [str(email) for email in data.get("recipient_emails", [])]
@@ -61,6 +62,7 @@ def send_notification_deliveries(notification_id: str) -> None:
                         body_text=body_text,
                         body_html=body_html,
                         smtp_config=smtp_config,
+                        from_name=from_name,
                     )
                 else:
                     body_html = data.get("body_html")
@@ -70,6 +72,7 @@ def send_notification_deliveries(notification_id: str) -> None:
                         body_text=body_text,
                         body_html=body_html,
                         smtp_config=smtp_config,
+                        from_name=from_name,
                     )
                 setattr(delivery, "status", "failed" if err else "sent")
                 setattr(delivery, "sent_at", datetime.utcnow() if err is None else None)

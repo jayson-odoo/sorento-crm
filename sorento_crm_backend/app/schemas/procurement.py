@@ -825,6 +825,11 @@ class SendApprovalLinkResponse(BaseModel):
     email_error: Optional[str] = None
 
 
+class RejectSubmittedRequest(BaseModel):
+    """Body for rejecting a purchase request / sponsorship form before sending for approval."""
+    rejection_reason: str = Field(min_length=1, description="Mandatory reason; sent to the contact via Respond.io.")
+
+
 class ViewLinkRequest(BaseModel):
     """Optional base URL to build full view URL (e.g. frontend origin)."""
     base_url: Optional[str] = None

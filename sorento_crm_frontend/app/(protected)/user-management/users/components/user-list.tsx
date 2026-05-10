@@ -13,8 +13,10 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronRight, LoaderCircleIcon, Mail, Plus, Search, Settings, Trash2, UserCheck, UserX, X } from 'lucide-react';
+import { ChevronRight, LoaderCircleIcon, Mail, Plus, Search, Settings, Trash2, UserCheck, UserCog, UserX, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import { useSession } from 'next-auth/react';
+import { useImpersonation } from '@/hooks/useImpersonation';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -86,6 +88,10 @@ const UserList = () => {
   const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
   const [bulkConfirmAction, setBulkConfirmAction] = useState<'delete' | 'activate' | 'deactivate' | 'permanent_delete' | 'resend_invite' | null>(null);
   const [togglingSubscriptionByUser, setTogglingSubscriptionByUser] = useState<Record<string, boolean>>({});
+  const [impersonateTarget, setImpersonateTarget] = useState<User | null>(null);
+  const { data: nextAuthSession } = useSession();
+  const { start: startImpersonate, starting: startingImpersonate } = useImpersonation();
+  const currentUserId = nextAuthSession?.user?.id;
 
   // Role select query
   const { data: roleList } = useRoleSelectQuery();
@@ -499,19 +505,44 @@ const UserList = () => {
       {
         accessorKey: 'actions',
         header: '',
-        cell: () => (
-          <ChevronRight className="text-muted-foreground/70 size-3.5" />
-        ),
+        cell: ({ row }) => {
+          const user = row.original as User;
+          const canImpersonate =
+            !!currentUserId &&
+            user.id !== currentUserId &&
+            user.status === UserStatus.ACTIVE &&
+            !user.isProtected;
+          return (
+            <div className="flex items-center justify-end gap-1">
+              {canImpersonate && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7"
+                  title="Impersonate user"
+                  data-testid={`impersonate-${user.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setImpersonateTarget(user);
+                  }}
+                >
+                  <UserCog className="size-3.5" />
+                </Button>
+              )}
+              <ChevronRight className="text-muted-foreground/70 size-3.5" />
+            </div>
+          );
+        },
         meta: {
           skeleton: <Skeleton className="size-4" />,
         },
-        size: 40,
+        size: 80,
         enableSorting: false,
         enableHiding: false,
         enableResizing: false,
       },
     ],
-    [togglingSubscriptionByUser],
+    [togglingSubscriptionByUser, currentUserId],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
@@ -885,6 +916,63 @@ const UserList = () => {
                 </>
               ) : (
                 bulkConfirmConfig.actionLabel
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!impersonateTarget}
+        onOpenChange={(open) => {
+          if (!open) setImpersonateTarget(null);
+        }}
+      >
+        <AlertDialogContent data-testid="impersonate-confirm-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Impersonation</AlertDialogTitle>
+            <AlertDialogDescription>
+              You will browse the system as{' '}
+              <strong>
+                {impersonateTarget?.name || impersonateTarget?.email || ''}
+              </strong>{' '}
+              with their access rights. All records you create or modify will
+              still be attributed to you. Continue?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={startingImpersonate}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="impersonate-confirm"
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!impersonateTarget) return;
+                try {
+                  await startImpersonate(impersonateTarget.id);
+                  setImpersonateTarget(null);
+                  toast.success(
+                    `Now impersonating ${impersonateTarget.name || impersonateTarget.email}`,
+                  );
+                  if (typeof window !== 'undefined') {
+                    window.location.reload();
+                  }
+                } catch (err) {
+                  toast.error(
+                    err instanceof Error ? err.message : 'Failed to start impersonation',
+                  );
+                }
+              }}
+              disabled={startingImpersonate}
+            >
+              {startingImpersonate ? (
+                <>
+                  <LoaderCircleIcon className="size-4 animate-spin" />
+                  Starting...
+                </>
+              ) : (
+                'Impersonate'
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

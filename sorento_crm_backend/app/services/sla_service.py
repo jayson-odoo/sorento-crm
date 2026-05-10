@@ -437,6 +437,19 @@ class ConversationSLATrackingService:
             joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user)
         )
 
+        # Conversation SLA list excludes form trackers (stock_inquiry / purchase_request /
+        # sponsorship_form / complaint). Those have their own per-form SLA Tracking tab and
+        # detail flow; surfacing them in this list inflates contact-keyed rows and breaks
+        # back-navigation to the originating form.
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        q = q.filter(
+            or_(
+                ConversationSLATracking.source_entity_type.is_(None),
+                ConversationSLATracking.source_entity_type.notin_(FORM_SLA_TYPES),
+            )
+        )
+
         if policy_id:
             q = q.filter(ConversationSLATracking.policy_id == policy_id)
 
@@ -1469,13 +1482,20 @@ class ConversationSLATrackingService:
                 if _rid:
                     update_data["resolved_by"] = _rid
             update_data["is_resolved"] = True
-            # Unset assignee when resolving (same as n8n / external API behaviour)
-            update_data["assigned_to"] = None
-            update_data["assigned_to_id"] = None
-            # Clear escalation routing FK and team code — no longer needed once resolved
-            update_data["agent_id"] = None
-            update_data["team_set_code"] = None
-            update_data["message_id"] = None
+            # Conversation SLA: unset assignee + escalation routing on resolve so n8n / external
+            # API stops looking at the row. Form SLA: keep all those fields so the audit trail
+            # (agent / stage / assignee at resolution) survives in the per-form SLA Tracking tab.
+            from app.services.form_sla_service import FORM_SLA_TYPES
+
+            _is_form_tracker = (
+                getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES
+            )
+            if not _is_form_tracker:
+                update_data["assigned_to"] = None
+                update_data["assigned_to_id"] = None
+                update_data["agent_id"] = None
+                update_data["team_set_code"] = None
+                update_data["message_id"] = None
             # Always set resolved_at when marking resolved (UTC)
             if "resolved_at" not in update_data or update_data.get("resolved_at") is None:
                 update_data["resolved_at"] = _now_utc()
@@ -1535,7 +1555,12 @@ class ConversationSLATrackingService:
         # Force NULL for routing / external ids on resolve. Some session edge cases (e.g. after a prior
         # commit in the same request) can leave ORM-only clears from not flushing; a direct UPDATE
         # matches DB state (used by test-overrides "Mark as resolved" and all other resolve paths).
-        if resolved_in_this_request:
+        # Skip for form trackers — they keep agent / team / assignee for audit.
+        from app.services.form_sla_service import FORM_SLA_TYPES as _FORM_TYPES
+
+        if resolved_in_this_request and (
+            getattr(tracking, "source_entity_type", None) not in _FORM_TYPES
+        ):
             self.db.execute(
                 update(ConversationSLATracking)
                 .where(ConversationSLATracking.id == tracking.id)
@@ -2031,8 +2056,19 @@ class ConversationSLATrackingService:
         now_utc = _now_utc()
         thirty_days_ago = now_utc - timedelta(days=30)
 
-        # Get all trackings
-        all_trackings = self.db.query(ConversationSLATracking).all()
+        # Conversation dashboard excludes form trackers (those have their own per-form view).
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        all_trackings = (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                or_(
+                    ConversationSLATracking.source_entity_type.is_(None),
+                    ConversationSLATracking.source_entity_type.notin_(FORM_SLA_TYPES),
+                )
+            )
+            .all()
+        )
         all_logs = self.db.query(ConversationSLAEventLog).all()
         response_logs = [l for l in all_logs if (l.event_type or "").lower() == "response"]
         resolution_logs = [l for l in all_logs if (l.event_type or "").lower() == "resolution"]

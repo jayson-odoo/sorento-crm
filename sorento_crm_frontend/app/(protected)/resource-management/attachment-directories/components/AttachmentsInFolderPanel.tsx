@@ -28,6 +28,7 @@ import {
   RotateCcw,
   Shield,
   Pencil,
+  Tag,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -64,6 +65,7 @@ import AttachmentBulkImportDialog from '../../attachments/components/AttachmentB
 import AttachmentDeleteDialog from '../../attachments/components/attachment-delete-dialog';
 import AttachmentBulkDeleteDialog from '../../attachments/components/AttachmentBulkDeleteDialog';
 import AttachmentDetailModal from '../../attachments/components/AttachmentDetailModal';
+import EditAttachmentTypeDialog from '../../attachments/components/EditAttachmentTypeDialog';
 import { TRASH_VIEW_ID, TRASH_FOLDER_PREFIX, FOLDER_ALL_ID } from '../constants';
 
 const DRAG_ID_PREFIX = 'attachment-';
@@ -123,6 +125,7 @@ export default function AttachmentsInFolderPanel({
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [viewAttachmentId, setViewAttachmentId] = useState<string | null>(null);
   const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
@@ -589,6 +592,16 @@ export default function AttachmentsInFolderPanel({
                 </Button>
               )}
               {selectedDeletableIds.length > 0 && !isTrashView && (
+                <Button
+                  variant="outline"
+                  onClick={() => setBulkEditTypeOpen(true)}
+                  data-testid="bulk-attachment-type-trigger"
+                >
+                  <Tag className="size-4 mr-2" />
+                  Attachment type ({selectedDeletableIds.length})
+                </Button>
+              )}
+              {selectedDeletableIds.length > 0 && !isTrashView && (
                 <>
                   <Button
                     variant="outline"
@@ -661,6 +674,13 @@ export default function AttachmentsInFolderPanel({
         attachmentIds={selectedDeletableIds}
         permanent={isTrashView}
         onSuccess={() => setRowSelection({})}
+      />
+
+      <EditAttachmentTypeDialog
+        open={bulkEditTypeOpen}
+        onOpenChange={setBulkEditTypeOpen}
+        attachmentIds={selectedDeletableIds}
+        onSaved={() => setRowSelection({})}
       />
 
       <AttachmentDetailModal

@@ -1,5 +1,36 @@
 import { NextRequest } from 'next/server';
 
+import { impersonationStore } from '@/lib/impersonation-store';
+
+/**
+ * Add the X-Impersonate-User-Id header to outgoing /api/v1/* requests when an
+ * admin has an active impersonation session. The backend ignores the header
+ * unless it can match an active row in `impersonation_sessions`.
+ */
+function _attachImpersonationHeader(url: unknown, init: RequestInit | undefined): RequestInit | undefined {
+  if (typeof url !== 'string') return init;
+  if (!url.includes('/api/v1/')) return init;
+  const session = impersonationStore.getState();
+  if (!session) return init;
+  const next = init ? { ...init } : {};
+  const isFormData = next.body instanceof FormData;
+  if (next.headers instanceof Headers) {
+    const cloned = new Headers(next.headers);
+    cloned.set('X-Impersonate-User-Id', session.targetUser.id);
+    next.headers = cloned;
+  } else if (Array.isArray(next.headers)) {
+    next.headers = [...next.headers.filter(([k]) => k.toLowerCase() !== 'x-impersonate-user-id'),
+      ['X-Impersonate-User-Id', session.targetUser.id]];
+  } else {
+    next.headers = {
+      ...(next.headers as Record<string, string> | undefined),
+      'X-Impersonate-User-Id': session.targetUser.id,
+    };
+  }
+  void isFormData;
+  return next;
+}
+
 /**
  * apiFetch - universal fetch for dev/prod that prefixes API calls with the correct base URL
  * Routes business logic APIs to FastAPI backend, keeps auth routes in Next.js
@@ -337,6 +368,7 @@ export async function apiFetch(
     }
   }
 
+  init = _attachImpersonationHeader(url, init);
   return fetch(url as RequestInfo, init);
 }
 

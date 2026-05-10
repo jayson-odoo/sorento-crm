@@ -538,6 +538,28 @@ class PortalService:
         except Exception as e:  # noqa: BLE001
             logger.warning("Post-submit notify failed for %s %s: %s", kind, row.id, e)
 
+        # Form SLA: emit `submit` so the configured form_sla_configs spawn a tracker.
+        # Portal submit bypasses the API state-transition methods; this hook covers
+        # complaint / stock_inquiry / purchase_request / sponsorship_form uniformly.
+        try:
+            from app.services.form_sla_service import emit_form_event
+
+            emit_form_event(
+                self.db,
+                kind,
+                str(row.id),
+                "submit",
+                contact_id=getattr(row, "contact_id", None),
+                actor_user_id=None,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Form SLA emit 'submit' (portal submit_draft) failed for %s %s: %s",
+                kind,
+                row.id,
+                e,
+            )
+
         return self.get_submission(token, kind, str(row.id))
 
     def _assign_document_number_if_missing(self, kind: str, row: Any) -> None:

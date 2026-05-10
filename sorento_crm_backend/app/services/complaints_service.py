@@ -697,8 +697,20 @@ class ComplaintService:
 
         self.db.commit()
         self.db.refresh(complaint)
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                "complaint",
+                str(complaint.id),
+                "submit",
+                contact_id=getattr(complaint, "contact_id", None),
+                actor_user_id=None,
+            )
+        except Exception as e:
+            logging.getLogger(__name__).warning("Form SLA emit 'submit' failed for complaint %s: %s", complaint.id, e)
         return complaint
-    
+
     def update_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
         """Update a complaint."""
         complaint = self.get_complaint(complaint_id)
@@ -916,6 +928,18 @@ class ComplaintService:
         complaint.last_responded_at = now_utc
         self.db.commit()
         self.db.refresh(complaint)
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                "complaint",
+                str(complaint.id),
+                "technical_team_response",
+                contact_id=getattr(complaint, "contact_id", None),
+                actor_user_id=crm_sender_user_id or respond_user_id,
+            )
+        except Exception as e:
+            logging.getLogger(__name__).warning("Form SLA emit 'technical_team_response' failed for complaint %s: %s", complaint.id, e)
         return complaint
 
     _DECIDE_ALLOWED_DECISIONS: tuple[str, ...] = ("approved", "rejected")
@@ -1064,6 +1088,19 @@ class ComplaintService:
             complaint.rejected_by = None
         self.db.commit()
         self.db.refresh(complaint)
+
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                "complaint",
+                str(complaint.id),
+                decision,
+                contact_id=getattr(complaint, "contact_id", None),
+                actor_user_id=crm_sender_user_id or respond_user_id,
+            )
+        except Exception as e:
+            logging.getLogger(__name__).warning("Form SLA emit '%s' failed for complaint %s: %s", decision, complaint.id, e)
 
         if decision == "approved":
             try:

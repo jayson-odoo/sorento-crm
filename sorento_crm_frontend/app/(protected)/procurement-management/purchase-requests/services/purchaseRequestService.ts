@@ -206,6 +206,34 @@ export async function sendApprovalLink(
   return response.json();
 }
 
+export async function rejectSubmittedPurchaseRequest(
+  id: string,
+  rejectionReason: string,
+): Promise<PurchaseRequest> {
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/${id}/reject-submitted`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rejection_reason: rejectionReason }),
+    },
+  );
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ message: 'Failed to reject submission' }));
+    const detail = err.detail;
+    const msg =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: { msg?: string }) => d.msg).filter(Boolean).join(' ')
+          : typeof detail === 'object' && detail !== null && 'message' in detail
+            ? String((detail as { message?: string }).message)
+            : err.message || 'Failed to reject submission';
+    throw new Error(msg);
+  }
+  return response.json();
+}
+
 export async function setPendingApproval(id: string): Promise<PurchaseRequest> {
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests/${id}/set-pending-approval`,

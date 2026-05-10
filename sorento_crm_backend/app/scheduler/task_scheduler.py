@@ -113,6 +113,13 @@ def _handler_automation_runner(db, task):
     return AutomationService(db).evaluate_due()
 
 
+def _handler_form_sla_overdue_scan(db, task):
+    """Scan unresolved form SLA trackers, escalate any past due_at to next tier."""
+    from app.services.form_sla_service import FormSLAOrchestrator
+
+    return FormSLAOrchestrator(db).scan_overdue_and_escalate()
+
+
 def _run_notification_delivery_jobs_impl():
     """Process jobs from the notifications queue (email and web_push deliveries). Returns summary dict."""
     from rq.job import Job
@@ -370,6 +377,7 @@ def start_scheduler():
     register_handler("promotion_active_window", _handler_promotion_active_window)
     register_handler("respond_contacts_sync", run_respond_contacts_sync)
     register_handler("automation_runner", _handler_automation_runner)
+    register_handler("form_sla_overdue_scan", _handler_form_sla_overdue_scan)
 
     scheduler = BackgroundScheduler()
 

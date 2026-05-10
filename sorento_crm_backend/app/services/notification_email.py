@@ -145,6 +145,7 @@ def send_notification_email_multi(
     body_text: str,
     body_html: Optional[str] = None,
     smtp_config: Optional[dict] = None,
+    from_name: Optional[str] = None,
 ) -> Optional[str]:
     """
     Send one email to multiple recipients (To: all). Uses smtp_config if provided, else env.
@@ -182,7 +183,7 @@ def send_notification_email_multi(
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = from_addr
+    msg["From"] = f'"{from_name}" <{from_addr}>' if from_name else from_addr
     msg["To"] = ", ".join(to_list)
     msg.attach(MIMEText(body_text or body_html or "", "plain", "utf-8"))
     if body_html:
