@@ -26,8 +26,10 @@ from app.schemas.tickets import (
     TicketAssignRequest,
     TicketCreate,
     TicketKanbanResponse,
+    TicketResolutionAndReply,
     TicketResolutionUpdate,
     TicketResponse,
+    TicketResponseAndReply,
     TicketResponseUpdate,
     TicketStatusChangeRequest,
     TicketUpdate,
@@ -44,6 +46,10 @@ def list_tickets(
     raised_by: Optional[str] = Query(None),
     priority: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
+    source_channel: Optional[str] = Query(
+        None,
+        description="Filter by source channel: manual | ai_assistant | whatsapp_respond",
+    ),
     due_before: Optional[str] = Query(None),
     q: Optional[str] = Query(None, description="Title/description/ticket-number search"),
     page: int = Query(1, ge=1),
@@ -62,6 +68,7 @@ def list_tickets(
             "raised_by": raised_by,
             "priority": priority,
             "category": category,
+            "source_channel": source_channel,
             "due_before": due_before,
             "q": q,
         },
@@ -171,6 +178,30 @@ def change_status(
     )
 
 
+@router.post("/tickets/{ticket_id}/submit-draft", response_model=TicketResponse)
+def submit_ticket_draft(
+    ticket_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("tickets.tickets.edit")),
+):
+    """Promote a draft to submitted/assigned. Round-robin picks an assignee
+    from the it_support tier-1 team, fires assignment notification, emits
+    the FormSLA ``submit`` event."""
+    from app.services.tickets_service import submit_ticket_draft as _impl
+    return _impl(db, ticket_id=ticket_id, current_user=current_user)
+
+
+@router.post("/tickets/{ticket_id}/cancel-draft", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_ticket_draft(
+    ticket_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("tickets.tickets.edit")),
+):
+    """Hard-delete a draft. Only the raiser, the assignee, or an admin."""
+    from app.services.tickets_service import cancel_ticket_draft as _impl
+    _impl(db, ticket_id=ticket_id, current_user=current_user)
+
+
 @router.post("/tickets/{ticket_id}/assign", response_model=TicketResponse)
 def assign(
     ticket_id: str,
@@ -194,7 +225,29 @@ def update_response(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("tickets.tickets.edit")),
 ):
+    """Save the response payload only — does not change ticket status or
+    notify the submitter. Use ``/response/update-and-reply`` for the full
+    flow."""
     from app.services.tickets_service import update_response as _impl
+    return _impl(
+        db,
+        ticket_id=ticket_id,
+        response_html=body.response_html,
+        response_text=body.response_text,
+        current_user=current_user,
+    )
+
+
+@router.post("/tickets/{ticket_id}/response/update-and-reply", response_model=TicketResponse)
+def update_response_and_reply(
+    ticket_id: str,
+    body: TicketResponseAndReply,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("tickets.tickets.respond")),
+):
+    """Save the response, flip the ticket to ``responded``, and notify the
+    submitter via their channel."""
+    from app.services.tickets_service import update_response_and_reply as _impl
     return _impl(
         db,
         ticket_id=ticket_id,
@@ -211,7 +264,29 @@ def update_resolution(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("tickets.tickets.edit")),
 ):
+    """Save the resolution payload only — does not change ticket status or
+    notify the submitter. Use ``/resolution/update-and-reply`` for the full
+    flow."""
     from app.services.tickets_service import update_resolution as _impl
+    return _impl(
+        db,
+        ticket_id=ticket_id,
+        resolution_html=body.resolution_html,
+        resolution_text=body.resolution_text,
+        current_user=current_user,
+    )
+
+
+@router.post("/tickets/{ticket_id}/resolution/update-and-reply", response_model=TicketResponse)
+def update_resolution_and_reply(
+    ticket_id: str,
+    body: TicketResolutionAndReply,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("tickets.tickets.resolve")),
+):
+    """Save the resolution, flip the ticket to ``resolved``, and notify the
+    submitter via their channel."""
+    from app.services.tickets_service import update_resolution_and_reply as _impl
     return _impl(
         db,
         ticket_id=ticket_id,

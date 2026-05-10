@@ -380,7 +380,7 @@ class AIAssistantChatService:
                 "visible_text": (page_snapshot.visible_text or "")[:1000],
             }
 
-        self.append_message(conv.id, "user", message, metadata_json=user_meta or None)
+        user_msg = self.append_message(conv.id, "user", message, metadata_json=user_meta or None)
         logger.info("AI assistant user message appended conversation_id=%s", conv.id)
         history_rows = (
             self.db.query(AIAssistantMessage)
@@ -461,6 +461,9 @@ class AIAssistantChatService:
             sources=sources,
             resolution=resolution,
             page_snapshot=page_snapshot,
+            user_id=user_id,
+            conversation_id=str(conv.id),
+            user_message_id=str(user_msg.id),
         )
         agent_ms = (time.perf_counter() - agent_started) * 1000
         logger.info(
@@ -674,7 +677,14 @@ class AIAssistantChatService:
     # ---------- Agent loop (OpenAI function calling → MCP tools) ----------
 
     def _mcp_schema_to_openai_tool(self, name: str, meta: dict[str, Any]) -> dict[str, Any]:
-        """Wrap an MCP tool (name, description, inputSchema) as an OpenAI function tool."""
+        """Wrap an MCP tool (name, description, inputSchema) as an OpenAI function tool.
+
+        ``contact_id`` / ``space_id`` are MCP-server guard params required for
+        n8n/WhatsApp callers but irrelevant for the in-app AI assistant — the
+        runtime force-empties them in ``_run_agent_loop`` before calling MCP.
+        Surfacing them to the LLM only causes it to ask the user for them
+        instead of invoking the tool, so strip them from the schema here.
+        """
         schema = meta.get("inputSchema") if isinstance(meta.get("inputSchema"), dict) else {}
         if not schema or not isinstance(schema, dict):
             parameters: dict[str, Any] = {"type": "object", "properties": {}}
@@ -682,11 +692,17 @@ class AIAssistantChatService:
             parameters = dict(schema)
             parameters.setdefault("type", "object")
             parameters.setdefault("properties", {})
+        props = dict(parameters.get("properties") or {})
+        for guard in ("contact_id", "space_id"):
+            props.pop(guard, None)
+        parameters["properties"] = props
+        required = [r for r in (parameters.get("required") or []) if r not in ("contact_id", "space_id")]
+        parameters["required"] = required
         return {
             "type": "function",
             "function": {
                 "name": name,
-                "description": (meta.get("description") or "")[:1000],
+                "description": (meta.get("description") or "")[:4000],
                 "parameters": parameters,
             },
         }
@@ -702,6 +718,9 @@ class AIAssistantChatService:
         sources: list[dict[str, Any]],
         resolution: ResolutionResult | None = None,
         page_snapshot: PageSnapshotPayload | None = None,
+        user_id: str | None = None,
+        conversation_id: str | None = None,
+        user_message_id: str | None = None,
     ) -> tuple[str, list[MCPToolCallResult], dict[str, int]]:
         """Orchestrator loop: LLM chooses/invokes MCP tools via function-calling, then answers.
 
@@ -903,6 +922,34 @@ class AIAssistantChatService:
                     for k, v in parsed_args.items()
                     if v is not None
                 }
+                # AI assistant chat has no Respond.io contact context, so any
+                # contact_id / space_id the LLM hallucinated as a placeholder
+                # string would only mislead the MCP access guard. Force-empty
+                # them; the access guard treats empty (contact_id, space_id)
+                # as a system call and authorises by tool/agent linkage.
+                str_args["contact_id"] = ""
+                str_args["space_id"] = ""
+                # IT-support intake tool: source_channel + actor_user_id are
+                # always known here (we are the in-app AI assistant talking on
+                # behalf of the logged-in user). The MCP tool schema only
+                # surfaces (contact_id, space_id, payload_json) — flat extras
+                # are stripped by FastMCP — so the only place these survive
+                # the round trip is inside the payload_json body itself.
+                if tool_name == "crm_it_support_ticket_create":
+                    raw_payload = str_args.get("payload_json") or "{}"
+                    try:
+                        payload_obj = json.loads(raw_payload)
+                        if not isinstance(payload_obj, dict):
+                            payload_obj = {}
+                    except Exception:
+                        payload_obj = {}
+                    payload_obj.setdefault("source_channel", "ai_assistant")
+                    payload_obj["actor_user_id"] = str(user_id) if user_id else None
+                    if conversation_id:
+                        payload_obj["source_conversation_id"] = conversation_id
+                    if user_message_id:
+                        payload_obj["source_message_id"] = user_message_id
+                    str_args["payload_json"] = json.dumps(payload_obj)
 
                 if tool_name not in available:
                     output = json.dumps({"error": "tool_not_available", "tool_name": tool_name})

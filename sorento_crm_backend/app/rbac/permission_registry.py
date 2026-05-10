@@ -296,6 +296,21 @@ PERMISSION_REGISTRY.append({
     "name": "Export tickets",
     "description": "Permission to export tickets with dynamic fields.",
 })
+PERMISSION_REGISTRY.append({
+    "slug": "tickets.tickets.respond",
+    "name": "Respond to tickets",
+    "description": "Save a response on a ticket and reply (flips status to responded, notifies submitter).",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "tickets.tickets.resolve",
+    "name": "Resolve tickets",
+    "description": "Save a resolution on a ticket and reply (flips status to resolved, notifies submitter).",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "system.it_support_intake.use",
+    "name": "Use IT Support intake",
+    "description": "Allow the MCP intake endpoint to create IT support tickets on behalf of a user or respond contact.",
+})
 
 
 # Email Templates — designable HTML emails with Jinja2 placeholders.

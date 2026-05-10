@@ -189,6 +189,14 @@ class PortalService:
             raise PortalAuthError("Portal token revoked.")
         if row.expires_at <= _utcnow():
             raise PortalAuthError("Portal token expired. Verify with OTP to continue.")
+        if getattr(row, "verified_at", None) is None:
+            # First-visit OTP gate. Admin-issued tokens (Send via Respond.io / QR /
+            # copy-link) start unverified; the contact must verify once via OTP
+            # before the token grants access. After verify_otp, all unrevoked tokens
+            # for this contact are marked verified, so this token works going forward.
+            raise PortalAuthError(
+                "Portal access requires OTP verification. Verify with OTP to continue."
+            )
         return row
 
     def build_portal_url(
@@ -290,8 +298,22 @@ class PortalService:
             raise handle_validation_error("Incorrect verification code.")
 
         otp.consumed_at = _utcnow()
+        # Mark every unrevoked token for this contact as verified so the original
+        # admin-issued QR / link / "Send via Respond.io" token grants access
+        # immediately after OTP success — no need to re-issue through the new
+        # minted token unless the caller wants a fresh expiry window.
+        now = _utcnow()
+        self.db.query(PortalToken).filter(
+            PortalToken.contact_id == contact.id,
+            PortalToken.revoked_at.is_(None),
+            PortalToken.verified_at.is_(None),
+        ).update({"verified_at": now}, synchronize_session=False)
         self.db.commit()
-        return self.mint_token(contact.id, space_id)
+        new_token = self.mint_token(contact.id, space_id)
+        # Newly minted token also bypasses the gate (verifier just succeeded).
+        new_token.verified_at = now
+        self.db.commit()
+        return new_token
 
     @staticmethod
     def _mask_phone(phone: Optional[str]) -> Optional[str]:
@@ -738,6 +760,18 @@ class PortalService:
                     value = self._coerce_date(value)
                 if field in self._decimal_fields(kind):
                     value = self._coerce_decimal(value)
+                if (
+                    kind == "stock_inquiry"
+                    and field == "quantity"
+                    and value not in (None, "")
+                ):
+                    try:
+                        if float(str(value)) < 0:
+                            raise handle_validation_error(
+                                "Quantity must be a non-negative number."
+                            )
+                    except (TypeError, ValueError):
+                        pass  # legacy free-text values pass through
                 setattr(row, field, value)
 
     def _replace_request_lines_if_needed(self, kind: str, row: Any, payload: dict) -> None:

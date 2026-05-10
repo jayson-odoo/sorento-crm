@@ -34,6 +34,7 @@ FORM_SLA_TYPES = (
     "purchase_request",
     "sponsorship_form",
     "complaint",
+    "ticket",
 )
 
 
@@ -49,6 +50,8 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
         return f"/procurement-management/purchase-requests/{source_entity_id}"
     if source_entity_type == "complaint":
         return f"/complaint-management/complaints/{source_entity_id}"
+    if source_entity_type == "ticket":
+        return f"/ticket-management/tickets/{source_entity_id}"
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
 
 

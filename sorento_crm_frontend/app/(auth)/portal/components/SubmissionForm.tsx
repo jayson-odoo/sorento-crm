@@ -147,7 +147,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
     { name: 'project_title', label: 'Project title' },
   ],
   purchase_request: [
-    { name: 'customer_name', label: 'Customer name' },
+    { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
     { name: 'project_title', label: 'Project title' },
     { name: 'purpose', label: 'Purpose', widget: 'textarea' },
     { name: 'request_date', label: 'Request date', widget: 'date' },
@@ -157,11 +157,11 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       widget: 'date',
     },
     { name: 'expected_po_date', label: 'Expected PO date', widget: 'date' },
-    { name: 'requested_by', label: 'Requested by' },
+    { name: 'requested_by', label: 'Requested by', defaultFromContact: 'fullname' },
     { name: 'external_reference', label: 'External reference' },
   ],
   sponsorship_form: [
-    { name: 'customer_name', label: 'Customer name' },
+    { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
     { name: 'project_title', label: 'Project title' },
     { name: 'sponsor_subject', label: 'Sponsor subject' },
     { name: 'purpose', label: 'Purpose', widget: 'textarea' },
@@ -173,7 +173,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       label: 'Expected delivery date',
       widget: 'date',
     },
-    { name: 'requested_by', label: 'Requested by' },
+    { name: 'requested_by', label: 'Requested by', defaultFromContact: 'fullname' },
   ],
 };
 
@@ -616,7 +616,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
       : null;
 
   return (
-    <div className="min-h-screen max-w-3xl mx-auto px-4 py-6 space-y-4">
+    <div className="min-h-screen max-w-7xl mx-auto px-4 py-6 space-y-4">
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" asChild>
           <Link href={`/portal?type=${kind}`}>
@@ -698,114 +698,166 @@ export function SubmissionForm({ kind, submissionId }: Props) {
             <CardTitle className="text-base">Items</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {products.map((line, index) => (
-              <div key={index} className="rounded-md border border-border p-3 space-y-2">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div className="space-y-1.5">
-                    <Label>Item code</Label>
-                    <AsyncCombobox<ProductLookupItem>
-                      value={line.item_code ?? ''}
-                      onChange={(v) =>
-                        setProducts((prev) =>
-                          prev.map((p, i) => (i === index ? { ...p, item_code: v } : p)),
-                        )
-                      }
-                      fetchOptions={(q) => lookupProducts(q)}
-                      optionValue={(o) => o.product_code}
-                      optionLabel={(o) => o.product_code}
-                      optionMeta={(o) => o.product_name ?? ''}
-                      disabled={!isEditable}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Quantity</Label>
-                    <Input
-                      type="number"
-                      inputMode="numeric"
-                      min="0"
-                      value={line.quantity ?? ''}
-                      onChange={(e) =>
-                        setProducts((prev) =>
-                          prev.map((p, i) =>
-                            i === index ? { ...p, quantity: e.target.value } : p,
-                          ),
-                        )
-                      }
-                      disabled={!isEditable}
-                    />
-                  </div>
-                  {kind === 'sponsorship_form' && (
-                    <>
-                      <div className="space-y-1.5">
-                        <Label>Unit price</Label>
-                        <Input
-                          type="number"
-                          inputMode="decimal"
-                          min="0"
-                          step="0.01"
-                          value={line.unit_price ?? ''}
-                          onChange={(e) =>
-                            setProducts((prev) =>
-                              prev.map((p, i) =>
-                                i === index ? { ...p, unit_price: e.target.value } : p,
-                              ),
-                            )
-                          }
-                          disabled={!isEditable}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label>Total</Label>
-                        <Input
-                          type="number"
-                          inputMode="decimal"
-                          min="0"
-                          step="0.01"
-                          value={line.total ?? ''}
-                          onChange={(e) =>
-                            setProducts((prev) =>
-                              prev.map((p, i) =>
-                                i === index ? { ...p, total: e.target.value } : p,
-                              ),
-                            )
-                          }
-                          disabled={!isEditable}
-                        />
-                      </div>
-                    </>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="w-10 px-2 py-2 text-left">#</th>
+                    <th className="min-w-[180px] px-2 py-2 text-left">Item code</th>
+                    <th className="w-28 px-2 py-2 text-left">Quantity</th>
+                    {kind === 'sponsorship_form' && (
+                      <>
+                        <th className="w-32 px-2 py-2 text-left">Unit price</th>
+                        <th className="w-32 px-2 py-2 text-left">Total</th>
+                      </>
+                    )}
+                    <th className="min-w-[200px] px-2 py-2 text-left">Remark</th>
+                    <th className="w-12 px-2 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map((line, index) => {
+                    const qtyNum = Number(line.quantity);
+                    const priceNum = Number(line.unit_price);
+                    const computedTotal =
+                      Number.isFinite(qtyNum) && Number.isFinite(priceNum)
+                        ? (qtyNum * priceNum).toFixed(2)
+                        : '';
+                    return (
+                      <tr key={index} className="border-t border-border align-top">
+                        <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
+                        <td className="px-2 py-2">
+                          <AsyncCombobox<ProductLookupItem>
+                            value={line.item_code ?? ''}
+                            onChange={(v) =>
+                              setProducts((prev) =>
+                                prev.map((p, i) =>
+                                  i === index ? { ...p, item_code: v } : p,
+                                ),
+                              )
+                            }
+                            fetchOptions={(q) => lookupProducts(q)}
+                            optionValue={(o) => o.product_code}
+                            optionLabel={(o) => o.product_code}
+                            optionMeta={(o) => o.product_name ?? ''}
+                            disabled={!isEditable}
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <Input
+                            type="number"
+                            inputMode="numeric"
+                            min="0"
+                            value={line.quantity ?? ''}
+                            onChange={(e) =>
+                              setProducts((prev) =>
+                                prev.map((p, i) =>
+                                  i === index ? { ...p, quantity: e.target.value } : p,
+                                ),
+                              )
+                            }
+                            disabled={!isEditable}
+                          />
+                        </td>
+                        {kind === 'sponsorship_form' && (
+                          <>
+                            <td className="px-2 py-2">
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                min="0"
+                                step="0.01"
+                                value={line.unit_price ?? ''}
+                                onChange={(e) =>
+                                  setProducts((prev) =>
+                                    prev.map((p, i) =>
+                                      i === index
+                                        ? { ...p, unit_price: e.target.value }
+                                        : p,
+                                    ),
+                                  )
+                                }
+                                disabled={!isEditable}
+                              />
+                            </td>
+                            <td className="px-2 py-2">
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                min="0"
+                                step="0.01"
+                                value={line.total ?? computedTotal}
+                                onChange={(e) =>
+                                  setProducts((prev) =>
+                                    prev.map((p, i) =>
+                                      i === index ? { ...p, total: e.target.value } : p,
+                                    ),
+                                  )
+                                }
+                                placeholder={
+                                  computedTotal && !line.total ? computedTotal : ''
+                                }
+                                disabled={!isEditable}
+                              />
+                            </td>
+                          </>
+                        )}
+                        <td className="px-2 py-2">
+                          <Textarea
+                            value={line.remark ?? ''}
+                            onChange={(e) =>
+                              setProducts((prev) =>
+                                prev.map((p, i) =>
+                                  i === index ? { ...p, remark: e.target.value } : p,
+                                ),
+                              )
+                            }
+                            rows={1}
+                            disabled={!isEditable}
+                          />
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            disabled={!isEditable}
+                            onClick={() =>
+                              setProducts((prev) => prev.filter((_, i) => i !== index))
+                            }
+                            title="Remove"
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {kind === 'sponsorship_form' && products.length > 0 && (
+                    <tr className="border-t-2 border-border bg-muted/20 font-medium">
+                      <td className="px-2 py-2 text-right" colSpan={4}>
+                        Grand total
+                      </td>
+                      <td className="px-2 py-2">
+                        {(() => {
+                          const sum = products.reduce((acc, p) => {
+                            const t = Number(p.total);
+                            if (Number.isFinite(t)) return acc + t;
+                            const q = Number(p.quantity);
+                            const u = Number(p.unit_price);
+                            if (Number.isFinite(q) && Number.isFinite(u))
+                              return acc + q * u;
+                            return acc;
+                          }, 0);
+                          return sum.toFixed(2);
+                        })()}
+                      </td>
+                      <td className="px-2 py-2" colSpan={2}></td>
+                    </tr>
                   )}
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Remark</Label>
-                  <Textarea
-                    value={line.remark ?? ''}
-                    onChange={(e) =>
-                      setProducts((prev) =>
-                        prev.map((p, i) =>
-                          i === index ? { ...p, remark: e.target.value } : p,
-                        ),
-                      )
-                    }
-                    rows={2}
-                    disabled={!isEditable}
-                  />
-                </div>
-                <div className="flex justify-end">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={!isEditable}
-                    onClick={() =>
-                      setProducts((prev) => prev.filter((_, i) => i !== index))
-                    }
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Remove
-                  </Button>
-                </div>
-              </div>
-            ))}
+                </tbody>
+              </table>
+            </div>
             <Button
               type="button"
               variant="outline"
@@ -1104,7 +1156,7 @@ function PurchaseRequestFormSection({
   const heading =
     kind === 'sponsorship_form' ? 'Project Sales Sponsorship Form' : 'Purchase Request';
   return (
-    <div className="lg:col-span-2 max-w-5xl mx-auto w-full">
+    <div className="w-full">
       <Card className="border-2 shadow-sm">
         <CardContent className="pt-6 pb-8 px-5 sm:px-10">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">

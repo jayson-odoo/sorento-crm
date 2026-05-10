@@ -13,6 +13,8 @@ import {
 } from '@/components/ui/breadcrumb';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -30,15 +32,25 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import EntityActivitiesLayout from '@/components/common/ActivitiesNotesPanel/EntityActivitiesLayout';
+import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
 import {
+  cancelTicketDraft,
   changeTicketStatus,
   getTicket,
+  submitTicketDraft,
+  updateTicket,
   updateTicketResolution,
+  updateTicketResolutionAndReply,
   updateTicketResponse,
+  updateTicketResponseAndReply,
 } from '../services/ticketService';
 import {
+  TICKET_CATEGORIES,
+  TICKET_PRIORITIES,
   TICKET_STATUSES,
   type Ticket,
+  type TicketCategory,
+  type TicketPriority,
   type TicketStatus,
 } from '../types/ticket.types';
 import {
@@ -46,6 +58,7 @@ import {
   TicketStatusBadge,
 } from '../components/TicketStatusBadge';
 import TicketWatchersSection from '../components/TicketWatchersSection';
+import TicketSourceCard from '../components/TicketSourceCard';
 
 function htmlToText(html: string): string {
   if (typeof window === 'undefined') return html.replace(/<[^>]+>/g, '').trim();
@@ -74,6 +87,11 @@ export default function TicketDetailPage({ params }: PageProps) {
   const [editingResponse, setEditingResponse] = useState(false);
   const [resolutionDraft, setResolutionDraft] = useState('');
   const [editingResolution, setEditingResolution] = useState(false);
+  const [editingDetails, setEditingDetails] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [descriptionDraft, setDescriptionDraft] = useState('');
+  const [priorityDraft, setPriorityDraft] = useState<TicketPriority>('medium');
+  const [categoryDraft, setCategoryDraft] = useState<TicketCategory>('bug');
   const [busy, setBusy] = useState(false);
 
   async function reload() {
@@ -109,17 +127,13 @@ export default function TicketDetailPage({ params }: PageProps) {
     }
   }
 
-  async function saveResponse() {
+  async function submitDraft() {
     if (!ticket) return;
     setBusy(true);
     try {
-      const updated = await updateTicketResponse(ticket.id, {
-        response_text: htmlToText(responseDraft),
-        response_html: responseDraft,
-      });
+      const updated = await submitTicketDraft(ticket.id);
       setTicket(updated);
-      setEditingResponse(false);
-      toast.success('Response saved');
+      toast.success('Ticket submitted to IT admin');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -127,17 +141,91 @@ export default function TicketDetailPage({ params }: PageProps) {
     }
   }
 
-  async function saveResolution() {
+  function startEditDetails() {
+    if (!ticket) return;
+    setTitleDraft(ticket.title);
+    setDescriptionDraft(ticket.description_html ?? ticket.description_text ?? '');
+    setPriorityDraft(ticket.priority);
+    setCategoryDraft(ticket.category);
+    setEditingDetails(true);
+  }
+
+  async function saveDetails() {
+    if (!ticket) return;
+    const title = titleDraft.trim();
+    if (!title) {
+      toast.error('Title is required');
+      return;
+    }
+    setBusy(true);
+    try {
+      const updated = await updateTicket(ticket.id, {
+        title,
+        description_html: descriptionDraft || null,
+        description_text: htmlToText(descriptionDraft) || null,
+        priority: priorityDraft,
+        category: categoryDraft,
+      });
+      setTicket(updated);
+      setEditingDetails(false);
+      toast.success('Ticket updated');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelDraft() {
+    if (!ticket) return;
+    if (!window.confirm('Cancel this draft? This cannot be undone.')) return;
+    setBusy(true);
+    try {
+      await cancelTicketDraft(ticket.id);
+      toast.success('Draft cancelled');
+      router.push('/ticket-management/tickets');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveResponse(reply: boolean) {
     if (!ticket) return;
     setBusy(true);
     try {
-      const updated = await updateTicketResolution(ticket.id, {
+      const payload = {
+        response_text: htmlToText(responseDraft),
+        response_html: responseDraft,
+      };
+      const updated = reply
+        ? await updateTicketResponseAndReply(ticket.id, payload)
+        : await updateTicketResponse(ticket.id, payload);
+      setTicket(updated);
+      setEditingResponse(false);
+      toast.success(reply ? 'Response sent and ticket marked responded' : 'Response saved');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveResolution(reply: boolean) {
+    if (!ticket) return;
+    setBusy(true);
+    try {
+      const payload = {
         resolution_text: htmlToText(resolutionDraft),
         resolution_html: resolutionDraft,
-      });
+      };
+      const updated = reply
+        ? await updateTicketResolutionAndReply(ticket.id, payload)
+        : await updateTicketResolution(ticket.id, payload);
       setTicket(updated);
       setEditingResolution(false);
-      toast.success('Resolution saved');
+      toast.success(reply ? 'Resolution sent and ticket marked resolved' : 'Resolution saved');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -190,6 +278,7 @@ export default function TicketDetailPage({ params }: PageProps) {
 
       <EntityActivitiesLayout entityType="ticket" entityId={ticket.id}>
         <Container>
+          <FormDetailWithSLATabs sourceEntityType="ticket" sourceEntityId={ticket.id}>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* main column */}
             <div className="lg:col-span-2 flex flex-col gap-4">
@@ -201,19 +290,119 @@ export default function TicketDetailPage({ params }: PageProps) {
                   <span className="ms-auto text-xs text-muted-foreground">
                     Updated {new Date(ticket.updated_at).toLocaleString()}
                   </span>
+                  {!editingDetails && ticket.status === 'draft' && (
+                    <Button variant="ghost" size="sm" onClick={startEditDetails}>
+                      Edit
+                    </Button>
+                  )}
                 </div>
-                <h2 className="text-xl font-semibold mb-2">{ticket.title}</h2>
-                {ticket.description_html ? (
-                  <div
-                    className="prose prose-sm max-w-none text-sm"
-                    dangerouslySetInnerHTML={{ __html: ticket.description_html }}
-                  />
-                ) : ticket.description_text ? (
-                  <div className="prose prose-sm max-w-none whitespace-pre-wrap text-sm">{ticket.description_text}</div>
+                {editingDetails ? (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-col gap-1">
+                      <Label htmlFor="ticket-title">Title</Label>
+                      <Input
+                        id="ticket-title"
+                        value={titleDraft}
+                        onChange={(e) => setTitleDraft(e.target.value)}
+                        disabled={busy}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <Label>Priority</Label>
+                        <Select
+                          value={priorityDraft}
+                          onValueChange={(v) => setPriorityDraft(v as TicketPriority)}
+                          disabled={busy}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {TICKET_PRIORITIES.map((p) => (
+                              <SelectItem key={p} value={p} className="capitalize">
+                                {p}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <Label>Category</Label>
+                        <Select
+                          value={categoryDraft}
+                          onValueChange={(v) => setCategoryDraft(v as TicketCategory)}
+                          disabled={busy}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {TICKET_CATEGORIES.map((c) => (
+                              <SelectItem key={c} value={c} className="capitalize">
+                                {c}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label>Description</Label>
+                      <RichTextEditor
+                        value={descriptionDraft}
+                        onChange={setDescriptionDraft}
+                        placeholder="What is wrong?"
+                        minHeight={140}
+                      />
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setEditingDetails(false)}
+                        disabled={busy}
+                      >
+                        Cancel
+                      </Button>
+                      <Button size="sm" onClick={saveDetails} disabled={busy || !titleDraft.trim()}>
+                        Save
+                      </Button>
+                    </div>
+                  </div>
                 ) : (
-                  <span className="text-muted-foreground text-sm">No description.</span>
+                  <>
+                    <h2 className="text-xl font-semibold mb-2">{ticket.title}</h2>
+                    {ticket.description_html ? (
+                      <div
+                        className="prose prose-sm max-w-none text-sm"
+                        dangerouslySetInnerHTML={{ __html: ticket.description_html }}
+                      />
+                    ) : ticket.description_text ? (
+                      <div className="prose prose-sm max-w-none whitespace-pre-wrap text-sm">{ticket.description_text}</div>
+                    ) : (
+                      <span className="text-muted-foreground text-sm">No description.</span>
+                    )}
+                  </>
                 )}
               </Card>
+
+              <TicketSourceCard ticket={ticket} />
+
+              {ticket.status === 'draft' && (
+                <Card className="p-4 flex flex-col gap-3 border-primary/40 bg-primary/5">
+                  <div className="text-sm">
+                    <span className="font-medium">Draft ticket.</span>{' '}
+                    Review the details above. Click <strong>Submit to IT admin</strong> to send it to the team
+                    (round-robin assigns a tier-1 IT admin and starts the SLA timer). Click{' '}
+                    <strong>Cancel</strong> to discard this draft.
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <Button variant="outline" size="sm" onClick={cancelDraft} disabled={busy}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={submitDraft} disabled={busy}>
+                      Submit to IT admin
+                    </Button>
+                  </div>
+                </Card>
+              )}
 
               {/* SLA strip */}
               <Card className="p-4 flex flex-wrap items-center gap-4 text-sm">
@@ -239,6 +428,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                 </div>
               </Card>
 
+              {ticket.status !== 'draft' && (<>
               {/* Response card */}
               <Card className="p-5">
                 <div className="flex items-center justify-between mb-2">
@@ -261,8 +451,11 @@ export default function TicketDetailPage({ params }: PageProps) {
                       <Button variant="outline" size="sm" onClick={() => { setEditingResponse(false); setResponseDraft(ticket.response_html ?? ''); }} disabled={busy}>
                         Cancel
                       </Button>
-                      <Button size="sm" onClick={saveResponse} disabled={busy || !htmlToText(responseDraft)}>
+                      <Button variant="outline" size="sm" onClick={() => saveResponse(false)} disabled={busy || !htmlToText(responseDraft)}>
                         Save
+                      </Button>
+                      <Button size="sm" onClick={() => saveResponse(true)} disabled={busy || !htmlToText(responseDraft)}>
+                        Update &amp; Reply
                       </Button>
                     </div>
                   </div>
@@ -304,8 +497,11 @@ export default function TicketDetailPage({ params }: PageProps) {
                       <Button variant="outline" size="sm" onClick={() => { setEditingResolution(false); setResolutionDraft(ticket.resolution_html ?? ''); }} disabled={busy}>
                         Cancel
                       </Button>
-                      <Button size="sm" onClick={saveResolution} disabled={busy || !htmlToText(resolutionDraft)}>
+                      <Button variant="outline" size="sm" onClick={() => saveResolution(false)} disabled={busy || !htmlToText(resolutionDraft)}>
                         Save
+                      </Button>
+                      <Button size="sm" onClick={() => saveResolution(true)} disabled={busy || !htmlToText(resolutionDraft)}>
+                        Update &amp; Reply
                       </Button>
                     </div>
                   </div>
@@ -324,6 +520,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                   </div>
                 )}
               </Card>
+              </>)}
             </div>
 
             {/* sidebar */}
@@ -352,7 +549,11 @@ export default function TicketDetailPage({ params }: PageProps) {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Reporter</span>
-                    <span>{ticket.raised_by_user?.display_name ?? '—'}</span>
+                    <span>
+                      {ticket.raised_by_actor?.display_name
+                        ?? ticket.raised_by_user?.display_name
+                        ?? '—'}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Assignee</span>
@@ -395,6 +596,7 @@ export default function TicketDetailPage({ params }: PageProps) {
               </div>
             </Card>
           </div>
+          </FormDetailWithSLATabs>
         </Container>
       </EntityActivitiesLayout>
     </>

@@ -31,6 +31,8 @@ from app.database import Base
 TICKET_STATUSES: tuple[str, ...] = ("draft", "submitted", "assigned", "responded", "resolved")
 TICKET_PRIORITIES: tuple[str, ...] = ("low", "medium", "high", "urgent")
 TICKET_CATEGORIES: tuple[str, ...] = ("bug", "feature", "question", "other")
+TICKET_SOURCE_CHANNELS: tuple[str, ...] = ("manual", "ai_assistant", "whatsapp_respond")
+TICKET_RAISED_BY_KINDS: tuple[str, ...] = ("user", "respond_contact")
 
 
 class Ticket(Base):
@@ -50,7 +52,15 @@ class Ticket(Base):
     category = Column(String(40), nullable=False, default="question")
     due_date = Column(Date, nullable=True)
 
-    raised_by = Column(UUID(as_uuid=False), nullable=False)
+    # Polymorphic submitter: when raised_by_kind='user', raised_by → users.id;
+    # when raised_by_kind='respond_contact', raised_by → respond_contacts.id.
+    # No FK because it points to two tables; resolved at serialization time.
+    raised_by = Column(String(100), nullable=True)
+    raised_by_kind = Column(String(20), nullable=False, default="user")
+    source_channel = Column(String(30), nullable=False, default="manual")
+    source_conversation_id = Column(Text, nullable=True)
+    source_message_id = Column(Text, nullable=True)
+    source_space_id = Column(Text, nullable=True)
     assigned_to = Column(UUID(as_uuid=False), nullable=True)
 
     # Response payload (rich text on the ticket itself, distinct from the activity feed).
@@ -89,6 +99,12 @@ class Ticket(Base):
         Index("ix_tickets_priority", "priority"),
         Index("ix_tickets_due_date", "due_date"),
         Index("ix_tickets_sla_response_due_at", "sla_response_due_at"),
+        Index("ix_tickets_source_channel", "source_channel"),
+        Index(
+            "ix_tickets_source_conversation",
+            "source_channel",
+            "source_conversation_id",
+        ),
     )
 
 

@@ -31,11 +31,13 @@ import type {
   TicketCategory,
   TicketListFilters,
   TicketPriority,
+  TicketSourceChannel,
   TicketStatus,
 } from '../types/ticket.types';
 import {
   TICKET_CATEGORIES,
   TICKET_PRIORITIES,
+  TICKET_SOURCE_CHANNELS,
   TICKET_STATUSES,
 } from '../types/ticket.types';
 import { TicketPriorityBadge, TicketStatusBadge } from './TicketStatusBadge';
@@ -66,6 +68,7 @@ export default function TicketsList() {
   const [statusFilter, setStatusFilter] = useState<TicketStatus | 'all'>('all');
   const [priorityFilter, setPriorityFilter] = useState<TicketPriority | 'all'>('all');
   const [categoryFilter, setCategoryFilter] = useState<TicketCategory | 'all'>('all');
+  const [sourceFilter, setSourceFilter] = useState<TicketSourceChannel | 'all'>('all');
 
   // Debounce search input.
   useEffect(() => {
@@ -76,7 +79,7 @@ export default function TicketsList() {
   // Reset to page 1 whenever filters change.
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, statusFilter, priorityFilter, categoryFilter]);
+  }, [debouncedSearch, statusFilter, priorityFilter, categoryFilter, sourceFilter]);
 
   // Only fetch list-mode data when in list mode.
   useEffect(() => {
@@ -91,6 +94,7 @@ export default function TicketsList() {
     if (statusFilter !== 'all') filters.status = statusFilter;
     if (priorityFilter !== 'all') filters.priority = priorityFilter;
     if (categoryFilter !== 'all') filters.category = categoryFilter;
+    if (sourceFilter !== 'all') filters.source_channel = sourceFilter;
     getTickets(filters)
       .then((res) => {
         if (cancelled) return;
@@ -106,7 +110,7 @@ export default function TicketsList() {
     return () => {
       cancelled = true;
     };
-  }, [mode, page, debouncedSearch, statusFilter, priorityFilter, categoryFilter]);
+  }, [mode, page, debouncedSearch, statusFilter, priorityFilter, categoryFilter, sourceFilter]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / PAGE_SIZE)),
@@ -172,6 +176,28 @@ export default function TicketsList() {
             ))}
           </SelectContent>
         </Select>
+        {mode === 'list' && (
+          <Select
+            value={sourceFilter}
+            onValueChange={(v) => setSourceFilter(v as TicketSourceChannel | 'all')}
+          >
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Source" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All sources</SelectItem>
+              {TICKET_SOURCE_CHANNELS.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s === 'manual'
+                    ? 'Manual'
+                    : s === 'ai_assistant'
+                    ? 'AI Assistant'
+                    : 'WhatsApp'}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <ListBoardViewToggle value={mode} onChange={setMode} />
         <div className="ms-auto">
           <Button asChild>
@@ -201,6 +227,7 @@ export default function TicketsList() {
                   <TableHead className="w-[120px]">Status</TableHead>
                   <TableHead className="w-[120px]">Priority</TableHead>
                   <TableHead className="w-[120px]">Category</TableHead>
+                  <TableHead className="w-[120px]">Source</TableHead>
                   <TableHead className="w-[140px]">Due date</TableHead>
                   <TableHead className="w-[180px]">Assignee</TableHead>
                   <TableHead className="w-[160px]">Updated</TableHead>
@@ -210,7 +237,7 @@ export default function TicketsList() {
                 {loading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={`skel-${i}`}>
-                      {Array.from({ length: 8 }).map((__, j) => (
+                      {Array.from({ length: 9 }).map((__, j) => (
                         <TableCell key={j}>
                           <Skeleton className="h-4 w-full" />
                         </TableCell>
@@ -220,7 +247,7 @@ export default function TicketsList() {
                 ) : rows.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={8}
+                      colSpan={9}
                       className="h-24 text-center text-muted-foreground"
                     >
                       No tickets match these filters.
@@ -244,6 +271,13 @@ export default function TicketsList() {
                         <TicketPriorityBadge priority={t.priority} />
                       </TableCell>
                       <TableCell className="capitalize">{t.category}</TableCell>
+                      <TableCell className="text-xs">
+                        {t.source_channel === 'ai_assistant'
+                          ? 'AI Assistant'
+                          : t.source_channel === 'whatsapp_respond'
+                          ? 'WhatsApp'
+                          : 'Manual'}
+                      </TableCell>
                       <TableCell className={t.is_overdue_resolution ? 'text-destructive' : ''}>
                         {t.due_date ?? '—'}
                       </TableCell>

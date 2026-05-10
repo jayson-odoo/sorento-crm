@@ -5,7 +5,8 @@ export type FormSLASourceType =
   | 'stock_inquiry'
   | 'purchase_request'
   | 'sponsorship_form'
-  | 'complaint';
+  | 'complaint'
+  | 'ticket';
 
 export async function getFormSLATrackers(
   sourceEntityType: FormSLASourceType,
@@ -157,6 +158,12 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'approved',
     'rejected',
   ],
+  ticket: [
+    'submit',
+    'assigned',
+    'responded',
+    'resolved',
+  ],
 };
 
 export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
@@ -164,4 +171,5 @@ export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
   purchase_request: 'Purchase Request',
   sponsorship_form: 'Sponsorship Form',
   complaint: 'Complaint',
+  ticket: 'Ticket',
 };

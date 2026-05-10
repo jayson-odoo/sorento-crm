@@ -21,6 +21,7 @@ class PortalToken(Base):
     space_id = Column(Text, nullable=False)
     expires_at = Column(DateTime(timezone=False), nullable=False)
     revoked_at = Column(DateTime(timezone=False), nullable=True)
+    verified_at = Column(DateTime(timezone=False), nullable=True)  # OTP-verified gate; NULL = first visit must verify
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (

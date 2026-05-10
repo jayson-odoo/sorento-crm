@@ -1098,4 +1098,44 @@ CATALOG: tuple[ToolSpec, ...] = (
         module="user_guides",
         external=True,
     ),
+    # ===== IT Support intake (single tool, two-call protocol) =====
+    # The description is intentionally fat: the AI assistant's RAG selector
+    # does embedding similarity over this text, so every common natural-language
+    # phrasing of "I have an IT issue" must appear inline so the embedding
+    # vector lands close to the user's message.
+    ToolSpec(
+        "crm_it_support_ticket_create",
+        (
+            "Submit an IT-support ticket / report a bug / log an issue with "
+            "the IT admin team. INVOCATION RULES — VERY IMPORTANT: "
+            "1. NEVER ask the user for ANYTHING — not title, not priority, "
+            "not category, not description. Infer all ticket fields from the "
+            "recent 1-5 turns of conversation; the user has already told you "
+            "what is wrong. "
+            "2. CALL ONCE with payload_json = JSON object containing "
+            "{title, priority (low|medium|high|urgent), category "
+            "(bug|feature|question|other), description}. Server creates a "
+            "DRAFT ticket and returns a draft_url. "
+            "3. Reply to the user with ONE short message containing the "
+            "draft_url verbatim, e.g. 'I prepared a draft ticket — open "
+            "<draft_url> to review and click Submit.' Do NOT echo the "
+            "preview fields, do NOT ask for confirmation in chat — the user "
+            "confirms by clicking Submit on the draft page. "
+            "4. STOP. Do not call this tool again in the same turn. "
+            "WHEN TO USE: user is reporting that something is broken / not "
+            "working / errored / crashed / slow / can't access / login fails "
+            "/ page won't load / data missing, OR explicitly asks to file / "
+            "submit / raise a ticket / open a support request / report a "
+            "problem / log a complaint with IT / get tech support. "
+            "DO NOT USE for how-to questions ('how do I…', 'where is…', "
+            "'what are the steps to…') — those belong to user_guides_search "
+            "/ user_guides_read."
+        ),
+        "/api/v1/external/it-support/tickets/",
+        (),
+        (),
+        method="POST",
+        body_params=("payload_json",),
+        module="tickets",
+    ),
 )

@@ -15,6 +15,26 @@ export type TicketPriority = (typeof TICKET_PRIORITIES)[number];
 export const TICKET_CATEGORIES = ['bug', 'feature', 'question', 'other'] as const;
 export type TicketCategory = (typeof TICKET_CATEGORIES)[number];
 
+export const TICKET_SOURCE_CHANNELS = [
+  'manual',
+  'ai_assistant',
+  'whatsapp_respond',
+] as const;
+export type TicketSourceChannel = (typeof TICKET_SOURCE_CHANNELS)[number];
+
+export const TICKET_RAISED_BY_KINDS = ['user', 'respond_contact'] as const;
+export type TicketRaisedByKind = (typeof TICKET_RAISED_BY_KINDS)[number];
+
+export interface TicketRaisedByActor {
+  kind: TicketRaisedByKind;
+  id: string;
+  display_name?: string | null;
+  email?: string | null;
+  avatar_url?: string | null;
+  phone_number?: string | null;
+  respond_io_id?: string | null;
+}
+
 export interface TicketUserRef {
   id: string;
   display_name?: string | null;
@@ -58,8 +78,14 @@ export interface Ticket {
   category: TicketCategory;
   due_date?: string | null;
 
-  raised_by: string;
+  raised_by?: string | null;
+  raised_by_kind: TicketRaisedByKind;
   raised_by_user?: TicketUserRef | null;
+  raised_by_actor?: TicketRaisedByActor | null;
+  source_channel: TicketSourceChannel;
+  source_conversation_id?: string | null;
+  source_message_id?: string | null;
+  source_space_id?: string | null;
   assigned_to?: string | null;
   assigned_to_user?: TicketUserRef | null;
 
@@ -155,6 +181,7 @@ export interface TicketListFilters {
   raised_by?: string;
   priority?: TicketPriority;
   category?: TicketCategory;
+  source_channel?: TicketSourceChannel;
   due_before?: string;
   q?: string;
 }

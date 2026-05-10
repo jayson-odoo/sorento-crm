@@ -1567,6 +1567,39 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "outline doc info",
         ),
     ),
+    "crm_it_support_ticket_create": ToolIntent(
+        category="it_support",
+        intent=(
+            "Submit (file / raise / open) an IT support ticket to report a "
+            "bug or system problem to the IT admin team."
+        ),
+        description=(
+            "Submit an IT-support ticket to the IT admin team. "
+            "Used when the user explicitly asks to file / submit / raise a "
+            "ticket, report a bug, open a support request, or log a problem "
+            "with IT. Triggers on phrases like 'submit ticket', 'raise an "
+            "issue', 'file a bug report', 'log a complaint with IT'."
+        ),
+        typical_user_questions=(
+            "Submit a ticket to IT for me.",
+            "File a bug report with the IT team.",
+            "Raise a ticket for the IT admin.",
+            "Open an IT support ticket.",
+            "Log an IT support request.",
+            "I want to file a ticket.",
+            "Report this bug to IT.",
+            "Open a support request with IT.",
+        ),
+        aliases=(
+            "submit it ticket",
+            "create it ticket",
+            "raise it ticket",
+            "file bug",
+            "report bug",
+            "open support request",
+            "log complaint with IT",
+        ),
+    ),
 }
 
 

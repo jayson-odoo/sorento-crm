@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -80,6 +81,14 @@ export default function AIAssistantBubble() {
   const [greetingSuggestions, setGreetingSuggestions] = useState<string[]>([]);
   const greetingFetchedRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const deepLinkConvId = searchParams?.get('ai_conversation') ?? null;
+  const deepLinkMsgId = searchParams?.get('ai_message') ?? null;
+  const handledDeepLinkRef = useRef<string | null>(null);
   const canSend = input.trim().length > 0 && !isSending;
 
   const sortedMessages = useMemo(
@@ -287,6 +296,55 @@ export default function AIAssistantBubble() {
     }
   };
 
+  // Deep-link handler: ?ai_conversation=<id>&ai_message=<id>. Opens bubble,
+  // loads that conversation, scrolls to the message, highlights it briefly.
+  // Strips the params from the URL after handling so refresh / back doesn't
+  // re-trigger.
+  useEffect(() => {
+    if (!canUseAIAssistant) return;
+    if (!deepLinkConvId) {
+      // Params cleared (either by us after handling, or by user navigation).
+      // Reset the dedupe key so a subsequent click on the same link re-fires.
+      handledDeepLinkRef.current = null;
+      return;
+    }
+    const key = `${deepLinkConvId}::${deepLinkMsgId ?? ''}`;
+    if (handledDeepLinkRef.current === key) return;
+    handledDeepLinkRef.current = key;
+    setOpen(true);
+    setHistoryOpen(false);
+    (async () => {
+      try {
+        const conv = await loadConversation(deepLinkConvId);
+        setConversationId(conv.id);
+        setMessages(conv.messages || []);
+        if (deepLinkMsgId) {
+          setHighlightedMessageId(deepLinkMsgId);
+          requestAnimationFrame(() => {
+            const el = messageRefs.current.get(deepLinkMsgId);
+            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+          window.setTimeout(() => setHighlightedMessageId(null), 4000);
+        }
+      } catch {
+        // Ignore — keep bubble open at fresh state.
+      } finally {
+        const sp = new URLSearchParams(searchParams?.toString() ?? '');
+        sp.delete('ai_conversation');
+        sp.delete('ai_message');
+        const next = sp.toString();
+        router.replace(next ? `${pathname}?${next}` : pathname || '/', { scroll: false });
+      }
+    })();
+  }, [
+    canUseAIAssistant,
+    deepLinkConvId,
+    deepLinkMsgId,
+    pathname,
+    router,
+    searchParams,
+  ]);
+
   const onSuggestionClick = async (s: string) => {
     setInput(s);
     await sendText(s);
@@ -442,13 +500,20 @@ export default function AIAssistantBubble() {
                     </div>
                   ) : null}
                   {sortedMessages.map((m) => (
-                    <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div
+                      key={m.id}
+                      ref={(node) => {
+                        if (node) messageRefs.current.set(m.id, node);
+                        else messageRefs.current.delete(m.id);
+                      }}
+                      className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
                       <div
-                        className={`max-w-[85%] rounded-2xl px-3 py-2.5 text-sm leading-relaxed shadow-sm ${
+                        className={`max-w-[85%] rounded-2xl px-3 py-2.5 text-sm leading-relaxed shadow-sm transition-shadow ${
                           m.role === 'user'
                             ? 'bg-primary/15 text-foreground'
                             : 'bg-background/85 text-foreground'
-                        }`}
+                        } ${highlightedMessageId === m.id ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}
                       >
                         {m.role === 'assistant' ? (
                           <div className="ai-markdown space-y-2 [&_p]:my-0 [&_ul]:my-1 [&_ol]:my-1 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_li]:my-0.5 [&_strong]:font-semibold [&_em]:italic [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[0.9em] [&_h1]:mt-2 [&_h1]:mb-1 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:mb-1 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-1.5 [&_h3]:mb-0.5 [&_h3]:text-sm [&_h3]:font-semibold [&_blockquote]:border-l-2 [&_blockquote]:border-muted [&_blockquote]:pl-2 [&_blockquote]:text-muted-foreground [&_table]:my-2 [&_table]:w-full [&_th]:border [&_th]:border-border [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-border [&_td]:px-1.5 [&_td]:py-1">

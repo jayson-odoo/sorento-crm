@@ -75,7 +75,15 @@ def evaluate(
     `space_id` is the Respond.io external workspace id
     (`respond_workspaces.space_id`, e.g. ``"364817"``). It is resolved here to
     the internal workspace UUID before any FK comparison or log write.
+
+    Special case: when both ``contact_id`` and ``space_id`` are empty, treat
+    the call as a system / AI-assistant context (no Respond.io contact in
+    play) and allow as long as the tool exists and is linked to at least
+    one active agent. Backend authentication is still enforced by the
+    underlying CRM endpoint via X-API-Key + permission gates.
     """
+    is_system_call = not (contact_id or "").strip() and not (space_id or "").strip()
+
     workspace = (
         db.query(RespondWorkspace)
         .filter(RespondWorkspace.space_id == space_id)
@@ -122,6 +130,18 @@ def evaluate(
         return AccessDecision(allowed=False, decision="deny_tool_unlinked", agent_name=None)
 
     fallback_name = linked_agents[0].name
+
+    if is_system_call:
+        _record_log(
+            db,
+            tool_name=tool_name,
+            contact_external_id=None,
+            respond_contact_id=None,
+            respond_workspace_id=None,
+            decision="allow",
+            matched_agent_id=linked_agents[0].id,
+        )
+        return AccessDecision(allowed=True, decision="allow", agent_name=fallback_name)
 
     if workspace_uuid is None:
         _record_log(

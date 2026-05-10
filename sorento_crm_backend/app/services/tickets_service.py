@@ -30,8 +30,11 @@ from fastapi import HTTPException, status
 from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session
 
+from app.models.access import RespondContact
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.tickets import (
+    TICKET_CATEGORIES,
+    TICKET_PRIORITIES,
     TICKET_STATUSES,
     Ticket,
     TicketRespondContactLink,
@@ -39,6 +42,7 @@ from app.models.tickets import (
 )
 from app.models.user import User
 from app.services import activities_service
+from app.services.form_sla_service import emit_form_event
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +100,61 @@ def _user_ref(user: Optional[User]) -> Optional[Dict[str, Any]]:
     }
 
 
+def _respond_contact_ref(contact: Optional[RespondContact]) -> Optional[Dict[str, Any]]:
+    if contact is None:
+        return None
+    name = (
+        getattr(contact, "name", None)
+        or " ".join(
+            filter(
+                None,
+                [getattr(contact, "first_name", None), getattr(contact, "last_name", None)],
+            )
+        ).strip()
+        or getattr(contact, "phone_number", None)
+        or str(getattr(contact, "id", ""))
+    )
+    return {
+        "id": str(contact.id),
+        "display_name": name or None,
+        "phone_number": getattr(contact, "phone_number", None),
+        "respond_io_id": getattr(contact, "respond_io_id", None),
+    }
+
+
+def _actor_ref(
+    db: Session,
+    raised_by: Optional[str],
+    raised_by_kind: str,
+    user_cache: Dict[str, User],
+) -> Optional[Dict[str, Any]]:
+    """Resolve a polymorphic raised_by to a {kind, id, display_name, ...} dict.
+
+    Looks up users.id when ``raised_by_kind='user'`` and respond_contacts.id when
+    ``raised_by_kind='respond_contact'``. Returns ``None`` for unknown ids."""
+    if not raised_by:
+        return None
+    if raised_by_kind == "respond_contact":
+        contact = (
+            db.query(RespondContact).filter(RespondContact.id == str(raised_by)).first()
+        )
+        ref = _respond_contact_ref(contact)
+        if ref is None:
+            return None
+        return {"kind": "respond_contact", **ref}
+    user = user_cache.get(str(raised_by))
+    ref = _user_ref(user)
+    if ref is None:
+        return None
+    return {
+        "kind": "user",
+        "id": ref["id"],
+        "display_name": ref.get("display_name"),
+        "email": ref.get("email"),
+        "avatar_url": ref.get("avatar_url"),
+    }
+
+
 def _generate_ticket_number(db: Session) -> str:
     """``TCK-YYYY-NNNNNN`` monotonic per year using a simple count + 1.
 
@@ -114,7 +173,11 @@ def _generate_ticket_number(db: Session) -> str:
 
 
 def _visibility_filter(current_user: dict):
-    """Return a SQLAlchemy filter restricting to tickets the user can see."""
+    """Return a SQLAlchemy filter restricting to tickets the user can see.
+
+    raised_by-by-user matches only when ``raised_by_kind='user'`` — a respond
+    contact's id sharing the same string as a user.id is impossible in practice
+    but the discriminator avoids any accidental collision."""
     if _has_view_all(current_user) or _is_admin(current_user):
         return None
     me = str(current_user.get("id") or "")
@@ -124,7 +187,7 @@ def _visibility_filter(current_user: dict):
         and_(TicketWatcher.ticket_id == Ticket.id, TicketWatcher.user_id == me)
     )
     return or_(
-        Ticket.raised_by == me,
+        and_(Ticket.raised_by_kind == "user", Ticket.raised_by == me),
         Ticket.assigned_to == me,
         watcher_match,
     )
@@ -139,7 +202,9 @@ def can_view(db: Session, ticket_id: str, current_user: dict) -> bool:
     me = str(current_user.get("id") or "")
     if not me:
         return False
-    if str(t.raised_by) == me or (t.assigned_to and str(t.assigned_to) == me):
+    if t.raised_by_kind == "user" and t.raised_by and str(t.raised_by) == me:
+        return True
+    if t.assigned_to and str(t.assigned_to) == me:
         return True
     watch = (
         db.query(TicketWatcher)
@@ -207,13 +272,16 @@ def ticket_to_response(
     db: Session, ticket: Ticket, *, hydrate_links: bool = True
 ) -> Dict[str, Any]:
     """Serialize a Ticket SQLAlchemy row to a TicketResponse-compatible dict."""
-    user_ids = [
-        ticket.raised_by,
-        ticket.assigned_to,
-        ticket.responded_by,
-        ticket.resolved_by,
-    ]
-    users = _user_map(db, [str(u) for u in user_ids if u])
+    user_ids: List[str] = []
+    if ticket.raised_by_kind == "user" and ticket.raised_by:
+        user_ids.append(str(ticket.raised_by))
+    if ticket.assigned_to:
+        user_ids.append(str(ticket.assigned_to))
+    if ticket.responded_by:
+        user_ids.append(str(ticket.responded_by))
+    if ticket.resolved_by:
+        user_ids.append(str(ticket.resolved_by))
+    users = _user_map(db, user_ids)
     watchers_rows: List[TicketWatcher] = (
         _watchers_for(db, str(ticket.id)) if hydrate_links else []
     )
@@ -239,6 +307,13 @@ def ticket_to_response(
         and ticket.sla_resolution_due_at < now
     )
 
+    raised_by_user = (
+        _user_ref(users.get(str(ticket.raised_by)))
+        if ticket.raised_by_kind == "user" and ticket.raised_by
+        else None
+    )
+    raised_by_actor = _actor_ref(db, ticket.raised_by, ticket.raised_by_kind, users)
+
     return {
         "id": str(ticket.id),
         "ticket_number": ticket.ticket_number,
@@ -249,8 +324,14 @@ def ticket_to_response(
         "priority": ticket.priority,
         "category": ticket.category,
         "due_date": ticket.due_date,
-        "raised_by": str(ticket.raised_by),
-        "raised_by_user": _user_ref(users.get(str(ticket.raised_by))),
+        "raised_by": str(ticket.raised_by) if ticket.raised_by else None,
+        "raised_by_kind": ticket.raised_by_kind,
+        "raised_by_user": raised_by_user,
+        "raised_by_actor": raised_by_actor,
+        "source_channel": ticket.source_channel,
+        "source_conversation_id": ticket.source_conversation_id,
+        "source_message_id": ticket.source_message_id,
+        "source_space_id": ticket.source_space_id,
         "assigned_to": str(ticket.assigned_to) if ticket.assigned_to else None,
         "assigned_to_user": _user_ref(users.get(str(ticket.assigned_to))) if ticket.assigned_to else None,
         "response_html": ticket.response_html,
@@ -337,6 +418,8 @@ def list_tickets(
         q = q.filter(Ticket.priority == filters["priority"])
     if filters.get("category"):
         q = q.filter(Ticket.category == filters["category"])
+    if filters.get("source_channel"):
+        q = q.filter(Ticket.source_channel == filters["source_channel"])
     if filters.get("due_before"):
         try:
             cutoff = datetime.fromisoformat(filters["due_before"]).date()
@@ -463,6 +546,15 @@ def create_ticket(
 
     db.commit()
     db.refresh(ticket)
+
+    if submitted_now:
+        emit_form_event(
+            db,
+            ENTITY_TYPE,
+            str(ticket.id),
+            "submit",
+            actor_user_id=me,
+        )
     return ticket_to_response(db, ticket)
 
 
@@ -628,7 +720,33 @@ def assign(
     )
     db.commit()
     db.refresh(t)
+    if assignee_id:
+        emit_form_event(
+            db,
+            ENTITY_TYPE,
+            str(t.id),
+            "assigned",
+            actor_user_id=me,
+        )
     return ticket_to_response(db, t)
+
+
+def _ensure_can_edit_response(t: Ticket, current_user: dict) -> str:
+    if not (_is_admin(current_user) or (t.assigned_to and str(t.assigned_to) == str(current_user.get("id") or ""))):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the assignee or an admin can edit the response",
+        )
+    return str(current_user.get("id") or "")
+
+
+def _ensure_can_edit_resolution(t: Ticket, current_user: dict) -> str:
+    if not (_is_admin(current_user) or (t.assigned_to and str(t.assigned_to) == str(current_user.get("id") or ""))):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the assignee or an admin can edit the resolution",
+        )
+    return str(current_user.get("id") or "")
 
 
 def update_response(
@@ -639,14 +757,11 @@ def update_response(
     response_text: Optional[str],
     current_user: dict,
 ) -> Dict[str, Any]:
+    """Save the response payload only — does not flip status or notify the
+    submitter. Use ``update_response_and_reply`` for the full flow."""
     t = _get_or_404(db, ticket_id)
     _ensure_visible(db, t, current_user)
-    if not (_is_admin(current_user) or (t.assigned_to and str(t.assigned_to) == str(current_user.get("id") or ""))):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the assignee or an admin can edit the response",
-        )
-    me = str(current_user.get("id") or "")
+    me = _ensure_can_edit_response(t, current_user)
     now = datetime.utcnow()
     is_first = t.first_response_at is None
 
@@ -660,7 +775,50 @@ def update_response(
             seconds = (now - t.submitted_at).total_seconds()
             t.response_time_hours = Decimal(str(round(seconds / 3600.0, 2)))
 
-    if t.status == "assigned":
+    activities_service.record_system_event(
+        db,
+        ENTITY_TYPE,
+        str(t.id),
+        template="response.updated",
+        payload={"first_response": is_first, "and_reply": False},
+        actor_id=me,
+    )
+    db.commit()
+    db.refresh(t)
+    return ticket_to_response(db, t)
+
+
+def update_response_and_reply(
+    db: Session,
+    *,
+    ticket_id: str,
+    response_html: str,
+    response_text: Optional[str],
+    current_user: dict,
+) -> Dict[str, Any]:
+    """Save the response, flip the ticket from ``assigned`` to ``responded``,
+    notify the submitter via their channel (WhatsApp for respond contacts,
+    in-app + email for system users), and emit the form-SLA ``responded``
+    event."""
+    from app.services import ticket_notification_service
+
+    t = _get_or_404(db, ticket_id)
+    _ensure_visible(db, t, current_user)
+    me = _ensure_can_edit_response(t, current_user)
+    now = datetime.utcnow()
+    is_first = t.first_response_at is None
+
+    t.response_html = response_html
+    t.response_text = response_text or _strip_html(response_html)
+    t.responded_by = me
+    t.responded_at = now
+    if is_first:
+        t.first_response_at = now
+        if t.submitted_at:
+            seconds = (now - t.submitted_at).total_seconds()
+            t.response_time_hours = Decimal(str(round(seconds / 3600.0, 2)))
+
+    if t.status in ("submitted", "assigned"):
         from_status = t.status
         t.status = "responded"
         activities_service.record_system_event(
@@ -668,7 +826,7 @@ def update_response(
             ENTITY_TYPE,
             str(t.id),
             template="status.changed",
-            payload={"from": from_status, "to": "responded", "auto": True},
+            payload={"from": from_status, "to": "responded", "via": "update_and_reply"},
             actor_id=me,
         )
 
@@ -677,11 +835,16 @@ def update_response(
         ENTITY_TYPE,
         str(t.id),
         template="response.updated",
-        payload={"first_response": is_first},
+        payload={"first_response": is_first, "and_reply": True},
         actor_id=me,
     )
     db.commit()
     db.refresh(t)
+
+    ticket_notification_service.notify_submitter_on_status_change(
+        db, ticket=t, kind="responded"
+    )
+    emit_form_event(db, ENTITY_TYPE, str(t.id), "responded", actor_user_id=me)
     return ticket_to_response(db, t)
 
 
@@ -693,14 +856,11 @@ def update_resolution(
     resolution_text: Optional[str],
     current_user: dict,
 ) -> Dict[str, Any]:
+    """Save the resolution payload only — does not flip status or notify the
+    submitter. Use ``update_resolution_and_reply`` for the full flow."""
     t = _get_or_404(db, ticket_id)
     _ensure_visible(db, t, current_user)
-    if not (_is_admin(current_user) or (t.assigned_to and str(t.assigned_to) == str(current_user.get("id") or ""))):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the assignee or an admin can edit the resolution",
-        )
-    me = str(current_user.get("id") or "")
+    me = _ensure_can_edit_resolution(t, current_user)
     now = datetime.utcnow()
 
     t.resolution_html = resolution_html
@@ -711,7 +871,45 @@ def update_resolution(
         seconds = (now - t.submitted_at).total_seconds()
         t.resolution_time_hours = Decimal(str(round(seconds / 3600.0, 2)))
 
-    if t.status in ("responded", "assigned"):
+    activities_service.record_system_event(
+        db,
+        ENTITY_TYPE,
+        str(t.id),
+        template="resolution.updated",
+        payload={"and_reply": False},
+        actor_id=me,
+    )
+    db.commit()
+    db.refresh(t)
+    return ticket_to_response(db, t)
+
+
+def update_resolution_and_reply(
+    db: Session,
+    *,
+    ticket_id: str,
+    resolution_html: str,
+    resolution_text: Optional[str],
+    current_user: dict,
+) -> Dict[str, Any]:
+    """Save the resolution, flip the ticket to ``resolved``, notify the
+    submitter via their channel, and emit the form-SLA ``resolved`` event."""
+    from app.services import ticket_notification_service
+
+    t = _get_or_404(db, ticket_id)
+    _ensure_visible(db, t, current_user)
+    me = _ensure_can_edit_resolution(t, current_user)
+    now = datetime.utcnow()
+
+    t.resolution_html = resolution_html
+    t.resolution_text = resolution_text or _strip_html(resolution_html)
+    t.resolved_by = me
+    t.resolved_at = now
+    if t.submitted_at:
+        seconds = (now - t.submitted_at).total_seconds()
+        t.resolution_time_hours = Decimal(str(round(seconds / 3600.0, 2)))
+
+    if t.status in ("submitted", "assigned", "responded"):
         from_status = t.status
         t.status = "resolved"
         activities_service.record_system_event(
@@ -719,7 +917,7 @@ def update_resolution(
             ENTITY_TYPE,
             str(t.id),
             template="status.changed",
-            payload={"from": from_status, "to": "resolved", "auto": True},
+            payload={"from": from_status, "to": "resolved", "via": "update_and_reply"},
             actor_id=me,
         )
 
@@ -728,12 +926,206 @@ def update_resolution(
         ENTITY_TYPE,
         str(t.id),
         template="resolution.updated",
-        payload={},
+        payload={"and_reply": True},
         actor_id=me,
     )
     db.commit()
     db.refresh(t)
+
+    ticket_notification_service.notify_submitter_on_status_change(
+        db, ticket=t, kind="resolved"
+    )
+    emit_form_event(db, ENTITY_TYPE, str(t.id), "resolved", actor_user_id=me)
     return ticket_to_response(db, t)
+
+
+def create_ticket_from_mcp(
+    db: Session,
+    *,
+    title: str,
+    priority: str,
+    category: str,
+    description_html: str,
+    description_text: str,
+    source_channel: str,
+    raised_by: str,
+    raised_by_kind: str,
+    actor_user_id: Optional[str] = None,
+    source_conversation_id: Optional[str] = None,
+    source_message_id: Optional[str] = None,
+    source_space_id: Optional[str] = None,
+    respond_contact_id: Optional[str] = None,
+) -> Ticket:
+    """Create a DRAFT ticket from the MCP intake endpoint.
+
+    The draft is intentionally minimal: no round-robin assignment, no SLA
+    emit, no notifications. The submitter is expected to open the returned
+    link, review the preview on a real ticket page, and click "Submit" —
+    that path (``submit_ticket_draft``) is what fires the rest of the
+    workflow. This avoids the LLM-confirmation-state-machine fragility
+    altogether by delegating the explicit confirm to a real UI."""
+    if priority not in TICKET_PRIORITIES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"priority must be one of {TICKET_PRIORITIES}",
+        )
+    if category not in TICKET_CATEGORIES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"category must be one of {TICKET_CATEGORIES}",
+        )
+
+    ticket = Ticket(
+        ticket_number=_generate_ticket_number(db),
+        title=title,
+        description_html=description_html,
+        description_text=description_text or _strip_html(description_html),
+        status="draft",
+        priority=priority,
+        category=category,
+        raised_by=raised_by,
+        raised_by_kind=raised_by_kind,
+        source_channel=source_channel,
+        source_conversation_id=source_conversation_id,
+        source_message_id=source_message_id,
+        source_space_id=source_space_id,
+    )
+    db.add(ticket)
+    db.flush()
+
+    if respond_contact_id:
+        db.add(
+            TicketRespondContactLink(
+                ticket_id=str(ticket.id),
+                respond_contact_id=str(respond_contact_id),
+                is_primary=True,
+                created_by=actor_user_id,
+            )
+        )
+
+    activities_service.record_system_event(
+        db,
+        ENTITY_TYPE,
+        str(ticket.id),
+        template="entity.created",
+        payload={
+            "ticket_number": ticket.ticket_number,
+            "status": ticket.status,
+            "source_channel": source_channel,
+            "raised_by_kind": raised_by_kind,
+        },
+        actor_id=actor_user_id,
+    )
+    db.commit()
+    db.refresh(ticket)
+    return ticket
+
+
+def submit_ticket_draft(
+    db: Session, *, ticket_id: str, current_user: dict
+) -> Dict[str, Any]:
+    """Promote a draft ticket to submitted/assigned. Round-robin picks an
+    assignee from the it_support tier-1 team, fires assignee + team
+    notifications, emits the FormSLA ``submit`` event so the SLA timer
+    starts. No-op if the ticket is not in ``draft`` status."""
+    from app.models.access import AccessAgent
+    from app.services import ticket_notification_service
+    from app.services.user_service import AccessAgentService
+
+    t = _get_or_404(db, ticket_id)
+    _ensure_visible(db, t, current_user)
+    if t.status != "draft":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ticket is not a draft (status={t.status}); cannot submit.",
+        )
+
+    me = str(current_user.get("id") or "") or None
+    now = datetime.utcnow()
+
+    agent_svc = AccessAgentService(db)
+    agent = db.query(AccessAgent).filter(AccessAgent.code == "it_support").first()
+    assignee_id: Optional[str] = None
+    team_id: Optional[str] = None
+    if agent:
+        team_id = agent_svc.get_team_id_by_tier(
+            str(agent.id), 1, team_set_code="it_admin"
+        )
+        if team_id:
+            assignee = agent_svc.get_next_assignee(str(agent.id), team_id)
+            if assignee:
+                assignee_id = assignee["id"]
+
+    t.submitted_at = now
+    t.sla_response_due_at = now + timedelta(hours=DEFAULT_RESPONSE_SLA_HOURS)
+    t.sla_resolution_due_at = now + timedelta(hours=DEFAULT_RESOLUTION_SLA_HOURS)
+    if assignee_id:
+        t.assigned_to = assignee_id
+        t.assigned_at = now
+        t.status = "assigned"
+    else:
+        t.status = "submitted"
+
+    activities_service.record_system_event(
+        db,
+        ENTITY_TYPE,
+        str(t.id),
+        template="status.changed",
+        payload={"from": "draft", "to": t.status, "via": "submit_draft"},
+        actor_id=me,
+    )
+    if assignee_id:
+        activities_service.record_system_event(
+            db,
+            ENTITY_TYPE,
+            str(t.id),
+            template="assignee.changed",
+            payload={"from": None, "to": assignee_id, "via": "round_robin"},
+            actor_id=me,
+        )
+
+    db.commit()
+    db.refresh(t)
+
+    if assignee_id:
+        ticket_notification_service.notify_assignee_and_team_on_create(
+            db, ticket=t, assignee_id=assignee_id, team_id=team_id
+        )
+
+    primary_link = (
+        db.query(TicketRespondContactLink)
+        .filter(TicketRespondContactLink.ticket_id == str(t.id))
+        .order_by(TicketRespondContactLink.is_primary.desc())
+        .first()
+    )
+    contact_id = (
+        str(primary_link.respond_contact_id) if primary_link else None
+    )
+    emit_form_event(
+        db,
+        ENTITY_TYPE,
+        str(t.id),
+        "submit",
+        contact_id=contact_id,
+        actor_user_id=me,
+    )
+    return ticket_to_response(db, t)
+
+
+def cancel_ticket_draft(
+    db: Session, *, ticket_id: str, current_user: dict
+) -> None:
+    """Hard-delete a draft ticket. Only the raiser, the assignee, or an
+    admin can cancel."""
+    t = _get_or_404(db, ticket_id)
+    _ensure_visible(db, t, current_user)
+    if t.status != "draft":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ticket is not a draft (status={t.status}); cannot cancel.",
+        )
+    db.delete(t)
+    db.commit()
 
 
 def add_watchers(

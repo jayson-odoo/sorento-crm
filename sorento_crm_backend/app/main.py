@@ -184,6 +184,29 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Failed to sync MCP tool catalog at startup: {str(e)}", exc_info=True)
 
+    try:
+        from app.database import SessionLocal
+        from app.rbac.permission_registry import sync_permissions
+        _db = SessionLocal()
+        try:
+            created = sync_permissions(_db)
+            logging.info("RBAC permissions synced at startup: added=%d", created)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Failed to sync RBAC permissions at startup: {str(e)}", exc_info=True)
+
+    try:
+        from app.database import SessionLocal
+        from app.services import it_support_bootstrap
+        _db = SessionLocal()
+        try:
+            it_support_bootstrap.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"IT support bootstrap failed at startup: {str(e)}", exc_info=True)
+
     # AI assistant wishlist clustering — register the callable so ops can wire
     # it to the existing background scheduler (or cron). We do not schedule it
     # by default to avoid surprise traffic on environments without an OpenAI

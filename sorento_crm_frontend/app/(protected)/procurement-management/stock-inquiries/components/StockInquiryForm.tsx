@@ -348,9 +348,21 @@ export default function StockInquiryForm({
                   <FormControl>
                     <Input
                       className="h-9"
+                      type="number"
+                      min={0}
+                      step="any"
+                      inputMode="decimal"
                       placeholder="Quantity"
                       {...field}
                       value={field.value ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '' || Number(v) < 0) {
+                          field.onChange(v === '' ? '' : '0');
+                          return;
+                        }
+                        field.onChange(v);
+                      }}
                     />
                   </FormControl>
                   <FormMessage />

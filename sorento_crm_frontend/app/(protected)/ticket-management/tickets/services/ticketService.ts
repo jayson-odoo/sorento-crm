@@ -136,6 +136,44 @@ export async function updateTicketResolution(
   return jsonOrThrow<Ticket>(res, 'Failed to save resolution');
 }
 
+/** Save response + flip status to ``responded`` + notify submitter. */
+export async function updateTicketResponseAndReply(
+  id: string,
+  data: TicketResponseUpdateInput,
+): Promise<Ticket> {
+  const res = await apiFetch(`${BASE}/${id}/response/update-and-reply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return jsonOrThrow<Ticket>(res, 'Failed to send response');
+}
+
+/** Submit a draft → assigned (round-robin) + SLA + notifications. */
+export async function submitTicketDraft(id: string): Promise<Ticket> {
+  const res = await apiFetch(`${BASE}/${id}/submit-draft`, { method: 'POST' });
+  return jsonOrThrow<Ticket>(res, 'Failed to submit draft');
+}
+
+/** Hard-delete a draft. */
+export async function cancelTicketDraft(id: string): Promise<void> {
+  const res = await apiFetch(`${BASE}/${id}/cancel-draft`, { method: 'POST' });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to cancel draft'));
+}
+
+/** Save resolution + flip status to ``resolved`` + notify submitter. */
+export async function updateTicketResolutionAndReply(
+  id: string,
+  data: TicketResolutionUpdateInput,
+): Promise<Ticket> {
+  const res = await apiFetch(`${BASE}/${id}/resolution/update-and-reply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return jsonOrThrow<Ticket>(res, 'Failed to send resolution');
+}
+
 export async function addTicketWatchers(
   id: string,
   data: TicketWatchersUpdateInput,
