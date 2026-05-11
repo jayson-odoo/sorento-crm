@@ -1377,16 +1377,23 @@ class ProductAttachmentService:
         sort_dir: str = "asc",
         product_id: Optional[str] = None,
         attachment_id: Optional[str] = None,
-        user_type: Optional[str] = None
+        user_type: Optional[str] = None,
+        contact_access_codes: Optional[list[str]] = None,
     ):
-        """List product attachments with filtering and pagination."""
+        """List product attachments with filtering and pagination.
+
+        When *contact_access_codes* is supplied, restricts to attachments whose
+        ``access_levels`` overlaps the contact's codes. ``contact_access_codes=[]``
+        returns nothing (contact has no assigned access types).
+        """
         from sqlalchemy.orm import joinedload
-        
+        from sqlalchemy import text as _sa_text
+
         q = self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
         )
-        
+
         if product_id:
             resolved_product_id = self._resolve_product_identifier(product_id)
             if not resolved_product_id:
@@ -1396,12 +1403,21 @@ class ProductAttachmentService:
                     "empty": True,
                 }
             q = q.filter(ProductAttachment.product_id == resolved_product_id)
-        
+
         if attachment_id:
             q = q.filter(ProductAttachment.attachment_id == attachment_id)
-        
+
         if user_type:
             q = q.filter(ProductAttachment.attachment.has(Attachment.access_levels.contains([user_type])))
+        if contact_access_codes is not None:
+            if not contact_access_codes:
+                q = q.filter(_sa_text("false"))
+            else:
+                q = q.filter(
+                    ProductAttachment.attachment.has(
+                        Attachment.access_levels.op("?|")(contact_access_codes)
+                    )
+                )
         
         sort_map = {
             "created_at": ProductAttachment.created_at,
@@ -1489,9 +1505,18 @@ class ProductAttachmentService:
         self.db.commit()
         return {"message": "Product attachment deleted successfully"}
     
-    def get_product_attachments_by_product(self, product_id: str, user_type: Optional[str] = None):
-        """Get all non-deleted attachments for a specific product UUID or product code."""
+    def get_product_attachments_by_product(
+        self,
+        product_id: str,
+        user_type: Optional[str] = None,
+        contact_access_codes: Optional[list[str]] = None,
+    ):
+        """Get all non-deleted attachments for a specific product UUID or product code.
+
+        ``contact_access_codes=[]`` returns nothing (no overlap with anything).
+        """
         from sqlalchemy.orm import joinedload
+        from sqlalchemy import text as _sa_text
         resolved_product_id = self._resolve_product_identifier(product_id)
         if not resolved_product_id:
             return []
@@ -1507,4 +1532,13 @@ class ProductAttachmentService:
         )
         if user_type:
             q = q.filter(ProductAttachment.attachment.has(Attachment.access_levels.contains([user_type])))
+        if contact_access_codes is not None:
+            if not contact_access_codes:
+                q = q.filter(_sa_text("false"))
+            else:
+                q = q.filter(
+                    ProductAttachment.attachment.has(
+                        Attachment.access_levels.op("?|")(contact_access_codes)
+                    )
+                )
         return q.all()

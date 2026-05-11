@@ -1,7 +1,8 @@
 """
 External API for n8n / Respond.io: create or update internal respond contact by phone.
 When a contact is created or updated in Respond.io, n8n can call this endpoint to sync
-phone_number, name, and user_type into our respond_contacts table.
+phone_number, name, and respond_io_id into our respond_contacts table. Access types are
+managed in the CRM (M2M via respond_contact_access_types) and are NOT supplied by Respond.
 
 Auth: X-API-Key header (get_external_api_user).
 """
@@ -33,27 +34,16 @@ async def sync_respond_contact(
     Create or update an internal respond contact by phone number.
 
     Call this from n8n when a contact is created or updated in Respond.io. The contact
-    is matched by phone_number; if found, name and user_type are updated (if provided);
-    otherwise a new contact is created.
+    is matched by phone_number; if found, name fields are updated (if provided);
+    otherwise a new contact is created. Access types are CRM-managed and not synced.
 
     **Auth:** X-API-Key header (external API key).
 
     **Body:**
     - phone_number (required): E.164 or similar, e.g. "+60166753328"
     - name (optional): Display name
-    - user_type (optional): e.g. "internal" / "external"
 
-    **Example (n8n):**
-    ```json
-    {
-      "id": 386900418,
-      "phone_number": "+60166753328",
-      "name": "John Doe",
-      "user_type": "internal"
-    }
-    ```
-
-    **Returns:** Contact id, phone_number, name, user_type, respond_io_id, and action ("created" | "updated").
+    **Returns:** Contact id, phone_number, name, respond_io_id, and action ("created" | "updated").
     """
     phone = (payload.phone_number or payload.phone or "").strip()
     if not phone:
@@ -79,8 +69,6 @@ async def sync_respond_contact(
             update_dict["first_name"] = (payload.firstName or "").strip() or None
         if payload.lastName is not None:
             update_dict["last_name"] = (payload.lastName or "").strip() or None
-        if payload.user_type is not None:
-            update_dict["user_type"] = payload.user_type
         if respond_io_id is not None:
             update_dict["respond_io_id"] = respond_io_id
         if not update_dict:
@@ -90,7 +78,6 @@ async def sync_respond_contact(
                 name=getattr(existing, "name", None),
                 first_name=getattr(existing, "first_name", None),
                 last_name=getattr(existing, "last_name", None),
-                user_type=getattr(existing, "user_type", None),
                 respond_io_id=getattr(existing, "respond_io_id", None),
                 action="updated",
             )
@@ -101,7 +88,6 @@ async def sync_respond_contact(
             name=getattr(contact, "name", None),
             first_name=getattr(contact, "first_name", None),
             last_name=getattr(contact, "last_name", None),
-            user_type=getattr(contact, "user_type", None),
             respond_io_id=getattr(contact, "respond_io_id", None),
             action="updated",
         )
@@ -109,7 +95,6 @@ async def sync_respond_contact(
         create_kwargs: dict = {
             "phone_number": phone,
             "name": name,
-            "user_type": payload.user_type,
             "respond_io_id": respond_io_id,
         }
         if payload.firstName is not None:
@@ -124,7 +109,6 @@ async def sync_respond_contact(
             name=getattr(contact, "name", None),
             first_name=getattr(contact, "first_name", None),
             last_name=getattr(contact, "last_name", None),
-            user_type=getattr(contact, "user_type", None),
             respond_io_id=getattr(contact, "respond_io_id", None),
             action="created",
         )

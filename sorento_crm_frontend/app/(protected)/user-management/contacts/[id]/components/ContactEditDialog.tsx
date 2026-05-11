@@ -13,6 +13,7 @@ import {
   AlertTitle,
 } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -33,6 +34,7 @@ import { Input } from '@/components/ui/input';
 import { LoaderCircleIcon } from 'lucide-react';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { listRespondWorkspaceSelect } from '@/app/(protected)/system-management/respond-workspaces/services/respondWorkspaceService';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import type { RespondContact } from '../../types/contact.types';
 import {
   ContactEditSchema,
@@ -51,14 +53,15 @@ export default function ContactEditDialog({
   contact,
 }: ContactEditDialogProps) {
   const queryClient = useQueryClient();
+  const { data: accessTypes = [] } = useContactAccessTypes();
 
   const form = useForm<ContactEditSchemaType>({
     resolver: zodResolver(ContactEditSchema),
     defaultValues: {
       phone_number: contact?.phone_number || '',
       name: contact?.name || '',
-      user_type: contact?.user_type || '',
       workspace_id: contact?.workspace_id || '',
+      access_type_codes: contact?.access_type_codes ?? [],
     },
     mode: 'onSubmit',
   });
@@ -68,8 +71,8 @@ export default function ContactEditDialog({
       form.reset({
         phone_number: contact.phone_number || '',
         name: contact.name || '',
-        user_type: contact.user_type || '',
         workspace_id: contact.workspace_id || '',
+        access_type_codes: contact.access_type_codes ?? [],
       });
     }
   }, [open, contact, form]);
@@ -102,8 +105,8 @@ export default function ContactEditDialog({
         body: JSON.stringify({
           phone_number: values.phone_number,
           name: values.name || null,
-          user_type: values.user_type || null,
           workspace_id: values.workspace_id ? values.workspace_id : null,
+          access_type_codes: values.access_type_codes ?? [],
         }),
       });
 
@@ -216,26 +219,52 @@ export default function ContactEditDialog({
 
             <FormField
               control={form.control}
-              name="user_type"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>User Type</FormLabel>
-                  <FormControl>
-                    <Input
-                      {...field}
-                      id="user_type"
-                      type="text"
-                      placeholder="User type (optional)"
-                      value={field.value || ''}
-                      disabled={mutation.isPending}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Optional: Synced from Respond.io or set manually
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
+              name="access_type_codes"
+              render={({ field }) => {
+                const selected = new Set(field.value ?? []);
+                return (
+                  <FormItem>
+                    <FormLabel>Access types</FormLabel>
+                    <FormControl>
+                      <div className="flex flex-wrap gap-3">
+                        {accessTypes.length === 0 ? (
+                          <span className="text-xs text-muted-foreground">
+                            No access types configured. Add some under User Management → Contact Access Types.
+                          </span>
+                        ) : (
+                          accessTypes.map((opt) => {
+                            const id = `edit-access-${opt.code}`;
+                            return (
+                              <label
+                                key={opt.code}
+                                htmlFor={id}
+                                className="flex items-center gap-2 text-sm border rounded-md px-2 py-1 cursor-pointer hover:bg-accent"
+                              >
+                                <Checkbox
+                                  id={id}
+                                  checked={selected.has(opt.code)}
+                                  onCheckedChange={(v) => {
+                                    const next = new Set(selected);
+                                    if (v === true) next.add(opt.code);
+                                    else next.delete(opt.code);
+                                    field.onChange(Array.from(next));
+                                  }}
+                                  disabled={mutation.isPending}
+                                />
+                                <span>{opt.name}</span>
+                              </label>
+                            );
+                          })
+                        )}
+                      </div>
+                    </FormControl>
+                    <FormDescription>
+                      Pick one or more access types. Promotions and attachments are visible to this contact when their access levels overlap.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }}
             />
 
             <FormField

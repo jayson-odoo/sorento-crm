@@ -86,24 +86,6 @@ def _respond_io_id_from_contact(contact: dict) -> str | None:
     return str(cid).strip() or None
 
 
-def _user_type_from_contact(contact: dict) -> str | None:
-    """Extract user_type from custom_fields where name is user_type."""
-    custom = (
-        contact.get("custom_fields")
-        or contact.get("customFields")
-        or contact.get("data", {}).get("custom_fields")
-        or contact.get("data", {}).get("customFields")
-        or []
-    )
-    if not isinstance(custom, list):
-        return None
-    for f in custom:
-        if str(f.get("name", "")).strip().lower() == "user_type":
-            v = f.get("value")
-            return str(v).strip() if v is not None else None
-    return None
-
-
 def _contact_identifier(contact: dict, prefer_phone: bool = True) -> str:
     """API identifier for contact. Prefer phone: when available (avoids 403 on update with id:)."""
     phone = _phone_from_contact(contact)
@@ -247,14 +229,12 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
 
             list_fn, list_ln = _first_last_from_contact(contact)
             list_name = _name_from_contact(contact)
-            list_user_type = _user_type_from_contact(contact)
             list_respond_io_id = _respond_io_id_from_contact(contact)
 
             # parsed (from single GET) wins; list values backfill anything still missing.
             first_name = parsed.get("first_name") if parsed.get("first_name") is not None else list_fn
             last_name = parsed.get("last_name") if parsed.get("last_name") is not None else list_ln
             name = parsed.get("name") if parsed.get("name") is not None else list_name
-            user_type = parsed.get("user_type") if "user_type" in parsed else list_user_type
             respond_io_id = parsed.get("respond_io_id") if parsed.get("respond_io_id") is not None else list_respond_io_id
 
             # Upsert local respond_contacts
@@ -263,7 +243,6 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
                 local_id = existing.id
                 if (
                     name is not None
-                    or user_type is not None
                     or respond_io_id is not None
                     or first_name is not None
                     or last_name is not None
@@ -274,8 +253,6 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
                         setattr(existing, "first_name", first_name)
                     if last_name is not None:
                         setattr(existing, "last_name", last_name)
-                    if user_type is not None:
-                        setattr(existing, "user_type", user_type)
                     if respond_io_id is not None:
                         setattr(existing, "respond_io_id", respond_io_id)
                     db.commit()
@@ -287,7 +264,6 @@ def run_respond_contacts_sync(db: Session, task: ScheduledTask) -> dict[str, Any
                         name=name,
                         first_name=first_name,
                         last_name=last_name,
-                        user_type=user_type,
                         respond_io_id=respond_io_id,
                     )
                 )

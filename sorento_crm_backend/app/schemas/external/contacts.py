@@ -12,7 +12,6 @@ class RespondContactSyncRequest(BaseModel):
     name: Optional[str] = None
     firstName: Optional[str] = None
     lastName: Optional[str] = None
-    user_type: Optional[str] = None
     email: Optional[str] = None
     language: Optional[str] = None
     countryCode: Optional[str] = None
@@ -25,7 +24,6 @@ class RespondContactSyncResponse(BaseModel):
     name: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    user_type: Optional[str] = None
     respond_io_id: Optional[str] = None
     action: str
 

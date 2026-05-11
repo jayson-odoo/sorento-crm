@@ -46,35 +46,39 @@ class ContactAccessType(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-    respond_mappings = relationship(
-        "RespondAccessTypeMapping",
-        back_populates="access_type",
-        cascade="all, delete-orphan",
-    )
-
     __table_args__ = (
         Index("ix_contact_access_types_is_active", "is_active"),
     )
 
 
-class RespondAccessTypeMapping(Base):
-    """Maps Respond.io raw values (e.g. custom field) to a configured contact_access_type code."""
-    __tablename__ = "respond_access_type_mappings"
-
-    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    source_key = Column(String(255), nullable=False)  # Raw value from Respond (e.g. "Dealer", "End User")
-    access_type_code = Column(String(50), ForeignKey("contact_access_types.code", ondelete="CASCADE"), nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
-
-    access_type = relationship("ContactAccessType", back_populates="respond_mappings")
-
-    __table_args__ = (
-        Index("ix_respond_access_type_mappings_source_key", "source_key"),
-        Index("ix_respond_access_type_mappings_access_type_code", "access_type_code"),
-        Index("uq_respond_access_type_mappings_source_key", "source_key", unique=True),
-    )
+# Many-to-many: a respond contact can have multiple access types. Replaces the
+# legacy single-valued respond_contacts.access_type_code FK so promotion /
+# attachment visibility can be evaluated as an overlap between the contact's
+# assigned codes and the resource's access_levels JSONB array.
+respond_contact_access_types = Table(
+    "respond_contact_access_types",
+    Base.metadata,
+    Column(
+        "contact_id",
+        Text,
+        ForeignKey("respond_contacts.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "access_type_code",
+        String(50),
+        ForeignKey("contact_access_types.code", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "created_at",
+        DateTime(timezone=False),
+        server_default=func.now(),
+        nullable=False,
+    ),
+    Index("ix_respond_contact_access_types_contact_id", "contact_id"),
+    Index("ix_respond_contact_access_types_access_type_code", "access_type_code"),
+)
 
 
 class RespondContact(Base):
@@ -85,8 +89,6 @@ class RespondContact(Base):
     name = Column(Text, nullable=True)
     first_name = Column(Text, nullable=True)
     last_name = Column(Text, nullable=True)
-    user_type = Column(Text, nullable=True)  # Raw value from Respond; kept for display/sync
-    access_type_code = Column(String(50), ForeignKey("contact_access_types.code", ondelete="SET NULL"), nullable=True)  # Resolved catalog code (one per contact)
     respond_io_id = Column(Text, nullable=True)  # Respond.io contact id for inbox URL
     workspace_id = Column(UUID(as_uuid=False), ForeignKey("respond_workspaces.id", ondelete="SET NULL"), nullable=True)
     # Per-conversation variables collected from n8n turns: {"turns":[{ts,inquiry_type,vars}], "merged":{<inquiry_type>:{...}}}.
@@ -101,13 +103,19 @@ class RespondContact(Base):
         back_populates="contact",
         cascade="all, delete-orphan",
     )
-    access_type = relationship("ContactAccessType", foreign_keys=[access_type_code])
+    # Many-to-many: contact ↔ access types catalog. Source of truth for which
+    # access codes apply to this contact (used by overlap filters on promotion /
+    # attachment visibility). Configurable per contact via the FE; no longer
+    # synced from Respond.io.
+    access_types = relationship(
+        "ContactAccessType",
+        secondary=respond_contact_access_types,
+        order_by="ContactAccessType.sort_order, ContactAccessType.code",
+    )
     workspace = relationship("RespondWorkspace", back_populates="respond_contacts")
 
     __table_args__ = (
         Index("ix_respond_contacts_phone_number", "phone_number"),
-        Index("ix_respond_contacts_user_type", "user_type"),
-        Index("ix_respond_contacts_access_type_code", "access_type_code"),
         Index("ix_respond_contacts_respond_io_id", "respond_io_id"),
         Index("ix_respond_contacts_workspace_id", "workspace_id"),
     )

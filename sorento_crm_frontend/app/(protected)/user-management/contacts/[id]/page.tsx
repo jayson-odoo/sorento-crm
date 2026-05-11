@@ -20,6 +20,7 @@ import {
   ToolbarTitle,
 } from '@/components/common/toolbar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Info, Pencil, RefreshCw, Trash2 } from 'lucide-react';
@@ -233,8 +234,18 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                 </p>
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">User Type</p>
-                <p className="font-medium">{contact.user_type || <span className="text-muted-foreground">—</span>}</p>
+                <p className="text-sm text-muted-foreground">Access types</p>
+                {contact.access_types && contact.access_types.length > 0 ? (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {contact.access_types.map((t) => (
+                      <Badge key={t.code} variant="secondary" className="font-normal">
+                        {t.name}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="font-medium text-muted-foreground">None assigned</p>
+                )}
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Respond.io ID</p>

@@ -33,6 +33,15 @@ TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
     "crm_forms_purchase_requests_list": ("contact_id", "space_id"),
     "crm_forms_purchase_requests_get": ("contact_id", "space_id"),
     "crm_forms_management_forms_get": ("contact_id", "space_id"),
+    # Promotion / attachment access-control: server resolves the contact's M2M
+    # access types from these and applies an overlap filter against the
+    # resource's access_levels JSONB array. n8n must always supply both.
+    "crm_marketing_promotions_list": ("contact_id", "space_id"),
+    "crm_marketing_promotions_get": ("contact_id", "space_id"),
+    "crm_marketing_promotion_attachments_list": ("contact_id", "space_id"),
+    "crm_marketing_promotion_attachments_by_promotion": ("contact_id", "space_id"),
+    "crm_master_product_attachments_list": ("contact_id", "space_id"),
+    "crm_master_product_attachments_by_product": ("contact_id", "space_id"),
 }
 
 TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {

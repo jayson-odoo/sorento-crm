@@ -5,7 +5,6 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { Plus, Pencil, Trash2, Columns3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -29,28 +28,15 @@ import {
   createContactAccessType,
   updateContactAccessType,
   deleteContactAccessType,
-  getAllRespondMappings,
-  createRespondMapping,
-  updateRespondMapping,
-  deleteRespondMapping,
   type ContactAccessTypeAdmin,
-  type RespondAccessTypeMappingAdmin,
 } from '../services/contactAccessTypeService';
-import { useContactAccessTypes } from '../hooks/useContactAccessTypes';
 
 export default function ContactAccessTypesAdmin() {
   const queryClient = useQueryClient();
-  const { data: options = [] } = useContactAccessTypes();
-  const [catalogTab, setCatalogTab] = useState<'catalog' | 'mappings'>('catalog');
 
   const { data: types = [], isLoading: typesLoading } = useQuery({
     queryKey: ['contact-access-types-admin'],
     queryFn: getAllContactAccessTypes,
-  });
-
-  const { data: mappings = [], isLoading: mappingsLoading } = useQuery({
-    queryKey: ['respond-access-type-mappings'],
-    queryFn: getAllRespondMappings,
   });
 
   const createTypeMutation = useMutation({
@@ -90,40 +76,6 @@ export default function ContactAccessTypesAdmin() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const createMappingMutation = useMutation({
-    mutationFn: createRespondMapping,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['respond-access-type-mappings'] });
-      setMappingDialogOpen(false);
-      resetMappingForm();
-      toast.success('Mapping created');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const updateMappingMutation = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Parameters<typeof updateRespondMapping>[1] }) =>
-      updateRespondMapping(id, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['respond-access-type-mappings'] });
-      setMappingDialogOpen(false);
-      setEditingMapping(null);
-      resetMappingForm();
-      toast.success('Mapping updated');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const deleteMappingMutation = useMutation({
-    mutationFn: deleteRespondMapping,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['respond-access-type-mappings'] });
-      setDeleteMappingId(null);
-      toast.success('Mapping deleted');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
   const [editingType, setEditingType] = useState<ContactAccessTypeAdmin | null>(null);
   const [deleteTypeCode, setDeleteTypeCode] = useState<string | null>(null);
@@ -135,15 +87,6 @@ export default function ContactAccessTypesAdmin() {
     sort_order: '' as string | number,
   });
 
-  const [mappingDialogOpen, setMappingDialogOpen] = useState(false);
-  const [editingMapping, setEditingMapping] = useState<RespondAccessTypeMappingAdmin | null>(null);
-  const [deleteMappingId, setDeleteMappingId] = useState<string | null>(null);
-  const [mappingForm, setMappingForm] = useState({
-    source_key: '',
-    access_type_code: '',
-    is_active: true,
-  });
-
   function resetTypeForm() {
     setTypeForm({
       code: '',
@@ -153,15 +96,6 @@ export default function ContactAccessTypesAdmin() {
       sort_order: '',
     });
     setEditingType(null);
-  }
-
-  function resetMappingForm() {
-    setMappingForm({
-      source_key: '',
-      access_type_code: options[0]?.code ?? '',
-      is_active: true,
-    });
-    setEditingMapping(null);
   }
 
   function openCreateType() {
@@ -207,49 +141,6 @@ export default function ContactAccessTypesAdmin() {
         description: typeForm.description.trim() || null,
         is_active: typeForm.is_active,
         sort_order: sort ?? null,
-      });
-    }
-  }
-
-  function openCreateMapping() {
-    resetMappingForm();
-    const firstCode = types[0]?.code ?? options[0]?.code ?? '';
-    setMappingForm((prev) => ({
-      ...prev,
-      access_type_code: firstCode,
-    }));
-    setMappingDialogOpen(true);
-  }
-
-  function openEditMapping(row: RespondAccessTypeMappingAdmin) {
-    setEditingMapping(row);
-    setMappingForm({
-      source_key: row.source_key,
-      access_type_code: row.access_type_code,
-      is_active: row.is_active,
-    });
-    setMappingDialogOpen(true);
-  }
-
-  function saveMapping() {
-    if (editingMapping) {
-      updateMappingMutation.mutate({
-        id: editingMapping.id,
-        body: {
-          source_key: mappingForm.source_key.trim(),
-          access_type_code: mappingForm.access_type_code,
-          is_active: mappingForm.is_active,
-        },
-      });
-    } else {
-      if (!mappingForm.source_key.trim() || !mappingForm.access_type_code) {
-        toast.error('Respond value and access type are required');
-        return;
-      }
-      createMappingMutation.mutate({
-        source_key: mappingForm.source_key.trim(),
-        access_type_code: mappingForm.access_type_code,
-        is_active: mappingForm.is_active,
       });
     }
   }
@@ -345,161 +236,39 @@ export default function ContactAccessTypesAdmin() {
     getCoreRowModel: getCoreRowModel(),
   });
 
-  const mappingColumns = useMemo<ColumnDef<RespondAccessTypeMappingAdmin>[]>(
-    () => [
-      {
-        id: 'source_key',
-        accessorFn: (row) => row.source_key,
-        header: ({ column }) => <DataGridColumnHeader title="Respond value (source_key)" column={column} />,
-        size: 260,
-        enableSorting: false,
-        meta: {
-          headerTitle: 'Respond value (source_key)',
-          skeleton: <Skeleton className="h-4 w-44 font-mono" />,
-        },
-        cell: ({ row }) => <span className="font-mono">{row.original.source_key}</span>,
-      },
-      {
-        id: 'access_type_code',
-        accessorFn: (row) => row.access_type_code,
-        header: ({ column }) => <DataGridColumnHeader title="Access type" column={column} />,
-        size: 200,
-        enableSorting: false,
-        meta: { headerTitle: 'Access type', skeleton: <Skeleton className="h-4 w-28" /> },
-        cell: ({ row }) => <span>{row.original.access_type_code}</span>,
-      },
-      {
-        id: 'is_active',
-        accessorFn: (row) => row.is_active,
-        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
-        size: 140,
-        enableSorting: false,
-        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-6 w-20" /> },
-        cell: ({ row }) =>
-          row.original.is_active ? (
-            <Badge variant="primary">Active</Badge>
-          ) : (
-            <Badge variant="secondary">Inactive</Badge>
-          ),
-      },
-      {
-        id: 'actions',
-        header: '',
-        size: 140,
-        enableSorting: false,
-        enableHiding: false,
-        enableResizing: false,
-        cell: ({ row }) => (
-          <div className="flex gap-2">
-            <Button variant="ghost" size="icon" onClick={() => openEditMapping(row.original)} aria-label="Edit">
-              <Pencil className="size-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setDeleteMappingId(row.original.id)}
-              aria-label="Delete"
-            >
-              <Trash2 className="size-4 text-destructive" />
-            </Button>
-          </div>
-        ),
-      },
-    ],
-    [],
-  );
-
-  const mappingTable = useReactTable({
-    columns: mappingColumns,
-    data: mappings,
-    getRowId: (row) => row.id,
-    state: {
-      pagination: { pageIndex: 0, pageSize: 10 },
-    },
-    getCoreRowModel: getCoreRowModel(),
-  });
-
   return (
     <div className="space-y-6">
-      <Tabs value={catalogTab} onValueChange={(v) => setCatalogTab(v as 'catalog' | 'mappings')}>
-        <TabsList>
-          <TabsTrigger value="catalog">Access type catalog</TabsTrigger>
-          <TabsTrigger value="mappings">Respond mappings</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="catalog" className="mt-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle>Contact access types</CardTitle>
-              <div className="flex items-center gap-2">
-                <DataGridColumnVisibility
-                  table={typeTable}
-                  trigger={
-                    <Button variant="outline" size="sm" className="gap-1">
-                      <Columns3 className="size-4" />
-                      Columns
-                    </Button>
-                  }
-                />
-                <Button onClick={openCreateType}>
-                  <Plus className="size-4 mr-2" />
-                  Add type
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle>Contact access types</CardTitle>
+          <div className="flex items-center gap-2">
+            <DataGridColumnVisibility
+              table={typeTable}
+              trigger={
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Columns3 className="size-4" />
+                  Columns
                 </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <DataGrid
-                table={typeTable}
-                recordCount={types.length}
-                isLoading={typesLoading}
-                emptyMessage="No access types. Add one to get started."
-                tableLayout={{ width: 'fixed' }}
-              >
-                <DataGridTable />
-              </DataGrid>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="mappings" className="mt-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle>Respond value → Access type</CardTitle>
-              <div className="flex items-center gap-2">
-                <DataGridColumnVisibility
-                  table={mappingTable}
-                  trigger={
-                    <Button variant="outline" size="sm" className="gap-1">
-                      <Columns3 className="size-4" />
-                      Columns
-                    </Button>
-                  }
-                />
-                <Button onClick={openCreateMapping} disabled={types.length === 0}>
-                  <Plus className="size-4 mr-2" />
-                  Add mapping
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {types.length === 0 && (
-                <p className="text-sm text-muted-foreground mb-4">
-                  Add at least one access type in the catalog before creating mappings.
-                </p>
-              )}
-              <DataGrid
-                table={mappingTable}
-                recordCount={mappings.length}
-                isLoading={mappingsLoading}
-                emptyMessage="No mappings. Add one to map Respond.io values to access types."
-                tableLayout={{ width: 'fixed' }}
-              >
-                <DataGridTable />
-              </DataGrid>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+              }
+            />
+            <Button onClick={openCreateType}>
+              <Plus className="size-4 mr-2" />
+              Add type
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <DataGrid
+            table={typeTable}
+            recordCount={types.length}
+            isLoading={typesLoading}
+            emptyMessage="No access types. Add one to get started."
+            tableLayout={{ width: 'fixed' }}
+          >
+            <DataGridTable />
+          </DataGrid>
+        </CardContent>
+      </Card>
 
       {/* Type create/edit dialog */}
       <Dialog open={typeDialogOpen} onOpenChange={setTypeDialogOpen}>
@@ -582,72 +351,6 @@ export default function ContactAccessTypesAdmin() {
         </DialogContent>
       </Dialog>
 
-      {/* Mapping create/edit dialog */}
-      <Dialog open={mappingDialogOpen} onOpenChange={setMappingDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editingMapping ? 'Edit mapping' : 'Add mapping'}</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label htmlFor="map-source">Respond value (source_key)</Label>
-              <Input
-                id="map-source"
-                value={mappingForm.source_key}
-                onChange={(e) => setMappingForm((f) => ({ ...f, source_key: e.target.value }))}
-                placeholder="e.g. Dealer or end_user"
-              />
-              <p className="text-xs text-muted-foreground">
-                Raw value from Respond.io (e.g. custom field) that should map to the access type below.
-              </p>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="map-code">Access type</Label>
-              <select
-                id="map-code"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
-                value={mappingForm.access_type_code}
-                onChange={(e) =>
-                  setMappingForm((f) => ({ ...f, access_type_code: e.target.value }))
-                }
-              >
-                {(types.length > 0 ? types : options.map((o) => ({ code: o.code, name: o.name }))).map(
-                  (o) => (
-                    <option key={o.code} value={o.code}>
-                      {o.name} ({o.code})
-                    </option>
-                  )
-                )}
-              </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="map-active"
-                checked={mappingForm.is_active}
-                onCheckedChange={(v) => setMappingForm((f) => ({ ...f, is_active: v === true }))}
-              />
-              <Label htmlFor="map-active">Active</Label>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setMappingDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={saveMapping}
-              disabled={
-                createMappingMutation.isPending ||
-                updateMappingMutation.isPending ||
-                !mappingForm.source_key.trim() ||
-                !mappingForm.access_type_code
-              }
-            >
-              {editingMapping ? 'Update' : 'Create'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Delete type confirmation */}
       <Dialog open={!!deleteTypeCode} onOpenChange={(open) => !open && setDeleteTypeCode(null)}>
         <DialogContent>
@@ -666,30 +369,6 @@ export default function ContactAccessTypesAdmin() {
               variant="destructive"
               onClick={() => deleteTypeCode && deleteTypeMutation.mutate(deleteTypeCode)}
               disabled={deleteTypeMutation.isPending}
-            >
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete mapping confirmation */}
-      <Dialog open={!!deleteMappingId} onOpenChange={(open) => !open && setDeleteMappingId(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete mapping</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Are you sure you want to delete this Respond mapping?
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteMappingId(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => deleteMappingId && deleteMappingMutation.mutate(deleteMappingId)}
-              disabled={deleteMappingMutation.isPending}
             >
               Delete
             </Button>
