@@ -13,7 +13,8 @@ import uuid
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, or_, exists, select, text
+from sqlalchemy import and_, cast, func, or_, exists, select, text, String
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import IntegrityError
 from typing import Any, Optional
 from decimal import Decimal
@@ -352,7 +353,11 @@ class PromotionService:
                 if not contact_access_codes:
                     q = q.filter(text("false"))
                 else:
-                    q = q.filter(Promotion.access_levels.op("?|")(contact_access_codes))
+                    q = q.filter(
+                        Promotion.access_levels.op("?|")(
+                            cast(contact_access_codes, ARRAY(String))
+                        )
+                    )
             if period_from is not None:
                 q = q.filter(Promotion.end_date >= period_from)
             if period_to is not None:
@@ -1271,12 +1276,13 @@ class PromotionAttachmentService:
             if not contact_access_codes:
                 q = q.filter(text("false"))
             else:
+                codes_arr = cast(contact_access_codes, ARRAY(String))
                 q = q.filter(
                     PromotionAttachment.promotion.has(
-                        Promotion.access_levels.op("?|")(contact_access_codes)
+                        Promotion.access_levels.op("?|")(codes_arr)
                     ),
                     PromotionAttachment.attachment.has(
-                        Attachment.access_levels.op("?|")(contact_access_codes)
+                        Attachment.access_levels.op("?|")(codes_arr)
                     ),
                 )
 

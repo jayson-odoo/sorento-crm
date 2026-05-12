@@ -1368,6 +1368,35 @@ class ProductAttachmentService:
             .first()
         )
         return str(product.id) if product else None
+
+    def _resolve_product_identifiers(self, product_identifier: Optional[str]) -> Optional[list[str]]:
+        """Resolve a product UUID or product_code to one or more product UUIDs.
+
+        - UUID input -> [uuid].
+        - Non-UUID input -> case-insensitive substring (ilike) match across product_code,
+          so callers passing a partial/base code (e.g. ``SRTMCB6084-WH``) also find
+          variants (``SRTMCB6084-WH-DF`` etc.).
+        - Returns ``None`` when input is empty; ``[]`` when no product matches.
+        """
+        if not product_identifier:
+            return None
+        normalized = str(product_identifier).strip()
+        if not normalized:
+            return None
+
+        try:
+            uuid.UUID(normalized)
+            return [normalized]
+        except (ValueError, AttributeError, TypeError):
+            pass
+
+        escaped = normalized.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        fuzzy_rows = (
+            self.db.query(Product.id)
+            .filter(Product.product_code.ilike(f"%{escaped}%", escape="\\"))
+            .all()
+        )
+        return [str(row.id) for row in fuzzy_rows]
     
     def list_product_attachments(
         self,
@@ -1387,7 +1416,8 @@ class ProductAttachmentService:
         returns nothing (contact has no assigned access types).
         """
         from sqlalchemy.orm import joinedload
-        from sqlalchemy import text as _sa_text
+        from sqlalchemy import cast as _sa_cast, text as _sa_text, String as _sa_String
+        from sqlalchemy.dialects.postgresql import ARRAY as _PG_ARRAY
 
         q = self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
@@ -1395,14 +1425,14 @@ class ProductAttachmentService:
         )
 
         if product_id:
-            resolved_product_id = self._resolve_product_identifier(product_id)
-            if not resolved_product_id:
+            resolved_product_ids = self._resolve_product_identifiers(product_id)
+            if not resolved_product_ids:
                 return {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
-            q = q.filter(ProductAttachment.product_id == resolved_product_id)
+            q = q.filter(ProductAttachment.product_id.in_(resolved_product_ids))
 
         if attachment_id:
             q = q.filter(ProductAttachment.attachment_id == attachment_id)
@@ -1415,10 +1445,12 @@ class ProductAttachmentService:
             else:
                 q = q.filter(
                     ProductAttachment.attachment.has(
-                        Attachment.access_levels.op("?|")(contact_access_codes)
+                        Attachment.access_levels.op("?|")(
+                            _sa_cast(contact_access_codes, _PG_ARRAY(_sa_String))
+                        )
                     )
                 )
-        
+
         sort_map = {
             "created_at": ProductAttachment.created_at,
             "sort_order": ProductAttachment.sort_order,
@@ -1516,7 +1548,8 @@ class ProductAttachmentService:
         ``contact_access_codes=[]`` returns nothing (no overlap with anything).
         """
         from sqlalchemy.orm import joinedload
-        from sqlalchemy import text as _sa_text
+        from sqlalchemy import cast as _sa_cast, text as _sa_text, String as _sa_String
+        from sqlalchemy.dialects.postgresql import ARRAY as _PG_ARRAY
         resolved_product_id = self._resolve_product_identifier(product_id)
         if not resolved_product_id:
             return []
@@ -1538,7 +1571,9 @@ class ProductAttachmentService:
             else:
                 q = q.filter(
                     ProductAttachment.attachment.has(
-                        Attachment.access_levels.op("?|")(contact_access_codes)
+                        Attachment.access_levels.op("?|")(
+                            _sa_cast(contact_access_codes, _PG_ARRAY(_sa_String))
+                        )
                     )
                 )
         return q.all()

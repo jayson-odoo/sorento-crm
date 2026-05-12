@@ -7,7 +7,7 @@ export const ContactEditSchema = z.object({
     .regex(/^\+?[1-9]\d{1,14}$/, 'Phone number must be in E.164 format (e.g., +1234567890)'),
   name: z.string().optional().nullable(),
   workspace_id: z.string().optional().nullable(),
-  access_type_codes: z.array(z.string()).optional().default([]),
+  access_type_codes: z.array(z.string()),
 });
 
 export type ContactEditSchemaType = z.infer<typeof ContactEditSchema>;

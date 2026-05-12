@@ -387,9 +387,12 @@ class AttachmentService:
         entity_id: Optional[str] = None,
         directory_id: Optional[str] = None,
         is_deleted: Optional[bool] = None,
+        access_levels: Optional[List[str]] = None,
     ):
-        """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash."""
+        """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash. access_levels filters rows whose JSONB access_levels overlap (any-of)."""
         from sqlalchemy.orm import joinedload
+        from sqlalchemy import cast
+        from sqlalchemy.dialects.postgresql import JSONB
         q = self.db.query(Attachment).options(
             joinedload(Attachment.attachment_type)
         )
@@ -397,13 +400,21 @@ class AttachmentService:
             q = q.filter(Attachment.is_deleted == is_deleted)
         else:
             q = q.filter(Attachment.is_deleted == False)
-        
+
         if entity_type:
             q = q.filter(Attachment.entity_type == entity_type)
         if entity_id:
             q = q.filter(Attachment.entity_id == entity_id)
         if directory_id is not None:
             q = q.filter(Attachment.directory_id == directory_id)
+        if access_levels:
+            cleaned = sorted({lvl for lvl in access_levels if lvl and lvl.strip()})
+            if cleaned:
+                payload = cast(cleaned, JSONB)
+                q = q.filter(
+                    Attachment.access_levels.op('@>')(payload),
+                    payload.op('@>')(Attachment.access_levels),
+                )
         if query and query.strip():
             term = f"%{query.strip()}%"
             q = q.filter(
