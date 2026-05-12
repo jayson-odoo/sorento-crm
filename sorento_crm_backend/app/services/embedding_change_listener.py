@@ -1,8 +1,11 @@
 """Model change listeners to enqueue embedding events for key entities."""
 from __future__ import annotations
 
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
+from typing import Iterable
 
 from sqlalchemy import event
 
@@ -14,9 +17,72 @@ from app.models.order import Order, OrderStatus, OrderLine
 
 
 _REGISTERED = False
+_SUPPRESSED = threading.local()
+
+
+def _suppressed_set() -> set[str]:
+    s = getattr(_SUPPRESSED, "types", None)
+    if s is None:
+        s = set()
+        _SUPPRESSED.types = s
+    return s
+
+
+@contextmanager
+def suppress_embedding_events(*source_types: str):
+    """Skip per-row enqueue for given source_types within this thread/context."""
+    s = _suppressed_set()
+    added = [t for t in source_types if t not in s]
+    s.update(added)
+    try:
+        yield
+    finally:
+        for t in added:
+            s.discard(t)
+
+
+def bulk_enqueue_embedding_events(
+    bind,
+    source_type: str,
+    source_ids: Iterable[str],
+    event_type: str | None = None,
+) -> int:
+    """Single multi-row INSERT into embedding_queue. `bind` is a Session or Connection."""
+    event_type = event_type or f"{source_type}.updated"
+    ids = [str(i) for i in source_ids if i is not None]
+    if not ids:
+        return 0
+    now = datetime.utcnow()
+    rows = []
+    for sid in ids:
+        rows.append({
+            "id": str(uuid.uuid4()),
+            "source_type": source_type,
+            "source_id": sid,
+            "event_type": event_type,
+            "event_version": 1,
+            "payload": {
+                "event_id": str(uuid.uuid4()),
+                "event_type": event_type,
+                "event_version": 1,
+                "occurred_at": now.isoformat(),
+                "source_type": source_type,
+                "source_id": sid,
+                "changed_fields": ["bulk_enqueue"],
+                "triggered_by": "system",
+            },
+            "status": "pending",
+            "retry_count": 0,
+            "available_at": now,
+            "created_at": now,
+        })
+    bind.execute(EmbeddingQueue.__table__.insert(), rows)
+    return len(rows)
 
 
 def _queue_from_mapper(connection, source_type: str, source_id: str, event_type: str) -> None:
+    if source_type in _suppressed_set():
+        return
     connection.execute(
         EmbeddingQueue.__table__.insert().values(
             id=str(uuid.uuid4()),

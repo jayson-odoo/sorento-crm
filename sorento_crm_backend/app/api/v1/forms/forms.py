@@ -33,6 +33,8 @@ async def get_forms(
     language: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     form_type: Optional[str] = Query(None, description="Filter by form type (e.g. marketing)"),
+    contact_id: Optional[str] = Query(None, description="Respond.io contact id. Pair with space_id for access-level filtering."),
+    space_id: Optional[str] = Query(None, description="Respond.io space id. Pair with contact_id for access-level filtering."),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -42,6 +44,8 @@ async def get_forms(
     try:
         service = FormService(db)
         # Handle empty strings or None values
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
         sort_field = (sort and sort.strip()) or "updated_at"
         sort_dir = (dir and dir.strip()) or "desc"
         result = service.list_forms(
@@ -51,6 +55,7 @@ async def get_forms(
             language=language, 
             status=status,
             form_type=form_type,
+            contact_access_codes=contact_codes,
             sort_field=sort_field,
             sort_dir=sort_dir
         )
@@ -74,9 +79,10 @@ async def get_form(
 ):
     """Get a single form by ID."""
     try:
-        _ = contact_id, space_id  # accepted for cross-tool MCP compatibility
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
         service = FormService(db)
-        form = service.get_form(form_id)
+        form = service.get_form(form_id, contact_access_codes=contact_codes)
         return form
     except HTTPException:
         raise

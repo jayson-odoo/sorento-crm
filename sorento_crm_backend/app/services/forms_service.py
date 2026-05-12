@@ -26,11 +26,13 @@ class FormService:
         language: Optional[str] = None,
         status: Optional[str] = None,
         form_type: Optional[str] = None,
+        contact_access_codes: Optional[list[str]] = None,
         sort_field: str = "updated_at",
         sort_dir: str = "desc",
     ):
         """List forms."""
-        from sqlalchemy import or_, and_
+        from sqlalchemy import or_, and_, cast, String, text
+        from sqlalchemy.dialects.postgresql import ARRAY
         from sqlalchemy.orm import joinedload
         q = self.db.query(Form).options(
             joinedload(Form.attachment).joinedload(Attachment.attachment_type)
@@ -41,18 +43,30 @@ class FormService:
             filters.append(Form.form_type == str(form_type).strip().lower())
         if query:
             ql = query.strip()
+            q = q.outerjoin(Attachment, Form.attachment_id == Attachment.id)
             filters.append(
                 or_(
                     Form.code.ilike(f"%{ql}%"),
                     Form.name.ilike(f"%{ql}%"),
                     Form.purpose.ilike(f"%{ql}%"),
                     Form.form_type.ilike(f"%{ql}%"),
+                    Attachment.original_filename.ilike(f"%{ql}%"),
+                    Attachment.stored_filename.ilike(f"%{ql}%"),
                 )
             )
         if language:
             filters.append(Form.language == language)
         if status and status != "all":
             filters.append(Form.is_active == (status == "active"))
+        if contact_access_codes is not None:
+            if not contact_access_codes:
+                filters.append(text("false"))
+            else:
+                filters.append(
+                    Form.access_levels.op("?|")(
+                        cast(contact_access_codes, ARRAY(String))
+                    )
+                )
         
         if filters:
             q = q.filter(and_(*filters))
@@ -100,12 +114,24 @@ class FormService:
             "empty": total == 0
         }
     
-    def get_form(self, form_id: str):
+    def get_form(self, form_id: str, contact_access_codes: Optional[list[str]] = None):
         """Get a form by ID."""
+        from sqlalchemy import cast, String, text
+        from sqlalchemy.dialects.postgresql import ARRAY
         from sqlalchemy.orm import joinedload
-        form = self.db.query(Form).options(
+        q = self.db.query(Form).options(
             joinedload(Form.attachment).joinedload(Attachment.attachment_type)
-        ).filter(Form.id == form_id).first()
+        ).filter(Form.id == form_id)
+        if contact_access_codes is not None:
+            if not contact_access_codes:
+                q = q.filter(text("false"))
+            else:
+                q = q.filter(
+                    Form.access_levels.op("?|")(
+                        cast(contact_access_codes, ARRAY(String))
+                    )
+                )
+        form = q.first()
         if not form:
             raise handle_not_found("Form", form_id)
         return form
@@ -116,7 +142,16 @@ class FormService:
         if existing:
             raise handle_conflict("Form code already exists.")
         
+        from app.services.contact_access_type_service import ContactAccessTypeService
+
         form_dict = form_data.model_dump()
+        access_svc = ContactAccessTypeService(self.db)
+        if form_dict.get("access_levels"):
+            form_dict["access_levels"] = access_svc.validate_access_levels(
+                form_dict["access_levels"], field_name="access_levels"
+            )
+        else:
+            form_dict["access_levels"] = access_svc.get_default_access_levels()
         # created_by column doesn't exist in database, skip setting it
         # form_dict["created_by"] = created_by
         form = Form(**form_dict)
@@ -140,6 +175,11 @@ class FormService:
         form = self.get_form(form_id)
         
         update_data = form_data.model_dump(exclude_unset=True)
+        if "access_levels" in update_data and update_data["access_levels"]:
+            from app.services.contact_access_type_service import ContactAccessTypeService
+            update_data["access_levels"] = ContactAccessTypeService(self.db).validate_access_levels(
+                update_data["access_levels"], field_name="access_levels"
+            )
         for key, value in update_data.items():
             setattr(form, key, value)
         

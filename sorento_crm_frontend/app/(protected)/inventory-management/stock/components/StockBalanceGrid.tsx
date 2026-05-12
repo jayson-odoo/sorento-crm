@@ -405,11 +405,20 @@ export default function StockBalanceGrid() {
                 Stock List
               </Button>
             )}
-            <Button variant="outline" onClick={handleDownloadTemplate} disabled={isLoadingExport}>
+            <Button
+              variant="outline"
+              data-guide-target="inventory-management.stock.export-button"
+              onClick={handleDownloadTemplate}
+              disabled={isLoadingExport}
+            >
               <Download className="size-4" />
               Export
             </Button>
-            <Button variant="outline" onClick={() => setUploadDialogOpen(true)}>
+            <Button
+              variant="outline"
+              data-guide-target="inventory-management.stock.import-button"
+              onClick={() => setUploadDialogOpen(true)}
+            >
               <Upload className="size-4" />
               Import
             </Button>

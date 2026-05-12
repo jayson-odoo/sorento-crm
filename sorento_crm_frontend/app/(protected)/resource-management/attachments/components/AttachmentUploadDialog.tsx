@@ -17,7 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription, AlertIcon } from '@/components/ui/alert';
@@ -30,6 +29,7 @@ import {
   useFieldLinkageSchema,
   type FieldLinkageEntityType,
 } from '@/app/(protected)/master-data-management/products/hooks/useFieldLinkageSchema';
+import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 
 interface AttachmentUploadDialogProps {
   open: boolean;
@@ -95,11 +95,8 @@ export default function AttachmentUploadDialog({
     setTargetFieldKeys([]);
   }, [targetEntityType]);
 
-  useEffect(() => {
-    if (accessLevels.length === 0 && defaultAccessLevels.length > 0) {
-      setAccessLevels(defaultAccessLevels);
-    }
-  }, [defaultAccessLevels, accessLevels.length]);
+  // Defaults are seeded by the open-effect above. Re-filling whenever the
+  // user clears the selection would defeat "Clear all" — leave it alone.
 
   // Update validation when type or files change
   useEffect(() => {
@@ -579,28 +576,11 @@ export default function AttachmentUploadDialog({
 
           <div className="space-y-2" data-guide-target="resource-management.files.access-levels">
             <Label>Access Levels</Label>
-            <div className="flex flex-wrap gap-4">
-              {accessTypeOptions.map((opt) => {
-                const checked = accessLevels.includes(opt.code);
-                return (
-                  <label key={opt.code} className="flex items-center gap-2 text-sm">
-                    <Checkbox
-                      checked={checked}
-                      onCheckedChange={(value) => {
-                        const next = new Set(accessLevels);
-                        if (value) {
-                          next.add(opt.code);
-                        } else {
-                          next.delete(opt.code);
-                        }
-                        setAccessLevels(Array.from(next));
-                      }}
-                    />
-                    {opt.name || opt.code}
-                  </label>
-                );
-              })}
-            </div>
+            <AccessLevelsMultiSelect
+              options={accessTypeOptions}
+              value={accessLevels}
+              onChange={setAccessLevels}
+            />
           </div>
 
           {/* Validation Error */}

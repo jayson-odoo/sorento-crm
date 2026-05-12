@@ -1,9 +1,10 @@
 """Inventory service for business logic."""
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_
+from sqlalchemy import func, or_, and_, tuple_
 from typing import Optional
 import time
 import uuid
+from datetime import datetime
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.product import Product
 from app.schemas.inventory import (
@@ -267,7 +268,7 @@ class StockService:
         q = self.db.query(Stock).options(
             selectinload(Stock.product),
             selectinload(Stock.warehouse),
-        )
+        ).filter(Stock.warehouse.has(Warehouse.is_active.is_(True)))
 
         warehouse_ids = resolve_identifier(
             self.db,
@@ -396,7 +397,7 @@ class StockService:
         q = self.db.query(StockLedger).options(
             selectinload(StockLedger.product),
             selectinload(StockLedger.warehouse)
-        )
+        ).filter(StockLedger.warehouse.has(Warehouse.is_active.is_(True)))
         if product_id:
             resolved_pid = _resolve_stock_product_id(self.db, product_id)
             if resolved_pid is None:
@@ -473,7 +474,8 @@ class StockService:
             selectinload(StockLedger.warehouse)
         ).filter(
             StockLedger.product_id == resolved_pid,
-            StockLedger.warehouse_id.in_(warehouse_ids)
+            StockLedger.warehouse_id.in_(warehouse_ids),
+            StockLedger.warehouse.has(Warehouse.is_active.is_(True)),
         )
 
         total = q.count()
@@ -519,7 +521,7 @@ class StockService:
         q = self.db.query(Stock).options(
             selectinload(Stock.product),
             selectinload(Stock.warehouse)
-        )
+        ).filter(Stock.warehouse.has(Warehouse.is_active.is_(True)))
         
         warehouse_ids = resolve_identifier(
             self.db,
@@ -898,13 +900,15 @@ class StockService:
         # Step 3: Bulk lookup existing stock by product_id + warehouse_id
         existing_stock_by_pair = {}
         if product_warehouse_pairs:
-            # Build query with OR conditions for all pairs
-            conditions = [
-                and_(Stock.product_id == pid, Stock.warehouse_id == wid)
-                for pid, wid in product_warehouse_pairs
-            ]
-            existing_stocks = self.db.query(Stock).filter(or_(*conditions)).all()
-            # Ensure tuple keys use string UUIDs for consistent matching
+            pair_list = list(product_warehouse_pairs)
+            existing_stocks: list[Stock] = []
+            # Chunk to keep IN list manageable for very large imports
+            for chunk_start in range(0, len(pair_list), 1000):
+                chunk = pair_list[chunk_start:chunk_start + 1000]
+                stocks_chunk = self.db.query(Stock).filter(
+                    tuple_(Stock.product_id, Stock.warehouse_id).in_(chunk)
+                ).all()
+                existing_stocks.extend(stocks_chunk)
             existing_stock_by_pair = {(str(s.product_id), str(s.warehouse_id)): s for s in existing_stocks}
         
         # Step 4: Separate creates and updates (new stock records are created automatically)
@@ -926,6 +930,35 @@ class StockService:
         for row_dict in rows_to_update:
             final_updates.append(row_dict)
 
+        create_dict = {}
+        for row_dict in final_creates:
+            pair = (str(row_dict['product_id']), str(row_dict['warehouse_id']))
+            create_dict[pair] = row_dict
+
+        seen_stock_pairs = {
+            (str(r['product_id']), str(r['warehouse_id']))
+            for r in [*create_dict.values(), *final_updates]
+        }
+
+        # Find stocks "missing from import" (will be system-adjusted to 0).
+        # Pulling seen_stock_pairs into SQL as a tuple-NOT-IN explodes parameter
+        # count (>20k params on a full snapshot) and produces a pathological plan;
+        # SELECT all candidates and set-diff in Python instead.
+        zero_q = self.db.query(Stock).filter(
+            Stock.warehouse.has(Warehouse.is_active.is_(True)),
+            Stock.quantity_on_hand != 0,
+        )
+        all_zero_candidates: list[Stock] = zero_q.all()
+        seen_set = seen_stock_pairs  # already string-tuple keys
+        stocks_to_zero_cached: list[Stock] = [
+            s for s in all_zero_candidates
+            if (str(s.product_id), str(s.warehouse_id)) not in seen_set
+        ]
+        snapshot_zero_count = len(stocks_to_zero_cached)
+        if validate_only:
+            # Don't need the instance refs further in validate-only path.
+            stocks_to_zero_cached = []
+
         if validate_only:
             warnings_str = [
                 f"Row {w.get('row', '?')}: {w.get('product_code', '-')} / {w.get('warehouse', '-')}: {w.get('reason', '')}"
@@ -941,6 +974,7 @@ class StockService:
                     "total_rows": len(stock_data),
                     "would_create": len(create_keys),
                     "would_update": len(final_updates),
+                    "would_system_adjust_to_zero": snapshot_zero_count,
                     "would_skip": skipped_rows,
                     "error_count": len(errors),
                 },
@@ -951,17 +985,17 @@ class StockService:
         for stock in existing_stock_by_pair.values():
             existing_by_id[stock.id] = stock
         
-        # Step 5: Create new stock records (dedupe by product_id + warehouse_id, last wins)
-        create_dict = {}
-        for row_dict in final_creates:
-            pair = (str(row_dict['product_id']), str(row_dict['warehouse_id']))
-            create_dict[pair] = row_dict
+        now = datetime.utcnow()
+
+        # Step 5: Create new stock records (dedupe by product_id + warehouse_id, last wins).
+        # Stock.id has a python-side UUID default, so ids are assigned at construction
+        # time — no per-row flush needed. Build all instances, add together, single flush.
         if create_dict:
             try:
+                new_stocks: list[tuple[Stock, int]] = []
                 for (_pid, _wid), row_dict in create_dict.items():
                     qoh = row_dict.get('quantity_on_hand', 0) or 0
                     qres = row_dict.get('quantity_reserved', 0) or 0
-                    # quantity_available is a DB-generated column (quantity_on_hand - quantity_reserved), do not set it
                     new_stock = Stock(
                         product_id=row_dict['product_id'],
                         warehouse_id=row_dict['warehouse_id'],
@@ -970,9 +1004,14 @@ class StockService:
                         quantity_reserved=qres,
                         quantity_damaged=row_dict.get('quantity_damaged', 0) or 0,
                         reorder_point=row_dict.get('reorder_point'),
+                        updated_at=now,
                     )
-                    self.db.add(new_stock)
-                    self.db.flush()  # Get id for ledger
+                    new_stocks.append((new_stock, qoh))
+
+                self.db.add_all(s for s, _ in new_stocks)
+                self.db.flush()
+
+                for new_stock, qoh in new_stocks:
                     if qoh != 0:
                         ledger_entries.append({
                             'id': str(uuid.uuid4()),
@@ -985,7 +1024,7 @@ class StockService:
                             'reference_type': 'bulk_import',
                             'reference_id': new_stock.id,
                             'notes': 'Bulk import (new stock record)',
-                            'created_by': user_id
+                            'created_by': user_id,
                         })
                 created = len(create_dict)
             except Exception as e:
@@ -1036,6 +1075,7 @@ class StockService:
                         # Skip quantity_available if it somehow got into update_data (shouldn't happen)
                         if key != 'quantity_available':
                             setattr(stock, key, value)
+                    stock.updated_at = now
                     # Mark as modified to ensure SQLAlchemy tracks the change
                     self.db.add(stock)
                     new_qty = update_data['quantity_on_hand']
@@ -1064,6 +1104,37 @@ class StockService:
                 message = f"Bulk update error: {str(e)}"
                 errors.append(message)
                 error_records.append({"row": None, "error": message, "data": None})
+
+        system_adjusted_to_zero = 0
+        try:
+            stocks_to_zero = stocks_to_zero_cached
+            for stock in stocks_to_zero:
+                previous_qty = stock.quantity_on_hand or 0
+                if previous_qty == 0:
+                    continue
+                stock.quantity_on_hand = 0
+                stock.quantity_reserved = 0
+                stock.quantity_damaged = 0
+                stock.updated_at = now
+                self.db.add(stock)
+                ledger_entries.append({
+                    'id': str(uuid.uuid4()),
+                    'product_id': stock.product_id,
+                    'warehouse_id': stock.warehouse_id,
+                    'transaction_type': 'SYSTEM_ADJUSTMENT',
+                    'quantity_change': -previous_qty,
+                    'previous_quantity': previous_qty,
+                    'new_quantity': 0,
+                    'reference_type': 'stock_snapshot_import',
+                    'reference_id': import_session_id,
+                    'notes': 'System adjustment: missing from full stock import; set on-hand quantity to 0',
+                    'created_by': user_id
+                })
+                system_adjusted_to_zero += 1
+        except Exception as e:
+            message = f"Snapshot zero-adjustment error: {str(e)}"
+            errors.append(message)
+            error_records.append({"row": None, "error": message, "data": None})
         
         # Step 7: Commit all changes
         commit_successful = False
@@ -1097,10 +1168,10 @@ class StockService:
                     created_rows=created,
                     updated_rows=updated,
                     failed_rows=len(error_records),
-                    skipped_rows=skipped_rows,
+                    skipped_rows=skipped_rows + system_adjusted_to_zero,
                     warnings=warnings,
                     errors=error_records,
-                    summary=None,
+                    summary={"system_adjusted_to_zero": system_adjusted_to_zero},
                     imported_by=user_id,
                     duration_ms=duration_ms,
                 )
@@ -1114,12 +1185,16 @@ class StockService:
             "updated": updated,
             "skipped": skipped_rows,
             "errors": errors,
-            "warnings": warnings
+            "warnings": warnings,
+            "system_adjusted_to_zero": system_adjusted_to_zero,
         }
     
     def get_stock(self, stock_id: str):
         """Get stock by ID."""
-        stock = self.db.query(Stock).filter(Stock.id == stock_id).first()
+        stock = self.db.query(Stock).filter(
+            Stock.id == stock_id,
+            Stock.warehouse.has(Warehouse.is_active.is_(True)),
+        ).first()
         if not stock:
             raise handle_not_found("Stock", stock_id)
         return stock
@@ -1127,10 +1202,19 @@ class StockService:
     def get_stock_dashboard(self):
         """Get stock dashboard statistics."""
         # Count unique products
-        total_skus = self.db.query(func.count(func.distinct(Stock.product_id))).scalar() or 0
+        total_skus = (
+            self.db.query(func.count(func.distinct(Stock.product_id)))
+            .filter(Stock.warehouse.has(Warehouse.is_active.is_(True)))
+            .scalar()
+            or 0
+        )
         
         # Sum quantities from stock batches
-        total_quantity_result = self.db.query(func.sum(StockBatch.quantity)).scalar()
+        total_quantity_result = (
+            self.db.query(func.sum(StockBatch.quantity))
+            .filter(StockBatch.warehouse.has(Warehouse.is_active.is_(True)))
+            .scalar()
+        )
         total_quantity = int(total_quantity_result) if total_quantity_result else 0
         
         return {
@@ -1164,7 +1248,9 @@ class StockBatchService:
         warehouse_id: Optional[str] = None
     ):
         """List stock batches."""
-        q = self.db.query(StockBatch)
+        q = self.db.query(StockBatch).filter(
+            StockBatch.warehouse.has(Warehouse.is_active.is_(True))
+        )
         
         if product_id:
             resolved_pid = _resolve_stock_product_id(self.db, product_id)
@@ -1202,7 +1288,10 @@ class StockBatchService:
     
     def get_batch(self, batch_id: str):
         """Get a stock batch by ID."""
-        batch = self.db.query(StockBatch).filter(StockBatch.id == batch_id).first()
+        batch = self.db.query(StockBatch).filter(
+            StockBatch.id == batch_id,
+            StockBatch.warehouse.has(Warehouse.is_active.is_(True)),
+        ).first()
         if not batch:
             raise handle_not_found("Stock Batch", batch_id)
         return batch

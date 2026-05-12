@@ -63,14 +63,14 @@ export function OrderTrackingUploadDialog({
     try {
       setProgress(10);
       const parsed = await parseExcelSheets(selectedFile);
-      if (!parsed.sheetNames.includes('Master') || !parsed.sheetNames.includes('Daily Tracking')) {
-        toast.error('Excel file must contain both "Master" and "Daily Tracking" sheets.');
+      if (!parsed.sheetNames.includes('Master') || !parsed.sheetNames.includes('Overall Tracking')) {
+        toast.error('Excel file must contain both "Master" and "Overall Tracking" sheets.');
         setProgress(0);
         return;
       }
       setSheetSummary({
         masterRows: parsed.sheets['Master']?.length || 0,
-        trackingRows: parsed.sheets['Daily Tracking']?.length || 0,
+        trackingRows: parsed.sheets['Overall Tracking']?.length || 0,
       });
       setFile(selectedFile);
       setTestResult(null);
@@ -178,7 +178,7 @@ export function OrderTrackingUploadDialog({
         <DialogHeader>
           <DialogTitle>Import Delivery Order Tracking</DialogTitle>
           <DialogDescription>
-            Upload an Excel file with Master and Daily Tracking sheets. The system will create or update orders by Doc No.
+            Upload an Excel file with Master and Overall Tracking sheets. The system will create or update orders by Doc No.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -240,7 +240,7 @@ export function OrderTrackingUploadDialog({
               </div>
               {sheetSummary && (
                 <div className="text-xs text-muted-foreground">
-                  Master rows: {sheetSummary.masterRows} • Daily Tracking rows: {sheetSummary.trackingRows}
+                  Master rows: {sheetSummary.masterRows} • Overall Tracking rows: {sheetSummary.trackingRows}
                 </div>
               )}
               {testResult !== null && (

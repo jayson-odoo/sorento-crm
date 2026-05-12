@@ -81,13 +81,17 @@ export default function GuideTargetSpotlight() {
         setHash(snapshot);
         return;
       }
-      setHash(null);
+      // Never clear state from here. A spurious hashchange (e.g. Next.js
+      // stripping the fragment during hydration) must not overwrite a
+      // snapshot we already committed — the spotlight effect handles
+      // clearing its own state after applying.
     };
     update();
     // The hash snapshot is written by an inline `<script>` in `app/layout.tsx`
-    // that runs during HTML parse. Async chunks (React/Next) can race ahead
-    // and mount this component BEFORE the inline script executes, so retry
-    // briefly until the snapshot appears (or the DOM is fully parsed).
+    // that runs during HTML parse. Async React chunks can race ahead and
+    // mount this component BEFORE the inline script executes, so poll until
+    // a positive signal appears (live hash OR sessionStorage snapshot). Never
+    // clear state from the retry path — only positive matches call update().
     let retries = 0;
     let retryTimer: number | null = null;
     const retry = () => {
@@ -105,17 +109,30 @@ export default function GuideTargetSpotlight() {
       }
     };
     retryTimer = window.setTimeout(retry, 80);
-    const onLoad = () => update();
+    // Also patch history.pushState/replaceState to dispatch hashchange when
+    // the fragment changes. Browsers don't fire hashchange for programmatic
+    // history updates, so client-side navigations (e.g. clicking a markdown
+    // link inside the app) wouldn't reach the listener without this.
+    const origPush = window.history.pushState;
+    const origReplace = window.history.replaceState;
+    const wrap = (orig: typeof origPush) => function (this: History, ...args: Parameters<typeof origPush>) {
+      const beforeHash = window.location.hash;
+      const result = orig.apply(this, args);
+      if (window.location.hash !== beforeHash) {
+        try { window.dispatchEvent(new HashChangeEvent('hashchange')); } catch {}
+      }
+      return result;
+    };
+    window.history.pushState = wrap(origPush);
+    window.history.replaceState = wrap(origReplace);
     window.addEventListener('hashchange', update);
     window.addEventListener('popstate', update);
-    window.addEventListener('DOMContentLoaded', onLoad);
-    window.addEventListener('load', onLoad);
     return () => {
       if (retryTimer !== null) window.clearTimeout(retryTimer);
+      window.history.pushState = origPush;
+      window.history.replaceState = origReplace;
       window.removeEventListener('hashchange', update);
       window.removeEventListener('popstate', update);
-      window.removeEventListener('DOMContentLoaded', onLoad);
-      window.removeEventListener('load', onLoad);
     };
   }, [pathname]);
 
@@ -190,7 +207,16 @@ export default function GuideTargetSpotlight() {
 
     const applySpotlight = (el: Element) => {
       clearActive();
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Only scroll when the target is off-screen. Otherwise `scrollIntoView`
+      // still nudges the viewport slightly even with `block: 'center'`,
+      // which reads as page jitter when the user is already at the top.
+      const rect = el.getBoundingClientRect();
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      const vw = window.innerWidth || document.documentElement.clientWidth;
+      const fullyVisible = rect.top >= 0 && rect.left >= 0 && rect.bottom <= vh && rect.right <= vw;
+      if (!fullyVisible) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
       el.classList.add(SPOTLIGHT_CLASS);
       activeElementRef.current = el;
       clearTimerRef.current = window.setTimeout(() => {

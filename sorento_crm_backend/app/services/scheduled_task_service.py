@@ -1,10 +1,12 @@
 """Service for scheduled task execution and run logging."""
 import logging
+import threading
 from datetime import datetime, timedelta
 from typing import Callable, Optional, Any, Dict
 
 from sqlalchemy.orm import Session
 
+from app.database import SessionLocal
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
 
 logger = logging.getLogger(__name__)
@@ -173,57 +175,91 @@ def update_task(
     return task
 
 
-def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] = None) -> Optional[dict]:
-    """
-    Run a task once immediately (manual trigger). Returns run summary or None if task not found.
-    """
-    task = get_task(db, task_id)
-    if not task:
-        return None
-    run = None
+def _execute_task_run(
+    task_id: str,
+    run_id: str,
+    task_key: str,
+    requested_by_user_id: Optional[str],
+) -> None:
+    """Run handler in a fresh DB session. Intended to run inside a background thread."""
+    bg_db: Session = SessionLocal()
     start = datetime.utcnow()
     try:
-        run = create_run(db, _task_id(task), status="started")
-        handler = TASK_HANDLERS.get(_task_key(task))
+        task = bg_db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
+        if not task:
+            logger.warning("run_task_now background: task %s vanished", task_id)
+            return
+        handler = TASK_HANDLERS.get(task_key)
         if not handler:
             finish_run(
-                db,
-                _run_id(run),
+                bg_db,
+                run_id,
                 status="skipped",
                 duration_ms=int((datetime.utcnow() - start).total_seconds() * 1000),
                 summary={"reason": "no handler registered"},
             )
-            next_run = compute_next_run(
-                *_task_schedule_args(task),
-                datetime.utcnow(),
-            )
+            next_run = compute_next_run(*_task_schedule_args(task), datetime.utcnow())
             update_task_after_run(
-                db, _task_id(task), "skipped", None, {"reason": "no handler registered"}, next_run
+                bg_db, _task_id(task), "skipped", None,
+                {"reason": "no handler registered"}, next_run,
             )
-            return {"run_id": _run_id(run), "status": "skipped", "summary": {"reason": "no handler registered"}}
-        # For manual ad-hoc runs, handlers may use this context to run in safe test mode.
+            return
         if requested_by_user_id:
             setattr(task, "_manual_run_requested_by_user_id", str(requested_by_user_id))
-        summary = handler(db, task)
-        duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
-        finish_run(db, _run_id(run), status="success", duration_ms=duration_ms, summary=summary or {})
-        next_run = compute_next_run(
-            *_task_schedule_args(task),
-            datetime.utcnow(),
-        )
-        update_task_after_run(db, _task_id(task), "success", None, summary, next_run)
-        return {"run_id": _run_id(run), "status": "success", "summary": summary or {}}
-    except Exception as e:
-        duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
-        err_msg = str(e)
-        if run:
-            finish_run(db, _run_id(run), status="failed", duration_ms=duration_ms, error=err_msg)
-        next_run = compute_next_run(
-            *_task_schedule_args(task),
-            datetime.utcnow(),
-        )
-        update_task_after_run(db, _task_id(task), "failed", err_msg, None, next_run)
-        return {"run_id": _run_id(run) if run else None, "status": "failed", "error": err_msg}
+        try:
+            summary = handler(bg_db, task)
+            duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+            finish_run(bg_db, run_id, status="success", duration_ms=duration_ms, summary=summary or {})
+            next_run = compute_next_run(*_task_schedule_args(task), datetime.utcnow())
+            update_task_after_run(bg_db, _task_id(task), "success", None, summary, next_run)
+        except Exception as e:
+            logger.exception("Scheduled task %s failed in background", task_key)
+            duration_ms = int((datetime.utcnow() - start).total_seconds() * 1000)
+            err_msg = str(e)
+            try:
+                bg_db.rollback()
+            except Exception:
+                pass
+            finish_run(bg_db, run_id, status="failed", duration_ms=duration_ms, error=err_msg)
+            next_run = compute_next_run(*_task_schedule_args(task), datetime.utcnow())
+            update_task_after_run(bg_db, _task_id(task), "failed", err_msg, None, next_run)
+    finally:
+        try:
+            bg_db.close()
+        except Exception:
+            pass
+
+
+def run_task_now(db: Session, task_id: str, requested_by_user_id: Optional[str] = None) -> Optional[dict]:
+    """
+    Trigger a manual run asynchronously. Creates the run record synchronously
+    (so the caller gets a run_id), then dispatches the handler in a background
+    thread. Returns immediately with status="started"; clients should poll
+    /scheduled-tasks/{task_id}/runs for completion.
+    """
+    task = get_task(db, task_id)
+    if not task:
+        return None
+
+    run = create_run(db, _task_id(task), status="started")
+    run_id = _run_id(run)
+    task_key = _task_key(task)
+    task_id_str = _task_id(task)
+
+    thread = threading.Thread(
+        target=_execute_task_run,
+        args=(task_id_str, run_id, task_key, requested_by_user_id),
+        name=f"scheduled-task-run-{task_key}-{run_id[:8]}",
+        daemon=True,
+    )
+    thread.start()
+
+    return {
+        "run_id": run_id,
+        "status": "started",
+        "async": True,
+        "message": "Task run started in background. Poll the runs endpoint for status.",
+    }
 
 
 def create_run(db: Session, task_id: str, status: str = "started") -> ScheduledTaskRun:

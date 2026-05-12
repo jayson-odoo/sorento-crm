@@ -13,6 +13,7 @@ import {
 } from '@tanstack/react-table';
 import { ChevronRight, Columns3, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -121,7 +122,11 @@ export default function FormsList() {
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         cell: ({ row }) => (
           <Badge variant="outline" appearance="ghost" className="font-normal">
-            {row.original.form_type || 'marketing'}
+            <LookupBoundLabel
+              table="forms"
+              column="form_type"
+              value={row.original.form_type || 'marketing'}
+            />
           </Badge>
         ),
         size: 110,

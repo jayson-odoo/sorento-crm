@@ -163,7 +163,7 @@ export async function validateOrderTracking(file: File): Promise<ValidateImportR
 }
 
 /**
- * Import order tracking data from Excel file (Master + Daily Tracking sheets)
+ * Import order tracking data from Excel file (Master + Overall Tracking sheets)
  */
 export async function importOrderTracking(file: File): Promise<{
   job_id: string;

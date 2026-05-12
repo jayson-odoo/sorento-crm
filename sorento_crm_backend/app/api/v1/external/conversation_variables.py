@@ -1,21 +1,27 @@
-"""External API: per-conversation variables collected by n8n turn-by-turn."""
+"""External API: per-contact conversation state stored on respond_contacts.session_vars.
+
+Plain JSON store keyed by `respond_io_id` (Respond.io contact id, not internal UUID).
+- GET  /{respond_io_id}  -> returns the stored session_vars dict
+- PUT  /{respond_io_id}  -> body is an arbitrary JSON object, overwrites session_vars
+"""
 import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import text
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.schemas.external.conversation_variables import (
-    ConversationVariableKeysResponse,
-    ConversationVariablesUpsertRequest,
-    ConversationVariablesUpsertResponse,
+    ConversationStateOverwriteRequest,
+    ConversationStateResponse,
 )
 from app.schemas.integration import IntegrationLogCreate
-from app.services.conversation_variables_service import upsert_for_contact
+from app.services.conversation_variables_service import (
+    get_for_contact,
+    overwrite_for_contact,
+)
 from app.services.integration_service import IntegrationLogService
 
 
@@ -23,66 +29,61 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post(
-    "/upsert",
-    response_model=ConversationVariablesUpsertResponse,
+@router.get(
+    "/{respond_io_id}",
+    response_model=ConversationStateResponse,
     status_code=status.HTTP_200_OK,
 )
-def upsert_conversation_variables(
-    payload: ConversationVariablesUpsertRequest,
+def get_conversation_state(
+    respond_io_id: str,
+    current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """Return the raw `session_vars` JSON for the given respond.io contact id."""
+    _ = current_user
+    state = get_for_contact(db, respond_io_id=respond_io_id)
+    return ConversationStateResponse(respond_io_id=respond_io_id, session_vars=state)
+
+
+@router.put(
+    "/{respond_io_id}",
+    response_model=ConversationStateResponse,
+    status_code=status.HTTP_200_OK,
+)
+def overwrite_conversation_state(
+    respond_io_id: str,
+    payload: ConversationStateOverwriteRequest,
     request: Request,
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
-    """Append the latest turn's variables, slide the window, return the merged set.
-
-    Sends the merged dict for `inquiry_type` back to n8n so the next turn can
-    reference any slot already collected in this conversation.
-    """
+    """Overwrite `session_vars` for the contact with the supplied JSON object."""
     _ = current_user
 
     response_status = status.HTTP_200_OK
     error_message: str | None = None
-    response_payload: ConversationVariablesUpsertResponse | None = None
+    response_payload: ConversationStateResponse | None = None
+    _http_exc_to_reraise: HTTPException | None = None
 
     try:
-        state = upsert_for_contact(
-            db,
-            respond_io_id=payload.contact_id,
-            inquiry_type=payload.inquiry_type,
-            variables=payload.variables,
-            max_turns=payload.max_turns,
-            clear_inquiry_type=payload.clear_inquiry_type,
+        state = overwrite_for_contact(
+            db, respond_io_id=respond_io_id, state=payload.root
         )
-        merged = state.get("merged", {}) or {}
-        turns = state.get("turns", []) or []
-        per_type_count = sum(
-            1 for t in turns if isinstance(t, dict) and t.get("inquiry_type") == payload.inquiry_type
-        )
-        response_payload = ConversationVariablesUpsertResponse(
-            inquiry_type=payload.inquiry_type,
-            variables=merged.get(payload.inquiry_type, {}) or {},
-            turn_count_total=len(turns),
-            turn_count_for_inquiry_type=per_type_count,
-            max_turns=payload.max_turns,
+        response_payload = ConversationStateResponse(
+            respond_io_id=respond_io_id, session_vars=state
         )
     except HTTPException as http_exc:
         response_status = http_exc.status_code
         error_message = str(http_exc.detail)
-        # Continue to log, then re-raise after the audit row is written.
-        _http_exc_to_reraise: HTTPException | None = http_exc
+        _http_exc_to_reraise = http_exc
     except Exception as exc:
-        logger.exception("conversation-variables upsert failed: %s", exc)
+        logger.exception("conversation-state overwrite failed: %s", exc)
         response_status = status.HTTP_500_INTERNAL_SERVER_ERROR
-        error_message = "Failed to upsert conversation variables."
+        error_message = "Failed to overwrite conversation state."
         _http_exc_to_reraise = HTTPException(
-            status_code=response_status,
-            detail=error_message,
+            status_code=response_status, detail=error_message
         )
-    else:
-        _http_exc_to_reraise = None
 
-    # Always log to integration_logs so debugging variable-extraction regressions has an audit trail.
     try:
         request_headers = dict(request.headers)
         if "x-api-key" in request_headers:
@@ -92,7 +93,7 @@ def upsert_conversation_variables(
                 integration_channel="n8n",
                 business_table="respond_contacts.session_vars",
                 business_id=str(uuid.uuid4()),
-                external_reference=f"{payload.contact_id}:{payload.space_id}:{payload.inquiry_type}",
+                external_reference=respond_io_id,
                 direction="inbound",
                 endpoint=str(request.url.path),
                 http_method=request.method,
@@ -105,7 +106,7 @@ def upsert_conversation_variables(
         )
     except Exception as log_error:
         logger.warning(
-            "Failed to create integration log for conversation-variables upsert: %s",
+            "Failed to create integration log for conversation-state overwrite: %s",
             log_error,
             exc_info=True,
         )
@@ -113,74 +114,5 @@ def upsert_conversation_variables(
     if _http_exc_to_reraise is not None:
         raise _http_exc_to_reraise
 
-    assert response_payload is not None  # for type-checkers; success path always sets this
+    assert response_payload is not None
     return response_payload
-
-
-@router.get(
-    "/keys",
-    response_model=ConversationVariableKeysResponse,
-    status_code=status.HTTP_200_OK,
-)
-def list_known_variable_keys(
-    inquiry_type: str | None = Query(
-        None,
-        description=(
-            "Optional filter: only return keys that have appeared under this inquiry_type. "
-            "Omit for the global cross-inquiry-type set (recommended; matches LLM bootstrap usage)."
-        ),
-    ),
-    current_user: dict = Depends(get_external_api_user),
-    db: Session = Depends(get_db),
-):
-    """Distinct variable keys ever recorded across all `respond_contacts.session_vars`.
-
-    Sourced from `turns[].vars` (so keys evicted from `merged` by the sliding window are
-    still surfaced). n8n loads this list before each LLM call so the model reuses known
-    keys (`product_code`) instead of inventing variants (`product`, `productCode`, ...).
-    """
-    if inquiry_type is not None:
-        inquiry_type = inquiry_type.strip()
-        if not inquiry_type:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="inquiry_type, when supplied, must be a non-empty string.",
-            )
-
-    if inquiry_type:
-        sql = text(
-            """
-            SELECT DISTINCT k
-            FROM respond_contacts AS rc,
-                 LATERAL jsonb_array_elements(rc.session_vars -> 'turns') AS turn,
-                 LATERAL jsonb_object_keys(turn -> 'vars') AS k
-            WHERE jsonb_typeof(rc.session_vars -> 'turns') = 'array'
-              AND turn ->> 'inquiry_type' = :inquiry_type
-            ORDER BY k
-            """
-        )
-        params = {"inquiry_type": inquiry_type}
-    else:
-        sql = text(
-            """
-            SELECT DISTINCT k
-            FROM respond_contacts AS rc,
-                 LATERAL jsonb_array_elements(rc.session_vars -> 'turns') AS turn,
-                 LATERAL jsonb_object_keys(turn -> 'vars') AS k
-            WHERE jsonb_typeof(rc.session_vars -> 'turns') = 'array'
-            ORDER BY k
-            """
-        )
-        params = {}
-
-    try:
-        rows = db.execute(sql, params).fetchall()
-    except Exception as exc:
-        logger.exception("conversation-variables keys listing failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to list known variable keys.",
-        )
-
-    keys = [r[0] for r in rows if r[0]]
-    return ConversationVariableKeysResponse(keys=keys, count=len(keys))

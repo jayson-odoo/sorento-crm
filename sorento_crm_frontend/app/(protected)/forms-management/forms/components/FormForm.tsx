@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
@@ -26,11 +26,13 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import LookupBoundField from '@/components/common/LookupBoundField';
 import { useCreateForm, useUpdateForm, useForm as useFormQuery } from '../hooks/useForms';
 import { FormSchema, type FormSchemaInput, type FormSchemaType } from '../forms/form-schema';
 import type { FormFormData } from '../types/form.types';
 import { useAttachments } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
+import { AccessLevelsMultiSelect } from '@/app/(protected)/resource-management/attachments/components/AccessLevelsMultiSelect';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { formatDate } from '@/lib/helpers';
 import { toast } from 'sonner';
@@ -46,6 +48,8 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
   const { data: form, isLoading: isLoadingForm } = useFormQuery(formId || null);
   const createMutation = useCreateForm();
   const updateMutation = useUpdateForm();
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  const defaultAccessLevels = useMemo(() => accessTypeOptions.map((opt) => opt.code), [accessTypeOptions]);
 
   const formHook = useForm<FormSchemaInput, unknown, FormSchemaType>({
     resolver: zodResolver(FormSchema),
@@ -57,6 +61,7 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
       language: 'en',
       is_active: false,
       attachment_id: null,
+      access_levels: [],
     },
     mode: 'onSubmit',
   });
@@ -87,13 +92,29 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
           language: form.language,
           is_active: form.is_active,
           attachment_id: form.attachment_id || null,
+          access_levels: form.access_levels?.length ? form.access_levels : defaultAccessLevels,
         });
         setFormInitialized(true);
       }, 0);
 
       return () => clearTimeout(timeoutId);
     }
-  }, [form, isEditMode, formHook, formInitialized]);
+  }, [defaultAccessLevels, form, isEditMode, formHook, formInitialized]);
+
+  // Create-mode seed: fill default access levels exactly once, the first
+  // time the catalog arrives. Do NOT re-seed when the field is later cleared
+  // — that would block "Clear all" in the multi-select.
+  useEffect(() => {
+    if (
+      !isEditMode &&
+      !formInitialized &&
+      defaultAccessLevels.length > 0 &&
+      formHook.getValues('access_levels').length === 0
+    ) {
+      formHook.setValue('access_levels', defaultAccessLevels);
+      setFormInitialized(true);
+    }
+  }, [defaultAccessLevels, formHook, isEditMode, formInitialized]);
 
   // Reset formInitialized when formId changes
   useEffect(() => {
@@ -128,6 +149,7 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
         language: data.language,
         is_active: data.is_active,
         attachment_id: data.attachment_id || null,
+        access_levels: data.access_levels,
       };
 
       if (isEditMode && formId) {
@@ -211,26 +233,49 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Form type</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || 'marketing'}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select form type" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="marketing">Marketing</SelectItem>
-                        <SelectItem value="registration">Registration</SelectItem>
-                        <SelectItem value="application">Application</SelectItem>
-                        <SelectItem value="feedback">Feedback</SelectItem>
-                        <SelectItem value="survey">Survey</SelectItem>
-                        <SelectItem value="complaint">Complaint</SelectItem>
-                        <SelectItem value="internal">Internal</SelectItem>
-                        <SelectItem value="other">Other</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>
-                      Category for search and integrations (e.g. marketing for downloadable application forms)
-                    </FormDescription>
+                    <FormControl>
+                      <LookupBoundField
+                        table="forms"
+                        column="form_type"
+                        value={field.value}
+                        onChange={field.onChange}
+                        placeholder="Select form type"
+                        renderFallback={() => (
+                          <Select onValueChange={field.onChange} value={field.value || 'marketing'}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select form type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="marketing">Marketing</SelectItem>
+                              <SelectItem value="registration">Registration</SelectItem>
+                              <SelectItem value="application">Application</SelectItem>
+                              <SelectItem value="feedback">Feedback</SelectItem>
+                              <SelectItem value="survey">Survey</SelectItem>
+                              <SelectItem value="complaint">Complaint</SelectItem>
+                              <SelectItem value="internal">Internal</SelectItem>
+                              <SelectItem value="other">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={formHook.control}
+                name="access_levels"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Access levels</FormLabel>
+                    <FormControl>
+                      <AccessLevelsMultiSelect
+                        options={accessTypeOptions}
+                        value={field.value ?? []}
+                        onChange={field.onChange}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}

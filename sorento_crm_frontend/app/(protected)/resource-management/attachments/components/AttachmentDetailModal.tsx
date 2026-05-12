@@ -15,7 +15,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
 import {
   Command,
   CommandCheck,
@@ -57,6 +56,7 @@ import { getPromotions } from '@/app/(protected)/marketing-management/promotions
 import { getPackingLists } from '@/app/(protected)/procurement-management/packing-lists/services/packingListService';
 import { linkAttachmentToPackingList, deleteAttachmentLink, unlinkPackingListFromAttachment } from '../services/attachmentService';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 
 const ENTITY_ROUTES = {
   product: { label: 'Product', path: '/master-data-management/products' },
@@ -1110,23 +1110,11 @@ export default function AttachmentDetailModal({
                       <Label className="text-sm text-muted-foreground">Access levels</Label>
                       {accessLevelsEdit !== null ? (
                         <div className="space-y-2">
-                          <div className="flex flex-wrap gap-4">
-                            {accessTypeOptions.map((opt) => (
-                              <label key={opt.code} className="flex items-center gap-2 cursor-pointer">
-                                <Checkbox
-                                  checked={accessLevelsEdit.includes(opt.code)}
-                                  onCheckedChange={(checked) => {
-                                    setAccessLevelsEdit((prev) => {
-                                      const arr = prev ?? [];
-                                      if (checked) return arr.includes(opt.code) ? arr : [...arr, opt.code];
-                                      return arr.filter((v) => v !== opt.code);
-                                    });
-                                  }}
-                                />
-                                <span className="text-sm">{opt.name || opt.code}</span>
-                              </label>
-                            ))}
-                          </div>
+                          <AccessLevelsMultiSelect
+                            options={accessTypeOptions}
+                            value={accessLevelsEdit}
+                            onChange={setAccessLevelsEdit}
+                          />
                           <div className="flex gap-2">
                             <Button
                               size="sm"

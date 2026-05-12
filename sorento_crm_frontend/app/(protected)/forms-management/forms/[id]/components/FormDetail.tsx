@@ -16,7 +16,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import RecordNavigation from '@/components/common/RecordNavigation';
+import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { useForm, useForms, useDeleteForm } from '../../hooks/useForms';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { formatDate } from '@/lib/helpers';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { useQuery } from '@tanstack/react-query';
@@ -43,6 +45,12 @@ export default function FormDetail({ formId }: FormDetailProps) {
   const navigationItems = navigationData?.data ?? [];
   const downloadMutation = useDownloadAttachment();
   const deleteMutation = useDeleteForm();
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  const accessLevelNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    accessTypeOptions.forEach((o) => m.set(o.code, o.name || o.code));
+    return m;
+  }, [accessTypeOptions]);
   const [isDownloading, setIsDownloading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
@@ -134,8 +142,13 @@ export default function FormDetail({ formId }: FormDetailProps) {
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            Form Code: {form.code} • Type: {form.form_type || 'marketing'} • Version: {form.version} • Language:{' '}
-            {form.language.toUpperCase()}
+            Form Code: {form.code} • Type:{' '}
+            <LookupBoundLabel
+              table="forms"
+              column="form_type"
+              value={form.form_type || 'marketing'}
+            />
+            {' '}• Version: {form.version} • Language: {form.language.toUpperCase()}
           </p>
         </div>
         <div className="flex gap-2">
@@ -178,7 +191,27 @@ export default function FormDetail({ formId }: FormDetailProps) {
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Form type</p>
-              <p className="font-medium">{form.form_type || 'marketing'}</p>
+              <p className="font-medium">
+                <LookupBoundLabel
+                  table="forms"
+                  column="form_type"
+                  value={form.form_type || 'marketing'}
+                />
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Access levels</p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {(form.access_levels ?? []).length === 0 ? (
+                  <span className="text-sm text-muted-foreground">-</span>
+                ) : (
+                  (form.access_levels ?? []).map((level) => (
+                    <Badge key={level} variant="secondary">
+                      {accessLevelNameMap.get(level) ?? level}
+                    </Badge>
+                  ))
+                )}
+              </div>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Purpose</p>

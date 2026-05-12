@@ -21,8 +21,10 @@ Use this flow to bulk-create or update products from an Excel file. This is **Pa
 | **Is Active** | Optional | Boolean (`yes`/`no`, `true`/`false`, `1`/`0`). |
 
 
-5. Drag the filled file in or click to browse, then click **[Upload](/master-data-management/products#guide_target=template-upload.confirm-button)**.
-6. The system will process the import in the background and notify you via email once the process is finished.
+5. Drag the filled file in or click to browse.
+6. (Recommended) Click **[Test](/master-data-management/products#guide_target=template-upload.test-button)** first to run server-side validation only. Fix any reported errors, then continue.
+7. Click **[Upload](/master-data-management/products#guide_target=template-upload.confirm-button)**.
+8. The system will process the import in the background and notify you via email once the process is finished.
 
 ## How you'll see progress
 

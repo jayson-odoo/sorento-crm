@@ -15,6 +15,7 @@ class FormBase(BaseModel):
     version: int = 1
     is_active: bool = False
     attachment_id: Optional[str] = None
+    access_levels: list[str] = []
 
 
 class FormCreate(FormBase):
@@ -29,6 +30,7 @@ class FormUpdate(BaseModel):
     version: Optional[int] = None
     is_active: Optional[bool] = None
     attachment_id: Optional[str] = None
+    access_levels: Optional[list[str]] = None
 
 
 class AttachmentSimple(BaseModel):

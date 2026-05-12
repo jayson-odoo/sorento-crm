@@ -21,8 +21,13 @@ const dialogContentVariants = cva(
   },
 );
 
-function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
+function Dialog({ modal, ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
+  // Default to non-modal so the AI assistant bubble (rendered outside the
+  // dialog portal) stays scrollable / interactive while a dialog is open.
+  // Radix's modal mode wraps the tree in `react-remove-scroll` which blocks
+  // wheel/touch events on every element outside the dialog content.
+  // Callers can still opt back in by passing `modal={true}` explicitly.
+  return <DialogPrimitive.Root data-slot="dialog" modal={modal ?? false} {...props} />;
 }
 
 function DialogTrigger({ ...props }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
@@ -76,16 +81,67 @@ function DialogContent({
     overlay?: boolean;
   }) {
   const needsFallbackTitle = !hasDialogTitleInChildren(children);
+  // Track the moment the actual Content DOM node attaches (i.e. the moment
+  // the dialog truly opens). We can't use mount of this React component
+  // because Radix evaluates `<DialogContent>` even while the dialog is
+  // closed; only the underlying DialogPrimitive.Content DOM node toggles
+  // with the open state. The grace window below ignores the trailing
+  // pointer/focus event from a DropdownMenu / Popover / Select / ContextMenu
+  // item that just opened this dialog — those surfaces unmount during the
+  // same click cycle and their last event would otherwise land outside the
+  // freshly-opened dialog and instantly close it (`modal={false}` is
+  // intentional so the AI assistant bubble outside the portal stays
+  // interactive).
+  const mountedAtRef = React.useRef<number>(0);
+  const contentRefCallback = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node) {
+        mountedAtRef.current = performance.now();
+      } else {
+        mountedAtRef.current = 0;
+      }
+    },
+    [],
+  );
+  // Radix wraps these in a CustomEvent whose `target` is the DialogContent itself.
+  // The actual click/pointer/focus target is on `event.detail.originalEvent.target`.
   const guardOutsideInteraction = (event: Event) => {
-    const target = event.target as Element | null;
-    if (target && target.closest('[data-ai-assistant-root]')) {
+    const detail = (event as CustomEvent<{ originalEvent?: Event }>).detail;
+    const original = detail?.originalEvent;
+    const target = (original?.target ?? event.target) as Element | null;
+    // Keep the AI assistant bubble interactive while a dialog is open.
+    if (target && target.closest && target.closest('[data-ai-assistant-root]')) {
       event.preventDefault();
+      return;
+    }
+    // Ignore the trailing pointer/focus event from the Radix surface that
+    // *opened* this dialog (dropdown menu / popover / select / context menu).
+    // Those surfaces are unmounting during the same tick the dialog mounts;
+    // their event would otherwise be misread as an outside click.
+    if (
+      target &&
+      target.closest &&
+      target.closest(
+        '[data-radix-popper-content-wrapper], [data-radix-menu-content], [data-radix-popover-content], [data-radix-select-content], [data-radix-context-menu-content], [data-slot="dropdown-menu-content"], [data-slot="popover-content"], [data-slot="select-content"], [role="menu"], [role="menuitem"], [role="listbox"], [role="option"]',
+      )
+    ) {
+      event.preventDefault();
+      return;
+    }
+    // Same trailing-event problem when the closing surface was already
+    // unmounted by the time the event fires — target lands on body / html.
+    // Suppress any outside interaction within a short grace window after
+    // mount; this is well under the click-to-real-outside-click latency.
+    if (mountedAtRef.current && performance.now() - mountedAtRef.current < 300) {
+      event.preventDefault();
+      return;
     }
   };
   return (
     <DialogPortal>
       {overlay && <DialogOverlay />}
       <DialogPrimitive.Content
+        ref={contentRefCallback}
         data-slot="dialog-content"
         className={cn(dialogContentVariants({ variant }), className)}
         onPointerDownOutside={guardOutsideInteraction}

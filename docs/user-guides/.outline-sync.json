@@ -21,7 +21,12 @@
   "purchasing/upload-product-attachments.md": "6c8682d1-8756-459f-afbe-2c56c8fd913e",
   "purchasing/upload-product-master.md": "19dcc22e-258d-495d-b608-24e7a686b2d2",
   "purchasing/upload-spo.md": "6ac8f482-033a-4e2c-8f04-3e6236ac0253",
+  "technical-team/__parent__": "7e2c073e-19aa-4a99-8d66-46b35203d280",
+  "technical-team/approve-or-reject-complaint.md": "82abb93b-4b90-4fb7-a82a-79a3cb9b37c5",
+  "technical-team/respond-to-complaint.md": "3155831e-ddc2-428c-a484-fb7a0d2e3a7c",
+  "technical-team/set-root-cause-and-resolution.md": "4907c2b8-49c4-40fd-a1c1-1a6a8df959eb",
   "warehouse/__parent__": "33c9e186-89ed-437a-993c-8965a34f9a07",
   "warehouse/upload-delivery-orders.md": "2d1c4ac3-7f37-45d6-88a6-21c9b544d96f",
-  "warehouse/upload-grn.md": "51eafc85-d416-4bfe-bec3-c05bf715c821"
+  "warehouse/upload-grn.md": "51eafc85-d416-4bfe-bec3-c05bf715c821",
+  "warehouse/upload-stock.md": "93e0f529-c18f-49b7-b623-5fbd837ecd43"
 }

@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
 import { LoaderCircleIcon } from 'lucide-react';
@@ -25,6 +24,7 @@ import {
   useRestoreAttachment,
   useUpdateAttachment,
 } from '../hooks/useAttachments';
+import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 import { getAttachmentMetadata } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
@@ -421,23 +421,11 @@ export default function AttachmentDetail({
             <Label className="text-sm text-muted-foreground">Access levels</Label>
             {accessLevelsEdit !== null ? (
               <div className="space-y-2">
-                <div className="flex flex-wrap gap-4">
-                  {accessTypeOptions.map((opt) => (
-                    <label key={opt.code} className="flex items-center gap-2 cursor-pointer">
-                      <Checkbox
-                        checked={accessLevelsEdit.includes(opt.code)}
-                        onCheckedChange={(checked) => {
-                          setAccessLevelsEdit((prev) => {
-                            const arr = prev ?? [];
-                            if (checked) return arr.includes(opt.code) ? arr : [...arr, opt.code];
-                            return arr.filter((v) => v !== opt.code);
-                          });
-                        }}
-                      />
-                      <span className="text-sm">{opt.name || opt.code}</span>
-                    </label>
-                  ))}
-                </div>
+                <AccessLevelsMultiSelect
+                  options={accessTypeOptions}
+                  value={accessLevelsEdit}
+                  onChange={setAccessLevelsEdit}
+                />
                 <div className="flex gap-2">
                   <Button
                     size="sm"

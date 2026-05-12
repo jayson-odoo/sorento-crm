@@ -17,7 +17,8 @@ Toolbar:
 
 1. Click **[Import options](/procurement-management/grn#guide_target=procurement.grn.import-options-button)** → **Upload GRN**.
 2. Drag in or browse to your GRN-header Excel file.
-3. Click **[Upload](/procurement-management/grn#guide_target=procurement.grn.import-confirm-button)**. The job is queued (`grn_listing_import`). Toast: confirmation that the job started.
+3. (Recommended) Click **[Test](/procurement-management/grn#guide_target=template-upload.test-button)** to validate first; resolve errors before uploading.
+4. Click **[Upload](/procurement-management/grn#guide_target=procurement.grn.import-confirm-button)**. The job is queued (`grn_listing_import`). Toast: confirmation that the job started.
 
 ### GRN header columns
 
@@ -34,7 +35,8 @@ After the header import finishes:
 
 1. Click **[Import options](/procurement-management/grn#guide_target=procurement.grn.import-options-button)** → **Upload GRN Lines**.
 2. Drag in or browse to your GRN-lines Excel.
-3. Click **[Upload](/procurement-management/grn#guide_target=procurement.grn.import-confirm-button)**. The job is queued (`grn_lines_import`).
+3. (Recommended) Click **[Test](/procurement-management/grn#guide_target=template-upload.test-button)** to validate.
+4. Click **[Upload](/procurement-management/grn#guide_target=procurement.grn.import-confirm-button)**. The job is queued (`grn_lines_import`).
 
 ### GRN line columns
 

@@ -26,8 +26,9 @@ For uploading many product attachments at once:
 
 1. Zip the files together (e.g. one ZIP per brand or product family).
 2. Click **[Bulk import (ZIP)](/resource-management/attachment-directories#guide_target=resource-management.files.bulk-import-button)** in the toolbar.
-3. Set the attachment type (e.g. **Certificate**) and upload the ZIP.
-4. Each file inside the archive is processed individually and auto-linked the same way as a single upload.
+3. Set the attachment type (e.g. **Certificate**) and select the ZIP.
+4. Click **[Import](/resource-management/attachment-directories#guide_target=resource-management.files.bulk-import-confirm-button)** to start the bulk job.
+5. Each file inside the archive is processed individually and auto-linked the same way as a single upload.
 
 ## How you'll be notified
 

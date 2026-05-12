@@ -57,6 +57,7 @@ PARENT_TITLES = {
     "project-sales-admin": "4-Project Sales Admin",
     "project-sales-manager": "5-Project Sales Manager",
     "project-sales-rep": "6-Project Sales Rep",
+    "technical-team": "7-Technical Team",
 }
 
 ROOT_DOC_TITLE = "Overview"

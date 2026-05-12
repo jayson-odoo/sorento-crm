@@ -9,7 +9,8 @@ Use this flow to bulk-import **SPO allocations** from an Excel file. SPO allocat
 2. Click the **[Import options](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-options-button)** button in the toolbar (upload icon).
 3. Pick **Import SPO** from the dropdown.
 4. The **SPO Import** dialog opens. Drag in or browse to your SPO Excel file.
-5. Click **[Import](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-confirm-button)** to queue the import job.
+5. (Recommended) Click **[Test](/procurement-management/spo-allocations#guide_target=template-upload.test-button)** to validate the file before importing. Fix any reported errors first.
+6. Click **[Import](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-confirm-button)** to queue the import job.
 
 ## What the system captures (column reference)
 

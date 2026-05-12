@@ -522,8 +522,9 @@ export default function AIAssistantBubble() {
                               components={{
                                 a: ({ href, children, ...props }) => {
                                   const url = href ?? '';
-                                  const isInternal = url.startsWith('/');
-                                  if (isInternal) {
+                                  const isPath = url.startsWith('/');
+                                  const isHashOnly = url.startsWith('#');
+                                  if (isPath) {
                                     return (
                                       <Link
                                         href={url}
@@ -531,6 +532,20 @@ export default function AIAssistantBubble() {
                                       >
                                         {children}
                                       </Link>
+                                    );
+                                  }
+                                  if (isHashOnly) {
+                                    // Same-tab fragment link (e.g. guide_target spotlight on
+                                    // the page the user is already on). Plain anchor so the
+                                    // browser updates window.location.hash + fires hashchange.
+                                    return (
+                                      <a
+                                        href={url}
+                                        className="text-primary underline underline-offset-2"
+                                        {...props}
+                                      >
+                                        {children}
+                                      </a>
                                     );
                                   }
                                   return (

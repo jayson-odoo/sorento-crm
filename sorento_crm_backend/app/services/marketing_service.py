@@ -336,11 +336,22 @@ class PromotionService:
                 ).where(
                     Product.product_code.ilike(search_term)
                 )
+                has_attachment_match = exists().where(
+                    PromotionAttachment.promotion_id == Promotion.id
+                ).where(
+                    PromotionAttachment.attachment_id == Attachment.id
+                ).where(
+                    or_(
+                        Attachment.original_filename.ilike(search_term),
+                        Attachment.stored_filename.ilike(search_term),
+                    )
+                )
                 q = q.filter(
                     or_(
                         Promotion.promo_code.ilike(search_term),
                         Promotion.name.ilike(search_term),
                         has_product_match,
+                        has_attachment_match,
                     )
                 )
             if promo_type_norm:

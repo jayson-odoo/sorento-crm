@@ -45,6 +45,7 @@ import { LoaderCircleIcon } from 'lucide-react';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import type { PromotionProduct, PromotionGroup } from '../types/promotion.types';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 type FocTierRow = { purchase: string; foc: string };
 
@@ -101,6 +102,12 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const { data: navigationData } = usePromotions(navigationParams);
   const navigationItems = navigationData?.data ?? [];
   const deleteMutation = useDeletePromotion();
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
+  const accessLevelNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    accessTypeOptions.forEach((o) => m.set(o.code, o.name || o.code));
+    return m;
+  }, [accessTypeOptions]);
   const addProductMutation = useAddPromotionProduct();
   const removeProductMutation = useRemovePromotionProduct();
   const updatePriceMutation = useUpdatePromotionProductPrice();
@@ -584,11 +591,13 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
             {promotion.access_levels && promotion.access_levels.length > 0 && (
               <div className="md:col-span-2">
                 <p className="text-sm text-muted-foreground">Access type</p>
-                <p className="font-medium">
-                  {promotion.access_levels
-                    .map((l) => l.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()))
-                    .join(', ')}
-                </p>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {promotion.access_levels.map((level) => (
+                    <Badge key={level} variant="secondary">
+                      {accessLevelNameMap.get(level) ?? level}
+                    </Badge>
+                  ))}
+                </div>
               </div>
             )}
             {promotion.description && (

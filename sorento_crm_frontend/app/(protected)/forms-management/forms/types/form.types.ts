@@ -10,6 +10,7 @@ export interface Form {
   created_at: Date;
   updated_at: Date;
   attachment_id?: string | null;
+  access_levels?: string[] | null;
   attachment?: {
     id: string;
     original_filename: string;
@@ -59,6 +60,7 @@ export interface FormFormData {
   language: string;
   is_active: boolean;
   attachment_id?: string | null;
+  access_levels?: string[] | null;
 }
 
 export interface FormVersion {

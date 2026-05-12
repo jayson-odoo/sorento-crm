@@ -8,10 +8,10 @@ import { getDirectoryTree, createDirectory, updateDirectory, deleteDirectory, re
 import { apiFetch } from '@/lib/api';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 
-export function useAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; upload_date_from?: string; upload_date_to?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null; resolve_signed_urls?: boolean; access_levels?: string[]; access_levels_match?: 'any' | 'all' | 'exact' }) {
+export function useAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; attachment_type_id?: string; upload_date_from?: string; upload_date_to?: string; uploaded_at_from?: string; uploaded_at_to?: string; uploaded_by?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null; resolve_signed_urls?: boolean; access_levels?: string[]; access_levels_match?: 'any' | 'all' | 'exact' }) {
   const accessLevelsKey = (params.access_levels ?? []).slice().sort().join(',');
   return useQuery({
-    queryKey: ['attachments', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.entity_type, params.file_type, params.upload_date_from, params.upload_date_to, params.is_deleted, params.virus_status, params.directory_id, params.resolve_signed_urls, accessLevelsKey, params.access_levels_match ?? 'any'],
+    queryKey: ['attachments', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.entity_type, params.file_type, params.attachment_type_id, params.upload_date_from, params.upload_date_to, params.uploaded_at_from, params.uploaded_at_to, params.uploaded_by, params.is_deleted, params.virus_status, params.directory_id, params.resolve_signed_urls, accessLevelsKey, params.access_levels_match ?? 'any'],
     queryFn: () => getAttachments(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

@@ -1,9 +1,9 @@
 import { apiFetch } from '@/lib/api';
-import type { Attachment, AttachmentType } from '../types/attachment.types';
+import type { Attachment } from '../types/attachment.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-export async function getAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; upload_date_from?: string; upload_date_to?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null; resolve_signed_urls?: boolean; access_levels?: string[]; access_levels_match?: 'any' | 'all' | 'exact' }): Promise<DataGridApiResponse<Attachment>> {
-  const { pageIndex, pageSize, sorting, searchQuery, entity_type, file_type, upload_date_from, upload_date_to, is_deleted, virus_status, directory_id, resolve_signed_urls, access_levels, access_levels_match } = params;
+export async function getAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; attachment_type_id?: string; upload_date_from?: string; upload_date_to?: string; uploaded_at_from?: string; uploaded_at_to?: string; uploaded_by?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null; resolve_signed_urls?: boolean; access_levels?: string[]; access_levels_match?: 'any' | 'all' | 'exact' }): Promise<DataGridApiResponse<Attachment>> {
+  const { pageIndex, pageSize, sorting, searchQuery, entity_type, file_type, attachment_type_id, upload_date_from, upload_date_to, uploaded_at_from, uploaded_at_to, uploaded_by, is_deleted, virus_status, directory_id, resolve_signed_urls, access_levels, access_levels_match } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -12,9 +12,10 @@ export async function getAttachments(params: DataGridApiFetchParams & { entity_t
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
     ...(entity_type ? { entity_type } : {}),
-    ...(file_type ? { file_type } : {}),
-    ...(upload_date_from ? { upload_date_from } : {}),
-    ...(upload_date_to ? { upload_date_to } : {}),
+    ...(attachment_type_id || file_type ? { attachment_type_id: attachment_type_id || file_type } : {}),
+    ...(uploaded_by ? { uploaded_by } : {}),
+    ...(uploaded_at_from || upload_date_from ? { uploaded_at_from: uploaded_at_from || upload_date_from } : {}),
+    ...(uploaded_at_to || upload_date_to ? { uploaded_at_to: uploaded_at_to || upload_date_to } : {}),
     ...(is_deleted !== undefined ? { is_deleted: String(is_deleted) } : {}),
     ...(virus_status ? { virus_status } : {}),
     ...(directory_id != null && directory_id !== '' ? { directory_id } : {}),

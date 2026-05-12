@@ -657,7 +657,7 @@ async def import_order_tracking(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Import orders from Excel file with Master and Daily Tracking sheets (queued). Use validate_only=true to test without importing."""
+    """Import orders from Excel file with Master and Overall Tracking sheets (queued). Use validate_only=true to test without importing."""
     try:
         if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
             raise HTTPException(

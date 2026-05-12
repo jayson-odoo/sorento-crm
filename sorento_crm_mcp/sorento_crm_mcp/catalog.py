@@ -351,6 +351,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "entity_type",
             "entity_id",
             "directory_id",
+            "attachment_type_id",
+            "uploaded_by",
+            "uploaded_at_from",
+            "uploaded_at_to",
             "is_deleted",
             "resolve_signed_urls",
         ),
@@ -428,7 +432,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- inventory ---
     ToolSpec(
         "crm_inventory_stock_balance_list",
-        "Paged stock balances (warehouse, product, quantity filters, status). `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or warehouse_code/name.",
+        "Paged active-warehouse stock balances. Exposes quantity_on_hand and Malaysia-time updated_at only for stock quantities; does not reveal available/reserved/damaged/status. `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or warehouse_code/name.",
         "/api/v1/inventory/stock/balance",
         (),
         (
@@ -446,28 +450,28 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_inventory_stock_dashboard",
-        "Stock dashboard aggregates.",
+        "Active-warehouse stock dashboard aggregates.",
         "/api/v1/inventory/stock/dashboard",
         (),
         (),
     ),
     ToolSpec(
         "crm_inventory_stock_alerts",
-        "Low-stock style alerts from API.",
+        "Active-warehouse stock alerts from API.",
         "/api/v1/inventory/stock/alerts",
         (),
         (),
     ),
     ToolSpec(
         "crm_inventory_stock_balance_export",
-        "Export all stock rows (no pagination) with optional filters; requires export permission on act-as user. product_id accepts UUID or product_code (SKU).",
+        "Export active-warehouse stock rows with optional filters. MCP output exposes quantity_on_hand and Malaysia-time updated_at only for stock quantities. product_id accepts UUID or product_code (SKU).",
         "/api/v1/inventory/stock/balance/export",
         (),
         ("warehouse_id", "product_id", "quantity_operator", "quantity_value"),
     ),
     ToolSpec(
         "crm_inventory_stock_ledger_by_product_warehouse",
-        "Ledger for one product in one warehouse. product_id may be UUID or product_code (SKU).",
+        "Ledger for one product in one active warehouse. product_id may be UUID or product_code (SKU).",
         "/api/v1/inventory/stock/{product_id}/{warehouse_id}/ledger",
         ("product_id", "warehouse_id"),
         ("page", "limit"),
@@ -509,14 +513,14 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_inventory_stock_ledger_list",
-        "Global stock ledger list. `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or warehouse_code/name.",
+        "Global active-warehouse stock ledger list. `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or warehouse_code/name.",
         "/api/v1/inventory/stock-ledger",
         (),
         ("page", "limit", "product_id", "warehouse_id", "transaction_type"),
     ),
     ToolSpec(
         "crm_inventory_stock_batches_list",
-        "List stock batches. `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or warehouse_code/name.",
+        "List stock batches for active warehouses. `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or warehouse_code/name.",
         "/api/v1/inventory/stock-batches",
         (),
         ("page", "limit", "product_id", "warehouse_id"),
@@ -774,14 +778,14 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- forms ---
     ToolSpec(
         "crm_forms_management_forms_list",
-        "List forms. Query searches code, name, purpose, and form_type.",
+        "List forms visible to a Respond contact. Query searches code, name, purpose, form_type, and linked attachment filename. Pass form_type to filter department/category.",
         "/api/v1/forms-management/forms",
         (),
-        ("page", "limit", "query", "language", "status", "sort", "dir"),
+        ("page", "limit", "query", "language", "status", "form_type", "contact_id", "space_id", "sort", "dir"),
     ),
     ToolSpec(
         "crm_forms_management_forms_get",
-        "Get form by id. Supports optional `contact_id` and `space_id` query params for caller scope consistency across crm_forms_* tools.",
+        "Get a form by id if visible to the Respond contact. Returns form_type so the requester knows which department/category the form belongs to.",
         "/api/v1/forms-management/forms/{form_id}",
         ("form_id",),
         ("contact_id", "space_id"),

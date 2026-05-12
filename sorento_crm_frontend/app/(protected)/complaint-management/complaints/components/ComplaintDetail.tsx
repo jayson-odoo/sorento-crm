@@ -183,6 +183,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           <Button
             variant="outline"
             size="sm"
+            data-guide-target="complaint-management.complaints.tech-team.edit-response"
             onClick={() => {
               setEditTechnicalResponseValue(
                 displayComplaintTechnicalResponse(complaint.technical_team_response ?? ''),
@@ -196,6 +197,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           {complaint.status === 'responded' && canApprove && (
             <Button
               size="sm"
+              data-guide-target="complaint-management.complaints.tech-team.approve"
               disabled={approveComplaintMutation.isPending}
               onClick={() => setApproveDialogOpen(true)}
             >
@@ -207,6 +209,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             <Button
               variant="outline"
               size="sm"
+              data-guide-target="complaint-management.complaints.tech-team.reject"
               disabled={rejectComplaintMutation.isPending}
               onClick={() => {
                 setRejectReason('');
@@ -486,6 +489,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             </Button>
             <Button
               variant="outline"
+              data-guide-target="complaint-management.complaints.tech-team.save-response"
               disabled={updateComplaintMutation.isPending}
               onClick={async () => {
                 try {
@@ -504,6 +508,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             {canUseRespondChat && (
               <Button
                 variant="primary"
+                data-guide-target="complaint-management.complaints.tech-team.update-reply"
                 disabled={
                   updateComplaintMutation.isPending ||
                   openingReplySheet ||
@@ -662,6 +667,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               <Button
                 variant="outline"
                 size="sm"
+                data-guide-target="complaint-management.complaints.tech-team.notify-root-cause"
                 onClick={() => setNotifyRootCauseOpen(true)}
                 disabled={
                   !complaint.root_cause_id ||
@@ -686,6 +692,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               <Button
                 variant="outline"
                 size="sm"
+                data-guide-target="complaint-management.complaints.tech-team.notify-resolution"
                 onClick={() => setNotifyResolutionOpen(true)}
                 disabled={
                   !complaint.resolution_id ||

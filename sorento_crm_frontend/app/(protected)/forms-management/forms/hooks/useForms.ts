@@ -4,9 +4,9 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getForms, getForm, createForm, updateForm, deleteForm, bulkDeleteForms, duplicateForm, publishForm, getFormVersions } from '../services/formService';
 import type { FormFormData } from '../types/form.types';
 
-export function useForms(params: DataGridApiFetchParams & { language?: string; status?: string; purpose?: string }) {
+export function useForms(params: DataGridApiFetchParams & { language?: string; status?: string; purpose?: string; form_type?: string }) {
   return useQuery({
-    queryKey: ['forms', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.language, params.status, params.purpose],
+    queryKey: ['forms', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.language, params.status, params.purpose, params.form_type],
     queryFn: () => getForms(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

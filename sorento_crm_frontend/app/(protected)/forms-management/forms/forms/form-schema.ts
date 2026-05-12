@@ -21,6 +21,7 @@ export const FormSchema = z.object({
   language: z.string().min(2, { message: 'Language is required.' }).max(10, { message: 'Language code must not exceed 10 characters.' }),
   is_active: z.boolean(),
   attachment_id: z.string().min(1).optional().nullable(),
+  access_levels: z.array(z.string()).min(1, { message: 'Select at least one access level.' }),
 });
 
 export type FormSchemaInput = z.input<typeof FormSchema>;

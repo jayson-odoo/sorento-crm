@@ -13,26 +13,26 @@ Filter the list by **Status = Pending purchasing** to see only inquiries waiting
 
 1. Click an inquiry row to open the detail page (URL: `/procurement-management/stock-inquiries/{id}`).
 2. Review the inquiry header (requester, contact, products, requested quantities, notes) and any attached files.
-3. Click **[Edit purchasing response](/procurement-management/stock-inquiries#guide_target=procurement.stock-inquiries.edit-purchasing-response-button)** in the toolbar.
+3. Click **[Edit purchasing response](#guide_target=procurement.stock-inquiries.edit-purchasing-response-button)** in the toolbar.
 4. Fill in your response in the **Edit purchasing response** dialog. The dialog tells you: *"Save updates the record only. Update & Reply saves your text and sends it to the contact."*
 5. Choose how to finish:
-   * **[Save only](/procurement-management/stock-inquiries#guide_target=procurement.stock-inquiries.save-response-button)** — saves your draft response without notifying the requester. Use this for work-in-progress edits.
-   * **[Update & Reply](/procurement-management/stock-inquiries#guide_target=procurement.stock-inquiries.update-and-reply-button)** — saves your response **and** sends it back to the requester via Respond.io. Use this when the reply is complete.
+   * **[Save only](#guide_target=procurement.stock-inquiries.save-response-button)** — saves your draft response without notifying the requester. Use this for work-in-progress edits.
+   * **[Update & Reply](#guide_target=procurement.stock-inquiries.update-and-reply-button)** — saves your response **and** sends it back to the requester via Respond.io. Use this when the reply is complete.
 
 After **Update & Reply** the inquiry moves to **Responded** and the requester is notified.
 
 ## Reject an inquiry
 
-If the request can't be fulfilled, click **[Reject](/procurement-management/stock-inquiries#guide_target=procurement.stock-inquiries.reject-button)** on the detail page.
+If the request can't be fulfilled, click **[Reject](#guide_target=procurement.stock-inquiries.reject-button)** on the detail page.
 
 
 1. The **Reject stock inquiry** dialog opens.
 2. Enter a **Rejection reason** — this field is required (the dialog says: *"Enter a reason for the rejection. This is required."*). Placeholder: *"Reason for rejection..."*.
-3. Click **[Reject](/procurement-management/stock-inquiries#guide_target=procurement.stock-inquiries.reject-confirm-button)** to confirm. The inquiry moves to **Rejected** and the rejection reason is stored on the record and sent to the requester.
+3. Click **[Reject](#guide_target=procurement.stock-inquiries.reject-confirm-button)** to confirm. The inquiry moves to **Rejected** and the rejection reason is stored on the record and sent to the requester.
 
 ## Reopen a rejected inquiry
 
-If a rejection was issued in error, click **[Reopen to pending purchasing](/procurement-management/stock-inquiries#guide_target=procurement.stock-inquiries.reopen-button).** The **Reopen stock inquiry** dialog asks for an optional reason; click **[Reopen](/procurement-management/stock-inquiries#guide_target=procurement.stock-inquiries.reopen-confirm-button)** to confirm.
+If a rejection was issued in error, click **[Reopen to pending purchasing](#guide_target=procurement.stock-inquiries.reopen-button).** The **Reopen stock inquiry** dialog asks for an optional reason; click **[Reopen](#guide_target=procurement.stock-inquiries.reopen-confirm-button)** to confirm.
 
 ## Chat directly with the requester
 

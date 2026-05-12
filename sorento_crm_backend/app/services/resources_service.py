@@ -2,7 +2,7 @@
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from typing import Optional, List
+from typing import Any, Optional, List
 
 logger = logging.getLogger(__name__)
 from app.models.resources import Attachment, AttachmentType, AttachmentDirectory
@@ -387,6 +387,10 @@ class AttachmentService:
         entity_id: Optional[str] = None,
         directory_id: Optional[str] = None,
         is_deleted: Optional[bool] = None,
+        attachment_type_id: Optional[str] = None,
+        uploaded_by: Optional[str] = None,
+        uploaded_at_from: Optional[Any] = None,
+        uploaded_at_to: Optional[Any] = None,
         access_levels: Optional[List[str]] = None,
         access_levels_match: Optional[str] = "any",
     ):
@@ -414,6 +418,14 @@ class AttachmentService:
             q = q.filter(Attachment.entity_id == entity_id)
         if directory_id is not None:
             q = q.filter(Attachment.directory_id == directory_id)
+        if attachment_type_id:
+            q = q.filter(Attachment.attachment_type_id == attachment_type_id)
+        if uploaded_by:
+            q = q.filter(Attachment.uploaded_by == uploaded_by)
+        if uploaded_at_from is not None:
+            q = q.filter(Attachment.uploaded_at >= uploaded_at_from)
+        if uploaded_at_to is not None:
+            q = q.filter(Attachment.uploaded_at <= uploaded_at_to)
         if access_levels:
             cleaned = sorted({lvl for lvl in access_levels if lvl and lvl.strip()})
             if cleaned:

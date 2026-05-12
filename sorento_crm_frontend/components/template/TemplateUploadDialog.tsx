@@ -333,6 +333,7 @@ export function TemplateUploadDialog({
             <Button
               type="button"
               variant="outline"
+              data-guide-target="template-upload.test-button"
               onClick={handleTest}
               disabled={!file || isUploading || isTesting}
             >

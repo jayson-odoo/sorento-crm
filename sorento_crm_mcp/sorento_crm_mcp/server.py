@@ -6,7 +6,8 @@ import json
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -33,6 +34,7 @@ TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
     "crm_forms_purchase_requests_list": ("contact_id", "space_id"),
     "crm_forms_purchase_requests_get": ("contact_id", "space_id"),
     "crm_forms_management_forms_get": ("contact_id", "space_id"),
+    "crm_forms_management_forms_list": ("contact_id", "space_id"),
     # Promotion / attachment access-control: server resolves the contact's M2M
     # access types from these and applies an overlap filter against the
     # resource's access_levels JSONB array. n8n must always supply both.
@@ -60,6 +62,21 @@ PROMOTION_TOOL_NAMES: set[str] = {
     "crm_marketing_promotion_attachments_list",
     "crm_marketing_promotion_attachments_get",
     "crm_marketing_promotion_attachments_by_promotion",
+}
+
+STOCK_TOOL_PREFIX = "crm_inventory_stock_"
+_MALAYSIA_TZ = ZoneInfo("Asia/Kuala_Lumpur")
+_STOCK_HIDDEN_FIELDS = {
+    "quantity_available",
+    "quantity_reserved",
+    "quantity_damaged",
+    "reserved_quantity",
+    "damaged_quantity",
+    "available",
+    "reserved",
+    "damaged",
+    "status",
+    "reorder_point",
 }
 
 UUID_REGEX = re.compile(
@@ -319,6 +336,47 @@ def _filter_active_promotion_records(tool_name: str, raw: str) -> str:
     return raw
 
 
+def _to_malaysia_iso(value: Any) -> Any:
+    if not isinstance(value, str) or not value.strip():
+        return value
+    raw = value.strip()
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_MALAYSIA_TZ).isoformat()
+
+
+def _sanitize_stock_payload(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_sanitize_stock_payload(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    sanitized: dict[str, Any] = {}
+    for key, raw in value.items():
+        if key in _STOCK_HIDDEN_FIELDS:
+            continue
+        if key == "updated_at":
+            sanitized[key] = _to_malaysia_iso(raw)
+        elif isinstance(raw, (dict, list)):
+            sanitized[key] = _sanitize_stock_payload(raw)
+        else:
+            sanitized[key] = raw
+    return sanitized
+
+
+def _sanitize_stock_tool_response(tool_name: str, raw: str) -> str:
+    if not tool_name.startswith(STOCK_TOOL_PREFIX):
+        return raw
+    data = _json_loads_safe(raw)
+    if data is None:
+        return raw
+    return json.dumps(_sanitize_stock_payload(data))
+
+
 async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[str, Any], query: dict[str, Any]) -> str:
     # Recovery path: if a *_get tool receives non-UUID id text (e.g. "bathtubs"),
     # route to sibling list endpoint with query search instead of throwing DB UUID errors.
@@ -408,7 +466,8 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
         query=query,
         tool_name=spec.name,
     )
-    return _filter_active_promotion_records(spec.name, response)
+    response = _filter_active_promotion_records(spec.name, response)
+    return _sanitize_stock_tool_response(spec.name, response)
 
 
 async def _execute_tool_request_with_body(

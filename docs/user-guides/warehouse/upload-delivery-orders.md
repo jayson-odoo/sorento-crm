@@ -17,7 +17,8 @@ Toolbar:
 
 1. Click **[Import](/order-management/orders#guide_target=order-management.delivery-orders.import-button)** → **Import tracking**.
 2. Drag in or browse to your tracking Excel file.
-3. Click **[Upload](/order-management/orders#guide_target=template-upload.confirm-button)**. The job is queued (`order_tracking_import`).
+3. (Recommended) Click **[Test](/order-management/orders#guide_target=template-upload.test-button)** to validate first; resolve errors before uploading.
+4. Click **[Upload](/order-management/orders#guide_target=template-upload.confirm-button)**. The job is queued (`order_tracking_import`).
 
 ### Tracking columns
 
@@ -46,7 +47,8 @@ After the tracking import finishes:
 
 1. Click **[Import](/order-management/orders#guide_target=order-management.delivery-orders.import-button)** → **Import delivery order lines**.
 2. Drag in or browse to your lines Excel.
-3. Click **[Upload](/order-management/orders#guide_target=template-upload.confirm-button)**. The job is queued (`delivery_order_detail_import`).
+3. (Recommended) Click **[Test](/order-management/orders#guide_target=template-upload.test-button)** to validate.
+4. Click **[Upload](/order-management/orders#guide_target=template-upload.confirm-button)**. The job is queued (`delivery_order_detail_import`).
 
 ### Delivery order line columns
 

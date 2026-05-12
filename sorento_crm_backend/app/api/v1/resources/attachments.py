@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from pydantic import BaseModel
+from datetime import datetime
 import hashlib
 import logging
 import os
@@ -87,6 +88,10 @@ async def get_attachments(
     entity_id: Optional[str] = Query(None),
     directory_id: Optional[str] = Query(None),
     is_deleted: Optional[bool] = Query(None),
+    attachment_type_id: Optional[str] = Query(None),
+    uploaded_by: Optional[str] = Query(None),
+    uploaded_at_from: Optional[datetime] = Query(None),
+    uploaded_at_to: Optional[datetime] = Query(None),
     access_levels: Optional[List[str]] = Query(None, description="Filter to attachments whose access_levels match these codes (see access_levels_match)."),
     access_levels_match: Optional[str] = Query("any", description="How to combine access_levels: 'any' (overlap, default), 'all' (contains every code), 'exact' (set equality)."),
     resolve_signed_urls: bool = Query(False, description="When false, return stored file_path without CloudFront signing."),
@@ -106,6 +111,10 @@ async def get_attachments(
             entity_id=entity_id,
             directory_id=directory_id,
             is_deleted=is_deleted,
+            attachment_type_id=attachment_type_id,
+            uploaded_by=uploaded_by,
+            uploaded_at_from=uploaded_at_from,
+            uploaded_at_to=uploaded_at_to,
             access_levels=access_levels,
             access_levels_match=access_levels_match,
         )

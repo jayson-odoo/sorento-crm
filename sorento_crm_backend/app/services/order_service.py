@@ -21,6 +21,10 @@ from app.services.error_handler import handle_not_found, handle_conflict
 from app.services.import_log_service import ImportLogService
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
+from app.services.embedding_change_listener import (
+    suppress_embedding_events,
+    bulk_enqueue_embedding_events,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -736,7 +740,7 @@ class OrderService:
         }
 
     def import_excel_tracking(self, file_data: bytes, user_id: str, validate_only: bool = False):
-        """Import orders from Excel file with Master and Daily Tracking sheets. If validate_only=True, run validation and return errors/warnings without persisting (rollback)."""
+        """Import orders from Excel file with Master and Overall Tracking sheets. If validate_only=True, run validation and return errors/warnings without persisting (rollback)."""
         from io import BytesIO
         from datetime import datetime, date, time as dt_time, timedelta
         import openpyxl
@@ -770,13 +774,13 @@ class OrderService:
 
         logger.info("Order tracking import: opened workbook, sheets=%s", workbook.sheetnames)
 
-        required_sheets = {"Master", "Daily Tracking"}
+        required_sheets = {"Master", "Overall Tracking"}
         if not required_sheets.issubset(set(workbook.sheetnames)):
             missing = required_sheets.difference(set(workbook.sheetnames))
             raise ValueError(f"Missing required sheet(s): {', '.join(sorted(missing))}")
 
         master_sheet = workbook["Master"]
-        tracking_sheet = workbook["Daily Tracking"]
+        tracking_sheet = workbook["Overall Tracking"]
 
         master_mapping = {
             "Doc. No.": "order_number",
@@ -836,7 +840,7 @@ class OrderService:
             return str(value).strip()
 
         master_rows_list = list(iter_sheet_rows(master_sheet, "Master"))
-        tracking_rows_list = list(iter_sheet_rows(tracking_sheet, "Daily Tracking"))
+        tracking_rows_list = list(iter_sheet_rows(tracking_sheet, "Overall Tracking"))
         master_rows = len(master_rows_list)
         tracking_rows = len(tracking_rows_list)
 
@@ -924,6 +928,7 @@ class OrderService:
         mapped_master_rows = []
         min_master_date = None
         max_master_date = None
+        touched_orders: list[Order] = []
 
         # Process Master sheet
         for row_idx, row_data in master_rows_list:
@@ -983,6 +988,7 @@ class OrderService:
                         existing_order.order_status_id = new_status_id
                     existing_order.updated_by = user_id
                     updated += 1
+                    touched_orders.append(existing_order)
                 else:
                     mapped["created_by"] = user_id
                     if new_status_id:
@@ -991,6 +997,7 @@ class OrderService:
                     self.db.add(order)
                     created += 1
                     existing_orders[order_number.lower()] = order
+                    touched_orders.append(order)
             except Exception as exc:
                 errors.append({"row": row_idx, "error": str(exc), "data": row_data})
 
@@ -998,7 +1005,7 @@ class OrderService:
         min_tracking_date = None
         max_tracking_date = None
 
-        # Process Daily Tracking sheet
+        # Process Overall Tracking sheet
         for row_idx, row_data in tracking_rows_list:
             try:
                 mapped = {}
@@ -1061,6 +1068,7 @@ class OrderService:
 
                 order.updated_by = user_id
                 updated += 1
+                touched_orders.append(order)
             except Exception as exc:
                 errors.append({"row": row_idx, "error": str(exc), "data": row_data})
 
@@ -1143,7 +1151,27 @@ class OrderService:
             }
 
         try:
-            self.db.commit()
+            with suppress_embedding_events("order"):
+                self.db.flush()
+                seen: set[str] = set()
+                touched_ids: list[str] = []
+                for o in touched_orders:
+                    oid = getattr(o, "id", None)
+                    if oid is None:
+                        continue
+                    sid = str(oid)
+                    if sid in seen:
+                        continue
+                    seen.add(sid)
+                    touched_ids.append(sid)
+                enqueued = bulk_enqueue_embedding_events(
+                    self.db, "order", touched_ids, event_type="order.updated"
+                )
+                logger.info(
+                    "Order tracking import: bulk-enqueued %s embedding events (touched=%s)",
+                    enqueued, len(touched_orders),
+                )
+                self.db.commit()
         except Exception as exc:
             self.db.rollback()
             errors.append({"row": None, "error": f"Database error: {exc}", "data": None})

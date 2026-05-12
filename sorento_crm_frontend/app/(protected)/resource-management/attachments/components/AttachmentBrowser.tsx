@@ -32,11 +32,10 @@ import {
 } from '@/components/ui/select';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAttachments, useDeleteAttachment, useDownloadAttachment, useRestoreAttachment, useBulkRestoreAttachments, useDirectoryTree, useUpdateAttachment } from '../hooks/useAttachments';
+import { useAttachments, useAttachmentTypesList, useDeleteAttachment, useDownloadAttachment, useRestoreAttachment, useBulkRestoreAttachments, useDirectoryTree, useUpdateAttachment } from '../hooks/useAttachments';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -75,10 +74,15 @@ export default function AttachmentBrowser() {
   const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [directoryId, setDirectoryId] = useState<string | null>(null);
+  const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
+  const [uploadedBy, setUploadedBy] = useState('');
+  const [uploadedAtFrom, setUploadedAtFrom] = useState('');
+  const [uploadedAtTo, setUploadedAtTo] = useState('');
   const [pendingResubmitIds, setPendingResubmitIds] = useState<Set<string>>(new Set());
 
   const queryClient = useQueryClient();
   const { data: directoryTree = [] } = useDirectoryTree();
+  const { data: attachmentTypes = [] } = useAttachmentTypesList();
   const isTrashView = directoryId === '__trash__';
 
   const { data, isLoading } = useAttachments({
@@ -88,6 +92,10 @@ export default function AttachmentBrowser() {
     searchQuery,
     directory_id: isTrashView ? undefined : directoryId ?? undefined,
     is_deleted: isTrashView ? true : undefined,
+    attachment_type_id: attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
+    uploaded_by: uploadedBy.trim() || undefined,
+    uploaded_at_from: uploadedAtFrom || undefined,
+    uploaded_at_to: uploadedAtTo || undefined,
   });
 
   const deleteMutation = useDeleteAttachment();
@@ -491,6 +499,54 @@ export default function AttachmentBrowser() {
                   </SelectItem>
                 </SelectContent>
               </Select>
+              <Select
+                value={attachmentTypeId}
+                onValueChange={(value) => {
+                  setAttachmentTypeId(value);
+                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                }}
+              >
+                <SelectTrigger className="w-[190px]">
+                  <SelectValue placeholder="Attachment type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All attachment types</SelectItem>
+                  {attachmentTypes.map((type) => (
+                    <SelectItem key={type.id} value={type.id}>
+                      {type.type_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="Uploaded by user id"
+                value={uploadedBy}
+                onChange={(event) => {
+                  setUploadedBy(event.target.value);
+                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                }}
+                className="w-44"
+              />
+              <Input
+                type="date"
+                value={uploadedAtFrom}
+                onChange={(event) => {
+                  setUploadedAtFrom(event.target.value);
+                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                }}
+                className="w-36"
+                aria-label="Uploaded from"
+              />
+              <Input
+                type="date"
+                value={uploadedAtTo}
+                onChange={(event) => {
+                  setUploadedAtTo(event.target.value);
+                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                }}
+                className="w-36"
+                aria-label="Uploaded to"
+              />
             </div>
             <div className="flex items-center gap-2">
               {selectedDeletableIds.length > 0 && isTrashView && (

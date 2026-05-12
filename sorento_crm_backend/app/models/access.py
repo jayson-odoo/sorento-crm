@@ -91,8 +91,8 @@ class RespondContact(Base):
     last_name = Column(Text, nullable=True)
     respond_io_id = Column(Text, nullable=True)  # Respond.io contact id for inbox URL
     workspace_id = Column(UUID(as_uuid=False), ForeignKey("respond_workspaces.id", ondelete="SET NULL"), nullable=True)
-    # Per-conversation variables collected from n8n turns: {"turns":[{ts,inquiry_type,vars}], "merged":{<inquiry_type>:{...}}}.
-    # Maintained by /api/v1/external/conversation-variables/upsert; sliding window capped per call.
+    # Arbitrary per-contact conversation state. Read/overwritten wholesale by
+    # GET|PUT /api/v1/external/conversation-variables/{respond_io_id}.
     session_vars = Column(JSONB(astext_type=Text()), nullable=False, server_default=text("'{}'::jsonb"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)

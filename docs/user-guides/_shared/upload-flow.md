@@ -32,8 +32,9 @@ If you are uploading **a single file or a folder of files** that the system shou
 1. Open **[Resource Management → Files](/resource-management/attachment-directories)**.
 2. Click **[Bulk import (ZIP)](/resource-management/attachment-directories#guide_target=resource-management.files.bulk-import-button)** (top toolbar, archive icon).
 3. Pick the attachment type — every file inside the ZIP will be tagged with this type.
-4. Upload your `.zip`. The system extracts files in the background.
-5. The dialog closes when the import job is queued. Progress shows on the same page.
+4. Drag your `.zip` in (or click to browse).
+5. Click **[Import](/resource-management/attachment-directories#guide_target=resource-management.files.bulk-import-confirm-button)**. The system extracts files in the background.
+6. The dialog closes when the import job is queued. Progress shows on the same page.
 
 ## How files are linked to business records (auto-link)
 

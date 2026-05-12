@@ -50,6 +50,8 @@ ROUTE_MAP: list[tuple[str, str]] = [
     ("Marketing Management → Promotions", "/marketing-management/promotions"),
     # Complaints
     ("Complaint Management → Complaints", "/complaint-management/complaints"),
+    ("Complaint Management → Root Causes", "/complaint-management/complaint-root-causes"),
+    ("Complaint Management → Resolutions", "/complaint-management/complaint-resolutions"),
     # System
     ("System Management → Integration Logs", "/system-management/integration-logs"),
     ("System Management → Import Jobs", "/system-management/import-jobs"),

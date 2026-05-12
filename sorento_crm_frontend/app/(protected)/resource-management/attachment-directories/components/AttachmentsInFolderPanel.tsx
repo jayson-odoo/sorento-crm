@@ -54,6 +54,14 @@ import {
   useRestoreDirectory,
   useUpdateAttachment,
 } from '../../attachments/hooks/useAttachments';
+import { useAttachmentTypes } from '../../attachment-types/hooks/useAttachmentTypes';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Calendar } from '@/components/ui/calendar';
+import { getUsersSelect, type UserSelectItem } from '@/services/userSelectService';
+import { useQuery } from '@tanstack/react-query';
+import { format } from 'date-fns';
+import { CalendarDays } from 'lucide-react';
+import type { DateRange } from 'react-day-picker';
 import {
   Dialog,
   DialogContent,
@@ -129,6 +137,28 @@ export default function AttachmentsInFolderPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [accessLevelFilters, setAccessLevelFilters] = useState<string[]>([]);
   const [accessLevelsMatch, setAccessLevelsMatch] = useState<'any' | 'all' | 'exact'>('any');
+  const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
+  const [uploadedBy, setUploadedBy] = useState<string>('__all__');
+  const [uploadedRange, setUploadedRange] = useState<DateRange | undefined>();
+  const uploadedAtFrom = uploadedRange?.from ? format(uploadedRange.from, 'yyyy-MM-dd') : '';
+  const uploadedAtTo = uploadedRange?.to ? format(uploadedRange.to, 'yyyy-MM-dd') : '';
+  const { data: usersSelect = [] as UserSelectItem[] } = useQuery({
+    queryKey: ['users-select', 'attachment-filter'],
+    queryFn: () => getUsersSelect({ status: 'ACTIVE' }),
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: attachmentTypesData } = useAttachmentTypes({
+    pageIndex: 0,
+    pageSize: 100,
+    sorting: [{ id: 'type_name', desc: false }],
+    searchQuery: '',
+  });
+  const attachmentTypes = attachmentTypesData?.data ?? [];
+  const extraFilterCount =
+    (attachmentTypeId !== '__all__' ? 1 : 0) +
+    (uploadedBy !== '__all__' ? 1 : 0) +
+    (uploadedAtFrom || uploadedAtTo ? 1 : 0);
+  const totalFilterCount = accessLevelFilters.length + extraFilterCount;
   const { data: accessTypes = [] } = useContactAccessTypes();
   const accessTypeNameByCode = useMemo(() => {
     const m = new Map<string, string>();
@@ -171,6 +201,10 @@ export default function AttachmentsInFolderPanel({
     is_deleted: isTrashView ? true : undefined,
     access_levels: accessLevelFilters.length > 0 ? accessLevelFilters : undefined,
     access_levels_match: accessLevelFilters.length > 0 ? accessLevelsMatch : undefined,
+    attachment_type_id: attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
+    uploaded_by: uploadedBy !== '__all__' ? uploadedBy : undefined,
+    uploaded_at_from: uploadedAtFrom || undefined,
+    uploaded_at_to: uploadedAtTo || undefined,
   });
 
   const deleteMutation = useDeleteAttachment();
@@ -591,18 +625,18 @@ export default function AttachmentsInFolderPanel({
                   <Button variant="outline" size="sm" className="gap-1 relative" title="Filters">
                     <Filter className="size-4" />
                     Filters
-                    {accessLevelFilters.length > 0 && (
+                    {totalFilterCount > 0 && (
                       <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
-                        {accessLevelFilters.length}
+                        {totalFilterCount}
                       </Badge>
                     )}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-64" align="start">
+                <PopoverContent className="w-72" align="start">
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <h4 className="font-medium text-sm">Access levels</h4>
-                      {accessLevelFilters.length > 0 && (
+                      <h4 className="font-medium text-sm">Filters</h4>
+                      {totalFilterCount > 0 && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -610,12 +644,113 @@ export default function AttachmentsInFolderPanel({
                           onClick={() => {
                             setAccessLevelFilters([]);
                             setAccessLevelsMatch('any');
+                            setAttachmentTypeId('__all__');
+                            setUploadedBy('__all__');
+                            setUploadedRange(undefined);
                             setPagination((p) => ({ ...p, pageIndex: 0 }));
                           }}
                         >
-                          Clear
+                          Clear all
                         </Button>
                       )}
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Attachment type</p>
+                      <Select
+                        value={attachmentTypeId}
+                        onValueChange={(v) => {
+                          setAttachmentTypeId(v);
+                          setPagination((p) => ({ ...p, pageIndex: 0 }));
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="All attachment types" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">All attachment types</SelectItem>
+                          {attachmentTypes.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>
+                              {t.type_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Uploaded by</p>
+                      <Select
+                        value={uploadedBy}
+                        onValueChange={(v) => {
+                          setUploadedBy(v);
+                          setPagination((p) => ({ ...p, pageIndex: 0 }));
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="All users" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">All users</SelectItem>
+                          {usersSelect.map((u) => (
+                            <SelectItem key={u.id} value={u.id}>
+                              {u.name?.trim() || u.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Uploaded date range</p>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className="w-full justify-start font-normal"
+                          >
+                            <CalendarDays className="size-4 me-2 opacity-70" />
+                            {uploadedRange?.from ? (
+                              uploadedRange.to ? (
+                                <span>
+                                  {format(uploadedRange.from, 'dd MMM yyyy')} -{' '}
+                                  {format(uploadedRange.to, 'dd MMM yyyy')}
+                                </span>
+                              ) : (
+                                <span>{format(uploadedRange.from, 'dd MMM yyyy')}</span>
+                              )
+                            ) : (
+                              <span className="text-muted-foreground">Any date</span>
+                            )}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <Calendar
+                            mode="range"
+                            defaultMonth={uploadedRange?.from}
+                            selected={uploadedRange}
+                            onSelect={(range) => {
+                              setUploadedRange(range);
+                              setPagination((p) => ({ ...p, pageIndex: 0 }));
+                            }}
+                            numberOfMonths={2}
+                          />
+                          {uploadedRange && (
+                            <div className="flex justify-end p-2 border-t">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setUploadedRange(undefined);
+                                  setPagination((p) => ({ ...p, pageIndex: 0 }));
+                                }}
+                              >
+                                Clear
+                              </Button>
+                            </div>
+                          )}
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                    <div className="border-t pt-2">
+                      <h4 className="font-medium text-sm mb-1.5">Access levels</h4>
                     </div>
                     {accessTypes.length === 0 ? (
                       <p className="text-xs text-muted-foreground">

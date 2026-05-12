@@ -44,3 +44,14 @@
   position: relative;
   z-index: 1;
 }
+
+/* Keep the AI assistant bubble interactive when a Radix modal dialog is open.
+   Radix sets `pointer-events: none` on <body> while a modal is open; we
+   explicitly override on the bubble's container so users can scroll the
+   chat, click guide-target links inside it, etc. The DialogContent's
+   `onPointerDownOutside` handler still preventDefaults to keep the dialog
+   from closing on these interactions. */
+[data-ai-assistant-root],
+[data-ai-assistant-root] * {
+  pointer-events: auto !important;
+}
