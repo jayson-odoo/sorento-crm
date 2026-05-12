@@ -1,4 +1,4 @@
-# Warehouse — Upload Delivery Orders (order tracking + lines)
+# 1.3-Warehouse — Upload Delivery Orders (order tracking + lines)
 
 Use this flow to bulk-import delivery orders and their line items. The flow has two imports: the **tracking** import (one row per order: dates, customer, totals) and the **delivery order lines** import (one row per product line on each order).
 
@@ -8,16 +8,16 @@ Open **[Delivery Order Management → Delivery Orders](/order-management/orders)
 
 Toolbar:
 
-* [**Import**](/order-management/orders#guide_target=order-management.delivery-orders.import-button) — dropdown with **Import tracking** and **Import delivery order lines**.
+* **[Import](/order-management/orders#guide_target=order-management.delivery-orders.import-button)** — dropdown with **Import tracking** and **Import delivery order lines**.
 * **Create Delivery Order** — manual single-record creation.
 * **Quick filters** / **Filters** / **Export** / **Columns** / **Refresh** — DataGrid tools.
 
 ## Step 1 — Import tracking (order header)
 
 
-1. Click [**Import**](/order-management/orders#guide_target=order-management.delivery-orders.import-button) → **Import tracking**.
+1. Click **[Import](/order-management/orders#guide_target=order-management.delivery-orders.import-button)** → **Import tracking**.
 2. Drag in or browse to your tracking Excel file.
-3. Click [**Upload**](/order-management/orders#guide_target=template-upload.confirm-button). The job is queued (`order_tracking_import`).
+3. Click **[Upload](/order-management/orders#guide_target=template-upload.confirm-button)**. The job is queued (`order_tracking_import`).
 
 ### Tracking columns
 
@@ -44,9 +44,9 @@ Accepted date formats: ISO, `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`. Numeric fi
 After the tracking import finishes:
 
 
-1. Click [**Import**](/order-management/orders#guide_target=order-management.delivery-orders.import-button) → **Import delivery order lines**.
+1. Click **[Import](/order-management/orders#guide_target=order-management.delivery-orders.import-button)** → **Import delivery order lines**.
 2. Drag in or browse to your lines Excel.
-3. Click [**Upload**](/order-management/orders#guide_target=template-upload.confirm-button). The job is queued (`delivery_order_detail_import`).
+3. Click **[Upload](/order-management/orders#guide_target=template-upload.confirm-button)**. The job is queued (`delivery_order_detail_import`).
 
 ### Delivery order line columns
 
@@ -76,9 +76,8 @@ Each panel updates with `queued` → `running` → `finished` (or `failed`) and 
 
 ## How you'll be notified
 
-* **Immediately:** in-app toast confirming each job was queued.
-* **On completion:** the panel updates with the result. Email notifications fire if your tenant has them configured.
-* **Errors:** rows that fail validation are reported per row in the import-job result; the whole import is not aborted.
+* **Immediately:** in-app message at the bottom right confirming the job was queued.
+* **On completion:** the system notifies you via email notification & in-app notification (in which you can access from the bell icon at the top right).
 
 ## See also
 

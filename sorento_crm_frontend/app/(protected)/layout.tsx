@@ -36,7 +36,9 @@ fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{metho
 // #region agent log
 fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'layout.tsx:23',message:'Redirecting to signin',data:{status},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H5'})}).catch(()=>{});
 // #endregion
-      const callbackUrl = pathname ? `/signin?callbackUrl=${encodeURIComponent(pathname)}` : '/signin';
+      const hashFragment = typeof window !== 'undefined' ? window.location.hash : '';
+      const target = pathname ? `${pathname}${hashFragment}` : '';
+      const callbackUrl = target ? `/signin?callbackUrl=${encodeURIComponent(target)}` : '/signin';
       router.push(callbackUrl);
     }
   }, [status, router, pathname]);

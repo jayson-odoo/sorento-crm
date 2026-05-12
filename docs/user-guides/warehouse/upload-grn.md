@@ -1,6 +1,6 @@
-# Warehouse — Upload GRN (Goods Received Note)
+# 1.2-Warehouse — Upload GRN (Goods Received Note)
 
-Use this flow to record incoming stock against a supplier purchase order. A GRN consists of a **header** (one document number + receiving date + optional SPO link) and a set of **lines** (product + warehouse + quantity received). Both are uploaded as separate Excel files.
+Use this flow to record the receiving of incoming stock against a supplier packing list. A GRN consists of a **header** (one document number + receiving date + optional SPO link) and a set of **lines** (product + warehouse + quantity received). Both are uploaded as separate Excel files.
 
 ## Where to upload
 
@@ -8,16 +8,16 @@ Open **[Procurement → GRN](/procurement-management/grn)** (URL: `/procurement-
 
 Toolbar:
 
-* [**Import options**](/procurement-management/grn#guide_target=procurement.grn.import-options-button) (the upload-icon button on the toolbar) — opens a dropdown with **Upload GRN** (header) and **Upload GRN Lines** (lines).
+* **[Import options](/procurement-management/grn#guide_target=procurement.grn.import-options-button)** (the upload-icon button on the toolbar) — opens a dropdown with **Upload GRN** (header) and **Upload GRN Lines** (lines).
 * **Create GRN** — manual single-record creation.
 * **Filters** / **Export** / **Columns** — DataGrid tools.
 
 ## Step 1 — Upload GRN header
 
 
-1. Click [**Import options**](/procurement-management/grn#guide_target=procurement.grn.import-options-button) → **Upload GRN**.
+1. Click **[Import options](/procurement-management/grn#guide_target=procurement.grn.import-options-button)** → **Upload GRN**.
 2. Drag in or browse to your GRN-header Excel file.
-3. Click [**Upload**](/procurement-management/grn#guide_target=procurement.grn.import-confirm-button). The job is queued (`grn_listing_import`). Toast: confirmation that the job started.
+3. Click **[Upload](/procurement-management/grn#guide_target=procurement.grn.import-confirm-button)**. The job is queued (`grn_listing_import`). Toast: confirmation that the job started.
 
 ### GRN header columns
 
@@ -32,9 +32,9 @@ Toolbar:
 After the header import finishes:
 
 
-1. Click [**Import options**](/procurement-management/grn#guide_target=procurement.grn.import-options-button) → **Upload GRN Lines**.
+1. Click **[Import options](/procurement-management/grn#guide_target=procurement.grn.import-options-button)** → **Upload GRN Lines**.
 2. Drag in or browse to your GRN-lines Excel.
-3. Click [**Upload**](/procurement-management/grn#guide_target=procurement.grn.import-confirm-button). The job is queued (`grn_lines_import`).
+3. Click **[Upload](/procurement-management/grn#guide_target=procurement.grn.import-confirm-button)**. The job is queued (`grn_lines_import`).
 
 ### GRN line columns
 
@@ -57,13 +57,12 @@ Each panel updates with `queued` → `running` → `finished` (or `failed`) and 
 
 ## Status flow
 
-A GRN moves through: **Draft** → **Approved** (or **Rejected**). Newly imported GRNs land in **Draft** and need to be approved on the detail page before stock is posted.
+A GRN moves through: **Draft** → **Approved** (or **Rejected**). Newly imported GRNs land in **Approved** automatically
 
 ## How you'll be notified
 
-* **Immediately:** in-app toast confirming each job was queued.
-* **On completion:** the panel updates with the result. Email notifications fire if your tenant has them configured for GRN imports.
-* **Errors:** rows that fail validation (missing item, unknown warehouse, qty `<= 0`, header not found) are reported per row in the import-job result. The whole import is not aborted.
+* **Immediately:** in-app message at the bottom right confirming the job was queued.
+* **On completion:** the system notifies you via email notification & in-app notification (in which you can access from the bell icon at the top right).
 
 ## See also
 

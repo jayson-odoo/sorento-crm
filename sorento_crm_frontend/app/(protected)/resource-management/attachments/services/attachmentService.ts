@@ -2,8 +2,8 @@ import { apiFetch } from '@/lib/api';
 import type { Attachment, AttachmentType } from '../types/attachment.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-export async function getAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; upload_date_from?: string; upload_date_to?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null; resolve_signed_urls?: boolean; access_levels?: string[] }): Promise<DataGridApiResponse<Attachment>> {
-  const { pageIndex, pageSize, sorting, searchQuery, entity_type, file_type, upload_date_from, upload_date_to, is_deleted, virus_status, directory_id, resolve_signed_urls, access_levels } = params;
+export async function getAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; upload_date_from?: string; upload_date_to?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null; resolve_signed_urls?: boolean; access_levels?: string[]; access_levels_match?: 'any' | 'all' | 'exact' }): Promise<DataGridApiResponse<Attachment>> {
+  const { pageIndex, pageSize, sorting, searchQuery, entity_type, file_type, upload_date_from, upload_date_to, is_deleted, virus_status, directory_id, resolve_signed_urls, access_levels, access_levels_match } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -23,6 +23,9 @@ export async function getAttachments(params: DataGridApiFetchParams & { entity_t
   if (access_levels && access_levels.length > 0) {
     for (const lvl of access_levels) {
       if (lvl) queryParams.append('access_levels', lvl);
+    }
+    if (access_levels_match) {
+      queryParams.set('access_levels_match', access_levels_match);
     }
   }
   const response = await apiFetch(`/api/v1/resource-management/attachments?${queryParams.toString()}`);

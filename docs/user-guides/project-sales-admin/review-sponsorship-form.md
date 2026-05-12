@@ -19,17 +19,17 @@ Filter by **Approval Status**. Statuses: **Draft**, **Pending approval**, **Appr
 
 ## Move to "Pending approval"
 
-If the form is still in **Draft**, click [**Change to pending approval**](/procurement-management/sponsorship-forms#guide_target=procurement.approvals.change-to-pending-approval-button) in the toolbar. Toast: *"Status set to Pending approval"*.
+If the form is still in **Draft**, click **[Change to pending approval](/procurement-management/sponsorship-forms#guide_target=procurement.approvals.change-to-pending-approval-button)** in the toolbar. Toast: *"Status set to Pending approval"*.
 
 ## Send for approval
 
-When the form is in **Pending approval**, click [**Send for approval**](/procurement-management/sponsorship-forms#guide_target=procurement.approvals.send-for-approval-button) in the toolbar.
+When the form is in **Pending approval**, click **[Send for approval](/procurement-management/sponsorship-forms#guide_target=procurement.approvals.send-for-approval-button)** in the toolbar.
 
 * **With a configured default approver:** the system immediately generates the one-time approval link and emails it. Toast: *"Approval link sent to {email}"*.
 * **Without a default approver:** the **Send for approval** dialog opens.
   * **Choose approver (optional)** — pick a user from the dropdown to pre-fill, or leave blank.
   * **Approver email** — required.
-  * Click [**Create link only**](/procurement-management/sponsorship-forms#guide_target=procurement.approvals.create-link-only-button) (link only, no email) or [**Create link & send email**](/procurement-management/sponsorship-forms#guide_target=procurement.approvals.create-link-and-send-button) (link + email to the approver).
+  * Click **[Create link only](/procurement-management/sponsorship-forms#guide_target=procurement.approvals.create-link-only-button)** (link only, no email) or **[Create link & send email](/procurement-management/sponsorship-forms#guide_target=procurement.approvals.create-link-and-send-button)** (link + email to the approver).
 * After the link is created, the dialog shows **Approval link (one-time use)** with a copy icon — click **Done** to close.
 
 The link is token-based, one-time use, and expires after 24 hours.

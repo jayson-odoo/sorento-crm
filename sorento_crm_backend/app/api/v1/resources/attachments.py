@@ -87,7 +87,8 @@ async def get_attachments(
     entity_id: Optional[str] = Query(None),
     directory_id: Optional[str] = Query(None),
     is_deleted: Optional[bool] = Query(None),
-    access_levels: Optional[List[str]] = Query(None, description="Filter to attachments whose access_levels overlap any of these codes."),
+    access_levels: Optional[List[str]] = Query(None, description="Filter to attachments whose access_levels match these codes (see access_levels_match)."),
+    access_levels_match: Optional[str] = Query("any", description="How to combine access_levels: 'any' (overlap, default), 'all' (contains every code), 'exact' (set equality)."),
     resolve_signed_urls: bool = Query(False, description="When false, return stored file_path without CloudFront signing."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -106,6 +107,7 @@ async def get_attachments(
             directory_id=directory_id,
             is_deleted=is_deleted,
             access_levels=access_levels,
+            access_levels_match=access_levels_match,
         )
         # Enrich each attachment with uploaded_by_user for display
         enriched = []

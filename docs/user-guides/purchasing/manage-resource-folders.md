@@ -1,4 +1,4 @@
-# Purchasing — Manage folders, files, and Quick Access
+# 1.6-Purchasing — Manage folders, files, and Quick Access
 
 Folders help organise attachments (packing lists, product attachments, promotions, marketing forms, etc.) so they are easier to find. Folder operations live on the same **Files** page as the attachments, on the left **Folders** sidebar.
 
@@ -19,7 +19,7 @@ Click **Folder actions** (the `⋯` button on a folder row) to see the menu:
 | Pin folder to Quick Access | **Pin to Quick Access** |
 | Remove from Quick Access | **Unpin from Quick Access** |
 
-To **create a top-level folder**, click [**Add**](/resource-management/attachment-directories#guide_target=resource-management.files.add-folder-button) at the top of the **Folders** sidebar (next to the **Expand all** / **Collapse all** buttons). The dialog is titled **New folder** for top-level and **New subfolder** for children.
+To **create a top-level folder**, click **[Add](/resource-management/attachment-directories#guide_target=resource-management.files.add-folder-button)** at the top of the **Folders** sidebar (next to the **Expand all** / **Collapse all** buttons). The dialog is titled **New folder** for top-level and **New subfolder** for children.
 
 ## Search folders
 

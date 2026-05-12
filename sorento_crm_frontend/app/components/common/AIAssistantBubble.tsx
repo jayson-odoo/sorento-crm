@@ -353,7 +353,7 @@ export default function AIAssistantBubble() {
   if (!canUseAIAssistant) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-[120]">
+    <div className="fixed bottom-6 right-6 z-[120]" data-ai-assistant-root>
       <Button
         size="icon"
         className={`size-12 rounded-full shadow-lg transition-transform ${isSending ? 'animate-pulse' : ''}`}

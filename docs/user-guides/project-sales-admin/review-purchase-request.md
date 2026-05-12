@@ -17,19 +17,19 @@ The DataGrid lists every purchase request. Filter by **Approval Status** to find
 
 ## Move to "Pending approval"
 
-If the request is still in **Draft** when you receive it, click [**Change to pending approval**](/procurement-management/purchase-requests#guide_target=procurement.approvals.change-to-pending-approval-button) in the toolbar. This locks the request from rep edits and signals it's ready for the manager. A toast confirms: *"Status set to Pending approval"*.
+If the request is still in **Draft** when you receive it, click **[Change to pending approval](/procurement-management/purchase-requests#guide_target=procurement.approvals.change-to-pending-approval-button)** in the toolbar. This locks the request from rep edits and signals it's ready for the manager. A toast confirms: *"Status set to Pending approval"*.
 
 ## Send for approval
 
-When the request is in **Pending approval**, click [**Send for approval**](/procurement-management/purchase-requests#guide_target=procurement.approvals.send-for-approval-button) in the toolbar.
+When the request is in **Pending approval**, click **[Send for approval](/procurement-management/purchase-requests#guide_target=procurement.approvals.send-for-approval-button)** in the toolbar.
 
 * If your tenant has a **default approver** configured, the system **immediately** generates a one-time approval link and emails it to the configured approver. Toast: *"Approval link sent to {email}"*.
 * If there is no default approver, the **Send for approval** dialog opens. Fill in:
   * **Choose approver (optional)** — pick a user from the dropdown to pre-fill their email, or leave it blank.
   * **Approver email** — required. Use the manager's email if they're not in the system.
 * Then click one of:
-  * [**Create link only**](/procurement-management/purchase-requests#guide_target=procurement.approvals.create-link-only-button) — generates the link without sending an email. Useful when you want to share the link via another channel (e.g. paste into chat).
-  * [**Create link & send email**](/procurement-management/purchase-requests#guide_target=procurement.approvals.create-link-and-send-button) — generates the link **and** emails it to the approver address.
+  * **[Create link only](/procurement-management/purchase-requests#guide_target=procurement.approvals.create-link-only-button)** — generates the link without sending an email. Useful when you want to share the link via another channel (e.g. paste into chat).
+  * **[Create link & send email](/procurement-management/purchase-requests#guide_target=procurement.approvals.create-link-and-send-button)** — generates the link **and** emails it to the approver address.
 
 After the link is created, the dialog shows **Approval link (one-time use)** with a copy icon. Click **Done** to close.
 

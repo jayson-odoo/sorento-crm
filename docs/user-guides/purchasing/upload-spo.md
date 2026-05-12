@@ -1,17 +1,15 @@
-# Purchasing — Upload SPO allocations (direct Excel)
+# 1.3-Purchasing — Upload SPO allocations (direct Excel)
 
-Use this flow to bulk-import **SPO allocations** from an Excel file. SPO allocations link products and warehouse destinations to a supplier purchase order so that incoming stock can be matched against the right SPO.
-
-> Most of the time you do **not** need this flow — uploading a [packing list](upload-packing-list.md) creates the SPO allocations automatically. Use this direct upload only when the packing-list flow does not apply (e.g. correcting historical data, loading SPO data without a packing list available).
+Use this flow to bulk-import **SPO allocations** from an Excel file. SPO allocations link products and warehouse destinations to a supplier packing list so that incoming stock can be matched against the right SPO.
 
 ## Steps
 
 
 1. Open **[Procurement → SPO Allocations](/procurement-management/spo-allocations)** (URL: `/procurement-management/spo-allocations`). The page is titled **SPO Allocations**.
-2. Click the [**Import options**](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-options-button) button in the toolbar (upload icon).
+2. Click the **[Import options](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-options-button)** button in the toolbar (upload icon).
 3. Pick **Import SPO** from the dropdown.
 4. The **SPO Import** dialog opens. Drag in or browse to your SPO Excel file.
-5. Click [**Import**](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-confirm-button) to queue the import job.
+5. Click **[Import](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-confirm-button)** to queue the import job.
 
 ## What the system captures (column reference)
 
@@ -29,14 +27,14 @@ Rows are grouped by `(SPO number, product, warehouse)` — duplicate rows for th
 
 ## How you'll see progress
 
-Once a job is queued, the **SPO Allocations** page shows a **Latest SPO import** panel above the table. It updates with the job status (queued, running, completed, failed) and row counts in real time. Refresh or check **[System Management → Import Jobs](/system-management/import-jobs)** for the full history.
+Once a job is queued, the **SPO Allocations** page shows a **Latest SPO import** panel above the table. It updates with the job status (queued, running, completed, failed) and row counts in real time. Refresh the page if you don't see it.
 
 ## How you'll be notified
 
-* **Immediately:** in-app toast confirming the job was queued.
-* **On completion:** the panel updates with the result. Email notifications fire if your tenant has them configured.
+* **Immediately:** in-app message at the bottom right confirming the job was queued.
+* **On completion:** the system notifies you via email notification & in-app notification (in which you can access from the bell icon at the top right).
 
 ## See also
 
-* [Upload packing list](upload-packing-list.md) — the primary path; creates SPO allocations automatically
+* [Upload packing list](upload-packing-list.md) — the first step is to upload packing list first
 * [Upload product master](upload-product-master.md) — products must exist before SPO allocations can be created

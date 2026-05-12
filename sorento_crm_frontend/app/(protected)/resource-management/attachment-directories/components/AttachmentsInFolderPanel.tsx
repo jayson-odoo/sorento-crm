@@ -41,6 +41,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -127,6 +128,7 @@ export default function AttachmentsInFolderPanel({
   const [sorting, setSorting] = useState<SortingState>([{ id: 'uploaded_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [accessLevelFilters, setAccessLevelFilters] = useState<string[]>([]);
+  const [accessLevelsMatch, setAccessLevelsMatch] = useState<'any' | 'all' | 'exact'>('any');
   const { data: accessTypes = [] } = useContactAccessTypes();
   const accessTypeNameByCode = useMemo(() => {
     const m = new Map<string, string>();
@@ -168,6 +170,7 @@ export default function AttachmentsInFolderPanel({
     directory_id: trashFolderId ?? (isTrashView ? undefined : effectiveDirectoryId),
     is_deleted: isTrashView ? true : undefined,
     access_levels: accessLevelFilters.length > 0 ? accessLevelFilters : undefined,
+    access_levels_match: accessLevelFilters.length > 0 ? accessLevelsMatch : undefined,
   });
 
   const deleteMutation = useDeleteAttachment();
@@ -606,6 +609,7 @@ export default function AttachmentsInFolderPanel({
                           className="h-auto px-1 text-xs"
                           onClick={() => {
                             setAccessLevelFilters([]);
+                            setAccessLevelsMatch('any');
                             setPagination((p) => ({ ...p, pageIndex: 0 }));
                           }}
                         >
@@ -660,6 +664,40 @@ export default function AttachmentsInFolderPanel({
                               </label>
                             );
                           })}
+                        </div>
+                        <div className="border-t pt-2 space-y-1.5">
+                          <p className="text-xs font-medium">Match mode</p>
+                          <RadioGroup
+                            value={accessLevelsMatch}
+                            onValueChange={(v) => {
+                              setAccessLevelsMatch(v as 'any' | 'all' | 'exact');
+                              setPagination((p) => ({ ...p, pageIndex: 0 }));
+                            }}
+                            size="sm"
+                            className="gap-1.5"
+                          >
+                            <label htmlFor="access-match-any" className="flex items-start gap-2 text-xs cursor-pointer">
+                              <RadioGroupItem id="access-match-any" value="any" className="mt-0.5" />
+                              <span>
+                                <span className="font-medium">Any of selected</span>
+                                <span className="block text-muted-foreground">Show files tagged with at least one chosen level.</span>
+                              </span>
+                            </label>
+                            <label htmlFor="access-match-all" className="flex items-start gap-2 text-xs cursor-pointer">
+                              <RadioGroupItem id="access-match-all" value="all" className="mt-0.5" />
+                              <span>
+                                <span className="font-medium">All of selected</span>
+                                <span className="block text-muted-foreground">File must include every chosen level (extras allowed).</span>
+                              </span>
+                            </label>
+                            <label htmlFor="access-match-exact" className="flex items-start gap-2 text-xs cursor-pointer">
+                              <RadioGroupItem id="access-match-exact" value="exact" className="mt-0.5" />
+                              <span>
+                                <span className="font-medium">Exactly these</span>
+                                <span className="block text-muted-foreground">File's levels must match the selection exactly.</span>
+                              </span>
+                            </label>
+                          </RadioGroup>
                         </div>
                       </>
                     )}

@@ -1,5 +1,6 @@
 import { ReactNode, Suspense } from 'react';
 import { Inter } from 'next/font/google';
+import Script from 'next/script';
 import { cn } from '@/lib/utils';
 import { Metadata } from 'next';
 import { DynamicClientProviders } from '@/components/DynamicClientProviders';
@@ -34,6 +35,15 @@ export default async function RootLayout({
           inter.className,
         )}
       >
+        {/* Snapshot the guide-target hash before Next.js hydration strips it.
+            Consumed by GuideTargetSpotlight via sessionStorage. */}
+        <script
+          id="guide-target-hash-snapshot"
+          dangerouslySetInnerHTML={{
+            __html:
+              "try{if(window.location&&window.location.hash){sessionStorage.setItem('__GUIDE_TARGET_HASH__',window.location.hash);}}catch(e){}",
+          }}
+        />
         <DynamicClientProviders>
           <Suspense>{children}</Suspense>
         </DynamicClientProviders>

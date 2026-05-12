@@ -388,11 +388,18 @@ class AttachmentService:
         directory_id: Optional[str] = None,
         is_deleted: Optional[bool] = None,
         access_levels: Optional[List[str]] = None,
+        access_levels_match: Optional[str] = "any",
     ):
-        """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash. access_levels filters rows whose JSONB access_levels overlap (any-of)."""
+        """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash.
+
+        ``access_levels_match`` controls how multi-code filters combine:
+        - ``any`` (default): row's access_levels overlap any selected code.
+        - ``all``: row's access_levels contain every selected code (extras allowed).
+        - ``exact``: row's access_levels equal the selected set.
+        """
         from sqlalchemy.orm import joinedload
-        from sqlalchemy import cast
-        from sqlalchemy.dialects.postgresql import JSONB
+        from sqlalchemy import cast, String
+        from sqlalchemy.dialects.postgresql import JSONB, ARRAY
         q = self.db.query(Attachment).options(
             joinedload(Attachment.attachment_type)
         )
@@ -410,11 +417,22 @@ class AttachmentService:
         if access_levels:
             cleaned = sorted({lvl for lvl in access_levels if lvl and lvl.strip()})
             if cleaned:
-                payload = cast(cleaned, JSONB)
-                q = q.filter(
-                    Attachment.access_levels.op('@>')(payload),
-                    payload.op('@>')(Attachment.access_levels),
-                )
+                mode = (access_levels_match or "any").strip().lower()
+                if mode == "exact":
+                    payload = cast(cleaned, JSONB)
+                    q = q.filter(
+                        Attachment.access_levels.op('@>')(payload),
+                        payload.op('@>')(Attachment.access_levels),
+                    )
+                elif mode == "all":
+                    payload = cast(cleaned, JSONB)
+                    q = q.filter(Attachment.access_levels.op('@>')(payload))
+                else:
+                    q = q.filter(
+                        Attachment.access_levels.op('?|')(
+                            cast(cleaned, ARRAY(String))
+                        )
+                    )
         if query and query.strip():
             term = f"%{query.strip()}%"
             q = q.filter(

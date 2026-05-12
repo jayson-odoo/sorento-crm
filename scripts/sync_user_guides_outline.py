@@ -51,12 +51,12 @@ DEFAULT_COLLECTION_ID = "18f78b01-bf5a-4032-934c-d5679609d553"
 
 PARENT_TITLES = {
     "_shared": "Shared",
-    "purchasing": "Purchasing",
-    "warehouse": "Warehouse",
-    "marketing": "Marketing",
-    "project-sales-admin": "Project Sales Admin",
-    "project-sales-manager": "Project Sales Manager",
-    "project-sales-rep": "Project Sales Rep",
+    "purchasing": "1-Purchasing",
+    "warehouse": "2-Warehouse",
+    "marketing": "3-Marketing",
+    "project-sales-admin": "4-Project Sales Admin",
+    "project-sales-manager": "5-Project Sales Manager",
+    "project-sales-rep": "6-Project Sales Rep",
 }
 
 ROOT_DOC_TITLE = "Overview"

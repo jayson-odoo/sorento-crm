@@ -76,12 +76,21 @@ function DialogContent({
     overlay?: boolean;
   }) {
   const needsFallbackTitle = !hasDialogTitleInChildren(children);
+  const guardOutsideInteraction = (event: Event) => {
+    const target = event.target as Element | null;
+    if (target && target.closest('[data-ai-assistant-root]')) {
+      event.preventDefault();
+    }
+  };
   return (
     <DialogPortal>
       {overlay && <DialogOverlay />}
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(dialogContentVariants({ variant }), className)}
+        onPointerDownOutside={guardOutsideInteraction}
+        onInteractOutside={guardOutsideInteraction}
+        onFocusOutside={guardOutsideInteraction}
         {...props}
       >
         {needsFallbackTitle ? (

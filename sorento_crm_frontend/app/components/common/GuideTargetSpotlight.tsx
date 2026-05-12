@@ -56,13 +56,66 @@ export default function GuideTargetSpotlight() {
   const [hash, setHash] = useState<string | null>(null);
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const update = () => setHash(window.location.hash || null);
+    const update = () => {
+      // Next.js can strip the URL fragment during hydration before this
+      // component mounts. The root <script> in app/layout.tsx snapshots the
+      // initial hash to `window.__GUIDE_TARGET_HASH__` so we can recover it
+      // here. Consume + clear it once so subsequent hash changes win.
+      const liveHash = window.location.hash || null;
+      if (liveHash) {
+        setHash(liveHash);
+        return;
+      }
+      let snapshot: string | null = null;
+      try {
+        snapshot = sessionStorage.getItem('__GUIDE_TARGET_HASH__');
+      } catch {
+        snapshot = null;
+      }
+      if (snapshot) {
+        try {
+          sessionStorage.removeItem('__GUIDE_TARGET_HASH__');
+        } catch {
+          // ignore
+        }
+        setHash(snapshot);
+        return;
+      }
+      setHash(null);
+    };
     update();
+    // The hash snapshot is written by an inline `<script>` in `app/layout.tsx`
+    // that runs during HTML parse. Async chunks (React/Next) can race ahead
+    // and mount this component BEFORE the inline script executes, so retry
+    // briefly until the snapshot appears (or the DOM is fully parsed).
+    let retries = 0;
+    let retryTimer: number | null = null;
+    const retry = () => {
+      const liveHash = window.location.hash || null;
+      const stashed = (() => {
+        try { return sessionStorage.getItem('__GUIDE_TARGET_HASH__'); } catch { return null; }
+      })();
+      if (liveHash || stashed) {
+        update();
+        return;
+      }
+      if (retries < 25) {
+        retries += 1;
+        retryTimer = window.setTimeout(retry, 80);
+      }
+    };
+    retryTimer = window.setTimeout(retry, 80);
+    const onLoad = () => update();
     window.addEventListener('hashchange', update);
     window.addEventListener('popstate', update);
+    window.addEventListener('DOMContentLoaded', onLoad);
+    window.addEventListener('load', onLoad);
     return () => {
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
       window.removeEventListener('hashchange', update);
       window.removeEventListener('popstate', update);
+      window.removeEventListener('DOMContentLoaded', onLoad);
+      window.removeEventListener('load', onLoad);
     };
   }, [pathname]);
 
@@ -190,11 +243,20 @@ export default function GuideTargetSpotlight() {
       startObserver();
     };
 
-    const rafId = window.requestAnimationFrame(tryFind);
+    // Run the first attempt synchronously so a fast effect re-run (caused by
+    // any subsequent setState / hash-strip) can't cancel us before rAF fires.
+    const immediate = findTarget();
+    let rafId = 0;
+    if (immediate) {
+      applySpotlight(immediate);
+      stripParam();
+    } else {
+      rafId = window.requestAnimationFrame(tryFind);
+    }
 
     return () => {
       cancelled = true;
-      window.cancelAnimationFrame(rafId);
+      if (rafId) window.cancelAnimationFrame(rafId);
       if (retryTimer !== null) window.clearTimeout(retryTimer);
       disconnectObserver();
     };
