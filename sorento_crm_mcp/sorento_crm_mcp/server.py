@@ -349,32 +349,66 @@ def _to_malaysia_iso(value: Any) -> Any:
     return dt.astimezone(_MALAYSIA_TZ).isoformat()
 
 
-def _sanitize_stock_payload(value: Any) -> Any:
+def _normalize_updated_at(value: Any) -> Any:
+    """Recursively rewrite every `updated_at` string to Asia/Kuala_Lumpur ISO 8601.
+
+    Applies to every MCP tool response so n8n / the AI assistant render a
+    consistent "last updated" timezone regardless of which tool produced the
+    row. Non-`updated_at` fields are left untouched.
+    """
     if isinstance(value, list):
-        return [_sanitize_stock_payload(item) for item in value]
+        return [_normalize_updated_at(item) for item in value]
     if not isinstance(value, dict):
         return value
+    out: dict[str, Any] = {}
+    for key, raw in value.items():
+        if key == "updated_at":
+            out[key] = _to_malaysia_iso(raw)
+        elif isinstance(raw, (dict, list)):
+            out[key] = _normalize_updated_at(raw)
+        else:
+            out[key] = raw
+    return out
 
-    sanitized: dict[str, Any] = {}
+
+def _strip_stock_hidden_fields(value: Any) -> Any:
+    """Recursively drop quantity / status fields the stock MCP tools must hide.
+
+    Stock tools only — see `_STOCK_HIDDEN_FIELDS`.
+    """
+    if isinstance(value, list):
+        return [_strip_stock_hidden_fields(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    out: dict[str, Any] = {}
     for key, raw in value.items():
         if key in _STOCK_HIDDEN_FIELDS:
             continue
-        if key == "updated_at":
-            sanitized[key] = _to_malaysia_iso(raw)
-        elif isinstance(raw, (dict, list)):
-            sanitized[key] = _sanitize_stock_payload(raw)
+        if isinstance(raw, (dict, list)):
+            out[key] = _strip_stock_hidden_fields(raw)
         else:
-            sanitized[key] = raw
-    return sanitized
+            out[key] = raw
+    return out
 
 
-def _sanitize_stock_tool_response(tool_name: str, raw: str) -> str:
-    if not tool_name.startswith(STOCK_TOOL_PREFIX):
-        return raw
+def _sanitize_tool_response(tool_name: str, raw: str) -> str:
+    """Single sanitizer entry for every MCP tool response.
+
+    * Always normalize `updated_at` → Malaysia time.
+    * For `crm_inventory_stock_*` tools, additionally strip hidden quantity
+      fields (preserves existing stock-tool sanitization behavior).
+    """
     data = _json_loads_safe(raw)
     if data is None:
         return raw
-    return json.dumps(_sanitize_stock_payload(data))
+    data = _normalize_updated_at(data)
+    if tool_name.startswith(STOCK_TOOL_PREFIX):
+        data = _strip_stock_hidden_fields(data)
+    return json.dumps(data)
+
+
+# Back-compat alias: existing imports / tests can keep using the old name.
+_sanitize_stock_tool_response = _sanitize_tool_response
 
 
 async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[str, Any], query: dict[str, Any]) -> str:
@@ -467,7 +501,7 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
         tool_name=spec.name,
     )
     response = _filter_active_promotion_records(spec.name, response)
-    return _sanitize_stock_tool_response(spec.name, response)
+    return _sanitize_tool_response(spec.name, response)
 
 
 async def _execute_tool_request_with_body(
@@ -479,7 +513,7 @@ async def _execute_tool_request_with_body(
 ) -> str:
     if spec.method.upper() == "GET":
         return await _execute_tool_request(spec, client, path_params, query)
-    return await client.request(
+    response = await client.request(
         spec.method,
         spec.path,
         path_params=path_params,
@@ -487,6 +521,7 @@ async def _execute_tool_request_with_body(
         body=body,
         tool_name=spec.name,
     )
+    return _sanitize_tool_response(spec.name, response)
 
 
 _GUARD_PARAM_NAMES = ("contact_id", "space_id")

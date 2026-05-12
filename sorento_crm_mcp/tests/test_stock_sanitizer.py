@@ -1,6 +1,6 @@
 import json
 
-from sorento_crm_mcp.server import _sanitize_stock_tool_response
+from sorento_crm_mcp.server import _sanitize_tool_response
 
 
 def test_stock_tool_response_hides_non_on_hand_quantities_and_normalizes_updated_at():
@@ -23,7 +23,7 @@ def test_stock_tool_response_hides_non_on_hand_quantities_and_normalizes_updated
     )
 
     sanitized = json.loads(
-        _sanitize_stock_tool_response("crm_inventory_stock_balance_list", raw)
+        _sanitize_tool_response("crm_inventory_stock_balance_list", raw)
     )
     row = sanitized["data"][0]
 
@@ -35,7 +35,70 @@ def test_stock_tool_response_hides_non_on_hand_quantities_and_normalizes_updated
     assert "status" not in row
 
 
-def test_non_stock_tool_response_is_not_changed():
-    raw = json.dumps({"quantity_available": 10})
+def test_non_stock_tool_response_normalizes_updated_at():
+    """Every MCP tool — not just stock — must rewrite updated_at to Malaysia time."""
+    raw = json.dumps(
+        {
+            "data": [
+                {
+                    "id": "prod-1",
+                    "product_code": "SKU-1",
+                    "quantity_available": 10,
+                    "updated_at": "2026-03-01T00:00:00",
+                }
+            ],
+            "pagination": {"total": 1, "page": 1, "limit": 50},
+        }
+    )
 
-    assert _sanitize_stock_tool_response("crm_master_products_list", raw) == raw
+    sanitized = json.loads(
+        _sanitize_tool_response("crm_master_products_list", raw)
+    )
+    row = sanitized["data"][0]
+
+    assert row["updated_at"] == "2026-03-01T08:00:00+08:00"
+    # Non-stock tools keep their full payload; nothing is stripped.
+    assert row["quantity_available"] == 10
+
+
+def test_nested_updated_at_is_normalized_for_non_stock_tool():
+    """Recursive walker must reach updated_at nested inside related objects."""
+    raw = json.dumps(
+        {
+            "data": [
+                {
+                    "id": "promo-1",
+                    "updated_at": "2026-03-01T00:00:00Z",
+                    "product": {
+                        "id": "prod-1",
+                        "updated_at": "2026-04-15T12:30:00",
+                    },
+                    "attachments": [
+                        {
+                            "id": "att-1",
+                            "updated_at": "2026-05-01T01:00:00",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    sanitized = json.loads(
+        _sanitize_tool_response("crm_marketing_promotions_list", raw)
+    )
+    row = sanitized["data"][0]
+
+    assert row["updated_at"] == "2026-03-01T08:00:00+08:00"
+    assert row["product"]["updated_at"] == "2026-04-15T20:30:00+08:00"
+    assert row["attachments"][0]["updated_at"] == "2026-05-01T09:00:00+08:00"
+
+
+def test_response_is_unchanged_when_no_updated_at_present():
+    raw = json.dumps({"quantity_available": 10})
+    assert _sanitize_tool_response("crm_master_products_list", raw) == raw
+
+
+def test_invalid_json_falls_through_unchanged():
+    raw = "not-json"
+    assert _sanitize_tool_response("crm_master_products_list", raw) == raw
