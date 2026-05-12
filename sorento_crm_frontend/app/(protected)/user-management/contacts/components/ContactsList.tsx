@@ -224,11 +224,27 @@ export default function ContactsList() {
         meta: { skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
-        accessorKey: 'user_type',
-        header: ({ column }) => <DataGridColumnHeader title="User Type" column={column} />,
-        size: 150,
-        cell: ({ row }) => row.original.user_type || <span className="text-muted-foreground">—</span>,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        id: 'access_types',
+        accessorFn: (row) => row.access_type_codes?.join(',') ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Access types" column={column} />,
+        size: 220,
+        enableSorting: false,
+        cell: ({ row }) => {
+          const types = row.original.access_types ?? [];
+          if (types.length === 0) {
+            return <span className="text-muted-foreground">—</span>;
+          }
+          return (
+            <div className="flex flex-wrap gap-1">
+              {types.map((t) => (
+                <Badge key={t.code} variant="secondary" className="font-normal">
+                  {t.name}
+                </Badge>
+              ))}
+            </div>
+          );
+        },
+        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'created_at',

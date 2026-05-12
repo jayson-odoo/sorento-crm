@@ -13,7 +13,8 @@ import uuid
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, or_, exists, select, text
+from sqlalchemy import and_, cast, func, or_, exists, select, text, String
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import IntegrityError
 from typing import Any, Optional
 from decimal import Decimal
@@ -225,6 +226,29 @@ class PromotionService:
     ) -> dict[str, list[PromotionAttachment]]:
         return _load_attachments_by_promotion_ids(self.db, promotion_ids)
 
+    @staticmethod
+    def _filter_attachments_by_codes(
+        attachments: list[PromotionAttachment],
+        codes: Optional[list[str]],
+    ) -> list[PromotionAttachment]:
+        """Drop inline attachments whose underlying file's access_levels does not overlap ``codes``.
+
+        ``codes is None`` means no per-attachment filter (FE/admin path). ``codes=[]``
+        hides every attachment (contact has no assigned access types).
+        """
+        if codes is None:
+            return attachments
+        if not codes:
+            return []
+        code_set = set(codes)
+        out: list[PromotionAttachment] = []
+        for pa in attachments:
+            att = getattr(pa, "attachment", None)
+            levels = getattr(att, "access_levels", None) if att is not None else None
+            if isinstance(levels, list) and code_set.intersection(levels):
+                out.append(pa)
+        return out
+
     def _ensure_promo_code_access_levels_unique(
         self,
         promo_code: str,
@@ -251,6 +275,7 @@ class PromotionService:
         page: int = 1,
         limit: int = 50,
         user_type: Optional[str] = None,
+        contact_access_codes: Optional[list[str]] = None,
         query: Optional[str] = None,
         status: Optional[str] = None,
         promo_type: Optional[str] = None,
@@ -286,7 +311,12 @@ class PromotionService:
         query_norm = (query or "").strip() or None
         promo_type_norm = (promo_type or "").strip() or None
         narrowing_filter_present = bool(
-            query_norm or promo_type_norm or user_type or period_from or period_to
+            query_norm
+            or promo_type_norm
+            or user_type
+            or contact_access_codes
+            or period_from
+            or period_to
         )
 
         today = datetime.utcnow().date()
@@ -317,6 +347,17 @@ class PromotionService:
                 q = q.filter(Promotion.promo_type == promo_type_norm)
             if user_type:
                 q = q.filter(Promotion.access_levels.contains([user_type]))
+            if contact_access_codes is not None:
+                # Empty access_levels (=[]) is invisible to any contact (no overlap possible).
+                # Empty contact_access_codes (contact has no assigned types) returns nothing.
+                if not contact_access_codes:
+                    q = q.filter(text("false"))
+                else:
+                    q = q.filter(
+                        Promotion.access_levels.op("?|")(
+                            cast(contact_access_codes, ARRAY(String))
+                        )
+                    )
             if period_from is not None:
                 q = q.filter(Promotion.end_date >= period_from)
             if period_to is not None:
@@ -383,7 +424,10 @@ class PromotionService:
                 PromotionProduct.promotion_id == promotion.id
             ).scalar() or 0
             promotion.products_count = products_count
-            promotion.attachments = attachments_by_promotion.get(promotion.id, [])
+            promotion.attachments = self._filter_attachments_by_codes(
+                attachments_by_promotion.get(promotion.id, []),
+                contact_access_codes,
+            )
 
         return {
             "data": promotions,
@@ -392,10 +436,18 @@ class PromotionService:
             "fallback_used": fallback_used,
         }
     
-    def get_promotion(self, promotion_id: str, *, include_products: bool = True):
+    def get_promotion(
+        self,
+        promotion_id: str,
+        *,
+        include_products: bool = True,
+        contact_access_codes: Optional[list[str]] = None,
+    ):
         """Get a promotion by UUID or promo_code.
 
         When *include_products* is False, loads groups without promotion product lines (no nested Product rows).
+        When *contact_access_codes* is supplied, inline attachments are filtered to those whose
+        ``access_levels`` overlaps the contact's codes.
         """
         from sqlalchemy.orm import joinedload, noload
 
@@ -426,7 +478,10 @@ class PromotionService:
             )
             promotion.products = None
             promotion.promotion_groups = groups
-            promotion.attachments = self._load_attachments_for_promotion_ids([resolved_pid]).get(resolved_pid, [])
+            promotion.attachments = self._filter_attachments_by_codes(
+                self._load_attachments_for_promotion_ids([resolved_pid]).get(resolved_pid, []),
+                contact_access_codes,
+            )
             return promotion
 
         promotion = (
@@ -452,7 +507,10 @@ class PromotionService:
         promotion.products = flat
         # Expose sorted groups for API (nested products on each group)
         promotion.promotion_groups = groups
-        promotion.attachments = self._load_attachments_for_promotion_ids([resolved_pid]).get(resolved_pid, [])
+        promotion.attachments = self._filter_attachments_by_codes(
+            self._load_attachments_for_promotion_ids([resolved_pid]).get(resolved_pid, []),
+            contact_access_codes,
+        )
 
         return promotion
     
@@ -1196,8 +1254,15 @@ class PromotionAttachmentService:
         promotion_id: Optional[str] = None,
         attachment_id: Optional[str] = None,
         query: Optional[str] = None,
+        contact_access_codes: Optional[list[str]] = None,
     ):
-        """List promotion attachments with pagination and filtering."""
+        """List promotion attachments with pagination and filtering.
+
+        When *contact_access_codes* is supplied the result is restricted to attachments
+        whose underlying file's ``access_levels`` overlaps the contact's codes (and whose
+        parent promotion's ``access_levels`` also overlaps). ``contact_access_codes=[]``
+        returns nothing (contact has no assigned access types).
+        """
         from sqlalchemy.orm import joinedload
         from sqlalchemy import or_
         from app.schemas.common import PaginationResponse
@@ -1206,7 +1271,21 @@ class PromotionAttachmentService:
             joinedload(PromotionAttachment.promotion),
             joinedload(PromotionAttachment.attachment).joinedload(Attachment.attachment_type)
         )
-        
+
+        if contact_access_codes is not None:
+            if not contact_access_codes:
+                q = q.filter(text("false"))
+            else:
+                codes_arr = cast(contact_access_codes, ARRAY(String))
+                q = q.filter(
+                    PromotionAttachment.promotion.has(
+                        Promotion.access_levels.op("?|")(codes_arr)
+                    ),
+                    PromotionAttachment.attachment.has(
+                        Attachment.access_levels.op("?|")(codes_arr)
+                    ),
+                )
+
         fallback_query = query
         if promotion_id:
             resolved_pid = _resolve_promotion_id_for_filter(self.db, promotion_id)
@@ -1326,13 +1405,34 @@ class PromotionAttachmentService:
         self.db.commit()
         return {"message": "Promotion attachment deleted successfully"}
     
-    def get_promotion_attachments_by_promotion(self, promotion_id: str):
-        """Get all attachments for a specific promotion."""
+    def get_promotion_attachments_by_promotion(
+        self,
+        promotion_id: str,
+        contact_access_codes: Optional[list[str]] = None,
+    ):
+        """Get all attachments for a specific promotion.
+
+        When *contact_access_codes* is supplied, filters out the entire result if the
+        parent promotion's ``access_levels`` does not overlap, then drops individual
+        attachments whose own ``access_levels`` does not overlap.
+        """
         from sqlalchemy.orm import joinedload
 
         resolved_pid = _resolve_promotion_id_for_filter(self.db, promotion_id)
         if resolved_pid is None:
             return []
+
+        if contact_access_codes is not None:
+            if not contact_access_codes:
+                return []
+            promotion = (
+                self.db.query(Promotion)
+                .filter(Promotion.id == resolved_pid)
+                .first()
+            )
+            promo_levels = getattr(promotion, "access_levels", None) if promotion else None
+            if not isinstance(promo_levels, list) or not set(contact_access_codes).intersection(promo_levels):
+                return []
 
         promotion_attachments = self.db.query(PromotionAttachment).options(
             joinedload(PromotionAttachment.promotion),
@@ -1341,4 +1441,8 @@ class PromotionAttachmentService:
             PromotionAttachment.sort_order.asc().nulls_last(),
             PromotionAttachment.created_at.asc()
         ).all()
+        if contact_access_codes is not None:
+            promotion_attachments = PromotionService._filter_attachments_by_codes(
+                promotion_attachments, contact_access_codes
+            )
         return promotion_attachments

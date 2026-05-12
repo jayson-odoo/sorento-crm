@@ -5,18 +5,23 @@ from datetime import datetime
 
 
 # Respond Contact Schemas
+class RespondContactAccessTypeRef(BaseModel):
+    code: str
+    name: str
+    sort_order: Optional[int] = None
+
+
 class RespondContactBase(BaseModel):
     phone_number: str
     name: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    user_type: Optional[str] = None
     respond_io_id: Optional[str] = None  # Respond.io contact id for inbox URL
     workspace_id: Optional[str] = None  # FK to respond_workspaces.id
 
 
 class RespondContactCreate(RespondContactBase):
-    pass
+    access_type_codes: Optional[List[str]] = None  # Many-to-many to contact_access_types
 
 
 class RespondContactUpdate(BaseModel):
@@ -24,9 +29,9 @@ class RespondContactUpdate(BaseModel):
     name: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    user_type: Optional[str] = None
     respond_io_id: Optional[str] = None
     workspace_id: Optional[str] = None
+    access_type_codes: Optional[List[str]] = None  # When set, replaces the contact's M2M assignment
 
 
 class RespondContactResponse(RespondContactBase):
@@ -35,7 +40,8 @@ class RespondContactResponse(RespondContactBase):
     updated_at: datetime
     created_by: Optional[str] = None
     respond_io_id: Optional[str] = None
-    access_type_code: Optional[str] = None  # Resolved from user_type via catalog/mappings
+    access_type_codes: List[str] = []
+    access_types: List[RespondContactAccessTypeRef] = []
     workspace_name: Optional[str] = None
     workspace_space_id: Optional[str] = None
 
@@ -332,32 +338,6 @@ class ContactAccessTypeUpdate(BaseModel):
 
 
 class ContactAccessTypeResponse(ContactAccessTypeBase):
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-# Respond access type mapping (admin CRUD)
-class RespondAccessTypeMappingBase(BaseModel):
-    source_key: str
-    access_type_code: str
-    is_active: bool = True
-
-
-class RespondAccessTypeMappingCreate(RespondAccessTypeMappingBase):
-    pass
-
-
-class RespondAccessTypeMappingUpdate(BaseModel):
-    source_key: Optional[str] = None
-    access_type_code: Optional[str] = None
-    is_active: Optional[bool] = None
-
-
-class RespondAccessTypeMappingResponse(RespondAccessTypeMappingBase):
-    id: str
     created_at: datetime
     updated_at: datetime
 

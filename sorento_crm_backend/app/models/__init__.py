@@ -22,7 +22,7 @@ from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
 from app.models.resources import Attachment, AttachmentType
-from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondAccessTypeMapping, RespondContact
+from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, respond_contact_access_types
 from app.models.respond_workspace import RespondWorkspace
 from app.models.workflow_stage import WorkflowStage
 from app.models.entity_conversation import EntityConversationMessage
@@ -119,8 +119,8 @@ __all__ = [
     "AccessAgent",
     "ContactAgentAccess",
     "ContactAccessType",
-    "RespondAccessTypeMapping",
     "RespondContact",
+    "respond_contact_access_types",
     "RespondWorkspace",
     "WorkflowStage",
     "EntityConversationMessage",

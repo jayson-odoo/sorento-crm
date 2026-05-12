@@ -1,13 +1,27 @@
-"""Contact access type catalog and Respond mapping: configurable access levels for promotions/attachments."""
+"""Contact access type catalog service.
+
+Source of truth for the configurable per-tenant access-type catalog
+(``contact_access_types``) and the many-to-many assignment between
+respond contacts and access types (``respond_contact_access_types``).
+
+Promotion / attachment visibility is evaluated by overlapping a contact's
+assigned access codes against a resource's ``access_levels`` JSONB array.
+"""
 from __future__ import annotations
 
 import logging
 from typing import List, Optional
 
+from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
-from app.models.access import ContactAccessType, RespondAccessTypeMapping
-from app.services.error_handler import handle_validation_error, handle_conflict
+from app.models.access import (
+    ContactAccessType,
+    RespondContact,
+    respond_contact_access_types,
+)
+from app.models.respond_workspace import RespondWorkspace
+from app.services.error_handler import handle_validation_error, handle_conflict, handle_not_found
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +30,12 @@ _FALLBACK_DEFAULT_CODES = ["dealer", "end_user"]
 
 
 class ContactAccessTypeService:
-    """CRUD and lookup for contact_access_types and respond_access_type_mappings."""
+    """CRUD on ``contact_access_types`` plus contact↔access-type M2M helpers."""
 
     def __init__(self, db: Session):
         self.db = db
 
+    # ---------------------------------------------------------------- catalog
     def list_active_codes(self) -> list[str]:
         """Return codes of active contact access types, ordered by sort_order then code."""
         rows = (
@@ -37,15 +52,12 @@ class ContactAccessTypeService:
         return codes if codes else _FALLBACK_DEFAULT_CODES.copy()
 
     def validate_access_levels(self, access_levels: list[str], field_name: str = "access_levels") -> list[str]:
-        """
-        Validate that every non-empty code is in the active catalog. Returns normalized list (stripped, deduplicated).
-        Raises if any code is invalid.
-        """
+        """Validate codes against the active catalog. Returns normalized (stripped, deduplicated) list."""
         if not access_levels:
             raise handle_validation_error(f"{field_name} must contain at least one access type.")
         allowed = set(self.list_active_codes())
-        normalized = []
-        seen = set()
+        normalized: list[str] = []
+        seen: set[str] = set()
         for a in access_levels:
             code = (a or "").strip()
             if not code:
@@ -60,33 +72,6 @@ class ContactAccessTypeService:
         if not normalized:
             raise handle_validation_error(f"{field_name} must contain at least one access type.")
         return normalized
-
-    def resolve_respond_value_to_code(self, respond_value: Optional[str]) -> Optional[str]:
-        """
-        Resolve Respond raw value (e.g. from custom field) to a contact_access_types.code.
-        Tries mapping first, then direct catalog code match. Returns None if not found.
-        """
-        if not respond_value or not str(respond_value).strip():
-            return None
-        raw = str(respond_value).strip()
-        # Direct mapping
-        mapping = (
-            self.db.query(RespondAccessTypeMapping.access_type_code)
-            .filter(
-                RespondAccessTypeMapping.source_key == raw,
-                RespondAccessTypeMapping.is_active.is_(True),
-            )
-            .first()
-        )
-        if mapping:
-            return str(mapping[0])
-        # Direct catalog code match (case-sensitive for code)
-        exists = (
-            self.db.query(ContactAccessType.code)
-            .filter(ContactAccessType.code == raw, ContactAccessType.is_active.is_(True))
-            .first()
-        )
-        return str(exists[0]) if exists else None
 
     def list_types_for_api(self) -> list[dict]:
         """Return list of {code, name, description, sort_order} for active types (API options)."""
@@ -148,76 +133,101 @@ class ContactAccessTypeService:
         return row
 
     def delete_type(self, code: str) -> None:
-        """Delete a contact access type. Fails if in use (e.g. contacts or mappings)."""
+        """Delete a contact access type. Cascades remove all contact assignments via the pivot."""
         row = self.get_type_by_code(code)
         if not row:
             raise handle_validation_error(f"Contact access type '{code}' not found.")
         self.db.delete(row)
         self.db.commit()
 
-    def list_mappings(self) -> List[RespondAccessTypeMapping]:
-        """Return all respond access type mappings for admin UI."""
-        return (
-            self.db.query(RespondAccessTypeMapping)
-            .order_by(RespondAccessTypeMapping.source_key.asc())
+    # ---------------------------------------------------------- contact M2M
+    def set_contact_access_codes(self, contact_id: str, codes: List[str]) -> List[str]:
+        """Replace the contact's access-type assignment with ``codes``.
+
+        Validates each code against the active catalog, deduplicates, and rewrites
+        the pivot in a single transaction. ``codes=[]`` clears all assignments.
+        Returns the final list of assigned codes (deterministic by sort_order).
+        """
+        normalized: list[str] = []
+        if codes:
+            allowed = set(self.list_active_codes())
+            seen: set[str] = set()
+            for code in codes:
+                c = (code or "").strip()
+                if not c or c in seen:
+                    continue
+                if c not in allowed:
+                    raise handle_conflict(
+                        f"Invalid access type(s): {[c]}. Allowed (from catalog): {sorted(allowed)}."
+                    )
+                seen.add(c)
+                normalized.append(c)
+
+        self.db.execute(
+            respond_contact_access_types.delete().where(
+                respond_contact_access_types.c.contact_id == contact_id
+            )
+        )
+        if normalized:
+            self.db.execute(
+                insert(respond_contact_access_types),
+                [{"contact_id": contact_id, "access_type_code": c} for c in normalized],
+            )
+        return normalized
+
+    def get_contact_access_codes(self, contact_id: str) -> List[str]:
+        """Return the contact's assigned access codes ordered by catalog sort_order then code."""
+        rows = (
+            self.db.query(respond_contact_access_types.c.access_type_code)
+            .join(
+                ContactAccessType,
+                ContactAccessType.code == respond_contact_access_types.c.access_type_code,
+            )
+            .filter(respond_contact_access_types.c.contact_id == contact_id)
+            .order_by(
+                ContactAccessType.sort_order.asc().nullslast(),
+                ContactAccessType.code.asc(),
+            )
             .all()
         )
+        return [r[0] for r in rows]
 
-    def get_mapping_by_id(self, mapping_id: str) -> Optional[RespondAccessTypeMapping]:
-        """Get a single mapping by id."""
-        return self.db.query(RespondAccessTypeMapping).filter(RespondAccessTypeMapping.id == mapping_id).first()
+    def resolve_contact_access_codes(self, respond_io_id: str, space_id: str) -> List[str]:
+        """Resolve a Respond.io (contact_id, space_id) pair to the contact's access codes.
 
-    def create_mapping(self, data: dict) -> RespondAccessTypeMapping:
-        """Create a new respond access type mapping. Raises if source_key already exists."""
-        existing = (
-            self.db.query(RespondAccessTypeMapping)
-            .filter(RespondAccessTypeMapping.source_key == data["source_key"])
+        Raises 404 when no contact matches. The contact must belong to a workspace
+        whose ``space_id`` matches the supplied value (exact string match).
+        """
+        rid = (respond_io_id or "").strip()
+        sid = (space_id or "").strip()
+        if not rid or not sid:
+            raise handle_validation_error("contact_id and space_id are both required.")
+        contact = (
+            self.db.query(RespondContact)
+            .join(RespondWorkspace, RespondWorkspace.id == RespondContact.workspace_id)
+            .filter(RespondContact.respond_io_id == rid, RespondWorkspace.space_id == sid)
             .first()
         )
-        if existing:
-            raise handle_conflict(f"Mapping for source key '{data['source_key']}' already exists.")
-        access_type = self.get_type_by_code(data["access_type_code"])
-        if not access_type:
-            raise handle_validation_error(f"Contact access type '{data['access_type_code']}' not found.")
-        row = RespondAccessTypeMapping(
-            source_key=data["source_key"],
-            access_type_code=data["access_type_code"],
-            is_active=data.get("is_active", True),
-        )
-        self.db.add(row)
-        self.db.commit()
-        self.db.refresh(row)
-        return row
+        if contact is None:
+            raise handle_not_found("RespondContact", f"respond_io_id={rid}, space_id={sid}")
+        return self.get_contact_access_codes(str(contact.id))
 
-    def update_mapping(self, mapping_id: str, data: dict) -> RespondAccessTypeMapping:
-        """Update a respond access type mapping."""
-        row = self.get_mapping_by_id(mapping_id)
-        if not row:
-            raise handle_validation_error(f"Mapping '{mapping_id}' not found.")
-        if "source_key" in data:
-            other = (
-                self.db.query(RespondAccessTypeMapping)
-                .filter(RespondAccessTypeMapping.source_key == data["source_key"], RespondAccessTypeMapping.id != mapping_id)
-                .first()
+    def resolve_optional_contact_access_codes(
+        self,
+        respond_io_id: Optional[str],
+        space_id: Optional[str],
+    ) -> Optional[List[str]]:
+        """Endpoint-friendly resolver: both absent → None (skip filter), exactly one absent → 400.
+
+        Returns the contact's assigned codes (possibly an empty list if the contact has
+        no access types assigned — caller treats that as 'no overlap with anything').
+        """
+        rid = (respond_io_id or "").strip() if respond_io_id is not None else ""
+        sid = (space_id or "").strip() if space_id is not None else ""
+        if not rid and not sid:
+            return None
+        if not rid or not sid:
+            raise handle_validation_error(
+                "Both contact_id and space_id are required when filtering by contact context."
             )
-            if other:
-                raise handle_conflict(f"Another mapping already exists for source key '{data['source_key']}'.")
-            row.source_key = data["source_key"]
-        if "access_type_code" in data:
-            access_type = self.get_type_by_code(data["access_type_code"])
-            if not access_type:
-                raise handle_validation_error(f"Contact access type '{data['access_type_code']}' not found.")
-            row.access_type_code = data["access_type_code"]
-        if "is_active" in data:
-            row.is_active = data["is_active"]
-        self.db.commit()
-        self.db.refresh(row)
-        return row
-
-    def delete_mapping(self, mapping_id: str) -> None:
-        """Delete a respond access type mapping."""
-        row = self.get_mapping_by_id(mapping_id)
-        if not row:
-            raise handle_validation_error(f"Mapping '{mapping_id}' not found.")
-        self.db.delete(row)
-        self.db.commit()
+        return self.resolve_contact_access_codes(rid, sid)

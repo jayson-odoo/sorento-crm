@@ -163,10 +163,15 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_master_product_attachments_list",
-        "List product–attachment links with filters. `product_id` accepts a product UUID or exact product code.",
+        (
+            "List product–attachment links with filters. `product_id` accepts a product UUID or exact "
+            "product code. Visibility is gated server-side by the contact's access types — pass the "
+            "Respond.io `contact_id` (respond_io_id) and `space_id` (workspace space id) and the CRM "
+            "filters attachments to those whose access_levels overlap the contact's assigned types."
+        ),
         "/api/v1/master-data/product-attachments",
         (),
-        ("page", "limit", "sort", "dir", "product_id", "attachment_id", "user_type"),
+        ("page", "limit", "sort", "dir", "product_id", "attachment_id", "contact_id", "space_id"),
     ),
     ToolSpec(
         "crm_master_product_attachments_get",
@@ -182,11 +187,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "product_code (SKU), or a free-text search term (LIKE on product_code, product_name, "
             "description) — same matcher as crm_master_products_list. When the term resolves to a "
             "single product, the attachments are returned; ambiguous matches return a candidate "
-            "list with `id` + `product_code` so the caller can re-issue with a precise reference."
+            "list with `id` + `product_code` so the caller can re-issue with a precise reference. "
+            "Server filters attachments to those whose access_levels overlap the contact's M2M "
+            "access types resolved from `contact_id` (respond_io_id) + `space_id`."
         ),
         "/api/v1/master-data/product-attachments/product/{product_id}",
         ("product_id",),
-        ("user_type",),
+        ("contact_id", "space_id"),
     ),
     # --- lookup sets ---
     ToolSpec(
@@ -217,16 +224,19 @@ CATALOG: tuple[ToolSpec, ...] = (
             "List promotions (summary fields + linked attachments inline; no product lines). "
             "Each row already carries its `attachments` array — no second tool call needed for "
             "promotion documents. Default returns ACTIVE promotions (is_active=true AND today "
-            "within start_date/end_date); when a narrowing filter (query, promo_type, period, "
-            "user_type) yields zero active matches, falls back to INACTIVE matches automatically "
-            "and sets fallback_used=true on the response. Pass active=false to fetch "
-            "historical-only (no fallback). Use period_from / period_to (YYYY-MM-DD) to scope by "
-            "overlap with the promotion's [start_date, end_date] window. For product lines use "
-            "crm_marketing_promotion_products_list."
+            "within start_date/end_date); when a narrowing filter (query, promo_type, period) "
+            "yields zero active matches, falls back to INACTIVE matches automatically and sets "
+            "fallback_used=true on the response. Pass active=false to fetch historical-only "
+            "(no fallback). Use period_from / period_to (YYYY-MM-DD) to scope by overlap with the "
+            "promotion's [start_date, end_date] window. For product lines use "
+            "crm_marketing_promotion_products_list. Visibility is gated server-side: the CRM "
+            "resolves the contact's M2M access types from `contact_id` (respond_io_id) + "
+            "`space_id` and filters BOTH the promotion (by access_levels overlap) AND its inline "
+            "attachments."
         ),
         "/api/v1/marketing/promotions",
         (),
-        ("page", "limit", "query", "user_type", "active", "promo_type", "period_from", "period_to", "sort", "dir"),
+        ("page", "limit", "query", "active", "promo_type", "period_from", "period_to", "sort", "dir", "contact_id", "space_id"),
     ),
     ToolSpec(
         "crm_marketing_promotions_get",
@@ -234,11 +244,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Get one promotion: metadata, groups (FOC tiers), AND linked attachments inline. "
             "No second tool call needed for attachments — they come back on the same response. "
             "Does NOT include product lines by default; set include_products=true only if you need "
-            "nested SKU lines."
+            "nested SKU lines. Visibility is gated server-side from the contact's M2M access types "
+            "(`contact_id` + `space_id`); a 404 is returned when the promotion does not overlap the "
+            "contact's access types, and inline attachments are filtered the same way."
         ),
         "/api/v1/marketing/promotions/{promotion_id}",
         ("promotion_id",),
-        ("user_type", "include_products"),
+        ("include_products", "contact_id", "space_id"),
     ),
     ToolSpec(
         "crm_marketing_promotion_products_nested",
@@ -266,10 +278,16 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_marketing_promotion_attachments_list",
-        "List/search promotion–attachment links. Optional promotion_id scopes one promotion (UUID or promo_code). Optional query searches promotion header details, product code/name, promotion group name, and attachment metadata.",
+        (
+            "List/search promotion–attachment links. Optional promotion_id scopes one promotion "
+            "(UUID or promo_code). Optional query searches promotion header details, product "
+            "code/name, promotion group name, and attachment metadata. Server filters results to "
+            "links whose parent promotion AND attachment access_levels both overlap the contact's "
+            "M2M access types (resolved from `contact_id` + `space_id`)."
+        ),
         "/api/v1/marketing/promotion-attachments",
         (),
-        ("page", "limit", "sort", "dir", "query", "promotion_id", "attachment_id"),
+        ("page", "limit", "sort", "dir", "query", "promotion_id", "attachment_id", "contact_id", "space_id"),
     ),
     ToolSpec(
         "crm_marketing_promotion_attachments_get",
@@ -280,10 +298,15 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_marketing_promotion_attachments_by_promotion",
-        "All promotion attachments for a promotion. promotion_id may be UUID or promo_code (ambiguous if duplicate codes exist—use UUID).",
+        (
+            "All promotion attachments for a promotion. promotion_id may be UUID or promo_code "
+            "(ambiguous if duplicate codes exist — use UUID). Server filters to attachments whose "
+            "parent promotion AND attachment access_levels both overlap the contact's M2M access "
+            "types (resolved from `contact_id` + `space_id`)."
+        ),
         "/api/v1/marketing/promotion-attachments/promotion/{promotion_id}",
         ("promotion_id",),
-        (),
+        ("contact_id", "space_id"),
     ),
     ToolSpec(
         "crm_marketing_campaigns_list",

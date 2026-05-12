@@ -1,15 +1,21 @@
+export interface RespondContactAccessType {
+  code: string;
+  name: string;
+  sort_order?: number | null;
+}
+
 export interface RespondContact {
   id: string;
   phone_number: string;
   name?: string | null;
   first_name?: string | null;
   last_name?: string | null;
-  user_type?: string | null;
-  access_type_code?: string | null;
   respond_io_id?: string | null;
   workspace_id?: string | null;
   workspace_name?: string | null;
   workspace_space_id?: string | null;
+  access_type_codes?: string[];
+  access_types?: RespondContactAccessType[];
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
@@ -18,6 +24,6 @@ export interface RespondContact {
 export interface RespondContactFormData {
   phone_number: string;
   name?: string;
-  user_type?: string | null;
   workspace_id?: string | null;
+  access_type_codes?: string[];
 }

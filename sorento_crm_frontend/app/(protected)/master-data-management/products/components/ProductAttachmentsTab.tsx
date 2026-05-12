@@ -20,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { useFieldLinkageSchema } from '../hooks/useFieldLinkageSchema';
 import { useProduct } from '../hooks/useProducts';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 function attachmentDirectoriesHref(directoryId: string | null | undefined): string {
   const base = '/resource-management/attachment-directories';
@@ -45,6 +46,12 @@ export default function ProductAttachmentsTab({
   const { data: productAttachments, isLoading: isLoadingAttachments } = useProductAttachmentsByProduct(productId || null);
   const { data: productDetail } = useProduct(productId || null);
   const { data: fieldLinkageSchema } = useFieldLinkageSchema('product');
+  const { data: accessTypes = [] } = useContactAccessTypes();
+  const accessTypeNameByCode = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of accessTypes) m.set(t.code, t.name);
+    return m;
+  }, [accessTypes]);
   const downloadMutation = useDownloadAttachment();
   const deleteMutation = useDeleteProductAttachment();
 
@@ -125,11 +132,12 @@ export default function ProductAttachmentsTab({
 
   const renderAccessLevels = (levels?: string[] | null) => {
     if (!levels || levels.length === 0) return null;
+    const unique = Array.from(new Set(levels));
     return (
       <div className="mt-2 flex flex-wrap gap-2">
-        {levels.map((level) => (
+        {unique.map((level) => (
           <Badge key={level} variant="secondary">
-            {level === 'dealer' ? 'Dealer' : 'End User'}
+            {accessTypeNameByCode.get(level) ?? level}
           </Badge>
         ))}
       </div>

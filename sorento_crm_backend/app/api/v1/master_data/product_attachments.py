@@ -20,12 +20,16 @@ async def get_product_attachments(
     dir: Optional[str] = Query("asc"),
     product_id: Optional[str] = Query(None),
     attachment_id: Optional[str] = Query(None),
-    user_type: Optional[str] = Query(None),
+    user_type: Optional[str] = Query(None, description="Legacy single access-level filter."),
+    contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id). Pair with space_id to filter by the contact's M2M access types."),
+    space_id: Optional[str] = Query(None, description="Respond.io space id (respond_workspaces.space_id). Pair with contact_id."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get product attachments with pagination and filtering."""
     try:
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
         service = ProductAttachmentService(db)
         result = service.list_product_attachments(
             page=page,
@@ -34,9 +38,12 @@ async def get_product_attachments(
             sort_dir=dir or "asc",
             product_id=product_id,
             attachment_id=attachment_id,
-            user_type=user_type
+            user_type=user_type,
+            contact_access_codes=contact_codes,
         )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -141,14 +148,24 @@ async def delete_product_attachment(
 @router.get("/product/{product_id}")
 async def get_product_attachments_by_product(
     product_id: str,
-    user_type: Optional[str] = Query(None),
+    user_type: Optional[str] = Query(None, description="Legacy single access-level filter."),
+    contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id)."),
+    space_id: Optional[str] = Query(None, description="Respond.io space id."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get all attachments for a specific product."""
     try:
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
         service = ProductAttachmentService(db)
-        product_attachments = service.get_product_attachments_by_product(product_id, user_type=user_type)
+        product_attachments = service.get_product_attachments_by_product(
+            product_id,
+            user_type=user_type,
+            contact_access_codes=contact_codes,
+        )
         return product_attachments
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))

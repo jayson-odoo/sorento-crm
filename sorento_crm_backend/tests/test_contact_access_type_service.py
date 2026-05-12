@@ -1,16 +1,19 @@
 """
-Unit tests for ContactAccessTypeService: catalog validation, mapping resolution, default access levels.
+Unit tests for ContactAccessTypeService: catalog validation, default access levels.
 
-Allowed access type codes are whatever is active in the contact access type catalog (admin UI + Respond
-mappings sync)—not fixed to any two values. Tests use ``dealer`` / ``end_user`` as example rows unless
-stated otherwise.
+Allowed access type codes are whatever is active in the contact access type catalog (admin UI)—not
+fixed to any two values. Tests use ``dealer`` / ``end_user`` as example rows unless stated otherwise.
 
 The only special case in code is ``_FALLBACK_DEFAULT_CODES`` when the catalog table has no active rows yet
 (bootstrap / pre-migration). That fallback is asserted in ``test_list_active_codes_returns_fallback_when_empty``.
+
+The pivot-based contact ↔ access-type assignment (set/get/resolve by respond_io_id+space_id) is covered
+in ``test_respond_contact_access_types_m2m.py`` against an in-memory SQLite session.
+
 Run with: pytest tests/test_contact_access_type_service.py -v
 """
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from app.services.contact_access_type_service import ContactAccessTypeService
 from app.services.error_handler import AppException
@@ -107,51 +110,6 @@ def test_validate_access_levels_accepts_any_catalog_code():
     assert service.validate_access_levels(["manager", "dealer"]) == ["manager", "dealer"]
 
 
-def test_resolve_respond_value_to_code_returns_none_for_empty():
-    """resolve_respond_value_to_code returns None for None or blank."""
-    mock_db = MagicMock()
-    service = ContactAccessTypeService(mock_db)
-    assert service.resolve_respond_value_to_code(None) is None
-    assert service.resolve_respond_value_to_code("") is None
-    assert service.resolve_respond_value_to_code("   ") is None
-
-
-def test_resolve_respond_value_to_code_mapping_first():
-    """resolve_respond_value_to_code uses mapping first when source_key matches."""
-    mock_db = MagicMock()
-    q_mapping = MagicMock()
-    q_mapping.filter.return_value.first.return_value = ("dealer",)
-    mock_db.query.return_value = q_mapping
-    service = ContactAccessTypeService(mock_db)
-    code = service.resolve_respond_value_to_code("Dealer")
-    assert code == "dealer"
-
-
-def test_resolve_respond_value_to_code_direct_code_when_no_mapping():
-    """resolve_respond_value_to_code falls back to direct catalog code when no mapping."""
-    mock_db = MagicMock()
-    q_mapping = MagicMock()
-    q_mapping.filter.return_value.first.return_value = None
-    q_catalog = MagicMock()
-    q_catalog.filter.return_value.first.return_value = ("end_user",)
-    mock_db.query.side_effect = [q_mapping, q_catalog]
-    service = ContactAccessTypeService(mock_db)
-    code = service.resolve_respond_value_to_code("end_user")
-    assert code == "end_user"
-
-
-def test_resolve_respond_value_to_code_returns_none_when_unknown():
-    """resolve_respond_value_to_code returns None when neither mapping nor direct code match."""
-    mock_db = MagicMock()
-    q_mapping = MagicMock()
-    q_mapping.filter.return_value.first.return_value = None
-    q_catalog = MagicMock()
-    q_catalog.filter.return_value.first.return_value = None
-    mock_db.query.side_effect = [q_mapping, q_catalog]
-    service = ContactAccessTypeService(mock_db)
-    assert service.resolve_respond_value_to_code("UnknownValue") is None
-
-
 def test_list_types_for_api_returns_active_only():
     """list_types_for_api returns only active types with code, name, description, sort_order."""
     mock_db = MagicMock()
@@ -164,3 +122,23 @@ def test_list_types_for_api_returns_active_only():
     assert len(result) == 2
     assert result[0]["code"] == "dealer" and result[0]["name"] == "Dealer"
     assert result[1]["code"] == "end_user" and result[1]["name"] == "End User"
+
+
+def test_resolve_optional_contact_access_codes_both_missing_returns_none():
+    """resolve_optional_contact_access_codes(None, None) → None: skip the contact-context filter."""
+    mock_db = MagicMock()
+    service = ContactAccessTypeService(mock_db)
+    assert service.resolve_optional_contact_access_codes(None, None) is None
+    assert service.resolve_optional_contact_access_codes("", "") is None
+
+
+def test_resolve_optional_contact_access_codes_only_one_raises():
+    """Exactly one of contact_id/space_id supplied → 400 (incomplete contact context)."""
+    mock_db = MagicMock()
+    service = ContactAccessTypeService(mock_db)
+    with pytest.raises(AppException) as exc_info:
+        service.resolve_optional_contact_access_codes("rid-only", None)
+    assert exc_info.value.status_code == 400
+    with pytest.raises(AppException) as exc_info:
+        service.resolve_optional_contact_access_codes(None, "space-only")
+    assert exc_info.value.status_code == 400

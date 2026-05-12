@@ -125,7 +125,7 @@ async def bulk_sync_contacts(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Sync multiple contacts from Respond.io (name, first/last name, user_type, respond_io_id)."""
+    """Sync multiple contacts from Respond.io (name, first/last name, respond_io_id)."""
     try:
         service = ContactService(db)
         result = service.bulk_sync_contacts_from_respond(body.ids)

@@ -78,20 +78,6 @@ def parse_respond_contact_payload(payload: dict) -> dict:
         if s:
             out["respond_io_id"] = s
 
-    custom_fields = (
-        root.get("custom_fields")
-        or root.get("customFields")
-        or payload.get("custom_fields")
-        or payload.get("customFields")
-    )
-    if isinstance(custom_fields, list):
-        for field in custom_fields:
-            field_name = str(field.get("name", "")).strip().lower()
-            if field_name == "user_type":
-                v = field.get("value")
-                out["user_type"] = str(v).strip() if v is not None else None
-                break
-
     return out
 
 
@@ -210,7 +196,11 @@ class ContactService:
             logger.warning("Assign default agents to new contact failed: %s", e)
 
     def create_contact(self, contact_data: RespondContactCreate) -> RespondContact:
-        """Create a new contact and assign default access agents (assign_to_new_internal_contacts=True). Resolves user_type to access_type_code from catalog/mappings.
+        """Create a new contact and assign default access agents (assign_to_new_internal_contacts=True).
+
+        Access types are stored in the ``respond_contact_access_types`` pivot. When
+        ``access_type_codes`` is provided, the catalog is validated and the contact
+        is linked to those types.
 
         If no ``workspace_id`` is provided, falls back to the tenant's default
         Respond.io workspace (``respond_workspaces.is_default = true``) so that
@@ -222,10 +212,7 @@ class ContactService:
         if existing:
             raise handle_conflict("Contact with this phone number already exists.")
         data = contact_data.model_dump()
-        if data.get("user_type") is not None:
-            from app.services.contact_access_type_service import ContactAccessTypeService
-            access_svc = ContactAccessTypeService(self.db)
-            data["access_type_code"] = access_svc.resolve_respond_value_to_code(data["user_type"])
+        codes = data.pop("access_type_codes", None)
         if not data.get("workspace_id"):
             from app.services.respond_workspace_service import RespondWorkspaceService
             default_ws = RespondWorkspaceService(self.db).get_default()
@@ -233,30 +220,36 @@ class ContactService:
                 data["workspace_id"] = str(default_ws.id)
         contact = RespondContact(**data)
         self.db.add(contact)
+        self.db.flush()
+        if codes:
+            from app.services.contact_access_type_service import ContactAccessTypeService
+            ContactAccessTypeService(self.db).set_contact_access_codes(str(contact.id), codes)
         self.db.commit()
         self.db.refresh(contact)
         self.assign_default_agents_to_contact(contact)
         return contact
-    
+
     def update_contact(self, contact_id: str, contact_data: RespondContactUpdate) -> RespondContact:
-        """Update a contact. When user_type is updated, resolves to access_type_code from catalog/mappings."""
+        """Update a contact. When ``access_type_codes`` is supplied, the M2M assignment is replaced."""
         contact = self.get_contact(contact_id)
-        
+
         update_data = contact_data.model_dump(exclude_unset=True)
-        if "user_type" in update_data:
-            from app.services.contact_access_type_service import ContactAccessTypeService
-            access_svc = ContactAccessTypeService(self.db)
-            update_data["access_type_code"] = access_svc.resolve_respond_value_to_code(update_data["user_type"])
-        
+        codes_present = "access_type_codes" in update_data
+        codes = update_data.pop("access_type_codes", None)
+
         # Check phone number uniqueness if being updated
         if 'phone_number' in update_data and update_data['phone_number'] != contact.phone_number:
             existing = self.get_contact_by_phone(update_data['phone_number'])
             if existing is not None and str(existing.id) != contact_id:
                 raise handle_conflict("Contact with this phone number already exists.")
-        
+
         for key, value in update_data.items():
             setattr(contact, key, value)
-        
+
+        if codes_present:
+            from app.services.contact_access_type_service import ContactAccessTypeService
+            ContactAccessTypeService(self.db).set_contact_access_codes(contact_id, codes or [])
+
         self.db.commit()
         self.db.refresh(contact)
         return contact
@@ -293,35 +286,43 @@ class ContactService:
     @staticmethod
     def contact_to_response_dict(contact: RespondContact) -> dict:
         ws = getattr(contact, "workspace", None)
+        access_types = list(getattr(contact, "access_types", []) or [])
         return {
             "id": str(contact.id),
             "phone_number": contact.phone_number,
             "name": contact.name,
             "first_name": getattr(contact, "first_name", None),
             "last_name": getattr(contact, "last_name", None),
-            "user_type": contact.user_type,
-            "access_type_code": getattr(contact, "access_type_code", None),
             "respond_io_id": getattr(contact, "respond_io_id", None),
             "workspace_id": str(contact.workspace_id) if getattr(contact, "workspace_id", None) else None,
             "workspace_name": getattr(ws, "name", None) if ws is not None else None,
             "workspace_space_id": getattr(ws, "space_id", None) if ws is not None else None,
+            "access_type_codes": [str(a.code) for a in access_types],
+            "access_types": [
+                {"code": str(a.code), "name": a.name, "sort_order": a.sort_order}
+                for a in access_types
+            ],
             "created_at": contact.created_at,
             "updated_at": contact.updated_at,
             "created_by": contact.created_by,
         }
 
     def sync_contact_name(self, contact_id: str) -> RespondContact:
-        """Sync contact name, first/last name, respond_io_id, and user_type from Respond.io API."""
+        """Sync contact name, first/last name, and respond_io_id from Respond.io API.
+
+        Access types are CRM-managed (M2M via respond_contact_access_types) and are
+        no longer touched by this sync.
+        """
         contact = self.get_contact(contact_id)
         log_service = IntegrationLogService(self.db)
-        
+
         # Create integration log for the sync operation
         request_payload = {
             "contact_id": contact_id,
             "phone_number": contact.phone_number,
             "action": "sync_contact_name"
         }
-        
+
         try:
             client = RespondClient()
             # Use phone: prefix format
@@ -329,7 +330,6 @@ class ContactService:
             parsed = parse_respond_contact_payload(payload)
 
             name = parsed.get("name")
-            user_type = parsed.get("user_type")
 
             if parsed.get("first_name") is not None:
                 contact.first_name = parsed["first_name"]
@@ -337,11 +337,6 @@ class ContactService:
                 contact.last_name = parsed["last_name"]
             if name is not None:
                 contact.name = name
-            if "user_type" in parsed:
-                contact.user_type = user_type
-                from app.services.contact_access_type_service import ContactAccessTypeService
-                access_svc = ContactAccessTypeService(self.db)
-                contact.access_type_code = access_svc.resolve_respond_value_to_code(contact.user_type)
             if parsed.get("respond_io_id") is not None:
                 contact.respond_io_id = parsed["respond_io_id"]
 
@@ -357,7 +352,6 @@ class ContactService:
                 parsed.get("first_name") is not None
                 or parsed.get("last_name") is not None
                 or name is not None
-                or "user_type" in parsed
                 or parsed.get("respond_io_id") is not None
                 or workspace_assigned
             )
@@ -366,12 +360,11 @@ class ContactService:
                 self.db.commit()
                 self.db.refresh(contact)
                 logger.info(
-                    "Synced contact %s: name=%s first=%s last=%s user_type=%s respond_io_id=%s",
+                    "Synced contact %s: name=%s first=%s last=%s respond_io_id=%s",
                     contact.phone_number,
                     contact.name,
                     contact.first_name,
                     contact.last_name,
-                    contact.user_type,
                     contact.respond_io_id,
                 )
                 

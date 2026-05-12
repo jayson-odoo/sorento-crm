@@ -29,6 +29,7 @@ import {
   Shield,
   Pencil,
   Tag,
+  Filter,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -37,6 +38,10 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable, DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -121,6 +126,19 @@ export default function AttachmentsInFolderPanel({
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'uploaded_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [accessLevelFilters, setAccessLevelFilters] = useState<string[]>([]);
+  const { data: accessTypes = [] } = useContactAccessTypes();
+  const accessTypeNameByCode = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of accessTypes) m.set(t.code, t.name);
+    return m;
+  }, [accessTypes]);
+  const toggleAccessLevel = (code: string) => {
+    setAccessLevelFilters((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
+    );
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -149,6 +167,7 @@ export default function AttachmentsInFolderPanel({
     searchQuery,
     directory_id: trashFolderId ?? (isTrashView ? undefined : effectiveDirectoryId),
     is_deleted: isTrashView ? true : undefined,
+    access_levels: accessLevelFilters.length > 0 ? accessLevelFilters : undefined,
   });
 
   const deleteMutation = useDeleteAttachment();
@@ -342,6 +361,27 @@ export default function AttachmentsInFolderPanel({
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        id: 'access_levels',
+        header: ({ column }) => <DataGridColumnHeader title="Access" column={column} />,
+        accessorFn: (row) => (row.access_levels ?? []).join(','),
+        enableSorting: false,
+        cell: ({ row }) => {
+          const levels = Array.from(new Set(row.original.access_levels ?? []));
+          if (levels.length === 0) return <span className="text-muted-foreground">-</span>;
+          return (
+            <div className="flex flex-wrap gap-1">
+              {levels.map((code) => (
+                <Badge key={code} variant="secondary" className="text-[10px]">
+                  {accessTypeNameByCode.get(code) ?? code}
+                </Badge>
+              ))}
+            </div>
+          );
+        },
+        size: 220,
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         id: 'attachment_type',
         header: ({ column }) => <DataGridColumnHeader title="Attachment Type" column={column} />,
         accessorFn: (row) => row.attachment_type?.type_name,
@@ -486,6 +526,7 @@ export default function AttachmentsInFolderPanel({
       handleResubmit,
       pendingResubmitIds,
       restoreMutation.isPending,
+      accessTypeNameByCode,
     ]
   );
 
@@ -542,6 +583,89 @@ export default function AttachmentsInFolderPanel({
                   </Button>
                 )}
               </div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1 relative" title="Filters">
+                    <Filter className="size-4" />
+                    Filters
+                    {accessLevelFilters.length > 0 && (
+                      <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
+                        {accessLevelFilters.length}
+                      </Badge>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-64" align="start">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-medium text-sm">Access levels</h4>
+                      {accessLevelFilters.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-auto px-1 text-xs"
+                          onClick={() => {
+                            setAccessLevelFilters([]);
+                            setPagination((p) => ({ ...p, pageIndex: 0 }));
+                          }}
+                        >
+                          Clear
+                        </Button>
+                      )}
+                    </div>
+                    {accessTypes.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        No access types configured.
+                      </p>
+                    ) : (
+                      <>
+                        <label
+                          htmlFor="access-filter-select-all"
+                          className="flex items-center gap-2 text-sm cursor-pointer border-b pb-2"
+                        >
+                          <Checkbox
+                            id="access-filter-select-all"
+                            checked={
+                              accessLevelFilters.length === accessTypes.length
+                                ? true
+                                : accessLevelFilters.length > 0
+                                  ? 'indeterminate'
+                                  : false
+                            }
+                            onCheckedChange={(v) => {
+                              setAccessLevelFilters(
+                                v === true ? accessTypes.map((t) => t.code) : []
+                              );
+                              setPagination((p) => ({ ...p, pageIndex: 0 }));
+                            }}
+                          />
+                          <span className="font-medium">Select all</span>
+                        </label>
+                        <div className="flex flex-col gap-2 max-h-72 overflow-y-auto">
+                          {accessTypes.map((opt) => {
+                            const id = `access-filter-${opt.code}`;
+                            const checked = accessLevelFilters.includes(opt.code);
+                            return (
+                              <label
+                                key={opt.code}
+                                htmlFor={id}
+                                className="flex items-center gap-2 text-sm cursor-pointer"
+                              >
+                                <Checkbox
+                                  id={id}
+                                  checked={checked}
+                                  onCheckedChange={() => toggleAccessLevel(opt.code)}
+                                />
+                                <span>{opt.name}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="flex items-center gap-2">
               {trashFolderId && (

@@ -39,7 +39,9 @@ async def get_promotions(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
-    user_type: Optional[str] = Query(None, description="Filter by access level: dealer, end_user"),
+    user_type: Optional[str] = Query(None, description="Filter by a single access level (FE listing). Prefer contact_id+space_id for MCP/agent flows."),
+    contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id). Pair with space_id to filter by the contact's M2M access types."),
+    space_id: Optional[str] = Query(None, description="Respond.io space id (matches respond_workspaces.space_id). Pair with contact_id."),
     status: Optional[str] = Query(None, description="Legacy filter: active, inactive, all. Prefer `active` (bool)."),
     active: Optional[bool] = Query(
         None,
@@ -63,13 +65,16 @@ async def get_promotions(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get promotions with pagination. Search by query/period, filter by access level, type, active state."""
+    """Get promotions with pagination. Search by query/period, filter by access level (legacy `user_type`) or by contact context (`contact_id`+`space_id`)."""
     try:
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
         service = PromotionService(db)
         result = service.list_promotions(
             page=page,
             limit=limit,
             user_type=user_type,
+            contact_access_codes=contact_codes,
             query=query,
             status=status,
             active=active,
@@ -80,6 +85,8 @@ async def get_promotions(
             sort_dir=dir,
         )
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -87,7 +94,9 @@ async def get_promotions(
 @router.get("/{promotion_id}", response_model=PromotionResponse)
 async def get_promotion(
     promotion_id: str,
-    user_type: Optional[str] = Query(None),
+    user_type: Optional[str] = Query(None, description="Legacy single access-level filter."),
+    contact_id: Optional[str] = Query(None, description="Respond.io contact id. Pair with space_id."),
+    space_id: Optional[str] = Query(None, description="Respond.io space id. Pair with contact_id."),
     include_products: bool = Query(
         False,
         description="When true, include promotion product lines and nested Product details. When false, groups only (no lines).",
@@ -95,15 +104,28 @@ async def get_promotion(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get a single promotion by ID."""
+    """Get a single promotion by ID. Use contact_id+space_id to also filter inline attachments."""
     try:
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
         service = PromotionService(db)
-        promotion = service.get_promotion(promotion_id, include_products=include_products)
+        promotion = service.get_promotion(
+            promotion_id,
+            include_products=include_products,
+            contact_access_codes=contact_codes,
+        )
         access_levels = getattr(promotion, "access_levels", None)
         if user_type and isinstance(access_levels, list) and user_type not in access_levels:
             from app.services.error_handler import handle_not_found
             raise handle_not_found("Promotion", promotion_id)
-        
+        if (
+            contact_codes is not None
+            and isinstance(access_levels, list)
+            and not set(contact_codes).intersection(access_levels)
+        ):
+            from app.services.error_handler import handle_not_found
+            raise handle_not_found("Promotion", promotion_id)
+
         # Map promo_selling_price to promotion_price for each line (flat list and nested groups)
         def _hydrate_promotion_price(pp):
             if hasattr(pp, "promo_selling_price"):
