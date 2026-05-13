@@ -119,6 +119,14 @@ export async function getPromotionProducts(promotionId: string): Promise<Promoti
   return response.json();
 }
 
+export async function getPromotionsByProductId(productId: string): Promise<PromotionProduct[]> {
+  const params = new URLSearchParams({ product_id: productId, limit: '100', page: '1' });
+  const response = await apiFetch(`/api/v1/marketing/promotion-products?${params.toString()}`);
+  if (!response.ok) throw new Error('Failed to fetch promotions for product');
+  const payload = await response.json();
+  return (payload?.data ?? []) as PromotionProduct[];
+}
+
 export async function createPromotionGroup(
   promotionId: string,
   data: {

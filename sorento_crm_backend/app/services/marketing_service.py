@@ -827,6 +827,7 @@ class PromotionProductService:
         self,
         promotion_id: Optional[str] = None,
         promotion_ids: Optional[list[str]] = None,
+        product_id: Optional[str] = None,
         page: int = 1,
         limit: int = 50,
         sort_field: str = "created_at",
@@ -889,6 +890,11 @@ class PromotionProductService:
                 }
             logger.debug(f"Filtering by resolved promotion_id: {resolved_pid}")
             q = q.filter(PromotionProduct.promotion_id == resolved_pid)
+
+        if product_id:
+            pid = str(product_id).strip()
+            if pid:
+                q = q.filter(PromotionProduct.product_id == pid)
 
         # Resolve category / brand (UUID or code/name) before joining.
         category_uuids = resolve_identifier(

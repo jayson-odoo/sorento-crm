@@ -13,6 +13,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
 import ProductStockTab from './ProductStockTab';
 import ProductSuppliersTab from './ProductSuppliersTab';
+import ProductPromotionsTab from './ProductPromotionsTab';
 import ProductDeleteDialog from '../../components/product-delete-dialog';
 import RecordNavigation from '../../../../../../components/common/RecordNavigation';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -196,6 +197,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               <TabsTrigger value="stock">Stock</TabsTrigger>
               <TabsTrigger value="attachments">Attachments</TabsTrigger>
               <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
+              <TabsTrigger value="promotions">Promotions</TabsTrigger>
               <TabsTrigger value="audit">Audit Trail</TabsTrigger>
             </TabsList>
 
@@ -374,6 +376,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             {/* Tab: Suppliers */}
             <TabsContent value="suppliers">
               <ProductSuppliersTab productId={productId} />
+            </TabsContent>
+
+            {/* Tab: Promotions */}
+            <TabsContent value="promotions">
+              <ProductPromotionsTab productId={productId} listPrice={product.list_price} />
             </TabsContent>
 
             {/* Tab: Audit Trail */}

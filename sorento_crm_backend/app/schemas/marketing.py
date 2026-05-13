@@ -263,6 +263,7 @@ class PromotionSimple(BaseModel):
     name: str
     promo_type: Optional[str] = None
     is_active: Optional[bool] = None
+    description: Optional[str] = None
 
     @field_validator("id", mode="before")
     @classmethod

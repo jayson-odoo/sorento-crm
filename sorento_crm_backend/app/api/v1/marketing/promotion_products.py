@@ -213,6 +213,10 @@ async def list_all_promotion_products(
         None,
         description="Single promotion: UUID or promo_code (preferred over encoding ids in query).",
     ),
+    product_id: Optional[str] = Query(
+        None,
+        description="Filter promotion lines to a single product (UUID).",
+    ),
     category_id: Optional[str] = Query(None, description="Product category UUID or category_code/name."),
     brand_id: Optional[str] = Query(None, description="Product brand UUID or brand_code/name."),
     item_type: Optional[str] = Query(None, description="Product item_type exact match."),
@@ -289,6 +293,7 @@ async def list_all_promotion_products(
         result = service.list_promotion_products(
             promotion_id=resolved_pid,
             promotion_ids=resolved_pids,
+            product_id=product_id,
             page=page,
             limit=limit,
             sort_field=sort or "created_at",

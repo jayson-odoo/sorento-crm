@@ -64,6 +64,14 @@ export interface PromotionProduct {
   dealer_cost?: number | null;
   /** list_price − dealer_cost */
   list_to_dealer_margin_amount?: number | null;
+  promotion?: {
+    id: string;
+    promo_code: string;
+    name: string;
+    promo_type?: string | null;
+    is_active?: boolean | null;
+    description?: string | null;
+  };
 }
 
 /** One buy-N paid, get M free combination within a promotion group. */
