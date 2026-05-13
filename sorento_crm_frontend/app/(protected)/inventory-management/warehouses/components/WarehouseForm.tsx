@@ -99,7 +99,7 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
                 name="warehouse_code"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Warehouse Code *</FormLabel>
+                    <FormLabel>System Location *</FormLabel>
                     <FormControl>
                       <Input placeholder="WH-001" {...field} />
                     </FormControl>
@@ -114,9 +114,9 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
                 name="warehouse_name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Warehouse Name *</FormLabel>
+                    <FormLabel>System Location Description *</FormLabel>
                     <FormControl>
-                      <Input placeholder="Warehouse Name" {...field} />
+                      <Input placeholder="e.g. Selangor Main DC" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -128,10 +128,10 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
                 name="location"
                 render={({ field }) => (
                   <FormItem className="md:col-span-2">
-                    <FormLabel>Location</FormLabel>
+                    <FormLabel>Warehouse</FormLabel>
                     <FormControl>
                       <Input
-                        placeholder="Warehouse location/address"
+                        placeholder="Warehouse name / address"
                         {...field}
                         value={field.value || ''}
                         onChange={(e) => field.onChange(e.target.value || null)}

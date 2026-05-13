@@ -65,6 +65,7 @@ PROMOTION_TOOL_NAMES: set[str] = {
 }
 
 STOCK_TOOL_PREFIX = "crm_inventory_stock_"
+INVENTORY_TOOL_PREFIX = "crm_inventory_"
 _MALAYSIA_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 _STOCK_HIDDEN_FIELDS = {
     "quantity_available",
@@ -77,7 +78,23 @@ _STOCK_HIDDEN_FIELDS = {
     "damaged",
     "status",
     "reorder_point",
+    "zone_id",
 }
+
+# Display-only rename for inventory MCP tools. DB columns + backend Pydantic
+# fields are unchanged (n8n / Sage push compat); we only rewrite response keys
+# so the AI assistant and MCP consumers see the new Sage-aligned vocabulary.
+_WAREHOUSE_KEY_RELABEL = {
+    "location": "warehouse",
+    "warehouse_code": "system_location",
+    "warehouse_name": "system_location_description",
+    "warehouse_id": "system_location_id",
+}
+
+# Stock tool nested `warehouse` object: trim to literal text identifiers only.
+# Drops UUID + description so the AI assistant always answers with the human-
+# readable system_location code + warehouse label.
+_STOCK_NESTED_WAREHOUSE_KEEP_KEYS = {"system_location", "warehouse"}
 
 UUID_REGEX = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
@@ -391,12 +408,66 @@ def _strip_stock_hidden_fields(value: Any) -> Any:
     return out
 
 
+def _relabel_warehouse_keys(value: Any) -> Any:
+    """Recursively rename warehouse-master keys to the Sage-aligned vocabulary.
+
+    `warehouse_code` → `system_location`, `warehouse_name` →
+    `system_location_description`, `location` → `warehouse`. Applied to MCP
+    inventory tool responses only. Backend payloads are untouched.
+
+    Collision guard: if a dict already contains the target key (e.g. a nested
+    `warehouse` object on the same row that also has a scalar `location`),
+    leave the original key untouched rather than overwrite the existing
+    target.
+    """
+    if isinstance(value, list):
+        return [_relabel_warehouse_keys(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    out: dict[str, Any] = {}
+    for key, raw in value.items():
+        new_key = _WAREHOUSE_KEY_RELABEL.get(key, key)
+        if new_key != key and new_key in value:
+            new_key = key
+        out[new_key] = _relabel_warehouse_keys(raw)
+    return out
+
+
+def _slim_stock_nested_warehouse(value: Any) -> Any:
+    """For stock tool rows, trim the nested `warehouse` dict to its literal-text
+    identifiers (`system_location`, `warehouse`). Run AFTER `_relabel_warehouse_keys`.
+
+    The backend embeds a `warehouse` object on each stock row carrying id +
+    system_location_description (+ now system_location + warehouse after the
+    additive WarehouseSimple change). For stock answers the assistant only
+    needs the human-readable codes, not the UUID or the description.
+    """
+    if isinstance(value, list):
+        return [_slim_stock_nested_warehouse(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    out: dict[str, Any] = {}
+    for key, raw in value.items():
+        if key == "warehouse" and isinstance(raw, dict):
+            out[key] = {
+                k: v for k, v in raw.items() if k in _STOCK_NESTED_WAREHOUSE_KEEP_KEYS
+            }
+        else:
+            out[key] = _slim_stock_nested_warehouse(raw)
+    return out
+
+
 def _sanitize_tool_response(tool_name: str, raw: str) -> str:
     """Single sanitizer entry for every MCP tool response.
 
     * Always normalize `updated_at` → Malaysia time.
     * For `crm_inventory_stock_*` tools, additionally strip hidden quantity
       fields (preserves existing stock-tool sanitization behavior).
+    * For every `crm_inventory_*` tool, relabel warehouse master keys to the
+      Sage-aligned vocabulary (system_location, system_location_description,
+      warehouse, system_location_id). Backend Pydantic response unchanged.
+    * For `crm_inventory_stock_*` tools, finally slim the nested `warehouse`
+      object on each row to its literal-text identifiers.
     """
     data = _json_loads_safe(raw)
     if data is None:
@@ -404,6 +475,10 @@ def _sanitize_tool_response(tool_name: str, raw: str) -> str:
     data = _normalize_updated_at(data)
     if tool_name.startswith(STOCK_TOOL_PREFIX):
         data = _strip_stock_hidden_fields(data)
+    if tool_name.startswith(INVENTORY_TOOL_PREFIX):
+        data = _relabel_warehouse_keys(data)
+    if tool_name.startswith(STOCK_TOOL_PREFIX):
+        data = _slim_stock_nested_warehouse(data)
     return json.dumps(data)
 
 

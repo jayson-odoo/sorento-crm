@@ -16,7 +16,7 @@ from typing import Optional, List, Any, Dict, cast
 from sqlalchemy import func
 
 from app.database import SessionLocal
-from app.services.inventory_service import StockService
+from app.services.inventory_service import StockService, WarehouseService
 from app.services.order_service import OrderService
 from app.services.product_service import ProductService
 from app.services.import_log_service import ImportLogService
@@ -126,6 +126,57 @@ def process_stock_import(db_job_id: str, stock_data: list, user_id: str):
         
     except Exception as e:
         logger.error(f"Stock import job {job.job_id} failed: {str(e)}", exc_info=True)
+        job_service.fail_job(job_id_str, str(e))
+    finally:
+        db.close()
+
+
+def process_warehouse_import(db_job_id: str, warehouses_data: list, user_id: str):
+    """Process warehouse import in background. Upserts by warehouse_code."""
+    from rq import get_current_job
+
+    db = SessionLocal()
+    job_service = JobService(db)
+
+    rq_job = get_current_job()
+    rq_job_id = rq_job.id if rq_job else None
+
+    job = job_service.get_job_by_db_id(db_job_id) if db_job_id else None
+    if not job and rq_job_id:
+        job = job_service.get_job(rq_job_id)
+
+    if not job:
+        logger.error(f"Job not found: db_job_id={db_job_id}, rq_job_id={rq_job_id}")
+        db.close()
+        return
+
+    job_id_str: str = str(job.job_id)
+    try:
+        job_service.start_job(job_id_str)
+
+        warehouse_service = WarehouseService(db)
+        result = warehouse_service.bulk_import_warehouses(warehouses_data, user_id)
+
+        job_service.complete_job(
+            job_id=job_id_str,
+            result={
+                "created": result["created"],
+                "updated": result["updated"],
+                "skipped": result["skipped"],
+                "errors": result["errors"],
+                "warnings": result["warnings"],
+                "import_session_id": result["import_session_id"],
+            },
+            successful_rows=result["created"] + result["updated"],
+            failed_rows=len(result["errors"]),
+            skipped_rows=result["skipped"],
+            processed_rows=len(warehouses_data),
+        )
+
+        logger.info(f"Warehouse import job {job.job_id} completed successfully")
+
+    except Exception as e:
+        logger.error(f"Warehouse import job {job.job_id} failed: {str(e)}", exc_info=True)
         job_service.fail_job(job_id_str, str(e))
     finally:
         db.close()

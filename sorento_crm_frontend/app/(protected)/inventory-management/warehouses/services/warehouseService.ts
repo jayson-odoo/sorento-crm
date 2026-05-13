@@ -59,3 +59,65 @@ export async function deleteWarehouse(id: string): Promise<void> {
     throw new Error(error.message);
   }
 }
+
+export interface BulkDeleteWarehousesResult {
+  deleted_count: number;
+  failed: Array<{ id: string; reason: string }>;
+  message: string;
+}
+
+export async function bulkDeleteWarehouses(ids: string[]): Promise<BulkDeleteWarehousesResult> {
+  const response = await apiFetch('/api/v1/inventory/warehouses/bulk', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to bulk delete warehouses' }));
+    throw new Error(error.message || 'Failed to bulk delete warehouses');
+  }
+  return response.json();
+}
+
+export interface ValidateWarehouseImportResult {
+  valid: boolean;
+  errors: string[];
+  warnings: Array<string | { row?: number; message?: string }>;
+  summary?: Record<string, unknown>;
+}
+
+export async function validateWarehouseImport(
+  data: Record<string, unknown>[],
+): Promise<ValidateWarehouseImportResult> {
+  const response = await apiFetch('/api/v1/inventory/warehouses/bulk-import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ warehouses: data, validate_only: true }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Validation failed' }));
+    const message =
+      typeof error.detail === 'string'
+        ? error.detail
+        : Array.isArray(error.detail)
+          ? error.detail.map((e: { msg?: string }) => e.msg || String(e)).join('; ')
+          : error.message || 'Validation failed';
+    throw new Error(message);
+  }
+  return response.json();
+}
+
+export async function bulkImportWarehouses(
+  data: Record<string, unknown>[],
+): Promise<{ job_id: string; status: string; message: string }> {
+  const response = await apiFetch('/api/v1/inventory/warehouses/bulk-import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ warehouses: data }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Failed to queue import job' }));
+    throw new Error(error.message || 'Failed to queue import job');
+  }
+  return response.json();
+}

@@ -44,9 +44,37 @@ class WarehouseService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_warehouses(self, page: int = 1, limit: int = 50, query: Optional[str] = None, is_active: Optional[bool] = None):
-        """List warehouses. When is_active=True, only return active warehouses."""
-        q = self.db.query(Warehouse)
+    def list_warehouses(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        sort_field: Optional[str] = None,
+        sort_dir: Optional[str] = None,
+    ):
+        """List warehouses. Supports sort by warehouse_code, warehouse_name, location, is_active, created_at, updated_at, zones_count, stock_count."""
+        from sqlalchemy import select
+
+        # Correlated count subqueries for derived columns (zones_count, stock_count).
+        zones_count_sq = (
+            select(func.count(StorageZone.id))
+            .where(StorageZone.warehouse_id == Warehouse.id)
+            .correlate(Warehouse)
+            .scalar_subquery()
+        )
+        stock_count_sq = (
+            select(func.count(Stock.id))
+            .where(Stock.warehouse_id == Warehouse.id)
+            .correlate(Warehouse)
+            .scalar_subquery()
+        )
+
+        q = self.db.query(
+            Warehouse,
+            zones_count_sq.label("zones_count"),
+            stock_count_sq.label("stock_count"),
+        )
 
         if is_active is not None:
             q = q.filter(Warehouse.is_active == is_active)
@@ -55,36 +83,39 @@ class WarehouseService:
             q = q.filter(
                 or_(
                     Warehouse.warehouse_code.ilike(f"%{query}%"),
-                    Warehouse.warehouse_name.ilike(f"%{query}%")
+                    Warehouse.warehouse_name.ilike(f"%{query}%"),
                 )
             )
-        
-        total = q.count()
+
+        sort_map = {
+            "warehouse_code": Warehouse.warehouse_code,
+            "warehouse_name": Warehouse.warehouse_name,
+            "location": Warehouse.location,
+            "is_active": Warehouse.is_active,
+            "created_at": Warehouse.created_at,
+            "updated_at": Warehouse.updated_at,
+            "zones_count": zones_count_sq,
+            "stock_count": stock_count_sq,
+        }
+        key = (sort_field or "created_at").strip()
+        col = sort_map.get(key, Warehouse.created_at)
+        direction = (sort_dir or "asc").lower()
+        q = q.order_by(col.desc() if direction == "desc" else col.asc())
+
+        total = q.with_entities(func.count(Warehouse.id)).order_by(None).scalar() or 0
         offset = (page - 1) * limit
-        warehouses = q.offset(offset).limit(limit).all()
-        
-        # Add counts
-        result = []
-        for warehouse in warehouses:
-            zones_count = self.db.query(func.count(StorageZone.id)).filter(
-                StorageZone.warehouse_id == warehouse.id
-            ).scalar() or 0
-            
-            stock_count = self.db.query(func.count(Stock.id)).filter(
-                Stock.warehouse_id == warehouse.id
-            ).scalar() or 0
-            
-            warehouse_dict = {
-                **{c.name: getattr(warehouse, c.name) for c in warehouse.__table__.columns},
-                "zones_count": zones_count,
-                "stock_count": stock_count
-            }
-            result.append(warehouse_dict)
-        
+        rows = q.offset(offset).limit(limit).all()
+
+        warehouses = []
+        for warehouse, zc, sc in rows:
+            setattr(warehouse, "zones_count", zc or 0)
+            setattr(warehouse, "stock_count", sc or 0)
+            warehouses.append(warehouse)
+
         return {
             "data": warehouses,
             "pagination": {"total": total, "page": page, "limit": limit},
-            "empty": total == 0
+            "empty": total == 0,
         }
     
     def get_warehouse(self, warehouse_id: str):
@@ -145,6 +176,272 @@ class WarehouseService:
         self.db.commit()
         self.db.refresh(warehouse)
         return warehouse
+
+    def delete_warehouse(self, warehouse_id: str) -> dict:
+        """Hard delete one warehouse by id (UUID or code/name). 409 if referenced by stock/zones/etc."""
+        from sqlalchemy.exc import IntegrityError
+        warehouse = self.get_warehouse(warehouse_id)
+        wid = warehouse.id
+        try:
+            self.db.delete(warehouse)
+            self.db.commit()
+        except IntegrityError as ex:
+            self.db.rollback()
+            raise handle_conflict(
+                "Warehouse has linked stock, zones, allocations, or picking lines. "
+                "Remove or reassign them before deleting."
+            ) from ex
+        return {"id": wid, "message": "Warehouse deleted."}
+
+    def bulk_delete_warehouses(self, warehouse_ids: list[str]) -> dict:
+        """Delete multiple warehouses by id. Returns deleted_count, failed[], message."""
+        from sqlalchemy.exc import IntegrityError
+        if not warehouse_ids:
+            return {"deleted_count": 0, "failed": [], "message": "No warehouses to delete."}
+
+        # Resolve mixed UUIDs/codes/names → UUIDs.
+        resolved: list[str] = []
+        unresolved: list[str] = []
+        for raw in warehouse_ids:
+            ids = resolve_identifier(
+                self.db,
+                raw,
+                Warehouse,
+                code_fields=("warehouse_code", "warehouse_name"),
+            )
+            if ids:
+                resolved.extend(ids)
+            else:
+                unresolved.append(raw)
+        resolved = list(dict.fromkeys(resolved))
+
+        failed: list[dict] = [{"id": raw, "reason": "not found"} for raw in unresolved]
+        deleted_count = 0
+        # Delete one-by-one so FK conflicts surface per-row instead of aborting whole batch.
+        for wid in resolved:
+            row = self.db.query(Warehouse).filter(Warehouse.id == wid).first()
+            if not row:
+                failed.append({"id": wid, "reason": "not found"})
+                continue
+            try:
+                self.db.delete(row)
+                self.db.flush()
+                deleted_count += 1
+            except IntegrityError as ex:
+                self.db.rollback()
+                failed.append({"id": wid, "reason": "referenced by stock / zones / allocations"})
+            except Exception as ex:
+                self.db.rollback()
+                failed.append({"id": wid, "reason": str(ex)})
+        self.db.commit()
+        return {
+            "deleted_count": deleted_count,
+            "failed": failed,
+            "message": f"Deleted {deleted_count} warehouse(s); {len(failed)} failed."
+            if failed
+            else f"Deleted {deleted_count} warehouse(s).",
+        }
+
+    def bulk_import_warehouses(
+        self,
+        rows: list[dict],
+        user_id: str,
+        validate_only: bool = False,
+    ):
+        """Upsert warehouses from Excel data, keyed by warehouse_code (case-insensitive).
+
+        Column mapping (Excel header → DB field):
+          - "Sytem Location" / "System Location" / "warehouse_code" → warehouse_code
+          - "System Location Descriptions" / "System Location Description" / "warehouse_name" → warehouse_name
+          - "Warehouse Location" / "location" → location
+          - "Status" / "is_active" → is_active (Active|true → True; Inactive|false → False)
+
+        Returns dict with created/updated/skipped counts + errors/warnings; if
+        validate_only=True returns valid/errors/warnings/summary without writes.
+        """
+        column_mapping = {
+            "Sytem Location": "warehouse_code",
+            "System Location": "warehouse_code",
+            "system location": "warehouse_code",
+            "warehouse_code": "warehouse_code",
+            "Warehouse Code": "warehouse_code",
+            "Code": "warehouse_code",
+            "code": "warehouse_code",
+            "System Location Descriptions": "warehouse_name",
+            "System Location Description": "warehouse_name",
+            "system location description": "warehouse_name",
+            "Description": "warehouse_name",
+            "description": "warehouse_name",
+            "warehouse_name": "warehouse_name",
+            "Warehouse Name": "warehouse_name",
+            "Warehouse Location": "location",
+            "warehouse location": "location",
+            "Location": "location",
+            "location": "location",
+            "Status": "is_active",
+            "status": "is_active",
+            "Active": "is_active",
+            "is_active": "is_active",
+        }
+
+        def _norm_status(value) -> Optional[bool]:
+            if value is None:
+                return None
+            if isinstance(value, bool):
+                return value
+            s = str(value).strip().lower()
+            if not s:
+                return None
+            if s in {"active", "true", "1", "yes", "y", "enabled"}:
+                return True
+            if s in {"inactive", "false", "0", "no", "n", "disabled"}:
+                return False
+            return None
+
+        def _map_row(raw: dict) -> dict:
+            mapped: dict = {}
+            for raw_key, value in raw.items():
+                key = str(raw_key).strip()
+                db_key = column_mapping.get(key) or column_mapping.get(key.lower())
+                if db_key is None:
+                    norm = key.lower().replace(" ", "")
+                    for ck, cv in column_mapping.items():
+                        if ck.lower().replace(" ", "") == norm:
+                            db_key = cv
+                            break
+                if db_key is None:
+                    continue
+                if isinstance(value, str):
+                    value = value.strip()
+                if value == "":
+                    value = None
+                if db_key == "is_active":
+                    value = _norm_status(value)
+                mapped[db_key] = value
+            return mapped
+
+        errors: list[str] = []
+        warnings: list[dict] = []
+        created = 0
+        updated = 0
+        skipped = 0
+        import_session_id = str(uuid.uuid4())
+
+        # Pass 1: parse + validate; collect codes for bulk lookup.
+        parsed: list[tuple[int, dict]] = []
+        codes_seen: dict[str, int] = {}
+        for idx, raw in enumerate(rows, start=1):
+            row = _map_row(raw)
+            code = row.get("warehouse_code")
+            if not code:
+                errors.append(f"Row {idx}: missing warehouse_code / Sytem Location.")
+                continue
+            code = str(code).strip()
+            if not row.get("warehouse_name"):
+                # Fallback so insert is valid; name is nullable=False in DB.
+                row["warehouse_name"] = code
+                warnings.append({"row": idx, "message": "warehouse_name missing — defaulted to warehouse_code"})
+            row["warehouse_code"] = code
+            key = code.lower()
+            if key in codes_seen:
+                warnings.append({
+                    "row": idx,
+                    "message": f"Duplicate warehouse_code '{code}' (first at row {codes_seen[key]}); later row wins.",
+                })
+            codes_seen[key] = idx
+            parsed.append((idx, row))
+
+        if not parsed:
+            result = {
+                "valid": len(errors) == 0,
+                "created": 0,
+                "updated": 0,
+                "skipped": skipped,
+                "errors": errors,
+                "warnings": warnings,
+                "import_session_id": import_session_id,
+                "summary": {"rows": len(rows), "parsed": 0},
+            }
+            return result
+
+        # Bulk lookup existing by code (case-insensitive).
+        all_codes = [r["warehouse_code"] for _, r in parsed]
+        existing = self.db.query(Warehouse).filter(
+            func.lower(Warehouse.warehouse_code).in_([c.lower() for c in all_codes])
+        ).all()
+        existing_by_code = {w.warehouse_code.lower(): w for w in existing}
+
+        if validate_only:
+            for idx, row in parsed:
+                if row["warehouse_code"].lower() in existing_by_code:
+                    warnings.append({"row": idx, "message": f"Will update existing warehouse '{row['warehouse_code']}'."})
+                else:
+                    warnings.append({"row": idx, "message": f"Will create new warehouse '{row['warehouse_code']}'."})
+            return {
+                "valid": len(errors) == 0,
+                "errors": errors,
+                "warnings": warnings,
+                "summary": {
+                    "rows": len(rows),
+                    "parsed": len(parsed),
+                    "to_update": sum(1 for _, r in parsed if r["warehouse_code"].lower() in existing_by_code),
+                    "to_create": sum(1 for _, r in parsed if r["warehouse_code"].lower() not in existing_by_code),
+                },
+                "import_session_id": import_session_id,
+            }
+
+        # Pass 2: apply upsert. Later duplicate wins (overwrite earlier).
+        seen_keys: set[str] = set()
+        for idx, row in parsed:
+            key = row["warehouse_code"].lower()
+            target = existing_by_code.get(key)
+            try:
+                if target is not None:
+                    for col in ("warehouse_code", "warehouse_name", "location", "is_active"):
+                        if col in row and row[col] is not None:
+                            setattr(target, col, row[col])
+                    if key not in seen_keys:
+                        updated += 1
+                else:
+                    new = Warehouse(
+                        warehouse_code=row["warehouse_code"],
+                        warehouse_name=row.get("warehouse_name") or row["warehouse_code"],
+                        location=row.get("location"),
+                        is_active=row["is_active"] if row.get("is_active") is not None else True,
+                    )
+                    self.db.add(new)
+                    existing_by_code[key] = new
+                    if key not in seen_keys:
+                        created += 1
+                seen_keys.add(key)
+            except Exception as ex:
+                errors.append(f"Row {idx}: {ex}")
+                skipped += 1
+
+        try:
+            self.db.commit()
+        except Exception as ex:
+            self.db.rollback()
+            errors.append(f"Commit failed: {ex}")
+            return {
+                "valid": False,
+                "created": 0,
+                "updated": 0,
+                "skipped": len(parsed),
+                "errors": errors,
+                "warnings": warnings,
+                "import_session_id": import_session_id,
+            }
+
+        return {
+            "valid": len(errors) == 0,
+            "created": created,
+            "updated": updated,
+            "skipped": skipped,
+            "errors": errors,
+            "warnings": warnings,
+            "import_session_id": import_session_id,
+        }
 
 
 class StorageZoneService:

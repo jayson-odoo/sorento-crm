@@ -192,7 +192,7 @@ export default function WarehouseDetailPage({
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground">
-                Warehouse Code: {warehouse.warehouse_code}
+                System Location: {warehouse.warehouse_code}
               </p>
             </div>
             <div className="flex gap-2">
@@ -221,16 +221,16 @@ export default function WarehouseDetailPage({
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
-                  <p className="text-sm text-muted-foreground">Warehouse Code</p>
+                  <p className="text-sm text-muted-foreground">System Location</p>
                   <p className="font-medium">{warehouse.warehouse_code}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Warehouse Name</p>
+                  <p className="text-sm text-muted-foreground">System Location Description</p>
                   <p className="font-medium">{warehouse.warehouse_name}</p>
                 </div>
                 {warehouse.location && (
                   <div>
-                    <p className="text-sm text-muted-foreground">Location</p>
+                    <p className="text-sm text-muted-foreground">Warehouse</p>
                     <p className="font-medium">{warehouse.location}</p>
                   </div>
                 )}

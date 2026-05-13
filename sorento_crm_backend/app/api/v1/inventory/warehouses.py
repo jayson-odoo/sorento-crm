@@ -1,15 +1,27 @@
 """Warehouses API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Body
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-from app.dependencies import get_current_user, get_current_user_or_api_key
+from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.inventory_service import WarehouseService
-from app.schemas.inventory import WarehouseCreate, WarehouseUpdate, WarehouseResponse
-from app.schemas.common import ListResponse
+from app.schemas.inventory import (
+    WarehouseCreate,
+    WarehouseUpdate,
+    WarehouseResponse,
+    BulkImportWarehousesRequest,
+    BulkImportWarehousesResponse,
+)
+from app.schemas.common import ListResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
+
+
+class BulkDeleteWarehousesRequest(BaseModel):
+    ids: list[str]
 
 
 @router.get("/", response_model=ListResponse[WarehouseResponse])
@@ -18,13 +30,22 @@ async def get_warehouses(
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
+    sort: Optional[str] = Query(None, description="Sort field: warehouse_code|warehouse_name|location|is_active|created_at|updated_at|zones_count|stock_count"),
+    dir: Optional[str] = Query("asc", description="asc|desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get warehouses with pagination and search. Use is_active=true for active-only."""
+    """Get warehouses with pagination, search, and sort. Use is_active=true for active-only."""
     try:
         service = WarehouseService(db)
-        result = service.list_warehouses(page=page, limit=limit, query=query, is_active=is_active)
+        result = service.list_warehouses(
+            page=page,
+            limit=limit,
+            query=query,
+            is_active=is_active,
+            sort_field=sort,
+            sort_dir=dir,
+        )
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -82,17 +103,93 @@ async def update_warehouse(
         raise handle_internal_error(str(e))
 
 
+@router.delete("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_delete_warehouses(
+    body: BulkDeleteWarehousesRequest = Body(...),
+    current_user: dict = Depends(require_permission("inventory.warehouses.delete")),
+    db: Session = Depends(get_db),
+):
+    """Bulk hard-delete warehouses. Rows referenced by stock/zones/allocations are reported in `failed`."""
+    try:
+        service = WarehouseService(db)
+        return service.bulk_delete_warehouses(body.ids)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.delete("/{warehouse_id}", status_code=status.HTTP_200_OK)
 async def delete_warehouse(
     warehouse_id: str,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user: dict = Depends(require_permission("inventory.warehouses.delete")),
+    db: Session = Depends(get_db),
 ):
-    """Delete a warehouse."""
+    """Hard-delete a single warehouse by id (UUID or code/name)."""
     try:
         service = WarehouseService(db)
-        # Implement delete logic
-        return {"message": "Warehouse deleted successfully"}
+        return service.delete_warehouse(warehouse_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post(
+    "/bulk-import",
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={200: {"description": "Validation only (validate_only=true)", "model": ValidateImportResponse}},
+)
+async def bulk_import_warehouses(
+    import_data: BulkImportWarehousesRequest,
+    current_user: dict = Depends(require_permission("inventory.warehouses.import")),
+    db: Session = Depends(get_db),
+):
+    """Bulk import warehouses (upsert by warehouse_code). Queued; validate_only=true returns errors/warnings without writes."""
+    try:
+        if getattr(import_data, "validate_only", False):
+            service = WarehouseService(db)
+            result = service.bulk_import_warehouses(
+                import_data.warehouses, current_user["id"], validate_only=True
+            )
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "valid": result["valid"],
+                    "errors": result["errors"],
+                    "warnings": result.get("warnings", []),
+                    "summary": result.get("summary"),
+                },
+            )
+
+        from app.services.job_service import JobService
+        from app.services.queue_service import enqueue_job
+        from app.tasks.import_tasks import process_warehouse_import
+
+        job_service = JobService(db)
+        job = job_service.create_job(
+            job_type="warehouse_import",
+            user_id=current_user["id"],
+            metadata={"total_rows": len(import_data.warehouses)},
+        )
+        setattr(job, "total_rows", len(import_data.warehouses))
+        db.commit()
+
+        rq_job = enqueue_job(
+            process_warehouse_import,
+            str(job.id),
+            import_data.warehouses,
+            current_user["id"],
+            queue_name="imports",
+            job_timeout=3600,
+        )
+        job_service.update_job_with_rq_id(job, rq_job.id)
+
+        return {
+            "job_id": rq_job.id,
+            "status": "queued",
+            "message": "Warehouse import job queued successfully",
+        }
     except HTTPException:
         raise
     except Exception as e:

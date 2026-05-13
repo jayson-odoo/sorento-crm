@@ -63,8 +63,10 @@ class StorageZoneResponse(StorageZoneBase):
 
 class WarehouseSimple(BaseModel):
     id: str
+    warehouse_code: Optional[str] = None
     warehouse_name: str
-    
+    location: Optional[str] = None
+
     class Config:
         from_attributes = True
 
@@ -189,6 +191,21 @@ class BulkImportStockRequest(BaseModel):
     """Request schema for bulk import."""
     stock: list[dict]  # List of stock dictionaries from Excel
     validate_only: Optional[bool] = False  # If True, validate only (no import); return errors/warnings.
+
+
+class BulkImportWarehousesRequest(BaseModel):
+    """Warehouse bulk import payload (raw Excel rows; column mapping handled server-side)."""
+    warehouses: list[dict]
+    validate_only: Optional[bool] = False
+
+
+class BulkImportWarehousesResponse(BaseModel):
+    import_session_id: Optional[str] = None
+    created: int = 0
+    updated: int = 0
+    skipped: int = 0
+    errors: list[str] = []
+    warnings: list[dict] = []
 
 
 class BulkImportStockResponse(BaseModel):

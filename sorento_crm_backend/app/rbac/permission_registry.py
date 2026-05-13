@@ -123,7 +123,7 @@ PERMISSION_REGISTRY.extend([
 ])
 
 # Inventory
-PERMISSION_REGISTRY.extend(_crud("inventory", "warehouses", "Warehouses"))
+PERMISSION_REGISTRY.extend(_with_import_export("inventory", "warehouses", "Warehouses"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "storage_zones", "Storage Zones"))
 PERMISSION_REGISTRY.extend(_with_import_export("inventory", "stock", "Stock"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_batches", "Stock Batches"))

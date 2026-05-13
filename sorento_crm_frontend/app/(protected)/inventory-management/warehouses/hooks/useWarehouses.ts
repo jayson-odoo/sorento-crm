@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getWarehouses, getWarehouse, createWarehouse, updateWarehouse, deleteWarehouse } from '../services/warehouseService';
+import { getWarehouses, getWarehouse, createWarehouse, updateWarehouse, deleteWarehouse, bulkDeleteWarehouses } from '../services/warehouseService';
 import type { WarehouseFormData } from '../types/warehouse.types';
 
 export function useWarehouses(params: DataGridApiFetchParams) {
@@ -61,5 +61,23 @@ export function useDeleteWarehouse() {
       toast.success('Warehouse deleted successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete warehouse'),
+  });
+}
+
+export function useBulkDeleteWarehouses() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => bulkDeleteWarehouses(ids),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['warehouses'] });
+      if (result.failed?.length) {
+        toast.warning(
+          `Deleted ${result.deleted_count}; ${result.failed.length} failed (likely have linked stock/zones).`,
+        );
+      } else {
+        toast.success(`Deleted ${result.deleted_count} warehouse${result.deleted_count === 1 ? '' : 's'}`);
+      }
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to bulk delete warehouses'),
   });
 }
