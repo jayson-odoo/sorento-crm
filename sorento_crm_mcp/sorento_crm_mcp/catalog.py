@@ -268,13 +268,34 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "Promotion product lines (paginated). Each row carries the parent promotion's "
             "`promotion_attachments` inline — no second call needed for the promotion document. "
-            "Optional promotion_id (UUID or promo_code) scopes to one promotion. Optional query does "
-            "text search by SKU/product name/promo code and can be used without promotion_id to find "
-            "which promotions a product appears in."
+            "Optional promotion_id (UUID or promo_code) scopes to one promotion. "
+            "TEXT QUERY: `query` is tokenized on whitespace; every token must match (case-insensitive) "
+            "somewhere across product_code, product_name, description, item_type, or promo_code. "
+            "Use `query` for free-text product traits that ARE words (e.g. 'sorento wash basin', "
+            "'cabinet') — DO NOT pass numeric/dimension expressions like 'L600' or '> 300mm' as `query`; "
+            "use the structured filters below. "
+            "STRUCTURED FILTERS (AND-combined with `query`): `category_id` accepts UUID or "
+            "category_code/name; `brand_id` accepts UUID or brand_code/name; `item_type` exact match; "
+            "`status` = active|inactive|all. PRICE: price_min, price_max (MYR). "
+            "DIMENSIONS (all in millimetres): per-axis length_min/length_max, width_min/width_max, "
+            "height_min/height_max. For axis-agnostic 'any side ≈ X' queries (e.g. user says 'L600' or "
+            "'cabinet 600mm'), use any_dimension_min / any_dimension_max — these match when ANY of "
+            "L/W/H falls in range. For an exact 'L600' hit, pass any_dimension_min=600 AND "
+            "any_dimension_max=600 (or a tight range like 595..605). "
+            "Use this tool without promotion_id to find which promotions a product (or product trait) "
+            "appears in."
         ),
         "/api/v1/marketing/promotion-products",
         (),
-        ("page", "limit", "sort", "dir", "query", "promotion_id"),
+        (
+            "page", "limit", "sort", "dir", "query", "promotion_id",
+            "category_id", "brand_id", "item_type", "status",
+            "price_min", "price_max",
+            "length_min", "length_max",
+            "width_min", "width_max",
+            "height_min", "height_max",
+            "any_dimension_min", "any_dimension_max",
+        ),
     ),
     ToolSpec(
         "crm_marketing_promotion_attachments_list",

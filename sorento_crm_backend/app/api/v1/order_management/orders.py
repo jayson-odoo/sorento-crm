@@ -5,6 +5,7 @@ from datetime import datetime, time
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Body, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db

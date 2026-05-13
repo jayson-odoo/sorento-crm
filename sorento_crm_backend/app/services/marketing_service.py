@@ -20,7 +20,7 @@ from typing import Any, Optional
 from decimal import Decimal
 
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, PromotionAttachment, CampaignType, MarketingCampaign
-from app.models.product import Product
+from app.models.product import Product, ProductCategory, Brand
 from app.models.resources import Attachment, AttachmentType
 from app.schemas.marketing import (
     PromotionCreate,
@@ -39,6 +39,7 @@ from app.schemas.marketing import (
 from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error, handle_validation_error
 from app.services.contact_access_type_service import ContactAccessTypeService
 from app.services.embedding_events import publish_embedding_event
+from app.services.identifier_resolver import resolve_identifier
 
 _MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
@@ -831,18 +832,39 @@ class PromotionProductService:
         sort_field: str = "created_at",
         sort_dir: str = "asc",
         query: Optional[str] = None,
+        category_id: Optional[str] = None,
+        brand_id: Optional[str] = None,
+        item_type: Optional[str] = None,
+        status: Optional[str] = None,
+        price_min: Optional[float] = None,
+        price_max: Optional[float] = None,
+        length_min: Optional[float] = None,
+        length_max: Optional[float] = None,
+        width_min: Optional[float] = None,
+        width_max: Optional[float] = None,
+        height_min: Optional[float] = None,
+        height_max: Optional[float] = None,
+        any_dimension_min: Optional[float] = None,
+        any_dimension_max: Optional[float] = None,
     ):
-        """List products for a promotion, several promotions, or all promotion products."""
+        """List products for a promotion, several promotions, or all promotion products.
+
+        Text `query` is tokenized on whitespace; every token must match (case-insensitive)
+        somewhere across Product.product_code, product_name, description, item_type, or
+        Promotion.promo_code. Structured filters (category_id, brand_id, dimensions, price,
+        item_type, status) are AND-combined with the text query.
+        """
         from sqlalchemy.orm import joinedload
-        from sqlalchemy import or_
+        from sqlalchemy import or_, and_
         import logging
         logger = logging.getLogger(__name__)
-        
+
         q = self.db.query(PromotionProduct).options(
-            joinedload(PromotionProduct.product),
-            joinedload(PromotionProduct.promotion)
+            joinedload(PromotionProduct.product).joinedload(Product.category),
+            joinedload(PromotionProduct.product).joinedload(Product.brand),
+            joinedload(PromotionProduct.promotion),
         )
-        
+
         if promotion_ids:
             resolved_bulk: list[str] = []
             for raw in promotion_ids:
@@ -867,20 +889,108 @@ class PromotionProductService:
                 }
             logger.debug(f"Filtering by resolved promotion_id: {resolved_pid}")
             q = q.filter(PromotionProduct.promotion_id == resolved_pid)
-        
+
+        # Resolve category / brand (UUID or code/name) before joining.
+        category_uuids = resolve_identifier(
+            self.db,
+            category_id,
+            ProductCategory,
+            code_fields=("category_code", "category_name"),
+        )
+        if category_uuids is not None and not category_uuids:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+        brand_uuids = resolve_identifier(
+            self.db,
+            brand_id,
+            Brand,
+            code_fields=("brand_code", "brand_name"),
+        )
+        if brand_uuids is not None and not brand_uuids:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+
+        needs_product_join = (
+            bool(query)
+            or category_uuids is not None
+            or brand_uuids is not None
+            or item_type is not None
+            or status is not None
+            or price_min is not None
+            or price_max is not None
+            or length_min is not None
+            or length_max is not None
+            or width_min is not None
+            or width_max is not None
+            or height_min is not None
+            or height_max is not None
+            or any_dimension_min is not None
+            or any_dimension_max is not None
+        )
+        needs_promotion_join = bool(query)
+
+        if needs_product_join:
+            q = q.join(Product, PromotionProduct.product_id == Product.id)
+        if needs_promotion_join:
+            q = q.join(Promotion, PromotionProduct.promotion_id == Promotion.id)
+
+        if category_uuids is not None:
+            q = q.filter(Product.category_id.in_(category_uuids))
+        if brand_uuids is not None:
+            q = q.filter(Product.brand_id.in_(brand_uuids))
+        if item_type:
+            q = q.filter(Product.item_type == item_type)
+        if status and status != "all":
+            q = q.filter(Product.is_active == (status == "active"))
+        if price_min is not None:
+            q = q.filter(Product.list_price >= Decimal(str(price_min)))
+        if price_max is not None:
+            q = q.filter(Product.list_price <= Decimal(str(price_max)))
+        if length_min is not None:
+            q = q.filter(Product.dimensions_length >= Decimal(str(length_min)))
+        if length_max is not None:
+            q = q.filter(Product.dimensions_length <= Decimal(str(length_max)))
+        if width_min is not None:
+            q = q.filter(Product.dimensions_width >= Decimal(str(width_min)))
+        if width_max is not None:
+            q = q.filter(Product.dimensions_width <= Decimal(str(width_max)))
+        if height_min is not None:
+            q = q.filter(Product.dimensions_height >= Decimal(str(height_min)))
+        if height_max is not None:
+            q = q.filter(Product.dimensions_height <= Decimal(str(height_max)))
+        if any_dimension_min is not None:
+            v = Decimal(str(any_dimension_min))
+            q = q.filter(or_(
+                Product.dimensions_length >= v,
+                Product.dimensions_width >= v,
+                Product.dimensions_height >= v,
+            ))
+        if any_dimension_max is not None:
+            v = Decimal(str(any_dimension_max))
+            q = q.filter(or_(
+                Product.dimensions_length <= v,
+                Product.dimensions_width <= v,
+                Product.dimensions_height <= v,
+            ))
+
         if query:
-            # Search in product code, product name, or promotion code
-            # Need to join with Product and Promotion for search
-            q = q.join(Product, PromotionProduct.product_id == Product.id).join(
-                Promotion, PromotionProduct.promotion_id == Promotion.id
-            ).filter(
-                or_(
-                    Product.product_code.ilike(f"%{query}%"),
-                    Product.product_name.ilike(f"%{query}%"),
-                    Promotion.promo_code.ilike(f"%{query}%")
-                )
-            )
-        
+            tokens = [t for t in str(query).split() if t]
+            for tok in tokens:
+                like = f"%{tok}%"
+                q = q.filter(or_(
+                    Product.product_code.ilike(like),
+                    Product.product_name.ilike(like),
+                    Product.description.ilike(like),
+                    Product.item_type.ilike(like),
+                    Promotion.promo_code.ilike(like),
+                ))
+
         # Sorting
         sort_map = {
             "created_at": PromotionProduct.created_at,

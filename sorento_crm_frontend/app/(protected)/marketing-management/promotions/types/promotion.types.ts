@@ -2,6 +2,20 @@ import type { Product } from '@/app/(protected)/master-data-management/products/
 
 export type PromotionType = 'price_override' | 'discount_percent' | 'discount_amount' | 'bundle' | 'other';
 
+export interface PromotionListAttachment {
+  id: string;
+  attachment_id: string;
+  is_primary?: boolean | null;
+  sort_order?: number | null;
+  attachment?: {
+    id: string;
+    original_filename: string;
+    stored_filename?: string;
+    mime_type?: string | null;
+    file_size_bytes?: number | null;
+  } | null;
+}
+
 export interface Promotion {
   id: string;
   promo_code: string;
@@ -16,6 +30,7 @@ export interface Promotion {
   updated_at: Date;
   created_by?: string | null;
   products_count?: number;
+  attachments?: PromotionListAttachment[] | null;
 }
 
 export interface PromotionFormData {

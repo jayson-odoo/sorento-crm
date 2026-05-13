@@ -12,7 +12,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, Download, Filter, Plus, Search, SlidersHorizontal, Trash2, Users, X } from 'lucide-react';
+import { ChevronRight, Columns3, Download, Eye, Filter, Plus, Search, SlidersHorizontal, Trash2, Users, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -41,9 +41,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
 import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
 import { useTenantModules } from '@/hooks/useTenantModules';
+import AttachmentDetailModal from '@/app/(protected)/resource-management/attachments/components/AttachmentDetailModal';
 import { getPromotions } from '../services/promotionService';
 import type { Promotion } from '../types/promotion.types';
-import { formatPromotionBoundaryInMalaysia } from '@/lib/helpers';
+import { formatPromotionBoundaryInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { postListQuerySearch, type ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import PromotionBulkDeleteDialog from './PromotionBulkDeleteDialog';
 import PromotionBulkAccessLevelsDialog from './PromotionBulkAccessLevelsDialog';
@@ -73,6 +74,7 @@ export default function PromotionsList() {
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [viewerAttachmentId, setViewerAttachmentId] = useState<string | null>(null);
 
   const hasActiveFilters = filterStatus !== 'all' || filterAccessLevel !== 'all' || filterPromoType !== 'all';
 
@@ -190,6 +192,66 @@ export default function PromotionsList() {
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
+        accessorKey: 'description',
+        header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+        cell: ({ row }) => {
+          const desc = row.original.description;
+          if (!desc) return <span className="text-muted-foreground">-</span>;
+          return (
+            <div className="min-w-0 max-w-full truncate" title={desc}>
+              {desc}
+            </div>
+          );
+        },
+        size: 260,
+        minSize: 160,
+        enableSorting: false,
+        meta: { skeleton: <Skeleton className="h-4 w-40" /> },
+      },
+      {
+        accessorKey: 'attachments',
+        header: ({ column }) => <DataGridColumnHeader title="Attachments" column={column} />,
+        cell: ({ row }) => {
+          const items = (row.original.attachments ?? [])
+            .map((pa) => pa.attachment)
+            .filter((a): a is NonNullable<typeof a> => !!a && !!a.original_filename);
+          if (!items.length) return <span className="text-muted-foreground">-</span>;
+          const handleOpenDetail = (
+            e: React.MouseEvent<HTMLButtonElement>,
+            attachmentId: string,
+          ) => {
+            e.stopPropagation();
+            setViewerAttachmentId(attachmentId);
+          };
+          return (
+            <div
+              className="min-w-0 max-w-full truncate"
+              title={items.map((a) => a.original_filename).join('\n')}
+            >
+              {items.map((a, idx) => (
+                <span key={a.id} className="inline-flex items-center gap-1 align-middle">
+                  <span>{a.original_filename}</span>
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-primary focus:outline-none"
+                    onClick={(e) => handleOpenDetail(e, a.id)}
+                    title="View attachment details"
+                    aria-label={`View details of ${a.original_filename}`}
+                  >
+                    <Eye className="size-3.5" />
+                  </button>
+                  {idx < items.length - 1 ? <span>, </span> : null}
+                </span>
+              ))}
+            </div>
+          );
+        },
+        size: 260,
+        minSize: 180,
+        enableSorting: false,
+        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+      },
+      {
         accessorKey: 'promo_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         cell: ({ row }) => {
@@ -254,6 +316,21 @@ export default function PromotionsList() {
           <span className="tabular-nums">{row.original.products_count ?? 0}</span>
         ),
         size: 100,
+      },
+      {
+        accessorKey: 'created_at',
+        header: ({ column }) => <DataGridColumnHeader title="Created At" column={column} />,
+        cell: ({ row }) => {
+          const created = row.original.created_at;
+          if (!created) return <span className="text-muted-foreground">-</span>;
+          return (
+            <span className="whitespace-nowrap tabular-nums">
+              {formatDateTimeInMalaysia(created as unknown as string)}
+            </span>
+          );
+        },
+        size: 160,
+        minSize: 140,
       },
       {
         accessorKey: 'actions',
@@ -483,6 +560,13 @@ export default function PromotionsList() {
         }}
         promotionIds={Array.from(selectedPromotionIds)}
         onSuccess={() => setSelectedPromotionIds(new Set())}
+      />
+      <AttachmentDetailModal
+        open={viewerAttachmentId !== null}
+        onOpenChange={(open) => {
+          if (!open) setViewerAttachmentId(null);
+        }}
+        attachmentId={viewerAttachmentId}
       />
       {listQueryToolsEnabled ? (
         <>

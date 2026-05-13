@@ -292,9 +292,23 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_master_product_attachments_get": ToolIntent(
         category="general_enquiries.attachment",
-        intent="Get one product-attachment link by id.",
-        description="Single product-attachment link record.",
-        typical_user_questions=("Get this product attachment link record.",),
+        intent="Get one product-attachment link by id; also serves product photo / image / visual look-up requests.",
+        description=(
+            "Single product-attachment link record. Also the entry point when the user asks to see the "
+            "product's photo, image, or how the product looks — the returned attachment carries the "
+            "preview/CDN URL the agent renders inline."
+        ),
+        typical_user_questions=(
+            "Get this product attachment link record.",
+            "Can I get the photos?",
+            "Can I see the photo?",
+            "Show me the picture of this product.",
+            "How does it look like?",
+            "What does this product look like?",
+            "Send me an image of this product.",
+            "Do you have a photo of this SKU?",
+        ),
+        aliases=("product photo", "product image", "product picture", "product look"),
     ),
     # ==================================================================
     # MARKETING — promotions, promotion products, promo attachments, campaigns

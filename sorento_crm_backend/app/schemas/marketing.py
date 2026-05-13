@@ -199,21 +199,61 @@ def _uuid_to_str(v):
 
 
 class ProductSimple(BaseModel):
-    """Simple product reference."""
+    """Product reference enriched with traits used by promotion search/answers."""
     id: str
     product_code: str
     product_name: str
+    description: Optional[str] = None
+    item_type: Optional[str] = None
     list_price: Optional[Decimal] = None
+    cost_price: Optional[Decimal] = None
     currency: str = "MYR"
+    weight: Optional[Decimal] = None
+    dimensions_length: Optional[Decimal] = None
+    dimensions_width: Optional[Decimal] = None
+    dimensions_height: Optional[Decimal] = None
+    warranty_months: Optional[int] = None
+    is_active: Optional[bool] = None
     is_discontinued: bool = False
+    category_id: Optional[str] = None
+    category_code: Optional[str] = None
+    category_name: Optional[str] = None
+    brand_id: Optional[str] = None
+    brand_code: Optional[str] = None
+    brand_name: Optional[str] = None
 
-    @field_validator("id", mode="before")
+    @field_validator("id", "category_id", "brand_id", mode="before")
     @classmethod
     def _id_uuid(cls, v):
         return _uuid_to_str(v)
 
     class Config:
         from_attributes = True
+
+    @classmethod
+    def model_validate(cls, obj, **kwargs):
+        """Flatten category/brand relations onto the response."""
+        if hasattr(obj, "product_code") and hasattr(obj, "category_id"):
+            data: dict = {}
+            for key in (
+                "id", "product_code", "product_name", "description", "item_type",
+                "list_price", "cost_price", "currency", "weight",
+                "dimensions_length", "dimensions_width", "dimensions_height",
+                "warranty_months", "is_active", "is_discontinued",
+                "category_id", "brand_id",
+            ):
+                if hasattr(obj, key):
+                    data[key] = getattr(obj, key)
+            cat = getattr(obj, "category", None)
+            if cat is not None:
+                data["category_code"] = getattr(cat, "category_code", None)
+                data["category_name"] = getattr(cat, "category_name", None)
+            brand = getattr(obj, "brand", None)
+            if brand is not None:
+                data["brand_code"] = getattr(brand, "brand_code", None)
+                data["brand_name"] = getattr(brand, "brand_name", None)
+            return cls(**data)
+        return super().model_validate(obj, **kwargs)
 
 
 class PromotionSimple(BaseModel):
@@ -270,7 +310,7 @@ class PromotionProductResponse(BaseModel):
             for key in [
                 'id', 'promotion_id', 'promotion_group_id', 'product_id', 'discount_amount', 'discount_percent',
                 'dealer_discount_percent', 'dealer_cost', 'list_to_dealer_margin_amount',
-                'created_at', 'updated_at', 'product', 'promotion', 'promotion_attachments',
+                'created_at', 'updated_at', 'promotion', 'promotion_attachments',
             ]:
                 if hasattr(obj, key):
                     value = getattr(obj, key)
@@ -279,6 +319,9 @@ class PromotionProductResponse(BaseModel):
                     ):
                         value = str(value)
                     data[key] = value
+            product_obj = getattr(obj, 'product', None)
+            if product_obj is not None:
+                data['product'] = ProductSimple.model_validate(product_obj)
             # Map promo_selling_price to promotion_price
             data['promotion_price'] = getattr(obj, 'promo_selling_price', None)
             data['display_order'] = getattr(obj, 'display_order', 0)
