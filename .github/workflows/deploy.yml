@@ -149,7 +149,7 @@ jobs:
             ${{ env.IMAGE_REPO }}:mcp-${{ env.RELEASE_TAG }}
             ${{ env.IMAGE_REPO }}:mcp-${{ github.sha }}
 
-      - name: Deploy to Server
+      - name: Deploy to Server (blue/green)
         if: steps.targets.outputs.should_deploy == 'true'
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -162,42 +162,30 @@ jobs:
             set -e
             cd /opt/sorento-crm2
             git pull || true
+            chmod +x ./scripts/blue_green_deploy.sh
+            IMAGE_TAG="${{ github.sha }}" ./scripts/blue_green_deploy.sh
 
-            IMAGE_REPO="${{ env.IMAGE_REPO }}"
-            TAG="${{ env.RELEASE_TAG }}"
-            SHA_TAG="${{ github.sha }}"
-            MODE="${{ steps.targets.outputs.mode }}"
-            BE="${{ steps.targets.outputs.backend }}"
-            FE="${{ steps.targets.outputs.frontend }}"
-            MCP="${{ steps.targets.outputs.mcp }}"
-
-            if [ "$MODE" = "full" ]; then
-              docker pull "$IMAGE_REPO:frontend-$SHA_TAG"
-              docker pull "$IMAGE_REPO:backend-$SHA_TAG"
-              docker pull "$IMAGE_REPO:mcp-$SHA_TAG"
-              docker tag "$IMAGE_REPO:frontend-$SHA_TAG" "$IMAGE_REPO:frontend-$TAG"
-              docker tag "$IMAGE_REPO:backend-$SHA_TAG" "$IMAGE_REPO:backend-$TAG"
-              docker tag "$IMAGE_REPO:mcp-$SHA_TAG" "$IMAGE_REPO:mcp-$TAG"
-              docker compose up -d --remove-orphans --force-recreate
-            else
-              if [ "$BE" = "true" ]; then
-                docker pull "$IMAGE_REPO:backend-$SHA_TAG"
-                docker tag "$IMAGE_REPO:backend-$SHA_TAG" "$IMAGE_REPO:backend-$TAG"
-                docker compose up -d --no-deps --force-recreate backend
-              fi
-              if [ "$FE" = "true" ]; then
-                docker pull "$IMAGE_REPO:frontend-$SHA_TAG"
-                docker tag "$IMAGE_REPO:frontend-$SHA_TAG" "$IMAGE_REPO:frontend-$TAG"
-                docker compose up -d --no-deps --force-recreate frontend
-              fi
-              if [ "$MCP" = "true" ]; then
-                docker pull "$IMAGE_REPO:mcp-$SHA_TAG"
-                docker tag "$IMAGE_REPO:mcp-$SHA_TAG" "$IMAGE_REPO:mcp-$TAG"
-                docker compose up -d --no-deps --force-recreate mcp
-              fi
-            fi
-
-            docker system prune -f
+      - name: Verify public endpoints
+        if: steps.targets.outputs.should_deploy == 'true'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 1m
+          command_timeout: 2m
+          script: |
+            set -e
+            # Frontend / backend via host nginx (public domain)
+            curl -fsS -o /dev/null https://fe-sorento.foundryx.my/ \
+              || curl -fsS -o /dev/null http://127.0.0.1/
+            # MCP via host nginx (n8n entrypoint, port stays 8765 forever)
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/mcp || true)
+            # 406 expected for plain GET (MCP demands SSE Accept header); means nginx reached MCP.
+            case "$code" in
+              200|405|406) echo "MCP reachable via nginx (HTTP $code)";;
+              *) echo "ERROR: MCP via nginx returned $code"; exit 1;;
+            esac
 
   notify-owner:
     name: Notify owner by email
