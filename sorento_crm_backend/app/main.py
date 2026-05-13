@@ -1,4 +1,5 @@
 """FastAPI application entry point."""
+import os
 # Load .env with override=True so file values beat any stale shell env
 # (e.g. a STORAGE_DEFAULT_PROVIDER exported earlier in the session).
 from pathlib import Path as _Path
@@ -160,12 +161,17 @@ async def startup_event():
         logging.info("Embedding change listeners registered")
     except Exception as e:
         logging.error(f"Failed to register embedding change listeners: {str(e)}", exc_info=True)
-    try:
-        from app.scheduler.task_scheduler import start_scheduler
-        scheduler = start_scheduler()
-        logging.info("Background scheduler started successfully")
-    except Exception as e:
-        logging.error(f"Failed to start scheduler: {str(e)}", exc_info=True)
+    # Scheduler is gated so only the dedicated `worker` container runs it.
+    # Blue/green API containers must NOT fire cron ticks (would double-process).
+    if os.getenv("ENABLE_SCHEDULER", "false").lower() == "true":
+        try:
+            from app.scheduler.task_scheduler import start_scheduler
+            scheduler = start_scheduler()
+            logging.info("Background scheduler started successfully")
+        except Exception as e:
+            logging.error(f"Failed to start scheduler: {str(e)}", exc_info=True)
+    else:
+        logging.info("Background scheduler disabled (ENABLE_SCHEDULER != true)")
     try:
         from app.database import SessionLocal
         from app.services.mcp_tool_registry_service import sync_catalog
@@ -244,5 +250,18 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+    """Readiness probe: 200 only if DB reachable. Blue/green deploy gates color swap on this."""
+    try:
+        from sqlalchemy import text
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            db.execute(text("SELECT 1"))
+        finally:
+            db.close()
+        return {"status": "healthy"}
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "error": str(e)[:200]},
+        )
