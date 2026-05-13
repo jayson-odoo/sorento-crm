@@ -149,6 +149,20 @@ jobs:
             ${{ env.IMAGE_REPO }}:mcp-${{ env.RELEASE_TAG }}
             ${{ env.IMAGE_REPO }}:mcp-${{ github.sha }}
 
+      - name: Sync compose + deploy script to server
+        if: steps.targets.outputs.should_deploy == 'true'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 1m
+          # Server has no git repo. CI is the source of truth for compose + script.
+          source: "docker-compose.yml,scripts/blue_green_deploy.sh"
+          target: "/opt/sorento-crm2"
+          overwrite: true
+          strip_components: 0
+
       - name: Deploy to Server (blue/green)
         if: steps.targets.outputs.should_deploy == 'true'
         uses: appleboy/ssh-action@v1.2.0
@@ -161,7 +175,6 @@ jobs:
           script: |
             set -e
             cd /opt/sorento-crm2
-            git pull || true
             chmod +x ./scripts/blue_green_deploy.sh
             IMAGE_TAG="${{ github.sha }}" ./scripts/blue_green_deploy.sh
 
