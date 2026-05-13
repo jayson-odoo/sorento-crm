@@ -1,5 +1,5 @@
 """SLA tracking API routes."""
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Response
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
@@ -576,6 +576,7 @@ async def update_sla_tracking(
     tracking_id: UUID,
     tracking_data: ConversationSLATrackingUpdate,
     request: Request,
+    response: Response,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -585,6 +586,7 @@ async def update_sla_tracking(
     try:
         service = ConversationSLATrackingService(db)
         tracking = service.update_tracking(tracking_id_str, tracking_data)
+        already_resolved = bool(getattr(tracking, "_already_resolved", False))
         tracking_id_result_str = str(getattr(tracking, "id"))
         external_reference = (
             str(getattr(getattr(tracking, "contact", None), "phone_number"))
@@ -600,11 +602,20 @@ async def update_sla_tracking(
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="PUT",
-                status="success",
+                status="success" if not already_resolved else "skipped_already_resolved",
             ),
             request_payload_dict=tracking_data.model_dump(exclude_unset=True),
         )
-        return service.get_tracking(tracking_id_result_str)
+        if already_resolved:
+            response.headers["X-SLA-Already-Resolved"] = "true"
+            response.headers["X-SLA-Updated"] = "false"
+        fresh = service.get_tracking(tracking_id_result_str)
+        # Attach indicators so they flow through `from_attributes` serialization
+        # of ConversationSLATrackingResponse. Header forwarding is unreliable
+        # through the Next.js proxy, so the body is the source of truth.
+        setattr(fresh, "already_resolved", already_resolved)
+        setattr(fresh, "updated_in_request", not already_resolved)
+        return fresh
     except HTTPException:
         raise
     except Exception as e:
@@ -754,6 +765,7 @@ async def update_sla_tracking_status_integration(
     tracking_id: UUID,
     update_data: ConversationSLATrackingStatusUpdate,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     """Update SLA tracking status fields from integration and log the request."""
@@ -784,9 +796,13 @@ async def update_sla_tracking_status_integration(
             )
 
         tracking = service.update_tracking(tracking_id_str, ConversationSLATrackingUpdate(**update_dict))
+        already_resolved = bool(getattr(tracking, "_already_resolved", False))
+        if already_resolved:
+            response.headers["X-SLA-Already-Resolved"] = "true"
+            response.headers["X-SLA-Updated"] = "false"
 
         # Create event logs for responded/resolved when applicable
-        if update_data.is_responded:
+        if update_data.is_responded and not already_resolved:
             # Convert responded_at to UTC before creating event log
             responded_at_utc = update_data.responded_at
             if isinstance(responded_at_utc, datetime) and responded_at_utc.tzinfo:
@@ -808,7 +824,7 @@ async def update_sla_tracking_status_integration(
                 assigned_to_id=aid,
             ))
 
-        if update_data.is_resolved:
+        if update_data.is_resolved and not already_resolved:
             # Use tracking.resolved_at (set by service if not sent) for event log
             resolved_at_utc = update_data.resolved_at or getattr(tracking, "resolved_at", None)
             if isinstance(resolved_at_utc, datetime) and resolved_at_utc.tzinfo:
@@ -848,11 +864,19 @@ async def update_sla_tracking_status_integration(
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="PUT",
-                status="success"
+                status="success" if not already_resolved else "skipped_already_resolved",
             ),
             request_payload_dict=update_data.model_dump(exclude_unset=True)
         )
 
+        if already_resolved:
+            return {
+                "status": "skipped",
+                "message": "Conversation is already resolved; no update applied.",
+                "tracking_id": tracking_id_result_str,
+                "already_resolved": True,
+                "updated": False,
+            }
         return {"status": "success", "message": "SLA tracking updated successfully.", "tracking_id": tracking_id_result_str}
     except HTTPException:
         raise

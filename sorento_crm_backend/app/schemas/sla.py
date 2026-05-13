@@ -424,6 +424,11 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     # Tier KPI hours (for frontend to color response_time / resolution_duration)
     tier_response_hours: Optional[int] = None
     tier_resolution_hours: Optional[int] = None
+    # Idempotent-update indicators: true when the caller tried to resolve an
+    # already-resolved tracking. The body is still returned so the caller can
+    # branch its own routing without parsing a 4xx error envelope.
+    already_resolved: Optional[bool] = False
+    updated_in_request: Optional[bool] = True
 
     @model_serializer(mode='wrap', when_used='json')
     def serialize_model(self, serializer, info):

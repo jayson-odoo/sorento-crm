@@ -468,7 +468,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- inventory ---
     ToolSpec(
         "crm_inventory_stock_balance_list",
-        "Paged active-warehouse stock balances. Exposes quantity_on_hand and Malaysia-time updated_at only for stock quantities; does not reveal available/reserved/damaged/status. Response uses Sage-aligned warehouse vocabulary: `system_location` (was warehouse_code), `system_location_description` (was warehouse_name), `warehouse` (was location). `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or system_location / system_location_description (still resolves against the underlying warehouse_code/name columns).",
+        "Paged active-warehouse stock balances. Exposes quantity_on_hand and Malaysia-time updated_at only for stock quantities; does not reveal available/reserved/damaged/status. Response uses Sage-aligned warehouse vocabulary: `system_location` (was warehouse_code), `system_location_description` (was warehouse_name), `warehouse` (was location). Each row exposes the warehouse identifiers under a nested `system_location` object (renamed from `warehouse`) containing `system_location` (code) and `warehouse` (label). `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or system_location / system_location_description (still resolves against the underlying warehouse_code/name columns).",
         "/api/v1/inventory/stock/balance",
         (),
         (
@@ -507,14 +507,14 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_inventory_stock_balance_export",
-        "Export active-warehouse stock rows with optional filters. MCP output exposes quantity_on_hand and Malaysia-time updated_at only for stock quantities. Warehouse keys use the Sage-aligned vocabulary: system_location, system_location_description, warehouse. product_id accepts UUID or product_code (SKU). warehouse_id accepts UUID or system_location / system_location_description.",
+        "Export active-warehouse stock rows with optional filters. MCP output exposes quantity_on_hand and Malaysia-time updated_at only for stock quantities. Warehouse keys use the Sage-aligned vocabulary: system_location, system_location_description, warehouse. Each row carries the warehouse identifiers under a nested `system_location` object (renamed from `warehouse`) with `system_location` (code) and `warehouse` (label). product_id accepts UUID or product_code (SKU). warehouse_id accepts UUID or system_location / system_location_description.",
         "/api/v1/inventory/stock/balance/export",
         (),
         ("warehouse_id", "product_id", "quantity_operator", "quantity_value"),
     ),
     ToolSpec(
         "crm_inventory_stock_ledger_by_product_warehouse",
-        "Ledger for one product in one active warehouse. Warehouse keys use Sage-aligned vocabulary (system_location, system_location_description, warehouse). product_id may be UUID or product_code (SKU). warehouse_id accepts UUID or system_location / system_location_description.",
+        "Ledger for one product in one active warehouse. Warehouse keys use Sage-aligned vocabulary (system_location, system_location_description, warehouse). Each ledger row carries the warehouse identifiers under a nested `system_location` object (renamed from `warehouse`) with `system_location` (code) and `warehouse` (label). product_id may be UUID or product_code (SKU). warehouse_id accepts UUID or system_location / system_location_description.",
         "/api/v1/inventory/stock/{product_id}/{warehouse_id}/ledger",
         ("product_id", "warehouse_id"),
         ("page", "limit"),
@@ -556,14 +556,14 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_inventory_stock_ledger_list",
-        "Global active-warehouse stock ledger list. Warehouse keys in the response use Sage-aligned vocabulary (system_location, system_location_description, warehouse). `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or system_location / system_location_description.",
+        "Global active-warehouse stock ledger list. Warehouse keys in the response use Sage-aligned vocabulary (system_location, system_location_description, warehouse). Each row carries the warehouse identifiers under a nested `system_location` object (renamed from `warehouse`) with `system_location` (code) and `warehouse` (label). `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or system_location / system_location_description.",
         "/api/v1/inventory/stock-ledger",
         (),
         ("page", "limit", "product_id", "warehouse_id", "transaction_type"),
     ),
     ToolSpec(
         "crm_inventory_stock_batches_list",
-        "List stock batches for active warehouses. Warehouse keys in the response use Sage-aligned vocabulary (system_location, system_location_description, warehouse). `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or system_location / system_location_description.",
+        "List stock batches for active warehouses. Warehouse keys in the response use Sage-aligned vocabulary (system_location, system_location_description, warehouse). Each batch row carries the warehouse identifiers under a nested `system_location` object (renamed from `warehouse`) with `system_location` (code) and `warehouse` (label). `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or system_location / system_location_description.",
         "/api/v1/inventory/stock-batches",
         (),
         ("page", "limit", "product_id", "warehouse_id"),

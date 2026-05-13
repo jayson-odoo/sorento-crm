@@ -92,9 +92,10 @@ def test_stock_row_top_level_renames_warehouse_id_and_strips_zone_id():
     assert row["quantity_on_hand"] == 197
 
 
-def test_stock_row_nested_warehouse_is_slimmed_to_literal_text_only():
-    """The nested warehouse object on a stock row must keep only
-    system_location + warehouse (literal text). No UUID, no description."""
+def test_stock_row_nested_warehouse_is_renamed_and_slimmed_to_literal_text_only():
+    """The nested warehouse wrapper on a stock row is renamed to
+    `system_location` and trimmed to literal text only
+    (system_location + warehouse). No UUID, no description."""
     raw = json.dumps(
         {
             "data": [
@@ -115,7 +116,9 @@ def test_stock_row_nested_warehouse_is_slimmed_to_literal_text_only():
     sanitized = json.loads(
         _sanitize_tool_response("crm_inventory_stock_balance_list", raw)
     )
-    nested = sanitized["data"][0]["warehouse"]
+    row = sanitized["data"][0]
+    assert "warehouse" not in row
+    nested = row["system_location"]
 
     assert nested == {"system_location": "BRW", "warehouse": "BRW"}
     assert "id" not in nested

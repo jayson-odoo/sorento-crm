@@ -1419,6 +1419,13 @@ class ConversationSLATrackingService:
         if not is_resolved and (update_data.get("resolved_by") or ("resolved_at" in update_data and update_data.get("resolved_at") is not None)):
             is_resolved = True
 
+        # Short-circuit: caller tries to resolve an already-resolved tracking.
+        # Return current state with a transient marker; let the route signal
+        # "already resolved, not updated" via response header. n8n decides routing.
+        if is_resolved and bool(getattr(tracking, "is_resolved", False)):
+            setattr(tracking, "_already_resolved", True)
+            return tracking
+
         # Smart handling for is_responded (same as responded_at / responded_by)
         if is_responded:
             if bool(getattr(tracking, "is_responded", False)):
@@ -1473,8 +1480,7 @@ class ConversationSLATrackingService:
         # Smart handling for is_resolved (same pattern: resolved_at, resolution_duration, resolved_by as user UUID)
         resolved_in_this_request = False
         if is_resolved:
-            if bool(getattr(tracking, "is_resolved", False)):
-                raise handle_validation_error("Conversation is already resolved.")
+            # Short-circuit above already returned for already-resolved case.
             resolved_in_this_request = True
             _res_by = update_data.get("resolved_by")
             if _res_by is None or (isinstance(_res_by, str) and not str(_res_by).strip()):

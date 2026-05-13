@@ -434,13 +434,19 @@ def _relabel_warehouse_keys(value: Any) -> Any:
 
 
 def _slim_stock_nested_warehouse(value: Any) -> Any:
-    """For stock tool rows, trim the nested `warehouse` dict to its literal-text
-    identifiers (`system_location`, `warehouse`). Run AFTER `_relabel_warehouse_keys`.
+    """For stock tool rows, rename the nested `warehouse` wrapper to
+    `system_location` and trim its contents to literal-text identifiers
+    (`system_location`, `warehouse`). Run AFTER `_relabel_warehouse_keys`.
 
     The backend embeds a `warehouse` object on each stock row carrying id +
     system_location_description (+ now system_location + warehouse after the
     additive WarehouseSimple change). For stock answers the assistant only
-    needs the human-readable codes, not the UUID or the description.
+    needs the human-readable codes, not the UUID or the description, and the
+    wrapper key itself is renamed so the row exposes a `system_location` object
+    rather than a `warehouse` object.
+
+    Collision guard: if a row already carries a `system_location` key, keep the
+    original `warehouse` wrapper name to avoid overwriting it.
     """
     if isinstance(value, list):
         return [_slim_stock_nested_warehouse(item) for item in value]
@@ -449,9 +455,11 @@ def _slim_stock_nested_warehouse(value: Any) -> Any:
     out: dict[str, Any] = {}
     for key, raw in value.items():
         if key == "warehouse" and isinstance(raw, dict):
-            out[key] = {
+            slimmed = {
                 k: v for k, v in raw.items() if k in _STOCK_NESTED_WAREHOUSE_KEEP_KEYS
             }
+            target_key = "system_location" if "system_location" not in value else key
+            out[target_key] = slimmed
         else:
             out[key] = _slim_stock_nested_warehouse(raw)
     return out
