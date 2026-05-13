@@ -21,3 +21,5 @@ sorento_crm_backend/.next/*
 *.old
 *.pack
 *.pyc
+
+docker-compose.yml
