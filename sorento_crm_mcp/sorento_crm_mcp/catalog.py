@@ -486,10 +486,17 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_inventory_stock_dashboard",
-        "Active-warehouse stock dashboard aggregates.",
+        (
+            "Active-warehouse stock dashboard sourced from the stock table (matches the Stock listing UI). "
+            "Returns total_skus, total_quantity, top warehouses by on-hand, 30-day net movement from "
+            "stock_ledger, and latest_stock_list_attachment (the current singleton 'Stock List' attachment "
+            "with a signed download URL — older versions are soft-deleted). "
+            "Use `limit` (1-50, default 10) to cap stock_by_warehouse — pass `limit=10` from n8n to "
+            "avoid pulling all 53 warehouses."
+        ),
         "/api/v1/inventory/stock/dashboard",
         (),
-        (),
+        ("limit",),
     ),
     ToolSpec(
         "crm_inventory_stock_alerts",

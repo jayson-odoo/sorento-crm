@@ -179,12 +179,10 @@ class StockBatchResponse(StockBatchBase):
 class StockDashboardResponse(BaseModel):
     total_skus: int
     total_quantity: int
-    low_stock_alert_count: int
-    overstock_warning_count: int
     stock_by_warehouse: list
-    stock_by_category: list
     stock_movement_30_days: list
-    low_stock_alerts: list
+    latest_stock_list_attachment: Optional[dict] = None
+    limit: int = 10
 
 
 class BulkImportStockRequest(BaseModel):

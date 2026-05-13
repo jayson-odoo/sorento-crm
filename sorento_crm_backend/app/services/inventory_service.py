@@ -1496,33 +1496,143 @@ class StockService:
             raise handle_not_found("Stock", stock_id)
         return stock
     
-    def get_stock_dashboard(self):
-        """Get stock dashboard statistics."""
-        # Count unique products
+    def get_stock_dashboard(self, limit: int = 10):
+        """Stock dashboard sourced from the `stock` table (same source as the Stock listing UI).
+
+        `limit` caps the size of every list returned (top warehouses, top low-stock rows).
+        Hard-bounded to [1, 50] inside the call. Counts/totals are NOT affected by `limit`.
+
+        StockBatch is only populated when batch-tracking is in use; the previous implementation
+        summed StockBatch.quantity which produced zeros for every account that doesn't track
+        batches. Source-of-truth for on-hand quantity is `Stock.quantity_on_hand`.
+        """
+        from datetime import datetime, timedelta
+
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            limit = 10
+        limit = max(1, min(limit, 50))
+
+        active_wh = Stock.warehouse.has(Warehouse.is_active.is_(True))
+
         total_skus = (
             self.db.query(func.count(func.distinct(Stock.product_id)))
-            .filter(Stock.warehouse.has(Warehouse.is_active.is_(True)))
+            .filter(active_wh)
             .scalar()
             or 0
         )
-        
-        # Sum quantities from stock batches
-        total_quantity_result = (
-            self.db.query(func.sum(StockBatch.quantity))
-            .filter(StockBatch.warehouse.has(Warehouse.is_active.is_(True)))
+
+        total_quantity = (
+            self.db.query(func.coalesce(func.sum(Stock.quantity_on_hand), 0))
+            .filter(active_wh)
             .scalar()
+            or 0
         )
-        total_quantity = int(total_quantity_result) if total_quantity_result else 0
-        
+
+        # Per-warehouse aggregation (top N by on-hand)
+        wh_rows = (
+            self.db.query(
+                Warehouse.id.label("warehouse_id"),
+                Warehouse.warehouse_code.label("warehouse_code"),
+                Warehouse.warehouse_name.label("warehouse_name"),
+                func.coalesce(func.sum(Stock.quantity_on_hand), 0).label("on_hand"),
+                func.coalesce(func.sum(Stock.quantity_reserved), 0).label("reserved"),
+                func.coalesce(func.sum(Stock.quantity_available), 0).label("available"),
+                func.count(func.distinct(Stock.product_id)).label("sku_count"),
+            )
+            .join(Stock, Stock.warehouse_id == Warehouse.id)
+            .filter(Warehouse.is_active.is_(True))
+            .group_by(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name)
+            .order_by(func.sum(Stock.quantity_on_hand).desc())
+            .limit(limit)
+            .all()
+        )
+        stock_by_warehouse = [
+            {
+                "warehouse_id": str(r.warehouse_id),
+                "warehouse_code": r.warehouse_code,
+                "warehouse_name": r.warehouse_name,
+                "quantity_on_hand": int(r.on_hand or 0),
+                "quantity_reserved": int(r.reserved or 0),
+                "quantity_available": int(r.available or 0),
+                "sku_count": int(r.sku_count or 0),
+            }
+            for r in wh_rows
+        ]
+
+        # 30-day movement from stock_ledger (net change per day)
+        since = datetime.utcnow() - timedelta(days=30)
+        movement_rows = (
+            self.db.query(
+                func.date(StockLedger.created_at).label("day"),
+                func.coalesce(func.sum(StockLedger.quantity_change), 0).label("net_change"),
+                func.count(StockLedger.id).label("txn_count"),
+            )
+            .filter(StockLedger.created_at >= since)
+            .group_by(func.date(StockLedger.created_at))
+            .order_by(func.date(StockLedger.created_at).asc())
+            .all()
+        )
+        stock_movement_30_days = [
+            {
+                "date": r.day.isoformat() if hasattr(r.day, "isoformat") else str(r.day),
+                "net_change": int(r.net_change or 0),
+                "transaction_count": int(r.txn_count or 0),
+            }
+            for r in movement_rows
+        ]
+
+        # Current Stock List attachment (singleton; matches /resources/attachments/current-stock-list).
+        # Stock imports upload a single "Stock List" file; previous versions are soft-deleted, so
+        # this returns only the newest non-archived row. Provides a signed download URL.
+        from app.models.resources import Attachment, AttachmentType
+        from app.services.storage_router import resolve_signed_url
+
+        latest_stock_list_attachment = None
+        stock_list_type = (
+            self.db.query(AttachmentType)
+            .filter(AttachmentType.type_name.in_(("Stock List", "Stock_List")))
+            .first()
+        )
+        if stock_list_type is not None:
+            attachment = (
+                self.db.query(Attachment)
+                .filter(
+                    Attachment.attachment_type_id == str(stock_list_type.id),
+                    Attachment.is_deleted.is_(False),
+                )
+                .order_by(Attachment.uploaded_at.desc())
+                .first()
+            )
+            if attachment is not None:
+                try:
+                    signed_url = resolve_signed_url(
+                        attachment.file_path,
+                        provider=getattr(attachment, "storage_provider", None),
+                    )
+                except Exception:
+                    signed_url = attachment.file_path
+                latest_stock_list_attachment = {
+                    "id": str(attachment.id),
+                    "original_filename": attachment.original_filename,
+                    "stored_filename": attachment.stored_filename,
+                    "file_size_bytes": attachment.file_size_bytes,
+                    "mime_type": attachment.mime_type,
+                    "uploaded_at": attachment.uploaded_at.isoformat() if attachment.uploaded_at else None,
+                    "uploaded_by": attachment.uploaded_by,
+                    "description": attachment.description,
+                    "file_path": signed_url,
+                    "storage_provider": getattr(attachment, "storage_provider", None),
+                }
+
         return {
-            "total_skus": total_skus,
-            "total_quantity": total_quantity,
-            "low_stock_alert_count": 0,
-            "overstock_warning_count": 0,
-            "stock_by_warehouse": [],
-            "stock_by_category": [],
-            "stock_movement_30_days": [],
-            "low_stock_alerts": []
+            "total_skus": int(total_skus),
+            "total_quantity": int(total_quantity),
+            "stock_by_warehouse": stock_by_warehouse,
+            "stock_movement_30_days": stock_movement_30_days,
+            "latest_stock_list_attachment": latest_stock_list_attachment,
+            "limit": limit,
         }
     
     def get_stock_alerts(self):

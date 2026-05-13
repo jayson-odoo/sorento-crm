@@ -67,13 +67,14 @@ def get_stock_balance(
 
 @router.get("/dashboard", response_model=StockDashboardResponse)
 def get_stock_dashboard(
+    limit: int = Query(10, ge=1, le=50, description="Cap on list sizes (top warehouses, top low-stock rows)."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get stock dashboard statistics."""
     try:
         service = StockService(db)
-        result = service.get_stock_dashboard()
+        result = service.get_stock_dashboard(limit=limit)
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
