@@ -261,12 +261,88 @@ class EmbeddingReadService:
         looks_like_product_code = bool(re.search(r"\b[a-z]{2,}\d{2,}[a-z0-9-]*\b", q_lower))
         promo_intent_words = ("promo", "promotion", "discount", "campaign", "offer")
         has_promo_intent = any(w in q_lower for w in promo_intent_words)
+
+        # Explicit submission-intent signal from the structured RAG query envelope:
+        #
+        #   Intent: stock_inquiry | complaint | purchase_request | sponsorship_form
+        #   User goal: file stock inquiry
+        #
+        # When the orchestrator marks the intent as one of the four portal-backed
+        # submission flows, the user always wants `crm_portal_link_get`, never an
+        # inventory / incoming-stock / order lookup tool — regardless of how the
+        # other lines ("Domain: warehouse", "Operation: search") bias the embedding
+        # cosine. Pin the portal tool and aggressively demote read-only data tools.
+        _portal_intent_values = (
+            "stock_inquiry",
+            "stock_enquiry",
+            "product_inquiry",
+            "product_enquiry",
+            "complaint",
+            "purchase_request",
+            "sponsorship_form",
+            "sponsorship",
+        )
+        _intent_line_match = re.search(r"intent:\s*([a-z_\-]+)", q_lower)
+        _intent_value = (_intent_line_match.group(1) if _intent_line_match else "").strip()
+        _submission_intent_from_envelope = _intent_value in _portal_intent_values
+        # Also catch "user goal: file/submit/lodge … stock inquiry/complaint/…".
+        _user_goal_match = re.search(r"user goal:\s*([^\n]+)", q_lower)
+        _user_goal_text = (_user_goal_match.group(1) if _user_goal_match else "").strip()
+        _goal_submission_verbs = ("file", "submit", "create", "lodge", "send", "i want to")
+        _goal_form_words = (
+            "stock inquiry",
+            "stock enquiry",
+            "product inquiry",
+            "product enquiry",
+            "complaint",
+            "purchase request",
+            "sponsorship form",
+            "sponsorship",
+        )
+        _submission_intent_from_goal = bool(_user_goal_text) and any(
+            v in _user_goal_text for v in _goal_submission_verbs
+        ) and any(w in _user_goal_text for w in _goal_form_words)
+        _submission_intent = _submission_intent_from_envelope or _submission_intent_from_goal
         initial = self.search_current(
             query_embedding,
             top_k=max(8, min(20, top_k * 3)),
             source_type="mcp_tool",
             visibility_scope="internal",
         )
+
+        # When the orchestrator marks this as a submission flow, the portal tool
+        # MUST be a candidate. Cosine often pushes it below the 20-row cutoff
+        # because "Domain: warehouse" / "Operation: search" / "Resolved entities"
+        # tokens dominate the embedding. Inject the top-similarity portal chunk
+        # so the re-rank below can pin it at position 1.
+        if _submission_intent:
+            _portal_in_initial = any(
+                (
+                    (c.metadata_json or {}).get("tool_name") == "crm_portal_link_get"
+                    or (d.source_key == "crm_portal_link_get")
+                )
+                for (c, d, _s) in initial
+            )
+            if not _portal_in_initial:
+                similarity_expr = (
+                    1 - EmbeddingChunk.embedding.cosine_distance(query_embedding)
+                ).label("similarity")
+                portal_row = (
+                    self.db.query(EmbeddingChunk, EmbeddingDocument, similarity_expr)
+                    .join(EmbeddingDocument, EmbeddingDocument.id == EmbeddingChunk.document_id)
+                    .filter(
+                        EmbeddingChunk.is_current.is_(True),
+                        EmbeddingDocument.is_active.is_(True),
+                        EmbeddingChunk.source_type == "mcp_tool",
+                        EmbeddingDocument.source_key == "crm_portal_link_get",
+                    )
+                    .order_by(similarity_expr.desc())
+                    .limit(1)
+                    .first()
+                )
+                if portal_row is not None:
+                    initial = list(initial) + [portal_row]
+
         known_params = self._extract_known_params(query)
         results: list[dict[str, Any]] = []
         for chunk, doc, similarity in initial:
@@ -448,6 +524,23 @@ class EmbeddingReadService:
             )
             if _wants_portal and tool_name == "crm_portal_link_get":
                 score += 0.20
+
+            # Hard pin for the four portal-backed submission flows. Beats the
+            # "Domain: warehouse" / "Operation: search" tokens that otherwise
+            # surface crm_inventory_* and crm_order_management_* candidates.
+            if _submission_intent:
+                if tool_name == "crm_portal_link_get":
+                    score += 0.60
+                elif tool_name.startswith("crm_inventory_"):
+                    score -= 0.45
+                elif tool_name.startswith("crm_incoming_stock_"):
+                    score -= 0.35
+                elif tool_name.startswith("crm_order_management_"):
+                    score -= 0.25
+                elif tool_name.startswith("crm_procurement_"):
+                    score -= 0.20
+                elif tool_name.startswith("crm_master_products"):
+                    score -= 0.15
             if _do_lookup_intent and not _has_do_number:
                 if tool_name in ("crm_order_management_orders_list", "crm_order_management_orders_by_product_list"):
                     score += 0.20

@@ -71,6 +71,28 @@ class ToolIntent:
 # ---------------------------------------------------------------------------
 
 
+# Tools that exist in the MCP CATALOG but must NOT be seeded into the
+# Tool-RAG embedding pool nor auto-enabled on assistants. Keep the MCP HTTP
+# tools available for direct n8n / external callers, but hide them from the
+# AI assistant's tool-search noise. Removal driven by ops decision; tools
+# are not in active product use.
+_EMBEDDING_SKIP_TOOLS: set[str] = {
+    "crm_forms_stock_inquiries_list",
+    "crm_forms_stock_inquiries_get",
+    "crm_forms_purchase_requests_list",
+    "crm_forms_purchase_requests_get",
+    "crm_forms_complaints_list",
+    "crm_forms_complaints_get",
+    "crm_commercial_projects_create_smart",
+    "crm_commercial_projects_edit",
+    "crm_commercial_projects_get",
+    "crm_commercial_projects_list",
+    "crm_workflow_forms_submissions_list",
+    "crm_workflow_forms_submissions_get",
+    "crm_workflow_forms_submissions_allowed_transitions",
+}
+
+
 TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     # MASTER DATA — product catalog, brands, categories, UOMs, attachments
@@ -1161,12 +1183,19 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         typical_user_questions=(
             "I want to file a complaint.",
             "I want to submit a complaint.",
+            "Complaint",
             "I want to submit a stock inquiry.",
+            "Stock inquiry",
             "I want to submit a stock enquiry.",
+            "Stock enquiry"
             "I want to submit a product enquiry.",
+            "Product enquiry",
             "I want to submit a product inquiry.",
+            "Product inquiry",
             "I want to submit a purchase request.",
+            "Purchase request",
             "I want to submit a sponsorship form.",
+            "Sponsorship form"
             "Create a purchase request.",
             "Send me the link to my submissions.",
             "Where can I see and edit my drafts?",
@@ -1193,123 +1222,14 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "create sponsorship form",
         ),
     ),
-    "crm_forms_stock_inquiries_list": ToolIntent(
-        category="stock_inquiries.form_submission",
-        intent="List the current user's Stock Inquiry submissions.",
-        description=(
-            "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for "
-            "downloadable templates, blank marketing forms, or attachments. "
-            "List stock inquiries for the authenticated scope with pagination and query. For external/API-key usage, always include contact_id and space_id filters. Use for "
-            "'show my stock inquiries', 'list my rejected stock inquiries', 'pending stock "
-            "inquiries this month'. Not for submitting — send the user a portal link via crm_portal_link_get."
-        ),
-        typical_user_questions=(
-            "Show my stock inquiries.",
-            "List my rejected stock inquiries.",
-            "Pending stock inquiries under my account.",
-            "Show the last 5 stock inquiries I submitted.",
-            "Find my stock inquiries for project Sunway.",
-        ),
-        aliases=("list my stock inquiries", "my stock inquiry list"),
-    ),
-    "crm_forms_stock_inquiries_get": ToolIntent(
-        category="stock_inquiries.form_submission",
-        intent="View one Stock Inquiry submission (for VIEW or prepare UPDATE).",
-        description=(
-            "Searches for previously submitted stock inquiry data records. DO NOT use this tool if the user is looking for "
-            "downloadable templates, blank marketing forms, or attachments. "
-            "Get one stock inquiry by inquiry_id for view-only summary or to preload an update flow "
-            "for a REJECTED stock inquiry. For external/API-key usage, contact_id and space_id are required filters. "
-            "Not for submit — send the user a portal link via crm_portal_link_get."
-        ),
-        typical_user_questions=(
-            "Show details for stock inquiry SI-2026-00123.",
-            "Open my stock inquiry with this inquiry number.",
-            "Load this rejected stock inquiry so I can edit it.",
-            "View the full summary of this stock inquiry.",
-        ),
-    ),
     # ==================================================================
-    # FORM SUBMISSIONS — purchase request / sponsorship form
+    # FORM SUBMISSIONS — stock inquiry / purchase request / complaint tools
+    # removed from Tool-RAG (per ops decision: not in active use; keeping out
+    # of the RAG noise so the assistant doesn't surface them as candidates).
+    # MCP catalog entries remain so existing callers / n8n flows still work,
+    # but assistants will no longer be auto-enabled for them via the
+    # _sync_enabled_tools merge in seed_mcp_tool_capabilities.
     # ==================================================================
-    "crm_forms_purchase_requests_list": ToolIntent(
-        category="purchase_request.form_submission",
-        intent="List my purchase requests AND sponsorship forms with filters.",
-        description=(
-            "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for "
-            "downloadable templates, blank marketing forms, or attachments. "
-            "List purchase requests + sponsorship forms for the authenticated user. For external/API-key usage, always include contact_id and space_id filters. Supports "
-            "request_type (purchase_request / sponsorship_form), approval_status, free-text query, "
-            "and pagination. Use for 'list my requests', 'show my rejected sponsorship forms', "
-            "'pending requests this month'."
-        ),
-        typical_user_questions=(
-            "List my latest purchase requests.",
-            "Show my rejected sponsorship forms.",
-            "Pending purchase requests this month.",
-            "Find my requests for customer Horizon Group.",
-            "Show the last 5 purchase requests / sponsorship forms I submitted.",
-        ),
-        aliases=("list my purchase requests", "list my sponsorship forms"),
-    ),
-    "crm_forms_purchase_requests_get": ToolIntent(
-        category="purchase_request.form_submission",
-        intent="View ONE purchase request or sponsorship form in detail.",
-        description=(
-            "Searches for previously submitted purchase request and sponsorship form data records. DO NOT use this tool if the user is looking for "
-            "downloadable templates, blank marketing forms, or attachments. "
-            "Get one purchase request or sponsorship form by request_id for a view-only summary "
-            "(header + lines) or to preload an update flow for a REJECTED request. For external/API-key usage, contact_id and space_id are required filters."
-        ),
-        typical_user_questions=(
-            "Show details for request PR-2026-00231.",
-            "Open sponsorship request SF-2026-00019.",
-            "View the full summary of this purchase request.",
-            "Load this rejected sponsorship form so I can edit it.",
-        ),
-    ),
-    # ==================================================================
-    # FORM SUBMISSIONS — complaint + entity attachments
-    # ==================================================================
-    "crm_forms_complaints_list": ToolIntent(
-        category="complaint.form_submission",
-        intent="List my complaints with filters scoped to the current Respond.io contact_id and space_id.",
-        description=(
-            "Searches previously submitted complaint records. DO NOT use this tool if the user is looking for "
-            "downloadable templates, blank marketing forms, or attachments. "
-            "REQUIRED PARAMETERS: contact_id AND space_id. ALWAYS pass BOTH from the active session/context — "
-            "never omit. Calling without them returns 400 'contact_id and space_id are required for external "
-            "complaint list/get requests.' These are SEPARATE parameters — do NOT try to stuff them into `query`. "
-            "Optional: free-text query (over delivery_order_number / customer_name / product_code / "
-            "defect_description / project_title), status, assigned_to, page, limit, sort, dir. "
-            "Use for 'list my complaints', 'show my open complaints', 'rejected complaints this month'."
-        ),
-        typical_user_questions=(
-            "List my latest complaints.",
-            "Show my open complaints.",
-            "Pending complaints this month.",
-            "Find my complaints for customer BATH IDEA BATHROOM.",
-            "Show the last 5 complaints I filed.",
-            "Rejected complaints I can edit.",
-        ),
-        aliases=("list my complaints", "show my complaints"),
-    ),
-    "crm_forms_complaints_get": ToolIntent(
-        category="complaint.form_submission",
-        intent="View ONE complaint in detail.",
-        description=(
-            "Searches previously submitted complaint records. DO NOT use this tool if the user is looking for "
-            "downloadable templates, blank marketing forms, or attachments. "
-            "Get one complaint by complaint_id for a view-only summary, or to preload an update flow for a REJECTED complaint. "
-            "For external/API-key usage, contact_id and space_id are required filters and the lookup 404s when the complaint is not in scope."
-        ),
-        typical_user_questions=(
-            "Show details for complaint CMP-2026-00081.",
-            "Open my complaint about cracked basin.",
-            "View the full summary of this complaint.",
-            "Load this rejected complaint so I can edit it.",
-        ),
-    ),
     "crm_forms_entity_attachments_link": ToolIntent(
         category="complaint.form_submission",
         intent="Attach photos/videos/files to a complaint, stock inquiry, or purchase request.",
@@ -1684,6 +1604,86 @@ def _intent_for(tool_name: str) -> ToolIntent | None:
     return TOOL_INTENTS.get(tool_name)
 
 
+# Envelope-style phrases that the n8n RAG orchestrator emits in its query
+# string ("Query type: tool_retrieval\nIntent: X\nDomain: Y\nUser goal: Z").
+# Seeding these directly into the body_text for the right tool steers cosine
+# similarity in the orchestrator's vocabulary, not just natural language.
+_ENVELOPE_MATCH_PHRASES: dict[str, tuple[str, ...]] = {
+    "crm_portal_link_get": (
+        # Full-envelope mirror lines: shape the cosine target so the n8n
+        # orchestrator's template ("Query type: tool_retrieval\nIntent: ...\n
+        # Domain: ...\nOperation: ...\nUser goal: ...") matches portal_link_get
+        # directly. Includes the misleading "Domain: warehouse" / "Domain:
+        # procurement" variants that the orchestrator actually emits for
+        # stock_inquiry / purchase_request flows.
+        "Query type: tool_retrieval | Intent: stock_inquiry | Domain: warehouse | Operation: search | User goal: file stock inquiry",
+        "Query type: tool_retrieval | Intent: stock_inquiry | Domain: user_submissions | Operation: submit | User goal: file stock inquiry",
+        "Query type: tool_retrieval | Intent: stock_enquiry | Domain: warehouse | Operation: search | User goal: file stock enquiry",
+        "Query type: tool_retrieval | Intent: product_inquiry | Domain: warehouse | Operation: search | User goal: submit product inquiry",
+        "Query type: tool_retrieval | Intent: product_enquiry | Domain: warehouse | Operation: search | User goal: submit product enquiry",
+        "Query type: tool_retrieval | Intent: complaint | Domain: warehouse | Operation: search | User goal: file complaint",
+        "Query type: tool_retrieval | Intent: complaint | Domain: complaint_management | Operation: submit | User goal: file complaint",
+        "Query type: tool_retrieval | Intent: complaint | Domain: forms_submission | Operation: submit | User goal: lodge complaint",
+        "Query type: tool_retrieval | Intent: purchase_request | Domain: procurement | Operation: search | User goal: file purchase request",
+        "Query type: tool_retrieval | Intent: purchase_request | Domain: forms_submission | Operation: submit | User goal: create purchase request",
+        "Query type: tool_retrieval | Intent: sponsorship_form | Domain: marketing | Operation: search | User goal: submit sponsorship form",
+        "Query type: tool_retrieval | Intent: sponsorship_form | Domain: forms_submission | Operation: submit | User goal: file sponsorship form",
+        # Intent enums emitted by the orchestrator for submission flows.
+        "Intent: stock_inquiry",
+        "Intent: stock_enquiry",
+        "Intent: product_inquiry",
+        "Intent: product_enquiry",
+        "Intent: complaint",
+        "Intent: purchase_request",
+        "Intent: sponsorship_form",
+        "Intent: sponsorship",
+        "Intent: file_submission",
+        "Intent: submit_form",
+        # Domain pointing at user-facing submission portal (counters "Domain: warehouse").
+        "Domain: user_submissions",
+        "Domain: portal",
+        "Domain: forms_submission",
+        # Operation = create / submit, NOT search.
+        "Operation: submit",
+        "Operation: create",
+        "Operation: file",
+        # User-goal phrasings.
+        "User goal: file stock inquiry",
+        "User goal: submit stock inquiry",
+        "User goal: file complaint",
+        "User goal: submit complaint",
+        "User goal: lodge complaint",
+        "User goal: create purchase request",
+        "User goal: submit purchase request",
+        "User goal: file sponsorship form",
+        "User goal: submit sponsorship form",
+        "User goal: hand me the portal link",
+        # Anti-confusion: explicit that these are NOT inventory lookups.
+        "Not an inventory lookup. Not a stock balance query. Use this for submission portal.",
+    ),
+}
+
+
+def _envelope_match_phrases(tool_name: str) -> tuple[str, ...]:
+    if tool_name in _ENVELOPE_MATCH_PHRASES:
+        return _ENVELOPE_MATCH_PHRASES[tool_name]
+    # Inventory + order-management lookup tools must be cosine-distant from
+    # submission-flow queries. The n8n orchestrator often emits
+    # "Domain: warehouse" + "Operation: search" for "file stock inquiry"
+    # which used to drag these tools into top-k. Seeded disclaimer counters it.
+    if (
+        tool_name.startswith("crm_inventory_")
+        or tool_name.startswith("crm_incoming_stock_")
+        or tool_name.startswith("crm_order_management_")
+    ):
+        return (
+            "This tool is a read-only data lookup. It does NOT submit, file, lodge, or create any form.",
+            "Do not pick this tool when the user wants to file a stock inquiry, file a complaint, "
+            "file a purchase request, or file a sponsorship form. Pick crm_portal_link_get for those.",
+        )
+    return ()
+
+
 def _fallback_intent(tool_name: str, path: str, required_params: list[str], optional_params: list[str]) -> ToolIntent:
     base_required = ", ".join(required_params) if required_params else "none"
     base_optional = ", ".join(optional_params) if optional_params else "none"
@@ -1741,6 +1741,8 @@ def build_capability_documents(include_planned: bool = True, definitions_file: s
         return docs
 
     for spec in _load_catalog_specs():
+        if spec.name in _EMBEDDING_SKIP_TOOLS:
+            continue
         required_params = [*spec.path_params]
         optional_params = [*spec.query_params]
         required_params.extend(_parse_required_query_hints(spec.description))
@@ -1748,6 +1750,8 @@ def build_capability_documents(include_planned: bool = True, definitions_file: s
         category = intent.category
         aliases = list(intent.aliases) + _tool_aliases_from_name(spec.name)
         aliases = list(dict.fromkeys(aliases))
+        typical_q = list(intent.typical_user_questions) if intent.typical_user_questions else []
+        envelope_phrases = _envelope_match_phrases(spec.name)
         body_text = (
             f"Tool Name: {spec.name}\n"
             f"Category: {category}\n"
@@ -1760,7 +1764,10 @@ def build_capability_documents(include_planned: bool = True, definitions_file: s
             f"Optional Params: {', '.join(optional_params) if optional_params else 'none'}\n"
             f"Body Params: {', '.join(spec.body_params) if spec.body_params else 'none'}\n"
             f"Aliases: {', '.join(aliases)}\n"
+            f"Typical User Questions: {' | '.join(typical_q) if typical_q else 'none'}\n"
         )
+        if envelope_phrases:
+            body_text += f"Envelope Match Phrases: {' | '.join(envelope_phrases)}\n"
         docs.append(
             CapabilityDoc(
                 source_id=f"implemented::{spec.name}",
