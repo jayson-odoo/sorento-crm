@@ -321,8 +321,7 @@ class ListQueryExportService:
             )
             q = q.filter(
                 or_(
-                    Promotion.promo_code.ilike(search_term),
-                    Promotion.name.ilike(search_term),
+                    Promotion.description.ilike(search_term),
                     has_product_match,
                 )
             )

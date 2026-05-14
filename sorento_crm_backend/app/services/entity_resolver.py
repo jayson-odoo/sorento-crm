@@ -870,40 +870,7 @@ def _probe_supplier(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
 
 
 def _probe_promotion(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
-    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
-    if not tokens:
-        return result
-    lowered = [t.lower() for t in tokens]
-    rows = (
-        db.query(
-            Promotion.promo_code,
-            Promotion.name,
-            Promotion.start_date,
-            Promotion.end_date,
-            Promotion.is_active,
-        )
-        .filter(func.lower(Promotion.promo_code).in_(lowered))
-        .all()
-    )
-    code_to_token = {t.lower(): t for t in tokens}
-    for code, name, start_date, end_date, is_active in rows:
-        token = code_to_token.get(str(code).lower())
-        if not token:
-            continue
-        result[token].append(
-            ResolvedEntity(
-                entity_type="promotion",
-                canonical_code=code,
-                match_field="promo_code",
-                display={
-                    "promotion_name": name,
-                    "start_date": _iso(start_date),
-                    "end_date": _iso(end_date),
-                    "is_active": bool(is_active) if is_active is not None else True,
-                },
-            )
-        )
-    return result
+    return {t: [] for t in tokens}
 
 
 # --------------------------------------------------------------------------- #
@@ -1184,20 +1151,20 @@ def _prefix_probe_grn(db: Session, token: str) -> list[ResolvedEntity]:
 def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
     prefix = f"{token}%"
     rows = (
-        db.query(Promotion.promo_code, Promotion.name, Promotion.is_active)
-        .filter(Promotion.promo_code.ilike(prefix))
+        db.query(Promotion.id, Promotion.description, Promotion.is_active)
+        .filter(Promotion.description.ilike(prefix))
         .limit(PREFIX_LIMIT)
         .all()
     )
     return [
         ResolvedEntity(
             entity_type="promotion",
-            canonical_code=code,
-            match_field="promo_code",
+            canonical_code=str(pid),
+            match_field="description",
             match_tier="prefix",
-            display={"promotion_name": name, "is_active": bool(is_active)},
+            display={"description": description, "is_active": bool(is_active)},
         )
-        for code, name, is_active in rows
+        for pid, description, is_active in rows
     ]
 
 

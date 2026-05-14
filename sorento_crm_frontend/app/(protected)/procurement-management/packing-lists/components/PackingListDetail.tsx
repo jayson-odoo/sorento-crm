@@ -246,7 +246,7 @@ export default function PackingListDetail({
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h1 className="text-2xl font-bold">
-            {packingList.shipment_number || `Packing list ${packingList.id.slice(0, 8)}`}
+            {packingList.shipping_container_number || packingList.shipment_number || `Packing list ${packingList.id.slice(0, 8)}`}
           </h1>
           <p className="text-sm text-muted-foreground">
             {packingList.supplier?.supplier_name || 'No supplier'} • Shipment

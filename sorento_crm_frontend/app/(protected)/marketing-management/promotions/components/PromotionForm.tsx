@@ -66,8 +66,6 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
   const form = useForm<PromotionSchemaType>({
     resolver: zodResolver(PromotionSchema),
     defaultValues: {
-      promo_code: '',
-      name: '',
       description: '',
       start_date: todayYmd,
       end_date: todayYmd,
@@ -89,8 +87,6 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
         const startYmd = malaysiaCivilYyyyMmDdFromApi(promotion.start_date) ?? todayYmd;
         const endYmd = malaysiaCivilYyyyMmDdFromApi(promotion.end_date) ?? todayYmd;
         form.reset({
-          promo_code: promotion.promo_code,
-          name: promotion.name,
           description: promotion.description || '',
           start_date: startYmd,
           end_date: endYmd,
@@ -116,8 +112,6 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
     try {
       // Transform data to ensure proper format
       const formData: PromotionFormData = {
-        promo_code: data.promo_code,
-        name: data.name,
         description: data.description || undefined,
         start_date: data.start_date,
         end_date: data.end_date,
@@ -178,42 +172,6 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                 <CardTitle>{isEditMode ? 'Edit Promotion' : 'Create Promotion'}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <FormField
-                control={form.control}
-                name="promo_code"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Promo Code *</FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="PROMO-001"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      Unique promotion identifier (alphanumeric, dashes, underscores only). Editable; must not duplicate another promotion.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Promotion Name *</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Summer Sale 2024" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-
             <FormField
               control={form.control}
               name="access_levels"
@@ -255,7 +213,7 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
               name="description"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Description</FormLabel>
+                  <FormLabel>Description *</FormLabel>
                   <FormControl>
                     <Textarea
                       placeholder="Enter promotion description..."

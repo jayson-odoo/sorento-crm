@@ -14,8 +14,7 @@ from app.services.templating import html_to_text, render_html, render_text
 # Static catalog of variables the editor can suggest. Real automation runs may
 # extend the context, but these are the documented placeholders.
 TEMPLATE_VARIABLE_CATALOG: list[dict[str, Any]] = [
-    {"key": "promotion.code", "label": "Promotion Code", "sample": "PROMO-001"},
-    {"key": "promotion.name", "label": "Promotion Name", "sample": "Year-End Sale"},
+    {"key": "promotion.description", "label": "Promotion Description", "sample": "Year-End Sale"},
     {"key": "promotion.start_date", "label": "Promotion Start Date", "sample": "2026-05-01"},
     {"key": "promotion.end_date", "label": "Promotion End Date", "sample": "2026-05-15"},
     {"key": "promotion.link", "label": "Promotion Link", "sample": "https://crm.example.com/marketing/promotions/{id}"},

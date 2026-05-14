@@ -393,9 +393,11 @@ class WarehouseService:
             target = existing_by_code.get(key)
             try:
                 if target is not None:
-                    for col in ("warehouse_code", "warehouse_name", "location", "is_active"):
-                        if col in row and row[col] is not None:
+                    for col in ("warehouse_code", "warehouse_name", "location"):
+                        if col in row:
                             setattr(target, col, row[col])
+                    if "is_active" in row and row["is_active"] is not None:
+                        target.is_active = row["is_active"]
                     if key not in seen_keys:
                         updated += 1
                 else:

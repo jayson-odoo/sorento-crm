@@ -229,8 +229,6 @@ export interface Supplier {
 // Promotion Interface
 export interface Promotion {
   id: string;
-  promo_code: string;
-  name: string;
   start_date: Date | null;
   end_date: Date | null;
   is_active: boolean;

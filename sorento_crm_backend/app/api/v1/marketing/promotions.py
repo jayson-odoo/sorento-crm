@@ -59,7 +59,7 @@ async def get_promotions(
         None,
         description="End of period window (YYYY-MM-DD). Filters promotions whose date range overlaps.",
     ),
-    sort: Optional[str] = Query(None, description="Sort field e.g. created_at, promo_code, products_count"),
+    sort: Optional[str] = Query(None, description="Sort field e.g. created_at, name, products_count"),
     dir: Optional[str] = Query("desc", description="asc or desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)

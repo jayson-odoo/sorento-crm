@@ -42,29 +42,19 @@ export default function PromotionProductsList() {
   const columns = useMemo<ColumnDef<PromotionProductListItem>[]>(
     () => [
       {
-        accessorKey: 'promotion.promo_code',
-        header: ({ column }) => <DataGridColumnHeader title="Promotion Code" column={column} />,
-        size: 150,
-        minSize: 100,
-        maxSize: 500,
-        cell: ({ row }) => (
-          <div className="truncate" title={row.original.promotion?.promo_code || '-'}>
-            {row.original.promotion?.promo_code || '-'}
-          </div>
-        ),
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        accessorKey: 'promotion.name',
-        header: ({ column }) => <DataGridColumnHeader title="Promotion Name" column={column} />,
+        accessorKey: 'promotion.description',
+        header: ({ column }) => <DataGridColumnHeader title="Promotion" column={column} />,
         size: 250,
         minSize: 150,
         maxSize: 500,
-        cell: ({ row }) => (
-          <div className="truncate" title={row.original.promotion?.name || '-'}>
-            {row.original.promotion?.name || '-'}
-          </div>
-        ),
+        cell: ({ row }) => {
+          const label = row.original.promotion?.description || row.original.promotion_id || '-';
+          return (
+            <div className="truncate" title={label}>
+              {label}
+            </div>
+          );
+        },
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {

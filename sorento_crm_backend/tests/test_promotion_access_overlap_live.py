@@ -84,8 +84,7 @@ def fixtures(db: Session):
     # Three promotions covering the three relevant cases for the overlap filter.
     promo_dealer = Promotion(
         id=str(uuid.uuid4()),
-        promo_code=f"TEST_DEALER_{suffix}",
-        name=f"Dealer-only {suffix}",
+        description=f"TEST_DEALER_{suffix}",
         access_levels=["dealer"],
         is_active=True,
         start_date=start,
@@ -93,8 +92,7 @@ def fixtures(db: Session):
     )
     promo_vip = Promotion(
         id=str(uuid.uuid4()),
-        promo_code=f"TEST_VIP_{suffix}",
-        name=f"VIP-only {suffix}",
+        description=f"TEST_VIP_{suffix}",
         # Use a catalog code the contact will NOT be assigned to.
         access_levels=["end_user"],
         is_active=True,
@@ -103,8 +101,7 @@ def fixtures(db: Session):
     )
     promo_both = Promotion(
         id=str(uuid.uuid4()),
-        promo_code=f"TEST_BOTH_{suffix}",
-        name=f"Dealer+End-user {suffix}",
+        description=f"TEST_BOTH_{suffix}",
         access_levels=["dealer", "end_user"],
         is_active=True,
         start_date=start,
@@ -119,13 +116,13 @@ def fixtures(db: Session):
         "promo_dealer_id": promo_dealer.id,
         "promo_vip_id": promo_vip.id,
         "promo_both_id": promo_both.id,
-        "promo_codes": {promo_dealer.promo_code, promo_vip.promo_code, promo_both.promo_code},
+        "promo_codes": {promo_dealer.description, promo_vip.description, promo_both.description},
     }
 
 
 def _list_codes_for_test_promos(result: dict, expected_codes: set[str]) -> set[str]:
     """Filter the listing response down to just our test promotions."""
-    return {p.promo_code for p in result["data"] if p.promo_code in expected_codes}
+    return {p.description for p in result["data"] if p.description in expected_codes}
 
 
 def test_set_and_get_contact_access_codes(db: Session, fixtures):
@@ -200,9 +197,9 @@ def test_promotion_list_filtered_by_overlap_dealer(db: Session, fixtures):
     expected_dealer = next(
         p for p in result["data"] if p.id == fixtures["promo_dealer_id"]
     )
-    assert f"TEST_DEALER_" in expected_dealer.promo_code
-    assert any(p.promo_code.startswith("TEST_BOTH_") for p in result["data"])
-    assert not any(p.promo_code.startswith("TEST_VIP_") for p in result["data"])
+    assert "TEST_DEALER_" in expected_dealer.description
+    assert any(p.description.startswith("TEST_BOTH_") for p in result["data"])
+    assert not any(p.description.startswith("TEST_VIP_") for p in result["data"])
     # And re-checked via the filtered set:
     assert any(c.startswith("TEST_DEALER_") for c in seen)
     assert any(c.startswith("TEST_BOTH_") for c in seen)

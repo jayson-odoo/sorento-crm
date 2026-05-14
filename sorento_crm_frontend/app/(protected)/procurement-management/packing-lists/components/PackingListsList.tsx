@@ -185,7 +185,7 @@ export default function PackingListsList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Created At" column={column} />
         ),
-        cell: ({ row }) => formatDateTimeInMalaysia(new Date(row.original.created_at)),
+        cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
         size: 120,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },

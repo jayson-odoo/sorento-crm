@@ -17,8 +17,8 @@ import { FileText, Folder } from 'lucide-react';
 import {
   useBulkMoveAttachments,
   useDirectoryTree,
+  useMoveDirectory,
   useUpdateAttachment,
-  useUpdateDirectory,
 } from '../../attachments/hooks/useAttachments';
 import type { AttachmentDirectoryTreeNode } from '../../attachments/services/directoryService';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
@@ -31,6 +31,18 @@ import BulkAttachmentAccessLevelsDialog, {
 export const DND_ID_ATTACHMENT_PREFIX = 'attachment-';
 export const DND_ID_FOLDER_PREFIX = 'folder-';
 export const DND_ID_FOLDER_ALL = 'folder-all';
+export const DND_ID_FOLDER_BETWEEN_PREFIX = 'folder-between::';
+
+function parseBetweenId(id: string): { parentId: string | null; index: number } | null {
+  if (!id.startsWith(DND_ID_FOLDER_BETWEEN_PREFIX)) return null;
+  const rest = id.slice(DND_ID_FOLDER_BETWEEN_PREFIX.length);
+  const sep = rest.lastIndexOf('::');
+  if (sep === -1) return null;
+  const parent = rest.slice(0, sep);
+  const idx = Number(rest.slice(sep + 2));
+  if (!Number.isFinite(idx)) return null;
+  return { parentId: parent === 'root' ? null : parent, index: idx };
+}
 
 function findFolderNameById(nodes: AttachmentDirectoryTreeNode[], id: string): string | null {
   for (const node of nodes) {
@@ -152,7 +164,7 @@ export default function AttachmentDirectoriesView({
   const { data: tree = [] } = useDirectoryTree();
   const updateAttachmentMutation = useUpdateAttachment();
   const bulkMoveMutation = useBulkMoveAttachments();
-  const updateDirectoryMutation = useUpdateDirectory();
+  const moveDirectoryMutation = useMoveDirectory();
   const selectedFolderName = useMemo(
     () => (selectedId ? findFolderNameById(tree, selectedId) : null),
     [selectedId, tree]
@@ -169,15 +181,41 @@ export default function AttachmentDirectoriesView({
     const activeId = String(active.id);
     const overId = String(over.id);
 
+    const isBetween = overId.startsWith(DND_ID_FOLDER_BETWEEN_PREFIX);
     const isOverFolder =
-      overId === DND_ID_FOLDER_ALL || overId.startsWith(DND_ID_FOLDER_PREFIX);
+      overId === DND_ID_FOLDER_ALL || (overId.startsWith(DND_ID_FOLDER_PREFIX) && !isBetween);
 
-    // Folder drag: move folder to another folder (reparent)
-    if (
+    const isFolderDrag =
       activeId.startsWith(DND_ID_FOLDER_PREFIX) &&
-      activeId !== DND_ID_FOLDER_ALL &&
-      isOverFolder
-    ) {
+      !activeId.startsWith(DND_ID_FOLDER_BETWEEN_PREFIX) &&
+      activeId !== DND_ID_FOLDER_ALL;
+
+    // Folder drag: reorder between siblings
+    if (isFolderDrag && isBetween) {
+      const parsed = parseBetweenId(overId);
+      if (!parsed) return;
+      const folderId = activeId.slice(DND_ID_FOLDER_PREFIX.length);
+      if (folderId === parsed.parentId) return;
+      const descendants = collectDescendantFolderIds(tree, folderId);
+      if (parsed.parentId && descendants.has(parsed.parentId)) return;
+
+      moveDirectoryMutation.mutate(
+        { id: folderId, parent_id: parsed.parentId, position: parsed.index },
+        {
+          onSuccess: () => {
+            const targetLabel =
+              parsed.parentId == null
+                ? 'top level'
+                : findFolderNameById(tree, parsed.parentId) ?? 'folder';
+            toast.success(`Folder reordered under ${targetLabel}`);
+          },
+        }
+      );
+      return;
+    }
+
+    // Folder drag: nest into another folder (reparent, append at end)
+    if (isFolderDrag && isOverFolder) {
       const folderId = activeId.slice(DND_ID_FOLDER_PREFIX.length);
       const targetParentId: string | null =
         overId === DND_ID_FOLDER_ALL ? null : overId.slice(DND_ID_FOLDER_PREFIX.length);
@@ -186,8 +224,8 @@ export default function AttachmentDirectoriesView({
       const descendants = collectDescendantFolderIds(tree, folderId);
       if (targetParentId && descendants.has(targetParentId)) return; // can't drop onto own descendant
 
-      updateDirectoryMutation.mutate(
-        { id: folderId, data: { parent_id: targetParentId } },
+      moveDirectoryMutation.mutate(
+        { id: folderId, parent_id: targetParentId, position: null },
         {
           onSuccess: () => {
             const targetLabel =

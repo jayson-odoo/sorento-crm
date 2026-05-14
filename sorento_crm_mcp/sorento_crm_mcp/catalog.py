@@ -271,9 +271,9 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "Promotion product lines (paginated). Each row carries the parent promotion's "
             "`promotion_attachments` inline — no second call needed for the promotion document. "
-            "Optional promotion_id (UUID or promo_code) scopes to one promotion.\n\n"
+            "Optional promotion_id (UUID) scopes to one promotion.\n\n"
             "TEXT QUERY (`query`): tokenized on whitespace; every token must match (case-insensitive) "
-            "somewhere across product_code, product_name, description, item_type, or promo_code. "
+            "somewhere across product_code, product_name, description, item_type, or promotion description. "
             "Pass ONLY word-like traits (nouns/adjectives): 'sorento wash basin', 'cabinet', "
             "'irene project'.\n\n"
             "STRUCTURED FILTERS — USE THESE WHENEVER THE USER MENTIONS A NUMBER OR DIMENSION. "
@@ -317,7 +317,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_marketing_promotion_attachments_list",
         (
             "List/search promotion–attachment links. Optional promotion_id scopes one promotion "
-            "(UUID or promo_code). Optional query searches promotion header details, product "
+            "(UUID). Optional query searches promotion header details, product "
             "code/name, promotion group name, and attachment metadata. Server filters results to "
             "links whose parent promotion AND attachment access_levels both overlap the contact's "
             "M2M access types (resolved from `contact_id` + `space_id`)."
@@ -336,8 +336,8 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_marketing_promotion_attachments_by_promotion",
         (
-            "All promotion attachments for a promotion. promotion_id may be UUID or promo_code "
-            "(ambiguous if duplicate codes exist — use UUID). Server filters to attachments whose "
+            "All promotion attachments for a promotion. promotion_id must be the UUID. "
+            "Server filters to attachments whose "
             "parent promotion AND attachment access_levels both overlap the contact's M2M access "
             "types (resolved from `contact_id` + `space_id`)."
         ),

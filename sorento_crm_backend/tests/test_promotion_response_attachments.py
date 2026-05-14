@@ -7,8 +7,6 @@ from app.schemas.marketing import PromotionResponse
 def _build_promotion_namespace(attachments: list) -> SimpleNamespace:
     return SimpleNamespace(
         id="promo-1",
-        promo_code="PROMO01",
-        name="Promo 01",
         description="Demo",
         start_date="2026-01-01",
         end_date="2026-12-31",

@@ -208,7 +208,7 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         new_values = _model_to_audit_dict(obj)
         if cols is not None:
             new_values = {k: v for k, v in new_values.items() if k in cols}
-        pending.append((entity_type, entity_id, "INSERT", None, new_values))
+        pending.append((entity_type, entity_id, "CREATE", None, new_values))
     for obj in session.dirty:
         if not _is_audited(obj):
             continue

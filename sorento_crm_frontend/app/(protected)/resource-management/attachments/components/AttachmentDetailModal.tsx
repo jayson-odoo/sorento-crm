@@ -562,7 +562,7 @@ function LinkPromotionForm({
   const promotions = (data?.data ?? []).filter((p) => !linkedPromotionIds.includes(p.id));
   const selectedFromList = promotions.find((p) => p.id === selectedId);
   const selectedLabel = selectedFromList
-    ? (selectedFromList.name || selectedFromList.id)
+    ? (selectedFromList.description || selectedFromList.id)
     : pickedLabel;
 
   return (
@@ -594,7 +594,7 @@ function LinkPromotionForm({
                 <CommandEmpty>{isFetching ? 'Searching…' : 'No promotion found.'}</CommandEmpty>
                 <CommandGroup>
                   {promotions.map((p) => {
-                    const label = p.name || p.id;
+                    const label = p.description || p.id;
                     return (
                       <CommandItem
                         key={p.id}

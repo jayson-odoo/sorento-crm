@@ -158,7 +158,7 @@ class EmbeddingBackfillService:
             ]
         if source == "promotion":
             rows = (
-                self.db.query(Promotion.id, Promotion.promo_code, Promotion.updated_at, Promotion.created_at)
+                self.db.query(Promotion.id, Promotion.updated_at, Promotion.created_at)
                 .filter(Promotion.is_active.is_(True))
                 .order_by(Promotion.created_at.asc())
                 .offset(offset)
@@ -166,7 +166,7 @@ class EmbeddingBackfillService:
                 .all()
             )
             return [
-                {"id": r.id, "source_key": r.promo_code, "source_updated_at": r.updated_at or r.created_at}
+                {"id": r.id, "source_key": str(r.id), "source_updated_at": r.updated_at or r.created_at}
                 for r in rows
             ]
         if source == "attachment":

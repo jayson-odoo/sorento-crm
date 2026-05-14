@@ -78,6 +78,45 @@ class AttachmentDirectoryService:
         self.db.refresh(d)
         return d
 
+    def move_directory(self, directory_id: str, parent_id: Optional[str], position: Optional[int]):
+        """Reparent + reorder. Re-sequences sort_order on the new parent's children at 10-step intervals."""
+        d = self.get_directory(directory_id)
+        if parent_id == directory_id:
+            raise handle_conflict("Directory cannot be its own parent.")
+        if parent_id:
+            descendant_ids = set(self.get_descendant_directory_ids(directory_id, include_deleted=False))
+            if parent_id in descendant_ids:
+                raise handle_conflict("Cannot move folder into one of its own subfolders.")
+            self.get_directory(parent_id, include_deleted=False)
+
+        setattr(d, "parent_id", parent_id)
+
+        siblings_q = self.db.query(AttachmentDirectory).filter(
+            AttachmentDirectory.is_deleted == False,
+            AttachmentDirectory.id != directory_id,
+        )
+        if parent_id is None:
+            siblings_q = siblings_q.filter(AttachmentDirectory.parent_id.is_(None))
+        else:
+            siblings_q = siblings_q.filter(AttachmentDirectory.parent_id == parent_id)
+        siblings = siblings_q.order_by(
+            AttachmentDirectory.sort_order.asc().nullsfirst(),
+            AttachmentDirectory.name.asc(),
+        ).all()
+
+        if position is None or position >= len(siblings):
+            new_order = siblings + [d]
+        else:
+            idx = max(0, position)
+            new_order = siblings[:idx] + [d] + siblings[idx:]
+
+        for i, sib in enumerate(new_order):
+            sib.sort_order = (i + 1) * 10
+
+        self.db.commit()
+        self.db.refresh(d)
+        return d
+
     def delete_directory(self, directory_id: str, deleted_by: str):
         """Soft-delete a directory and all descendants; archive attachments in them. Uses bulk update for speed."""
         from datetime import datetime
@@ -455,8 +494,19 @@ class AttachmentService:
             )
         
         sort_desc = (dir or "desc").lower() == "desc"
-        if sort:
-            sort_col = getattr(Attachment, sort, None)
+        sort_alias = {
+            "name": "original_filename",
+            "type": "mime_type",
+            "size": "file_size_bytes",
+        }
+        if sort == "attachment_type":
+            from app.models.resources import AttachmentType
+            q = q.outerjoin(AttachmentType, Attachment.attachment_type_id == AttachmentType.id)
+            order_col = AttachmentType.type_name
+            q = q.order_by(order_col.desc() if sort_desc else order_col.asc())
+        elif sort:
+            sort_key = sort_alias.get(sort, sort)
+            sort_col = getattr(Attachment, sort_key, None)
             if sort_col is not None:
                 q = q.order_by(sort_col.desc() if sort_desc else sort_col.asc())
             else:
@@ -529,7 +579,6 @@ class AttachmentService:
         q = (
             self.db.query(
                 Promotion.id,
-                Promotion.name,
                 Promotion.description,
                 PromotionAttachment.id.label("link_id"),
             )
@@ -537,10 +586,11 @@ class AttachmentService:
             .filter(PromotionAttachment.attachment_id == attachment_id)
         )
         for row in q.all():
+            desc = (row.description or "").strip()
             linked_promotions.append({
                 "id": str(row.id),
-                "name": row.name or str(row.id),
-                "description": (row.description or "").strip() or None,
+                "name": desc or f"Promotion {str(row.id)[:8]}",
+                "description": desc or None,
                 "link_id": str(row.link_id),
             })
 
@@ -680,7 +730,7 @@ class AttachmentService:
             })
 
         q = (
-            self.db.query(Promotion.id, Promotion.promo_code, Promotion.name)
+            self.db.query(Promotion.id, Promotion.description)
             .join(PromotionAttachment, PromotionAttachment.promotion_id == Promotion.id)
             .filter(PromotionAttachment.attachment_id.in_(unique_aids))
             .distinct()
@@ -693,8 +743,8 @@ class AttachmentService:
             targets.append({
                 "kind": "promotion",
                 "entity_id": str(row.id),
-                "code": row.promo_code,
-                "name": row.name or None,
+                "code": None,
+                "name": (row.description or "").strip() or f"Promotion {str(row.id)[:8]}",
             })
 
         q = self.db.query(Form.id, Form.code, Form.name).filter(Form.attachment_id.in_(unique_aids))

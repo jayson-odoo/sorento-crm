@@ -19,7 +19,9 @@ def parse_date_value(value: str | date | datetime | None) -> date | None:
         return value.date()
     if isinstance(value, str):
         value = value.strip()
-        for fmt in ("%Y-%m-%d", "%m/%d/%y", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d"):
+        if not value:
+            return None
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y", "%Y/%m/%d"):
             try:
                 return datetime.strptime(value, fmt).date()
             except ValueError:

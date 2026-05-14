@@ -113,8 +113,7 @@ def _mk_promotion(db: Session, *, days_until_end: int) -> Promotion:
     today = date.today()
     p = Promotion(
         id=str(uuid.uuid4()),
-        promo_code=f"PROMO-{uuid.uuid4().hex[:6].upper()}",
-        name="Test Promo",
+        description=f"Test Promo {uuid.uuid4().hex[:6].upper()}",
         start_date=today - timedelta(days=2),
         end_date=today + timedelta(days=days_until_end),
         is_active=True,
@@ -234,8 +233,8 @@ def test_run_now_inserts_pending_email_deliveries_for_each_recipient(
     for n in notifs:
         data = dict(getattr(n, "data") or {})
         rendered_emails.extend(data.get("recipient_emails") or [])
-        # Each notification stores rendered HTML and the substituted promo code in subject.
-        assert promo.promo_code in str(n.title)
+        # Each notification stores rendered HTML and the promotion description in subject.
+        assert promo.description in str(n.title)
         assert data.get("body_html"), "body_html must be present for outgoing mails surface"
 
     assert "external@example.com" in {e.lower() for e in rendered_emails}

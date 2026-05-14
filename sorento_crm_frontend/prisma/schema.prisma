@@ -470,9 +470,6 @@ model StockBatch {
 
 model Promotion {
   id          String        @id @default(uuid())
-  promoCode   String        @unique @map("promo_code") @db.VarChar(50)
-  name        String        @db.VarChar(255)
-  promoType   String        @map("promo_type") @db.VarChar(50)
   description String?       @db.Text
   startDate   DateTime      @map("start_date")
   endDate     DateTime      @map("end_date")
@@ -486,7 +483,6 @@ model Promotion {
   @@index([isActive])
   @@index([startDate])
   @@index([endDate])
-  @@index([promoType])
   @@map("promotions")
 }
 

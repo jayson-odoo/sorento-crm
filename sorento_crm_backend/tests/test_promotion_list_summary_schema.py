@@ -6,8 +6,6 @@ from app.schemas.marketing import PromotionListItemResponse
 def test_promotion_list_item_response_omits_nested_payloads():
     promotion = SimpleNamespace(
         id="promo-1",
-        promo_code="PROMO01",
-        name="Promo 01",
         description="Short summary",
         start_date="2026-01-01T00:00:00",
         end_date="2026-12-31T00:00:00",

@@ -207,11 +207,11 @@ async def list_all_promotion_products(
     dir: Optional[str] = Query("asc"),
     query: Optional[str] = Query(
         None,
-        description="Tokenized text search (whitespace-split, AND across tokens) over Product.product_code, product_name, description, item_type, and Promotion.promo_code. Or (if promotion_id omitted) one UUID / promotion_id='<uuid>' / comma-separated UUIDs to filter by promotion(s).",
+        description="Tokenized text search (whitespace-split, AND across tokens) over Product.product_code, product_name, description, item_type, and Promotion.description. Or (if promotion_id omitted) one UUID / promotion_id='<uuid>' / comma-separated UUIDs to filter by promotion(s).",
     ),
     promotion_id: Optional[str] = Query(
         None,
-        description="Single promotion: UUID or promo_code (preferred over encoding ids in query).",
+        description="Single promotion UUID.",
     ),
     product_id: Optional[str] = Query(
         None,

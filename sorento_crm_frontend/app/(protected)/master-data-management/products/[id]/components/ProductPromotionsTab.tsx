@@ -100,13 +100,13 @@ export default function ProductPromotionsTab({ productId, listPrice }: ProductPr
             <TableBody>
               {lines.map((line) => {
                 const promo = line.promotion;
-                const desc = promo?.description?.trim() || promo?.name || '-';
+                const desc = promo?.description?.trim() || '-';
                 const sell = line.promotion_price != null ? Number(line.promotion_price) : null;
                 return (
                   <TableRow key={line.id}>
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
-                        <span>{promo?.promo_code || '-'}</span>
+                        <span>{desc}</span>
                         {promo?.is_active === false && (
                           <Badge variant="secondary" appearance="ghost">
                             Inactive

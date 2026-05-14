@@ -27,7 +27,7 @@ async def get_promotion_attachments(
     dir: Optional[str] = Query("asc"),
     promotion_id: Optional[str] = Query(
         None,
-        description="Promotion UUID or promo_code.",
+        description="Promotion UUID.",
     ),
     query: Optional[str] = Query(
         None,
@@ -136,7 +136,7 @@ async def delete_promotion_attachment(
 async def get_promotion_attachments_by_promotion(
     promotion_id: str = Path(
         ...,
-        description="Promotion UUID or promo_code.",
+        description="Promotion UUID.",
     ),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id)."),
     space_id: Optional[str] = Query(None, description="Respond.io space id."),

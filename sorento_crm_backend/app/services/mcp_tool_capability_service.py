@@ -386,8 +386,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Promotion product lines, paginated. Each row carries the parent promotion's "
             "`promotion_attachments` array inline — the agent does NOT need to call "
             "crm_marketing_promotion_attachments_* afterwards to surface the promotion document. "
-            "Optional promotion_id scopes to one promotion (UUID or promo_code). Optional query "
-            "filters by SKU/name/promo code and can run without promotion_id to discover which "
+            "Optional promotion_id scopes to one promotion (UUID). Optional query "
+            "filters by SKU/name/promotion description and can run without promotion_id to discover which "
             "promotions a product participates in. Use when the user asks for the SKUs included "
             "in a promotion, or which promotions a product participates in."
         ),
@@ -431,7 +431,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     "crm_marketing_promotion_attachments_by_promotion": ToolIntent(
         category="general_enquiries.attachment",
         intent="All attachments for one promotion.",
-        description="Fetch every attachment linked to the given promotion (UUID or promo_code).",
+        description="Fetch every attachment linked to the given promotion (UUID).",
         typical_user_questions=(
             "Give me every document for this promotion.",
             "List all attachments for promo code MIX01.",

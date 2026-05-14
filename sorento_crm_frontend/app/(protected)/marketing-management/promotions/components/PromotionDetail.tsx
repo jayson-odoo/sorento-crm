@@ -534,15 +534,12 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{promotion.name}</h1>
+            <h1 className="text-2xl font-bold">{promotion.description?.trim() || `Promotion ${promotion.id.slice(0, 8)}`}</h1>
             <Badge variant={promotion.is_active ? 'success' : 'secondary'} appearance="ghost">
               <BadgeDot />
               {promotion.is_active ? 'Active' : 'Inactive'}
             </Badge>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Promo Code: {promotion.promo_code}
-          </p>
         </div>
         <div className="flex gap-2">
           <RecordNavigation
@@ -765,9 +762,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           <DialogHeader>
             <DialogTitle>Confirm Delete</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete the promotion{' '}
-              <strong className="text-foreground">{promotion.name}</strong> (
-              {promotion.promo_code})? This action cannot be undone.
+              Are you sure you want to delete this promotion? This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

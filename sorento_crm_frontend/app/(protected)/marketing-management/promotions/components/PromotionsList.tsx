@@ -156,36 +156,12 @@ export default function PromotionsList() {
           <Checkbox
             checked={selectedPromotionIds.has(row.original.id)}
             onCheckedChange={() => togglePromotionSelection(row.original.id)}
-            aria-label={`Select ${row.original.promo_code}`}
+            aria-label={`Select promotion ${row.original.id}`}
             onClick={(e) => e.stopPropagation()}
           />
         ),
         size: 44,
         enableResizing: false,
-      },
-      {
-        accessorKey: 'promo_code',
-        header: ({ column }) => <DataGridColumnHeader title="Promo Code" column={column} />,
-        cell: ({ row }) => (
-          <div className="min-w-0 max-w-full truncate" title={row.original.promo_code || ''}>
-            {row.original.promo_code || '-'}
-          </div>
-        ),
-        size: 180,
-        minSize: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        accessorKey: 'name',
-        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
-        cell: ({ row }) => (
-          <div className="min-w-0 max-w-full truncate" title={row.original.name || ''}>
-            {row.original.name || '-'}
-          </div>
-        ),
-        size: 220,
-        minSize: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'description',

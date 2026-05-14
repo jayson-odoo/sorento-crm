@@ -16,8 +16,6 @@ export interface PromotionListAttachment {
 
 export interface Promotion {
   id: string;
-  promo_code: string;
-  name: string;
   description?: string | null;
   start_date: Date | null;
   end_date: Date | null;
@@ -31,8 +29,6 @@ export interface Promotion {
 }
 
 export interface PromotionFormData {
-  promo_code: string;
-  name: string;
   description?: string;
   /** Malaysia civil YYYY-MM-DD (matches API / backend promotion_dates). */
   start_date: string;
@@ -62,8 +58,6 @@ export interface PromotionProduct {
   list_to_dealer_margin_amount?: number | null;
   promotion?: {
     id: string;
-    promo_code: string;
-    name: string;
     is_active?: boolean | null;
     description?: string | null;
   };

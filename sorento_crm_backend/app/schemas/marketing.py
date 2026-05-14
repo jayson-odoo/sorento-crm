@@ -14,8 +14,6 @@ import uuid
 
 
 class PromotionBase(BaseModel):
-    promo_code: str
-    name: str
     description: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
@@ -31,8 +29,6 @@ class PromotionCreate(PromotionBase):
 
 
 class PromotionUpdate(BaseModel):
-    promo_code: Optional[str] = None  # editable; unique together with access_levels set
-    name: Optional[str] = None
     description: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
@@ -256,8 +252,6 @@ class ProductSimple(BaseModel):
 class PromotionSimple(BaseModel):
     """Simple promotion reference."""
     id: str
-    promo_code: str
-    name: str
     is_active: Optional[bool] = None
     description: Optional[str] = None
 

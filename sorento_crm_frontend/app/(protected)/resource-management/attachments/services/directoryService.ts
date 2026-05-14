@@ -71,6 +71,22 @@ export async function updateDirectory(id: string, data: { name?: string; parent_
   return response.json();
 }
 
+export async function moveDirectory(
+  id: string,
+  data: { parent_id: string | null; position: number | null }
+): Promise<AttachmentDirectory> {
+  const response = await apiFetch(`/api/v1/resource-management/directories/${id}/move`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to move directory');
+  }
+  return response.json();
+}
+
 export async function deleteDirectory(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/resource-management/directories/${id}`, { method: 'DELETE' });
   if (!response.ok) {

@@ -11,22 +11,11 @@ from app.schemas.marketing import PromotionResponse
 
 
 class PromotionHeader(BaseModel):
-    promo_code: Optional[str] = Field(
-        default=None,
-        description="Ignored if sent; a unique code is generated per request (e.g. PROMO2026_0001).",
-    )
-    name: Optional[str] = None
     description: Optional[str] = None
     start_date: Optional[str | date] = None
     end_date: Optional[str | date] = None
     is_active: Optional[bool] = None
     attachment_id: Optional[List[str]] = None
-
-    @field_validator("promo_code")
-    @classmethod
-    def ignore_client_promo_code(cls, _v: Any) -> Optional[str]:
-        """Always discard; numbering service assigns promo_code on create."""
-        return None
 
     @field_validator("is_active", mode="before")
     @classmethod

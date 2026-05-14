@@ -13,8 +13,7 @@ export interface PromotionAttachment {
   updated_at?: Date | string | null;
   promotion?: {
     id: string;
-    promo_code: string;
-    name: string;
+    description?: string | null;
   };
   attachment?: AttachmentResponse;
 }

@@ -57,9 +57,8 @@ def _promotion_stored_boundary_date(dt: datetime | date) -> date:
 def _resolve_promotion_id_for_filter(db: Session, raw: Optional[str]) -> Optional[str]:
     """Map API promotion id/path segments to ``Promotion.id`` (UUID string).
 
-    Accepts a UUID string or ``Promotion.promo_code`` (case-insensitive exact match).
-    Returns ``None`` if *raw* is blank or no row matches the code.
-    Raises validation error if more than one promotion shares the same ``promo_code``.
+    Only UUIDs are accepted now that promo_code has been removed.
+    Returns ``None`` if *raw* is blank or not a UUID.
     """
     if raw is None:
         return None
@@ -69,20 +68,7 @@ def _resolve_promotion_id_for_filter(db: Session, raw: Optional[str]) -> Optiona
     try:
         return str(uuid.UUID(s))
     except ValueError:
-        pass
-    rows = (
-        db.query(Promotion.id)
-        .filter(func.lower(Promotion.promo_code) == s.lower())
-        .limit(2)
-        .all()
-    )
-    if not rows:
         return None
-    if len(rows) > 1:
-        raise handle_validation_error(
-            "Multiple promotions share this promo_code; pass promotion id (UUID)."
-        )
-    return str(rows[0].id)
 
 
 def _product_display_label(db: Session, product_id: str) -> str:
@@ -250,27 +236,6 @@ class PromotionService:
                 out.append(pa)
         return out
 
-    def _ensure_promo_code_access_levels_unique(
-        self,
-        promo_code: str,
-        access_levels: list[str],
-        exclude_id: Optional[str] = None,
-    ) -> None:
-        """
-        Enforce uniqueness on (promo_code + access level set).
-        Same promo_code is allowed only when access level set is different.
-        """
-        target = self._canonical_access_levels(access_levels)
-        q = self.db.query(Promotion).filter(Promotion.promo_code == promo_code)
-        if exclude_id:
-            q = q.filter(Promotion.id != exclude_id)
-        for existing in q.all():
-            if self._canonical_access_levels(existing.access_levels) == target:
-                raise handle_conflict(
-                    "Promo code already exists for the same access types. "
-                    "Use a different promo code or change access types."
-                )
-    
     def list_promotions(
         self,
         page: int = 1,
@@ -346,8 +311,7 @@ class PromotionService:
                 )
                 q = q.filter(
                     or_(
-                        Promotion.promo_code.ilike(search_term),
-                        Promotion.name.ilike(search_term),
+                        Promotion.description.ilike(search_term),
                         has_product_match,
                         has_attachment_match,
                     )
@@ -378,8 +342,6 @@ class PromotionService:
         if dir_norm not in ("asc", "desc"):
             dir_norm = "desc"
         sort_map = {
-            "promo_code": Promotion.promo_code,
-            "name": Promotion.name,
             "start_date": Promotion.start_date,
             "end_date": Promotion.end_date,
             "is_active": Promotion.is_active,
@@ -449,7 +411,7 @@ class PromotionService:
         include_products: bool = True,
         contact_access_codes: Optional[list[str]] = None,
     ):
-        """Get a promotion by UUID or promo_code.
+        """Get a promotion by UUID.
 
         When *include_products* is False, loads groups without promotion product lines (no nested Product rows).
         When *contact_access_codes* is supplied, inline attachments are filtered to those whose
@@ -524,9 +486,6 @@ class PromotionService:
         """Create a new promotion. Validates access_levels against catalog; defaults to all active types if missing."""
         access_svc = ContactAccessTypeService(self.db)
         promotion_dict = promotion_data.model_dump()
-        promotion_dict["promo_code"] = (promotion_dict.get("promo_code") or "").strip()
-        if not promotion_dict["promo_code"]:
-            raise handle_conflict("Promo code cannot be empty.")
         promotion_dict["created_by"] = created_by
         if promotion_dict.get("access_levels"):
             promotion_dict["access_levels"] = access_svc.validate_access_levels(
@@ -534,10 +493,6 @@ class PromotionService:
             )
         else:
             promotion_dict["access_levels"] = access_svc.get_default_access_levels()
-        self._ensure_promo_code_access_levels_unique(
-            promo_code=promotion_dict["promo_code"],
-            access_levels=promotion_dict["access_levels"],
-        )
         promotion = Promotion(**promotion_dict)
         self.db.add(promotion)
         self.db.commit()
@@ -546,16 +501,16 @@ class PromotionService:
             self.db,
             source_type="promotion",
             source_id=promotion.id,
-            source_key=promotion.promo_code,
+            source_key=promotion.id,
             source_updated_at=promotion.updated_at or promotion.created_at,
             event_type="promotion.created",
-            changed_fields=["promo_code", "name", "description", "start_date", "end_date", "access_levels"],
+            changed_fields=["description", "start_date", "end_date", "access_levels"],
             triggered_by=created_by,
         )
         return promotion
-    
+
     def update_promotion(self, promotion_id: str, promotion_data: PromotionUpdate):
-        """Update a promotion. Enforces uniqueness on promo_code + access level set."""
+        """Update a promotion."""
         promotion = self.get_promotion(promotion_id)
 
         update_data = promotion_data.model_dump(exclude_unset=True)
@@ -564,20 +519,6 @@ class PromotionService:
             update_data["access_levels"] = access_svc.validate_access_levels(
                 update_data["access_levels"], field_name="access_levels"
             )
-
-        if "promo_code" in update_data:
-            new_code = (update_data["promo_code"] or "").strip()
-            if not new_code:
-                raise handle_conflict("Promo code cannot be empty.")
-            update_data["promo_code"] = new_code
-
-        final_code = update_data.get("promo_code", promotion.promo_code)
-        final_access_levels = update_data.get("access_levels", promotion.access_levels)
-        self._ensure_promo_code_access_levels_unique(
-            promo_code=final_code,
-            access_levels=final_access_levels or [],
-            exclude_id=promotion_id,
-        )
 
         for key, value in update_data.items():
             setattr(promotion, key, value)
@@ -588,7 +529,7 @@ class PromotionService:
             self.db,
             source_type="promotion",
             source_id=promotion.id,
-            source_key=promotion.promo_code,
+            source_key=promotion.id,
             source_updated_at=promotion.updated_at or promotion.created_at,
             event_type="promotion.updated" if promotion.is_active else "promotion.deactivated",
             changed_fields=list(update_data.keys()),
@@ -615,29 +556,6 @@ class PromotionService:
             return {"message": "No promotions selected", "updated_count": 0}
         access_svc = ContactAccessTypeService(self.db)
         normalized = access_svc.validate_access_levels(access_levels, field_name="access_levels")
-        target_canonical = self._canonical_access_levels(normalized)
-
-        selected_promotions = self.db.query(Promotion).filter(Promotion.id.in_(promotion_ids)).all()
-        selected_ids = {p.id for p in selected_promotions}
-        selected_codes = {p.promo_code for p in selected_promotions}
-
-        if selected_codes:
-            code_conflict_scope = self.db.query(Promotion).filter(Promotion.promo_code.in_(selected_codes)).all()
-            by_code: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
-            for p in code_conflict_scope:
-                canonical = target_canonical if p.id in selected_ids else self._canonical_access_levels(p.access_levels)
-                by_code.setdefault(p.promo_code, []).append((p.id, canonical))
-
-            for code, rows in by_code.items():
-                seen: dict[tuple[str, ...], str] = {}
-                for row_id, canonical in rows:
-                    existing_id = seen.get(canonical)
-                    if existing_id and existing_id != row_id:
-                        raise handle_conflict(
-                            f"Bulk update would create duplicate promo code/access types for code '{code}'. "
-                            "Adjust selection or access types."
-                        )
-                    seen[canonical] = row_id
 
         updated = (
             self.db.query(Promotion)
@@ -849,7 +767,7 @@ class PromotionProductService:
 
         Text `query` is tokenized on whitespace; every token must match (case-insensitive)
         somewhere across Product.product_code, product_name, description, item_type, or
-        Promotion.promo_code. Structured filters (category_id, brand_id, dimensions, price,
+        Promotion.description. Structured filters (category_id, brand_id, dimensions, price,
         item_type, status) are AND-combined with the text query.
         """
         from sqlalchemy.orm import joinedload
@@ -1001,7 +919,7 @@ class PromotionProductService:
                     Product.product_name.ilike(like),
                     Product.description.ilike(like),
                     Product.item_type.ilike(like),
-                    Promotion.promo_code.ilike(like),
+                    Promotion.description.ilike(like),
                 ))
 
         # Sorting
@@ -1441,8 +1359,6 @@ class PromotionAttachmentService:
                 .outerjoin(Attachment, PromotionAttachment.attachment_id == Attachment.id)
                 .filter(
                     or_(
-                        Promotion.promo_code.ilike(term),
-                        Promotion.name.ilike(term),
                         Promotion.description.ilike(term),
                         Product.product_code.ilike(term),
                         Product.product_name.ilike(term),

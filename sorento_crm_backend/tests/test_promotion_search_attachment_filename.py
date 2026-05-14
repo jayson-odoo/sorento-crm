@@ -80,16 +80,13 @@ def _seed_attachment(db, filename: str) -> str:
 def _seed_promotion(
     db,
     *,
-    promo_code: str,
-    name: str,
+    description: str,
     active: bool = True,
 ) -> str:
     today = datetime.utcnow().date()
     promo = Promotion(
         id=str(uuid.uuid4()),
-        promo_code=promo_code,
-        name=name,
-        description="",
+        description=description,
         start_date=today - timedelta(days=30),
         end_date=today + timedelta(days=30),
         is_active=active,
@@ -114,8 +111,8 @@ def _link_attachment(db, promotion_id: str, attachment_id: str) -> None:
 
 
 def test_search_matches_linked_promotion_attachment_filename(db):
-    promo_id = _seed_promotion(db, promo_code="PROMO_SUMMER", name="Summer Promo")
-    other_id = _seed_promotion(db, promo_code="PROMO_OTHER", name="Other Promo")
+    promo_id = _seed_promotion(db, description="Summer Promo")
+    other_id = _seed_promotion(db, description="Other Promo")
     att_id = _seed_attachment(db, "summer-sale-poster.pdf")
     _link_attachment(db, promo_id, att_id)
     db.commit()
@@ -126,9 +123,9 @@ def test_search_matches_linked_promotion_attachment_filename(db):
     assert other_id not in ids
 
 
-def test_search_still_matches_promo_code(db):
-    target_id = _seed_promotion(db, promo_code="UNIQUE_XYZ_123", name="Specific Promo")
-    _seed_promotion(db, promo_code="OTHER_ABC", name="Other")
+def test_search_matches_promotion_description(db):
+    target_id = _seed_promotion(db, description="UNIQUE_XYZ_123")
+    _seed_promotion(db, description="OTHER_ABC")
     db.commit()
 
     result = PromotionService(db).list_promotions(query="UNIQUE_XYZ_123")

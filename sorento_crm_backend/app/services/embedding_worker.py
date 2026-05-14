@@ -94,19 +94,18 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
         promotion = db.query(Promotion).filter(Promotion.id == source_id).first()
         if not promotion:
             raise ValueError(f"Promotion not found: {source_id}")
+        title = (promotion.description or f"Promotion {str(promotion.id)[:8]}").strip().splitlines()[0]
         body = "\n".join(
             [
                 "Source Type: Promotion",
-                f"Promo Code: {promotion.promo_code}",
-                f"Promotion Name: {promotion.name}",
                 f"Description: {promotion.description or ''}",
                 f"Active From: {promotion.start_date}",
                 f"Active Until: {promotion.end_date}",
             ]
         ).strip()
         return {
-            "source_key": promotion.promo_code,
-            "title": promotion.name,
+            "source_key": str(promotion.id),
+            "title": title,
             "body_text": body,
             "visibility_scope": "customer",
             "source_updated_at": promotion.updated_at or promotion.created_at,
@@ -191,18 +190,18 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
         if not row:
             raise ValueError(f"Promotion product not found: {source_id}")
         line, promo, product = row
+        promo_label = (promo.description or f"Promotion {str(promo.id)[:8]}").strip().splitlines()[0]
         body = "\n".join(
             [
                 "Source Type: Promotion Product",
-                f"Promo Code: {promo.promo_code}",
-                f"Promotion: {promo.name}",
+                f"Promotion: {promo_label}",
                 f"Product Code: {product.product_code}",
                 f"Product Name: {product.product_name}",
                 f"Promo Selling Price: {line.promo_selling_price}",
                 f"Discount Percent: {line.discount_percent}",
             ]
         ).strip()
-        return {"source_key": f"{promo.promo_code}:{product.product_code}", "title": f"{promo.name} / {product.product_name}", "body_text": body, "visibility_scope": "customer", "source_updated_at": line.updated_at or line.created_at, "metadata": {"promotion_id": line.promotion_id, "product_id": line.product_id}}
+        return {"source_key": f"{promo.id}:{product.product_code}", "title": f"{promo_label} / {product.product_name}", "body_text": body, "visibility_scope": "customer", "source_updated_at": line.updated_at or line.created_at, "metadata": {"promotion_id": line.promotion_id, "product_id": line.product_id}}
 
     if source_type == "inbound_shipment":
         shipment = db.query(InboundShipment).filter(InboundShipment.id == source_id).first()

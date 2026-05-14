@@ -380,8 +380,7 @@ def notify_uploaders_after_external_promotion_created(
     uploader_ids: set[str] = set()
 
     promo_id = str(getattr(promotion, "id", "") or "")
-    promo_code = (getattr(promotion, "promo_code", None) or "").strip() or "—"
-    promo_name = (getattr(promotion, "name", None) or "").strip() or promo_code
+    promo_name = (getattr(promotion, "description", None) or "").strip() or f"Promotion {promo_id[:8]}"
     promo_url = build_promotion_detail_url(promo_id)
     notify_source_id = f"{promo_id}_{notification_batch_id}"
 
@@ -405,9 +404,9 @@ def notify_uploaders_after_external_promotion_created(
             for n, x in zip(names, user_atts)
         )
 
-        title = f"Promotion created: {promo_code}"
+        title = f"Promotion created: {promo_name}"
         body_plain = (
-            f'A promotion "{promo_name}" ({promo_code}) was created in Sorento CRM using your uploaded file(s): '
+            f'A promotion "{promo_name}" was created in Sorento CRM using your uploaded file(s): '
             f"{names_list}.\n\n"
             f"View promotion:\n{promo_url}\n\n"
             f"Your attachment(s):\n{att_lines_plain}\n\n"
@@ -415,7 +414,7 @@ def notify_uploaders_after_external_promotion_created(
         )
         body_html = (
             f"<p>A promotion <strong>{html.escape(promo_name)}</strong> "
-            f"(<strong>{html.escape(promo_code)}</strong>) was created in Sorento CRM using your uploaded file(s): "
+            f"was created in Sorento CRM using your uploaded file(s): "
             f"{safe_names_html}.</p>"
             f'<p><a href="{html.escape(promo_url, quote=True)}">Open promotion in Sorento CRM</a></p>'
             f"<p>Your attachment(s):</p><ul>{att_li_html}</ul>"
@@ -496,20 +495,19 @@ def notify_external_promotion_explicit_user(
         return []
 
     promo_id = str(getattr(promotion, "id", "") or "")
-    promo_code = (getattr(promotion, "promo_code", None) or "").strip() or "—"
-    promo_name = (getattr(promotion, "name", None) or "").strip() or promo_code
+    promo_name = (getattr(promotion, "description", None) or "").strip() or f"Promotion {promo_id[:8]}"
     promo_url = build_promotion_detail_url(promo_id)
 
-    title = f"Promotion created: {promo_code}"
+    title = f"Promotion created: {promo_name}"
     body_plain = (
-        f'A promotion "{promo_name}" ({promo_code}) was created in Sorento CRM via the external integration API '
+        f'A promotion "{promo_name}" was created in Sorento CRM via the external integration API '
         f"(for example n8n).\n\n"
         f"View promotion:\n{promo_url}\n\n"
         f"This is a system generated email. Please do not reply."
     )
     body_html = (
         f"<p>A promotion <strong>{html.escape(promo_name)}</strong> "
-        f"(<strong>{html.escape(promo_code)}</strong>) was created in Sorento CRM via the external integration API "
+        f"was created in Sorento CRM via the external integration API "
         f"(for example n8n).</p>"
         f'<p><a href="{html.escape(promo_url, quote=True)}">Open promotion in Sorento CRM</a></p>'
         f'<p style="color:#666;font-size:12px;margin-top:1.5em;">This is a system generated email. '

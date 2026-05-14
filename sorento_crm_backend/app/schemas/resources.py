@@ -21,6 +21,12 @@ class AttachmentDirectoryUpdate(BaseModel):
     sort_order: Optional[int] = None
 
 
+class AttachmentDirectoryMoveRequest(BaseModel):
+    """Reparent + reorder a folder in one shot. position=null appends; position re-sequences siblings."""
+    parent_id: Optional[str] = None
+    position: Optional[int] = None
+
+
 class AttachmentDirectoryResponse(AttachmentDirectoryBase):
     model_config = ConfigDict(from_attributes=True)
 

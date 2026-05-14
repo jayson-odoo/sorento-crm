@@ -8,7 +8,6 @@ import {
   ChevronUp,
   Folder,
   FolderOpen,
-  GripVertical,
   Plus,
   Pencil,
   Trash2,
@@ -54,6 +53,28 @@ interface DirectoryTreeSidebarProps {
 
 const FOLDER_DROP_PREFIX = 'folder-';
 const FOLDER_ALL_ID = 'folder-all';
+const FOLDER_BETWEEN_PREFIX = 'folder-between::';
+
+function encodeBetweenId(parentId: string | null, index: number): string {
+  return `${FOLDER_BETWEEN_PREFIX}${parentId ?? 'root'}::${index}`;
+}
+
+function BetweenDropZone({ parentId, index, depth }: { parentId: string | null; index: number; depth: number }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: encodeBetweenId(parentId, index),
+    data: { type: 'folder-between', parentId, index },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        '-my-1 h-2 rounded transition-colors relative z-10',
+        isOver && 'bg-primary'
+      )}
+      style={{ marginLeft: 8 + depth * 16, marginRight: 8 }}
+    />
+  );
+}
 
 function collectAllFolderIds(nodes: AttachmentDirectoryTreeNode[]): Set<string> {
   const ids = new Set<string>();
@@ -160,6 +181,8 @@ const ATTACHMENT_DIRECTORIES_PATH = '/resource-management/attachment-directories
 function DirectoryRow({
   node,
   depth,
+  index,
+  parentId,
   selectedId,
   expandedIds,
   onSelect,
@@ -174,6 +197,8 @@ function DirectoryRow({
 }: {
   node: AttachmentDirectoryTreeNode;
   depth: number;
+  index: number;
+  parentId: string | null;
   selectedId: string | null;
   expandedIds: Set<string>;
   onSelect: (id: string | null) => void;
@@ -205,12 +230,23 @@ function DirectoryRow({
     data: { type: 'folder', directoryId: node.id, folderName: node.name },
   });
 
+  const setRowRef = useCallback(
+    (el: HTMLElement | null) => {
+      setDropRef(el);
+      setDragRef(el);
+    },
+    [setDropRef, setDragRef]
+  );
+
   return (
     <div className="flex flex-col">
+      <BetweenDropZone parentId={parentId} index={index} depth={depth} />
       <div
-        ref={setDropRef}
+        ref={setRowRef}
+        {...listeners}
+        {...attributes}
         className={cn(
-          'group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm cursor-pointer min-w-0',
+          'group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm min-w-0 touch-none cursor-grab active:cursor-grabbing',
           isSelected && 'bg-primary text-primary-foreground font-medium',
           isOver && 'ring-2 ring-primary ring-inset',
           isDragging && 'opacity-50'
@@ -218,19 +254,6 @@ function DirectoryRow({
         style={{ paddingLeft: 8 + depth * 16 }}
         onClick={() => onSelect(node.id)}
       >
-        <span
-          ref={setDragRef}
-          className={cn(
-            'touch-none p-0.5 rounded shrink-0 cursor-grab active:cursor-grabbing',
-            isSelected ? 'hover:bg-primary-foreground/20' : 'hover:bg-muted'
-          )}
-          title="Drag to move folder"
-          {...listeners}
-          {...attributes}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <GripVertical className={cn('size-4', isSelected ? 'text-primary-foreground' : 'text-muted-foreground')} />
-        </span>
         <button
           type="button"
           className={cn(
@@ -241,6 +264,7 @@ function DirectoryRow({
             e.stopPropagation();
             onToggleExpand(node.id);
           }}
+          onPointerDown={(e) => e.stopPropagation()}
           aria-label={isExpanded ? 'Collapse' : 'Expand'}
         >
           <ChevronRight
@@ -258,7 +282,11 @@ function DirectoryRow({
         )}
         <span className="whitespace-nowrap" title={node.name}>{node.name}</span>
         <DropdownMenu>
-          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+          <DropdownMenuTrigger
+            asChild
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
             <Button
               variant="ghost"
               size="icon"
@@ -308,11 +336,13 @@ function DirectoryRow({
       </div>
       {hasChildren && isExpanded && (
         <div>
-          {node.children!.map((child) => (
+          {node.children!.map((child, idx) => (
             <DirectoryRow
               key={child.id}
               node={child}
               depth={depth + 1}
+              index={idx}
+              parentId={node.id}
               selectedId={selectedId}
               expandedIds={expandedIds}
               onSelect={onSelect}
@@ -326,6 +356,7 @@ function DirectoryRow({
               onAdjustFolderAccessLevels={onAdjustFolderAccessLevels}
             />
           ))}
+          <BetweenDropZone parentId={node.id} index={node.children!.length} depth={depth + 1} />
         </div>
       )}
     </div>
@@ -558,28 +589,35 @@ export default function DirectoryTreeSidebar({
             ) : filteredTree.length === 0 && searchQuery ? (
               <div className="px-2 py-2 text-sm text-muted-foreground">No folders match &quot;{searchQuery}&quot;</div>
             ) : (
-              filteredTree.map((node) => (
-                <DirectoryRow
-                  key={node.id}
-                  node={node}
-                  depth={0}
-                  selectedId={selectedId}
-                  expandedIds={expandedIds}
-                  onSelect={onSelect}
-                  onCreateSubfolder={(parentId) => {
-                    setAddParentId(parentId);
-                    setNewFolderName('');
-                    setAddDialogOpen(true);
-                  }}
-                  onRename={openRenameDialog}
-                  onDelete={openDeleteDialog}
-                  onToggleExpand={handleToggleExpand}
-                  quickAccessEntryIdByDirectoryId={quickAccessEntryIdByDirectoryId}
-                  onPinToQuickAccess={onPinToQuickAccess}
-                  onUnpinFromQuickAccess={onUnpinFromQuickAccess}
-                  onAdjustFolderAccessLevels={onAdjustFolderAccessLevels}
-                />
-              ))
+              <>
+                {filteredTree.map((node, idx) => (
+                  <DirectoryRow
+                    key={node.id}
+                    node={node}
+                    depth={0}
+                    index={idx}
+                    parentId={null}
+                    selectedId={selectedId}
+                    expandedIds={expandedIds}
+                    onSelect={onSelect}
+                    onCreateSubfolder={(parentId) => {
+                      setAddParentId(parentId);
+                      setNewFolderName('');
+                      setAddDialogOpen(true);
+                    }}
+                    onRename={openRenameDialog}
+                    onDelete={openDeleteDialog}
+                    onToggleExpand={handleToggleExpand}
+                    quickAccessEntryIdByDirectoryId={quickAccessEntryIdByDirectoryId}
+                    onPinToQuickAccess={onPinToQuickAccess}
+                    onUnpinFromQuickAccess={onUnpinFromQuickAccess}
+                    onAdjustFolderAccessLevels={onAdjustFolderAccessLevels}
+                  />
+                ))}
+                {!searchQuery && filteredTree.length > 0 && (
+                  <BetweenDropZone parentId={null} index={filteredTree.length} depth={0} />
+                )}
+              </>
             )}
           </div>
         </ScrollAreaZag>

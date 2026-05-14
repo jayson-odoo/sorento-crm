@@ -102,8 +102,8 @@ def _trigger_days_before_promotion_end(
         ctx = {
             "promotion": {
                 "id": str(getattr(promo, "id")),
-                "code": str(getattr(promo, "promo_code", "")),
-                "name": str(getattr(promo, "name", "")),
+                "code": "",
+                "name": str(getattr(promo, "description", "") or ""),
                 "start_date": start_date.isoformat() if start_date else None,
                 "end_date": end_date.isoformat() if end_date else None,
                 "link": _build_promotion_link(str(getattr(promo, "id"))),

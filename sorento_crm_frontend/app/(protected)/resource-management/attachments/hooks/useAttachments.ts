@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments, bulkMoveAttachments } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
-import { getDirectoryTree, createDirectory, updateDirectory, deleteDirectory, restoreDirectory, permanentDeleteDirectory } from '../services/directoryService';
+import { getDirectoryTree, createDirectory, updateDirectory, moveDirectory, deleteDirectory, restoreDirectory, permanentDeleteDirectory } from '../services/directoryService';
 import { apiFetch } from '@/lib/api';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 
@@ -318,6 +318,19 @@ export function useUpdateDirectory() {
       toast.success('Folder updated');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to update folder'),
+  });
+}
+
+export function useMoveDirectory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, parent_id, position }: { id: string; parent_id: string | null; position: number | null }) =>
+      moveDirectory(id, { parent_id, position }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to move folder'),
   });
 }
 

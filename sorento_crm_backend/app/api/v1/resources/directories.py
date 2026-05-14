@@ -9,6 +9,7 @@ from app.services.resources_service import AttachmentDirectoryService, Attachmen
 from app.schemas.resources import (
     AttachmentDirectoryCreate,
     AttachmentDirectoryUpdate,
+    AttachmentDirectoryMoveRequest,
     AttachmentDirectoryResponse,
     AttachmentDirectoryTreeNode,
 )
@@ -115,6 +116,23 @@ async def update_directory(
     try:
         service = AttachmentDirectoryService(db)
         return service.update_directory(directory_id, data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{directory_id}/move", response_model=AttachmentDirectoryResponse)
+async def move_directory(
+    directory_id: str,
+    data: AttachmentDirectoryMoveRequest,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Reparent and reorder a folder. Used by drag-and-drop: drop on folder = nest, drop between = reorder."""
+    try:
+        service = AttachmentDirectoryService(db)
+        return service.move_directory(directory_id, data.parent_id, data.position)
     except HTTPException:
         raise
     except Exception as e:

@@ -42,17 +42,10 @@ export default function PromotionAttachmentsList() {
   const columns = useMemo<ColumnDef<PromotionAttachment>[]>(
     () => [
       {
-        accessorKey: 'promotion.promo_code',
-        header: ({ column }) => <DataGridColumnHeader title="Promotion Code" column={column} />,
-        size: 150,
-        cell: ({ row }) => row.original.promotion?.promo_code || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        accessorKey: 'promotion.name',
-        header: ({ column }) => <DataGridColumnHeader title="Promotion Name" column={column} />,
+        accessorKey: 'promotion.description',
+        header: ({ column }) => <DataGridColumnHeader title="Promotion" column={column} />,
         size: 250,
-        cell: ({ row }) => row.original.promotion?.name || '-',
+        cell: ({ row }) => row.original.promotion?.description || row.original.promotion_id || '-',
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
