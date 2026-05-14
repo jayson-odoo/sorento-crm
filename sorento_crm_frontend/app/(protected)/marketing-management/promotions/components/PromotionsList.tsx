@@ -70,13 +70,12 @@ export default function PromotionsList() {
   const [bulkAccessLevelsDialogOpen, setBulkAccessLevelsDialogOpen] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterAccessLevel, setFilterAccessLevel] = useState<string>('all');
-  const [filterPromoType, setFilterPromoType] = useState<string>('all');
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [viewerAttachmentId, setViewerAttachmentId] = useState<string | null>(null);
 
-  const hasActiveFilters = filterStatus !== 'all' || filterAccessLevel !== 'all' || filterPromoType !== 'all';
+  const hasActiveFilters = filterStatus !== 'all' || filterAccessLevel !== 'all';
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: [
@@ -87,7 +86,6 @@ export default function PromotionsList() {
       searchQuery,
       filterStatus,
       filterAccessLevel,
-      filterPromoType,
       advancedFilter,
     ],
     queryFn: async () => {
@@ -103,7 +101,6 @@ export default function PromotionsList() {
           dir: sortDirection,
           quick_search: searchQuery || undefined,
           promotion_status: filterStatus === 'all' ? undefined : filterStatus,
-          promotion_promo_type: filterPromoType === 'all' ? undefined : filterPromoType,
           promotion_access_level: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
         });
       }
@@ -114,7 +111,6 @@ export default function PromotionsList() {
         searchQuery,
         status: filterStatus === 'all' ? undefined : filterStatus,
         user_type: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
-        promo_type: filterPromoType === 'all' ? undefined : filterPromoType,
       });
     },
     staleTime: Infinity,
@@ -125,7 +121,7 @@ export default function PromotionsList() {
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [advancedFilter, filterStatus, filterAccessLevel, filterPromoType]);
+  }, [advancedFilter, filterStatus, filterAccessLevel]);
 
   const pagePromotions = data?.data ?? [];
   const togglePromotionSelection = (promotionId: string) => {
@@ -252,22 +248,6 @@ export default function PromotionsList() {
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
-        accessorKey: 'promo_type',
-        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
-        cell: ({ row }) => {
-          const type = row.original.promo_type;
-          const typeLabels: Record<string, string> = {
-            price_override: 'Price Override',
-            discount_percent: 'Discount %',
-            discount_amount: 'Discount Amount',
-            bundle: 'Bundle',
-            other: 'Other',
-          };
-          return <Badge variant="secondary">{typeLabels[type as string] || type}</Badge>;
-        },
-        size: 150,
-      },
-      {
         accessorKey: 'access_levels',
         header: ({ column }) => <DataGridColumnHeader title="Access" column={column} />,
         cell: ({ row }) => {
@@ -289,13 +269,13 @@ export default function PromotionsList() {
       {
         accessorKey: 'start_date',
         header: ({ column }) => <DataGridColumnHeader title="Start Date" column={column} />,
-        cell: ({ row }) => formatPromotionBoundaryInMalaysia(row.original.start_date),
+        cell: ({ row }) => row.original.start_date ? formatPromotionBoundaryInMalaysia(row.original.start_date) : '-',
         size: 120,
       },
       {
         accessorKey: 'end_date',
         header: ({ column }) => <DataGridColumnHeader title="End Date" column={column} />,
-        cell: ({ row }) => formatPromotionBoundaryInMalaysia(row.original.end_date),
+        cell: ({ row }) => row.original.end_date ? formatPromotionBoundaryInMalaysia(row.original.end_date) : '-',
         size: 120,
       },
       {
@@ -438,22 +418,6 @@ export default function PromotionsList() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Type</Label>
-                    <Select value={filterPromoType} onValueChange={setFilterPromoType}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="All" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All</SelectItem>
-                        <SelectItem value="price_override">Price Override</SelectItem>
-                        <SelectItem value="discount_percent">Discount %</SelectItem>
-                        <SelectItem value="discount_amount">Discount Amount</SelectItem>
-                        <SelectItem value="bundle">Bundle</SelectItem>
-                        <SelectItem value="other">Other</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
                   {hasActiveFilters && (
                     <Button
                       variant="ghost"
@@ -462,7 +426,6 @@ export default function PromotionsList() {
                       onClick={() => {
                         setFilterStatus('all');
                         setFilterAccessLevel('all');
-                        setFilterPromoType('all');
                       }}
                     >
                       Clear quick filters
@@ -586,7 +549,6 @@ export default function PromotionsList() {
               filter: advancedFilter ?? undefined,
               quick_search: searchQuery || undefined,
               promotion_status: filterStatus === 'all' ? undefined : filterStatus,
-              promotion_promo_type: filterPromoType === 'all' ? undefined : filterPromoType,
               promotion_access_level: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
             })}
             selectedRecordIds={

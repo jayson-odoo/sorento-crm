@@ -100,7 +100,6 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
                 f"Promo Code: {promotion.promo_code}",
                 f"Promotion Name: {promotion.name}",
                 f"Description: {promotion.description or ''}",
-                f"Promo Type: {promotion.promo_type}",
                 f"Active From: {promotion.start_date}",
                 f"Active Until: {promotion.end_date}",
             ]
@@ -111,7 +110,7 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
             "body_text": body,
             "visibility_scope": "customer",
             "source_updated_at": promotion.updated_at or promotion.created_at,
-            "metadata": {"promo_type": promotion.promo_type, "access_levels": promotion.access_levels or []},
+            "metadata": {"access_levels": promotion.access_levels or []},
         }
 
     if source_type == "attachment":

@@ -65,22 +65,32 @@ def _strip_html(html: Optional[str]) -> Optional[str]:
     return _HTML_TAG_RE.sub("", html).strip() or None
 
 
-def _has_view_all(current_user: dict) -> bool:
-    perms = set(current_user.get("permissions") or [])
-    if not perms:
+def _has_view_all(db: Session, current_user: dict) -> bool:
+    # JWT carries no perms; resolve via DB.
+    from app.services.user_service import UserPermissionService
+    uid = current_user.get("id")
+    if not uid:
         return False
-    return "tickets.tickets.view_all" in perms
+    return UserPermissionService(db).check_user_has_permission(
+        str(uid), "tickets.tickets.view_all"
+    )
 
 
-def _is_admin(current_user: dict) -> bool:
-    roles = set(current_user.get("role_slugs") or current_user.get("roles") or [])
-    if not roles:
+def _is_admin(db: Session, current_user: dict) -> bool:
+    from app.services.user_service import UserPermissionService
+    uid = current_user.get("id")
+    if not uid:
         return False
-    return bool(roles & {"superadmin", "admin"})
+    slugs = UserPermissionService(db).get_user_role_slugs(str(uid))
+    return bool(slugs & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"})
 
 
-def _has_perm(current_user: dict, slug: str) -> bool:
-    return slug in set(current_user.get("permissions") or [])
+def _has_perm(db: Session, current_user: dict, slug: str) -> bool:
+    from app.services.user_service import UserPermissionService
+    uid = current_user.get("id")
+    if not uid:
+        return False
+    return UserPermissionService(db).check_user_has_permission(str(uid), slug)
 
 
 def _user_ref(user: Optional[User]) -> Optional[Dict[str, Any]]:
@@ -172,13 +182,13 @@ def _generate_ticket_number(db: Session) -> str:
     return f"{prefix}{int(count) + 1:06d}"
 
 
-def _visibility_filter(current_user: dict):
+def _visibility_filter(db: Session, current_user: dict):
     """Return a SQLAlchemy filter restricting to tickets the user can see.
 
     raised_by-by-user matches only when ``raised_by_kind='user'`` — a respond
     contact's id sharing the same string as a user.id is impossible in practice
     but the discriminator avoids any accidental collision."""
-    if _has_view_all(current_user) or _is_admin(current_user):
+    if _has_view_all(db, current_user) or _is_admin(db, current_user):
         return None
     me = str(current_user.get("id") or "")
     if not me:
@@ -197,7 +207,7 @@ def can_view(db: Session, ticket_id: str, current_user: dict) -> bool:
     t = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if t is None:
         return False
-    if _has_view_all(current_user) or _is_admin(current_user):
+    if _has_view_all(db, current_user) or _is_admin(db, current_user):
         return True
     me = str(current_user.get("id") or "")
     if not me:
@@ -405,7 +415,7 @@ def list_tickets(
     current_user: dict,
 ) -> Dict[str, Any]:
     q = db.query(Ticket)
-    vf = _visibility_filter(current_user)
+    vf = _visibility_filter(db, current_user)
     if vf is not None:
         q = q.filter(vf)
     if filters.get("status"):
@@ -459,7 +469,7 @@ def kanban(
     column_cap: int = 100,
 ) -> Dict[str, Any]:
     q = db.query(Ticket)
-    vf = _visibility_filter(current_user)
+    vf = _visibility_filter(db, current_user)
     if vf is not None:
         q = q.filter(vf)
     for key in ("status", "assigned_to", "raised_by", "priority", "category"):
@@ -598,7 +608,7 @@ def delete_ticket(
     db: Session, *, ticket_id: str, current_user: dict
 ) -> None:
     t = _get_or_404(db, ticket_id)
-    if not (_is_admin(current_user) or _has_perm(current_user, "tickets.tickets.delete")):
+    if not (_is_admin(db, current_user) or _has_perm(db, current_user, "tickets.tickets.delete")):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     db.delete(t)
     db.commit()
@@ -609,7 +619,7 @@ def bulk_delete_tickets(
 ) -> None:
     if not ids:
         return
-    if not (_is_admin(current_user) or _has_perm(current_user, "tickets.tickets.delete")):
+    if not (_is_admin(db, current_user) or _has_perm(db, current_user, "tickets.tickets.delete")):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     db.query(Ticket).filter(Ticket.id.in_(ids)).delete(synchronize_session=False)
     db.commit()
@@ -628,8 +638,8 @@ def _validate_transition(from_status: str, to_status: str) -> None:
         )
 
 
-def _can_change_status(ticket: Ticket, current_user: dict) -> bool:
-    if _is_admin(current_user):
+def _can_change_status(db: Session, ticket: Ticket, current_user: dict) -> bool:
+    if _is_admin(db, current_user):
         return True
     me = str(current_user.get("id") or "")
     return bool(ticket.assigned_to and str(ticket.assigned_to) == me)
@@ -646,7 +656,7 @@ def change_status(
     t = _get_or_404(db, ticket_id)
     _ensure_visible(db, t, current_user)
     _validate_transition(t.status, new_status)
-    if not _can_change_status(t, current_user):
+    if not _can_change_status(db, t, current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the assignee or an admin can move this ticket",
@@ -732,7 +742,7 @@ def assign(
 
 
 def _ensure_can_edit_response(t: Ticket, current_user: dict) -> str:
-    if not (_is_admin(current_user) or (t.assigned_to and str(t.assigned_to) == str(current_user.get("id") or ""))):
+    if not (_is_admin(db, current_user) or (t.assigned_to and str(t.assigned_to) == str(current_user.get("id") or ""))):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the assignee or an admin can edit the response",
@@ -741,7 +751,7 @@ def _ensure_can_edit_response(t: Ticket, current_user: dict) -> str:
 
 
 def _ensure_can_edit_resolution(t: Ticket, current_user: dict) -> str:
-    if not (_is_admin(current_user) or (t.assigned_to and str(t.assigned_to) == str(current_user.get("id") or ""))):
+    if not (_is_admin(db, current_user) or (t.assigned_to and str(t.assigned_to) == str(current_user.get("id") or ""))):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the assignee or an admin can edit the resolution",

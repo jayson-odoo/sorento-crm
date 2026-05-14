@@ -53,7 +53,7 @@ from app.models.activities import ActivityEvent, InternalNote, ActivityMention
 from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
 from app.models.email_template import EmailTemplate
 from app.models.automation import Automation, AutomationRun
-from app.models.impersonation import ImpersonationSession
+from app.models.impersonation import ImpersonationSession, ContactImpersonationSession
 
 __all__ = [
     "User",
@@ -170,6 +170,7 @@ __all__ = [
     "Automation",
     "AutomationRun",
     "ImpersonationSession",
+    "ContactImpersonationSession",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy

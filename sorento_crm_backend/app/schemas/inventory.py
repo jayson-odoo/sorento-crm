@@ -6,7 +6,7 @@ from datetime import datetime
 
 class WarehouseBase(BaseModel):
     warehouse_code: str
-    warehouse_name: str
+    warehouse_name: Optional[str] = None
     location: Optional[str] = None
     manager_id: Optional[str] = None
     is_active: bool = True
@@ -64,7 +64,7 @@ class StorageZoneResponse(StorageZoneBase):
 class WarehouseSimple(BaseModel):
     id: str
     warehouse_code: Optional[str] = None
-    warehouse_name: str
+    warehouse_name: Optional[str] = None
     location: Optional[str] = None
 
     class Config:

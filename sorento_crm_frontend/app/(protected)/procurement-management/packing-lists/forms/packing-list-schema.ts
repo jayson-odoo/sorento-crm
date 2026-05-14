@@ -6,7 +6,7 @@ export const shipmentLineSchema = z.object({
 });
 
 export const packingListSchema = z.object({
-  shipment_number: z.string().min(1, 'Shipment number is required'),
+  shipment_number: z.string().optional(),
   supplier_id: z.string().optional(),
   shipment_date: z.string().min(1, 'Shipment date is required'),
   estimated_arrival_date: z.string().optional(),

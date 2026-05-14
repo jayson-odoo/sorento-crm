@@ -14,12 +14,21 @@ export type PortalSubmissionKind =
   | 'purchase_request'
   | 'sponsorship_form';
 
+export interface PortalImpersonationInfo {
+  session_id: string;
+  admin_user_id: string;
+  admin_name: string | null;
+  admin_email: string | null;
+  started_at: string;
+}
+
 export interface PortalContact {
   contact_id: string;
   space_id: string;
   name: string | null;
   phone_number: string | null;
   expires_at: string;
+  impersonation?: PortalImpersonationInfo | null;
 }
 
 export interface PortalSubmissionSummary {
@@ -167,6 +176,15 @@ async function unwrap<T>(res: Response, fallback: string): Promise<T> {
 export async function fetchMe(): Promise<PortalContact> {
   const res = await portalFetch('/api/v1/public/portal/me');
   return unwrap<PortalContact>(res, 'Failed to load profile.');
+}
+
+export async function stopPortalImpersonation(): Promise<void> {
+  const res = await portalFetch('/api/v1/public/portal/impersonation/stop', {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    throw new Error(await extractApiError(res, 'Failed to exit impersonation.'));
+  }
 }
 
 export async function fetchSubmissions(

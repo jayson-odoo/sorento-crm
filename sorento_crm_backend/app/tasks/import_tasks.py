@@ -377,35 +377,35 @@ def process_attachment_bulk_import(
         return
 
     job_id_str: str = str(job.job_id)
-    dir_service = AttachmentDirectoryService(db)
-    attachment_service = AttachmentService(db)
-    type_service = AttachmentTypeService(db)
-    from app.services.storage_router import (
-        cdn_base_url,
-        default_provider,
-        get_backend,
-    )
-    storage_provider = default_provider()
-    storage_backend = get_backend(storage_provider)
-
-    access_levels_payload = None
     try:
-        parsed = json.loads(access_levels_json or "[]")
-        if isinstance(parsed, list):
-            access_levels_payload = parsed
-    except Exception:
-        pass
-    from app.services.contact_access_type_service import ContactAccessTypeService
-    access_svc = ContactAccessTypeService(db)
-    if access_levels_payload:
+        dir_service = AttachmentDirectoryService(db)
+        attachment_service = AttachmentService(db)
+        type_service = AttachmentTypeService(db)
+        from app.services.storage_router import (
+            cdn_base_url,
+            default_provider,
+            get_backend,
+        )
+        storage_provider = default_provider()
+        storage_backend = get_backend(storage_provider)
+
+        access_levels_payload = None
         try:
-            access_levels_payload = access_svc.validate_access_levels(access_levels_payload, field_name="access_levels")
+            parsed = json.loads(access_levels_json or "[]")
+            if isinstance(parsed, list):
+                access_levels_payload = parsed
         except Exception:
+            pass
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        access_svc = ContactAccessTypeService(db)
+        if access_levels_payload:
+            try:
+                access_levels_payload = access_svc.validate_access_levels(access_levels_payload, field_name="access_levels")
+            except Exception:
+                access_levels_payload = access_svc.get_default_access_levels()
+        else:
             access_levels_payload = access_svc.get_default_access_levels()
-    else:
-        access_levels_payload = access_svc.get_default_access_levels()
 
-    try:
         job_service.start_job(job_id_str)
 
         try:

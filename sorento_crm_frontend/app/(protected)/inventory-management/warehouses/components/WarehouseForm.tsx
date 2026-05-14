@@ -37,7 +37,7 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
     resolver: zodResolver(WarehouseSchema),
     defaultValues: {
       warehouse_code: '',
-      warehouse_name: '',
+      warehouse_name: null,
       location: null,
       manager_id: null,
       is_active: true,
@@ -50,7 +50,7 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
     if (warehouse && isEditMode) {
       form.reset({
         warehouse_code: warehouse.warehouse_code,
-        warehouse_name: warehouse.warehouse_name,
+        warehouse_name: warehouse.warehouse_name ?? null,
         location: warehouse.location || null,
         manager_id: warehouse.manager_id || null,
         is_active: warehouse.is_active,
@@ -114,9 +114,14 @@ export default function WarehouseForm({ warehouseId, onSuccess }: WarehouseFormP
                 name="warehouse_name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>System Location Description *</FormLabel>
+                    <FormLabel>System Location Description</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g. Selangor Main DC" {...field} />
+                      <Input
+                        placeholder="e.g. Selangor Main DC"
+                        {...field}
+                        value={field.value ?? ''}
+                        onChange={(e) => field.onChange(e.target.value || null)}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

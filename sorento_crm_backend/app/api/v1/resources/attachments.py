@@ -23,6 +23,8 @@ from app.schemas.resources import (
     AttachmentResponse,
     AttachmentBulkDeleteRequest,
     AttachmentReorderRequest,
+    AttachmentsBulkMoveRequest,
+    AttachmentsBulkMoveResponse,
     BulkAccessLevelsPreviewRequest,
     BulkAccessLevelsPreviewResponse,
     BulkAccessLevelsApplyRequest,
@@ -763,6 +765,23 @@ async def update_attachment(
         service = AttachmentService(db)
         attachment = service.update_attachment(attachment_id, attachment_data)
         return attachment
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/bulk-move", response_model=AttachmentsBulkMoveResponse)
+async def bulk_move_attachments(
+    body: AttachmentsBulkMoveRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Move many attachments into the same target folder in one transaction (drag-drop multi-select)."""
+    try:
+        service = AttachmentService(db)
+        updated = service.bulk_move(body.attachment_ids, body.directory_id)
+        return AttachmentsBulkMoveResponse(updated=updated)
     except HTTPException:
         raise
     except Exception as e:

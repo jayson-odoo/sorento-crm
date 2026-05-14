@@ -10,7 +10,7 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, Copy, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { ChevronRight, Columns3, Copy, LoaderCircleIcon, Plus, RefreshCw, Search, Trash2, UserCog, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -33,6 +33,17 @@ import ContactDeleteDialog from './ContactDeleteDialog';
 import ContactBulkDeleteDialog from './ContactBulkDeleteDialog';
 import BulkCopySettingsFromContactDialog from './BulkCopySettingsFromContactDialog';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { startContactImpersonation } from '@/services/contactImpersonationService';
 
 interface ContactsListProps {
   pageIndex?: number;
@@ -53,6 +64,8 @@ export default function ContactsList() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkCopyDialogOpen, setBulkCopyDialogOpen] = useState(false);
+  const [impersonateTarget, setImpersonateTarget] = useState<RespondContact | null>(null);
+  const [impersonateStarting, setImpersonateStarting] = useState(false);
 
   const fetchContacts = async (): Promise<DataGridApiResponse<RespondContact>> => {
     const sortField = sorting?.[0]?.id || 'created_at';
@@ -272,6 +285,17 @@ export default function ContactsList() {
             <Button
               variant="ghost"
               size="sm"
+              title="Impersonate in portal"
+              onClick={(e) => {
+                e.stopPropagation();
+                setImpersonateTarget(row.original);
+              }}
+            >
+              <UserCog className="size-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               title="Delete contact"
               onClick={(e) => handleDeleteClick(e, row.original)}
             >
@@ -429,6 +453,68 @@ export default function ContactsList() {
         targetContacts={selectedContacts}
         onSuccess={clearSelection}
       />
+
+      <AlertDialog
+        open={!!impersonateTarget}
+        onOpenChange={(open) => {
+          if (!open && !impersonateStarting) setImpersonateTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Impersonation</AlertDialogTitle>
+            <AlertDialogDescription>
+              You will browse the portal as{' '}
+              <strong>
+                {impersonateTarget?.name ||
+                  impersonateTarget?.phone_number ||
+                  impersonateTarget?.id ||
+                  ''}
+              </strong>{' '}
+              with their access rights. All records you create or modify will
+              still be attributed to you. Continue?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={impersonateStarting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={impersonateStarting}
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!impersonateTarget) return;
+                setImpersonateStarting(true);
+                try {
+                  const session = await startContactImpersonation(impersonateTarget.id);
+                  toast.success(
+                    `Now impersonating ${
+                      impersonateTarget.name || impersonateTarget.phone_number || impersonateTarget.id
+                    }`,
+                  );
+                  setImpersonateTarget(null);
+                  if (typeof window !== 'undefined') {
+                    window.open(session.portalUrl, '_blank', 'noopener,noreferrer');
+                  }
+                } catch (err) {
+                  toast.error(
+                    err instanceof Error ? err.message : 'Failed to start impersonation',
+                  );
+                } finally {
+                  setImpersonateStarting(false);
+                }
+              }}
+            >
+              {impersonateStarting ? (
+                <>
+                  <LoaderCircleIcon className="size-4 animate-spin" />
+                  Starting...
+                </>
+              ) : (
+                'Impersonate'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DataGrid>
   );
 }

@@ -103,7 +103,6 @@ class ListQuerySearchService:
             limit=req.limit,
             query=req.quick_search,
             status=req.promotion_status,
-            promo_type=req.promotion_promo_type,
             user_type=req.promotion_access_level,
             sort_field=sort_field or "created_at",
             sort_dir=sort_dir or "desc",

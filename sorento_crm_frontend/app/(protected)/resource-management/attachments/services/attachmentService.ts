@@ -247,6 +247,23 @@ export async function updateAttachment(
   return response.json();
 }
 
+export async function bulkMoveAttachments(
+  attachmentIds: string[],
+  directoryId: string | null,
+): Promise<{ updated: number }> {
+  const response = await apiFetch('/api/v1/resource-management/attachments/bulk-move', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ attachment_ids: attachmentIds, directory_id: directoryId }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to move attachments' }));
+    const message = typeof error.detail === 'string' ? error.detail : error.message ?? 'Failed to move attachments';
+    throw new Error(message);
+  }
+  return response.json();
+}
+
 export async function deleteAttachment(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/resource-management/attachments/${id}`, { method: 'DELETE' });
   if (!response.ok) {

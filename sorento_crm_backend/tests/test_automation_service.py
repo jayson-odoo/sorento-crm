@@ -115,7 +115,6 @@ def _mk_promotion(db: Session, *, days_until_end: int) -> Promotion:
         id=str(uuid.uuid4()),
         promo_code=f"PROMO-{uuid.uuid4().hex[:6].upper()}",
         name="Test Promo",
-        promo_type="other",
         start_date=today - timedelta(days=2),
         end_date=today + timedelta(days=days_until_end),
         is_active=True,

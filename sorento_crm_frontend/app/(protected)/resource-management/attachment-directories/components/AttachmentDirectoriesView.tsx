@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner';
 import { FileText, Folder } from 'lucide-react';
 import {
+  useBulkMoveAttachments,
   useDirectoryTree,
   useUpdateAttachment,
   useUpdateDirectory,
@@ -150,6 +151,7 @@ export default function AttachmentDirectoriesView({
   const [accessLevelsScope, setAccessLevelsScope] = useState<BulkAccessLevelsScope>(null);
   const { data: tree = [] } = useDirectoryTree();
   const updateAttachmentMutation = useUpdateAttachment();
+  const bulkMoveMutation = useBulkMoveAttachments();
   const updateDirectoryMutation = useUpdateDirectory();
   const selectedFolderName = useMemo(
     () => (selectedId ? findFolderNameById(tree, selectedId) : null),
@@ -206,27 +208,42 @@ export default function AttachmentDirectoriesView({
     const targetDirectoryId: string | null =
       overId === DND_ID_FOLDER_ALL ? null : overId.slice(DND_ID_FOLDER_PREFIX.length);
     const attachmentId = activeId.slice(DND_ID_ATTACHMENT_PREFIX.length);
-    const currentDirectoryId =
-      (active.data?.current as { currentDirectoryId?: string | null } | undefined)
-        ?.currentDirectoryId ?? null;
+    const dragData = active.data?.current as
+      | { currentDirectoryId?: string | null; attachmentIds?: string[] }
+      | undefined;
+    const currentDirectoryId = dragData?.currentDirectoryId ?? null;
     if (
       currentDirectoryId === targetDirectoryId ||
       (currentDirectoryId == null && targetDirectoryId == null)
     ) {
       return;
     }
-    updateAttachmentMutation.mutate(
-      { attachmentId, data: { directory_id: targetDirectoryId } },
-      {
-        onSuccess: () => {
-          const folderLabel =
-            targetDirectoryId == null
-              ? 'All attachments'
-              : findFolderNameById(tree, targetDirectoryId) ?? 'folder';
-          toast.success(`Moved to ${folderLabel}`);
-        },
-      }
-    );
+    const batchIds = dragData?.attachmentIds && dragData.attachmentIds.length > 1
+      ? dragData.attachmentIds
+      : [attachmentId];
+    const folderLabel =
+      targetDirectoryId == null
+        ? 'All attachments'
+        : findFolderNameById(tree, targetDirectoryId) ?? 'folder';
+    if (batchIds.length > 1) {
+      bulkMoveMutation.mutate(
+        { attachmentIds: batchIds, directoryId: targetDirectoryId },
+        {
+          onSuccess: ({ updated }) => {
+            toast.success(`Moved ${updated} file(s) to ${folderLabel}`);
+          },
+        }
+      );
+    } else {
+      updateAttachmentMutation.mutate(
+        { attachmentId, data: { directory_id: targetDirectoryId } },
+        {
+          onSuccess: () => {
+            toast.success(`Moved to ${folderLabel}`);
+          },
+        }
+      );
+    }
   };
 
   return (

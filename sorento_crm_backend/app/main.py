@@ -161,6 +161,15 @@ async def startup_event():
         logging.info("Embedding change listeners registered")
     except Exception as e:
         logging.error(f"Failed to register embedding change listeners: {str(e)}", exc_info=True)
+    # Register task handlers unconditionally so manual "run now" works on API
+    # containers even when scheduler ticks are gated to the worker container.
+    try:
+        from app.scheduler.task_scheduler import register_task_handlers
+        register_task_handlers()
+        logging.info("Scheduled task handlers registered")
+    except Exception as e:
+        logging.error(f"Failed to register task handlers: {str(e)}", exc_info=True)
+
     # Scheduler is gated so only the dedicated `worker` container runs it.
     # Blue/green API containers must NOT fire cron ticks (would double-process).
     if os.getenv("ENABLE_SCHEDULER", "false").lower() == "true":

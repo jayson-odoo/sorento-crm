@@ -246,7 +246,7 @@ export default function PackingListDetail({
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h1 className="text-2xl font-bold">
-            {packingList.shipment_number}
+            {packingList.shipment_number || `Packing list ${packingList.id.slice(0, 8)}`}
           </h1>
           <p className="text-sm text-muted-foreground">
             {packingList.supplier?.supplier_name || 'No supplier'} • Shipment
@@ -299,7 +299,7 @@ export default function PackingListDetail({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <p className="text-sm text-muted-foreground">Shipment Number</p>
-                <p className="font-medium">{packingList.shipment_number}</p>
+                <p className="font-medium">{packingList.shipment_number || '-'}</p>
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Supplier</p>

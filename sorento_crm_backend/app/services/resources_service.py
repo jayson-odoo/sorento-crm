@@ -989,6 +989,38 @@ class AttachmentService:
         )
         return attachment
     
+    def bulk_move(self, attachment_ids: list[str], directory_id: Optional[str]) -> int:
+        """Move many attachments into the same folder in one transaction.
+
+        Resolves full_directory_path once for the target folder so all rows
+        share the same denormalised path. Skips ids that no longer exist.
+        """
+        rows = (
+            self.db.query(Attachment)
+            .filter(Attachment.id.in_(attachment_ids))
+            .all()
+        )
+        if not rows:
+            return 0
+        dir_service = AttachmentDirectoryService(self.db)
+        full_path = dir_service.get_full_directory_path(directory_id) if directory_id else None
+        for row in rows:
+            row.directory_id = directory_id
+            row.full_directory_path = full_path
+        self.db.commit()
+        for row in rows:
+            self.db.refresh(row)
+            publish_embedding_event(
+                self.db,
+                source_type="attachment",
+                source_id=row.id,
+                source_key=row.original_filename,
+                source_updated_at=row.created_at,
+                event_type="attachment.updated",
+                changed_fields=["directory_id", "full_directory_path"],
+            )
+        return len(rows)
+
     def reorder_attachments(self, attachment_ids: list[str], directory_id: Optional[str] = None):
         """Set sort_order to index for each attachment id (within the same directory)."""
         for index, attachment_id in enumerate(attachment_ids):

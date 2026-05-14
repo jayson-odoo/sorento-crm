@@ -105,6 +105,7 @@ export default function PackingListsList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Shipment Number" column={column} />
         ),
+        cell: ({ row }) => row.original.shipment_number || '-',
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },

@@ -68,7 +68,6 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
     defaultValues: {
       promo_code: '',
       name: '',
-      promo_type: 'discount_percent',
       description: '',
       start_date: todayYmd,
       end_date: todayYmd,
@@ -92,7 +91,6 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
         form.reset({
           promo_code: promotion.promo_code,
           name: promotion.name,
-          promo_type: promotion.promo_type,
           description: promotion.description || '',
           start_date: startYmd,
           end_date: endYmd,
@@ -120,7 +118,6 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
       const formData: PromotionFormData = {
         promo_code: data.promo_code,
         name: data.name,
-        promo_type: data.promo_type,
         description: data.description || undefined,
         start_date: data.start_date,
         end_date: data.end_date,
@@ -216,31 +213,6 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
                 )}
               />
             </div>
-
-            <FormField
-              control={form.control}
-              name="promo_type"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Promotion Type *</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value || ''}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select promotion type" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="price_override">Price Override</SelectItem>
-                      <SelectItem value="discount_percent">Discount Percentage</SelectItem>
-                      <SelectItem value="discount_amount">Discount Amount</SelectItem>
-                      <SelectItem value="bundle">Bundle</SelectItem>
-                      <SelectItem value="other">Other</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
 
             <FormField
               control={form.control}

@@ -26,10 +26,9 @@ class Promotion(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     promo_code = Column(String(50), nullable=False)
     name = Column(String(255), nullable=False)
-    promo_type = Column(String(50), nullable=False)
     description = Column(Text, nullable=True)
-    start_date = Column(Date, nullable=False)
-    end_date = Column(Date, nullable=False)
+    start_date = Column(Date, nullable=True)
+    end_date = Column(Date, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
     created_by = Column(String, nullable=True)
@@ -56,7 +55,6 @@ class Promotion(Base):
         Index("ix_promotions_is_active", "is_active"),
         Index("ix_promotions_start_date", "start_date"),
         Index("ix_promotions_end_date", "end_date"),
-        Index("ix_promotions_promo_type", "promo_type"),
         Index("ix_promotions_access_levels", "access_levels", postgresql_using="gin"),
     )
 

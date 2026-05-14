@@ -503,11 +503,12 @@ class InboundShipmentService:
     
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
         """Create a new inbound shipment with lines."""
-        existing = self.db.query(InboundShipment).filter(
-            InboundShipment.shipment_number == shipment_data.shipment_number
-        ).first()
-        if existing:
-            raise handle_conflict("Shipment number already exists.")
+        if shipment_data.shipment_number:
+            existing = self.db.query(InboundShipment).filter(
+                InboundShipment.shipment_number == shipment_data.shipment_number
+            ).first()
+            if existing:
+                raise handle_conflict("Shipment number already exists.")
         
         # Create shipment and lines in transaction
         shipment_dict = shipment_data.model_dump(exclude={"shipment_lines"})

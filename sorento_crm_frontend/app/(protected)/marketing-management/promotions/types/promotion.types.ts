@@ -1,7 +1,5 @@
 import type { Product } from '@/app/(protected)/master-data-management/products/types/product.types';
 
-export type PromotionType = 'price_override' | 'discount_percent' | 'discount_amount' | 'bundle' | 'other';
-
 export interface PromotionListAttachment {
   id: string;
   attachment_id: string;
@@ -20,10 +18,9 @@ export interface Promotion {
   id: string;
   promo_code: string;
   name: string;
-  promo_type: PromotionType;
   description?: string | null;
-  start_date: Date;
-  end_date: Date;
+  start_date: Date | null;
+  end_date: Date | null;
   is_active: boolean;
   access_levels?: string[] | null;
   created_at: Date;
@@ -36,7 +33,6 @@ export interface Promotion {
 export interface PromotionFormData {
   promo_code: string;
   name: string;
-  promo_type: PromotionType;
   description?: string;
   /** Malaysia civil YYYY-MM-DD (matches API / backend promotion_dates). */
   start_date: string;
@@ -68,7 +64,6 @@ export interface PromotionProduct {
     id: string;
     promo_code: string;
     name: string;
-    promo_type?: string | null;
     is_active?: boolean | null;
     description?: string | null;
   };

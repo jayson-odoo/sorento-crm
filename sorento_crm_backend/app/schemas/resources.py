@@ -207,6 +207,23 @@ class AttachmentReorderRequest(BaseModel):
         return v
 
 
+class AttachmentsBulkMoveRequest(BaseModel):
+    """Move many attachments into the same target folder in one transaction."""
+    attachment_ids: list[str]
+    directory_id: Optional[str] = None
+
+    @field_validator("attachment_ids")
+    @classmethod
+    def at_least_one(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("At least one attachment ID is required")
+        return v
+
+
+class AttachmentsBulkMoveResponse(BaseModel):
+    updated: int
+
+
 class UploadedByUser(BaseModel):
     """User who uploaded the attachment (for display)."""
     id: str

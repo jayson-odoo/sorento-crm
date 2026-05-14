@@ -16,7 +16,7 @@ DateType = date
 class PackingListHeader(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    shipment_number: str
+    shipment_number: Optional[str] = None
     supplier_id: Optional[str] = None
     shipment_date: str | date
     shipping_container_number: Optional[str] = None

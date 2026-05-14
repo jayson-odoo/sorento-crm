@@ -19,9 +19,9 @@ import {
 } from '../services/promotionService';
 import type { PromotionFormData } from '../types/promotion.types';
 
-export function usePromotions(params: DataGridApiFetchParams & { promo_type?: string; status?: string; date_from?: string; date_to?: string; user_type?: string }) {
+export function usePromotions(params: DataGridApiFetchParams & { status?: string; date_from?: string; date_to?: string; user_type?: string }) {
   return useQuery({
-    queryKey: ['promotions', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.promo_type, params.status, params.date_from, params.date_to, params.user_type],
+    queryKey: ['promotions', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.status, params.date_from, params.date_to, params.user_type],
     queryFn: () => getPromotions(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,

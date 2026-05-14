@@ -21,7 +21,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface PackingListOption {
   id: string;
-  shipment_number: string;
+  shipment_number: string | null;
   shipping_container_number?: string | null;
 }
 
@@ -29,7 +29,7 @@ interface PackingListComboboxProps {
   value: string;
   onChange: (value: string) => void;
   packingLists: PackingListOption[];
-  packingListFallback?: { id: string; shipment_number: string; shipping_container_number?: string | null } | null;
+  packingListFallback?: { id: string; shipment_number: string | null; shipping_container_number?: string | null } | null;
   placeholder?: string;
   disabled?: boolean;
   className?: string;
@@ -83,7 +83,7 @@ export function PackingListCombobox({
                 {options.map((pl) => (
                   <CommandItem
                     key={pl.id}
-                    value={`${pl.shipment_number} ${pl.shipping_container_number ?? ''}`}
+                    value={`${pl.shipment_number ?? ''} ${pl.shipping_container_number ?? ''}`}
                     onSelect={() => {
                       onChange(value === pl.id ? '' : pl.id);
                       setOpen(false);

@@ -365,7 +365,16 @@ export default function AttachmentBulkImportDialog({
                     <p>Directories: {jobStatus.result.directories_created ?? 0}</p>
                     <p>Attachments created: {jobStatus.result.attachments_created ?? 0}</p>
                     {(jobStatus.result.errors?.length ?? 0) > 0 && (
-                      <p className="text-amber-600">Errors: {jobStatus.result.errors?.length}</p>
+                      <details className="text-amber-600">
+                        <summary className="cursor-pointer">
+                          View errors ({jobStatus.result.errors?.length})
+                        </summary>
+                        <ul className="mt-2 max-h-48 overflow-auto space-y-1 text-xs text-muted-foreground list-disc pl-5">
+                          {(jobStatus.result.errors ?? []).map((err, i) => (
+                            <li key={i} title={err}>{err}</li>
+                          ))}
+                        </ul>
+                      </details>
                     )}
                   </div>
                 )}

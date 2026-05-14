@@ -307,9 +307,6 @@ class ListQueryExportService:
             elif pst == "inactive":
                 q = q.filter(Promotion.is_active.is_(False))
 
-        if req.promotion_promo_type and (pt := (req.promotion_promo_type or "").strip()):
-            q = q.filter(Promotion.promo_type == pt)
-
         if req.promotion_access_level and (ut := (req.promotion_access_level or "").strip()):
             q = q.filter(Promotion.access_levels.contains([ut]))
 

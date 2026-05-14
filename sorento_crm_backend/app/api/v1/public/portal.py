@@ -145,12 +145,21 @@ def portal_token_info(token: str, db: Session = Depends(get_db)):
 # ---------- Contact ----------
 
 
+class PortalImpersonationInfo(BaseModel):
+    session_id: str
+    admin_user_id: str
+    admin_name: Optional[str]
+    admin_email: Optional[str]
+    started_at: str
+
+
 class PortalMeResponse(BaseModel):
     contact_id: str
     space_id: str
     name: Optional[str]
     phone_number: Optional[str]
     expires_at: str
+    impersonation: Optional[PortalImpersonationInfo] = None
 
 
 @router.get("/me", response_model=PortalMeResponse)
@@ -159,13 +168,94 @@ def portal_me(
     db: Session = Depends(get_db),
 ):
     contact = PortalService(db).get_contact(token)
+
+    # Surface admin-impersonation context so the portal can show a banner.
+    from app.models.impersonation import ContactImpersonationSession
+    from app.models.user import User
+
+    impersonation_info: Optional[PortalImpersonationInfo] = None
+    session_row = (
+        db.query(ContactImpersonationSession)
+        .filter(
+            ContactImpersonationSession.portal_token_id == token.id,
+            ContactImpersonationSession.ended_at.is_(None),
+        )
+        .first()
+    )
+    if session_row is not None:
+        admin = (
+            db.query(User)
+            .filter(User.id == session_row.admin_user_id)
+            .first()
+        )
+        impersonation_info = PortalImpersonationInfo(
+            session_id=session_row.id,
+            admin_user_id=session_row.admin_user_id,
+            admin_name=admin.name if admin else None,
+            admin_email=admin.email if admin else None,
+            started_at=session_row.started_at.isoformat(),
+        )
+
     return PortalMeResponse(
         contact_id=token.contact_id,
         space_id=token.space_id,
         name=contact.name or " ".join(filter(None, [contact.first_name, contact.last_name])).strip() or None,
         phone_number=contact.phone_number,
         expires_at=token.expires_at.isoformat(),
+        impersonation=impersonation_info,
     )
+
+
+@router.post("/impersonation/stop")
+def portal_impersonation_stop(
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """End the impersonation session and revoke the token from inside the portal.
+
+    Authenticated via portal token, so the admin can exit impersonation
+    directly from the portal banner without needing to switch back to the CRM
+    tab first.
+    """
+    from app.models.impersonation import ContactImpersonationSession
+    from app.services.audit_service import log_audit
+    from datetime import datetime as _dt
+
+    session_row = (
+        db.query(ContactImpersonationSession)
+        .filter(
+            ContactImpersonationSession.portal_token_id == token.id,
+            ContactImpersonationSession.ended_at.is_(None),
+        )
+        .first()
+    )
+    if session_row is None:
+        # Token still gets revoked so a closed-tab token can't be reused.
+        if token.revoked_at is None:
+            token.revoked_at = _dt.utcnow()
+            db.commit()
+        return {"ended": False}
+
+    now = _dt.utcnow()
+    session_row.ended_at = now
+    if token.revoked_at is None:
+        token.revoked_at = now
+    db.flush()
+    log_audit(
+        db,
+        entity_type="contact_impersonation_session",
+        entity_id=session_row.id,
+        action="UPDATE",
+        user_id=session_row.admin_user_id,
+        description="contact_impersonation_end_via_portal",
+        new_values={
+            "admin_user_id": session_row.admin_user_id,
+            "target_contact_id": session_row.target_contact_id,
+            "ended_at": now.isoformat(),
+        },
+    )
+    db.commit()
+    return {"ended": True, "session_id": session_row.id}
 
 
 # ---------- Lookups (gated by portal token) ----------

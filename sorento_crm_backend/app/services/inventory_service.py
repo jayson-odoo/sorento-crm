@@ -337,10 +337,6 @@ class WarehouseService:
                 errors.append(f"Row {idx}: missing warehouse_code / Sytem Location.")
                 continue
             code = str(code).strip()
-            if not row.get("warehouse_name"):
-                # Fallback so insert is valid; name is nullable=False in DB.
-                row["warehouse_name"] = code
-                warnings.append({"row": idx, "message": "warehouse_name missing — defaulted to warehouse_code"})
             row["warehouse_code"] = code
             key = code.lower()
             if key in codes_seen:
@@ -405,7 +401,7 @@ class WarehouseService:
                 else:
                     new = Warehouse(
                         warehouse_code=row["warehouse_code"],
-                        warehouse_name=row.get("warehouse_name") or row["warehouse_code"],
+                        warehouse_name=row.get("warehouse_name"),
                         location=row.get("location"),
                         is_active=row["is_active"] if row.get("is_active") is not None else True,
                     )

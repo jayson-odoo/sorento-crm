@@ -1,6 +1,6 @@
 """User management API routes."""
 from fastapi import APIRouter
-from app.api.v1.user_management import users, roles, permissions, access_agents, contacts, contact_access_types, system_logs, settings, teams, quick_access, impersonation
+from app.api.v1.user_management import users, roles, permissions, access_agents, contacts, contact_access_types, system_logs, settings, teams, quick_access, impersonation, contact_impersonation
 
 router = APIRouter()
 
@@ -15,4 +15,5 @@ router.include_router(system_logs.router, prefix="/system-logs", tags=["system-l
 router.include_router(settings.router, prefix="/settings", tags=["settings"])
 router.include_router(quick_access.router, prefix="/quick-access", tags=["quick-access"])
 router.include_router(impersonation.router, prefix="/impersonation", tags=["impersonation"])
+router.include_router(contact_impersonation.router, prefix="/contact-impersonation", tags=["contact-impersonation"])
 # Contact access agents list is at /access-agents/contact-access

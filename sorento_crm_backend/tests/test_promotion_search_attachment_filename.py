@@ -89,7 +89,6 @@ def _seed_promotion(
         id=str(uuid.uuid4()),
         promo_code=promo_code,
         name=name,
-        promo_type="bundle",
         description="",
         start_date=today - timedelta(days=30),
         end_date=today + timedelta(days=30),

@@ -44,6 +44,18 @@ def register_handler(key: str, handler: TaskHandler) -> None:
     TASK_HANDLERS[key] = handler
 
 
+def _interval_delta(interval_unit: str, interval_value: int) -> timedelta:
+    if interval_unit == "seconds":
+        return timedelta(seconds=interval_value)
+    if interval_unit == "minutes":
+        return timedelta(minutes=interval_value)
+    if interval_unit == "hours":
+        return timedelta(hours=interval_value)
+    if interval_unit == "days":
+        return timedelta(days=interval_value)
+    return timedelta(minutes=15)
+
+
 def compute_next_run(
     interval_unit: str,
     interval_value: int,
@@ -51,38 +63,40 @@ def compute_next_run(
     start_at: Optional[datetime],
     from_time: datetime,
 ) -> datetime:
+    """Display-only next-run estimate. Due-check is frequency-based at query time.
+
+    Rules:
+    - If `start_at` is in the future, next run = `start_at` (UI shows when task will first fire).
+    - Otherwise next run = `from_time + interval` (typically last_run + interval).
     """
-    Compute next run time from interval and start/from time.
-    Uses UTC; timezone param is reserved for future use.
-    """
-    if interval_unit == "seconds":
-        delta = timedelta(seconds=interval_value)
-    elif interval_unit == "minutes":
-        delta = timedelta(minutes=interval_value)
-    elif interval_unit == "hours":
-        delta = timedelta(hours=interval_value)
-    elif interval_unit == "days":
-        delta = timedelta(days=interval_value)
-    else:
-        delta = timedelta(minutes=15)
-    # If start_at is in the future, next run is start_at
+    delta = _interval_delta(interval_unit, interval_value)
     if start_at and start_at > from_time:
         return start_at
     return from_time + delta
 
 
-def get_due_tasks(db: Session) -> list[ScheduledTask]:
-    """Return enabled tasks where next_run_at <= now (UTC)."""
-    now = datetime.utcnow()
-    return (
-        db.query(ScheduledTask)
-        .filter(
-            ScheduledTask.enabled.is_(True),
-            ScheduledTask.next_run_at.isnot(None),
-            ScheduledTask.next_run_at <= now,
-        )
-        .all()
+def _is_task_due(task: ScheduledTask, now: datetime) -> bool:
+    """Frequency-driven: task fires if start_at has passed AND
+    (never ran OR `now - last_run >= interval`).
+    """
+    start_at = getattr(task, "start_at", None)
+    if isinstance(start_at, datetime) and start_at > now:
+        return False
+    last_run = getattr(task, "last_run_at", None)
+    if not isinstance(last_run, datetime):
+        return True
+    delta = _interval_delta(
+        str(getattr(task, "interval_unit")),
+        int(getattr(task, "interval_value")),
     )
+    return (now - last_run) >= delta
+
+
+def get_due_tasks(db: Session) -> list[ScheduledTask]:
+    """Return enabled tasks due now per frequency. `next_run_at` is display-only."""
+    now = datetime.utcnow()
+    enabled = db.query(ScheduledTask).filter(ScheduledTask.enabled.is_(True)).all()
+    return [t for t in enabled if _is_task_due(t, now)]
 
 
 def get_task(db: Session, task_id: str) -> Optional[ScheduledTask]:

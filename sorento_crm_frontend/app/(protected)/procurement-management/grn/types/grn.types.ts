@@ -27,7 +27,7 @@ export interface PickingLine {
     inbound_shipment_id?: string;
     inbound_shipment?: {
       id: string;
-      shipment_number: string;
+      shipment_number: string | null;
     };
   };
   source_warehouse?: {

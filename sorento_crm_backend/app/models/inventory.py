@@ -27,7 +27,7 @@ class Warehouse(Base):
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     warehouse_code = Column(String(50), unique=True, nullable=False)
-    warehouse_name = Column(String(150), nullable=False)
+    warehouse_name = Column(String(150), nullable=True)
     location = Column(String(255), nullable=True)
     manager_id = Column(String, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)

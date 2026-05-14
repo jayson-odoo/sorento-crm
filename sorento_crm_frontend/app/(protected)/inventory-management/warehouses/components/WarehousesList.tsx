@@ -118,6 +118,7 @@ export default function WarehousesList() {
         accessorKey: 'warehouse_name',
         header: ({ column }) => <DataGridColumnHeader title="System Location Description" column={column} />,
         size: 240,
+        cell: ({ row }) => row.original.warehouse_name || '-',
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {

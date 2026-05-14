@@ -19,7 +19,7 @@ export interface SPOAllocation {
   last_synced_to_excel?: Date | null;
   inbound_shipment?: {
     id: string;
-    shipment_number: string;
+    shipment_number: string | null;
     shipping_container_number?: string | null;
   };
   warehouse?: {
@@ -62,7 +62,7 @@ export interface ShipmentLineForGroup {
 export interface ShipmentWithAllocationsGroup {
   inbound_shipment: {
     id: string;
-    shipment_number: string;
+    shipment_number: string | null;
     shipping_container_number?: string | null;
   };
   spo_allocations: SPOAllocation[];

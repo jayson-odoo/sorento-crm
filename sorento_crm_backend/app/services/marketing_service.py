@@ -279,7 +279,6 @@ class PromotionService:
         contact_access_codes: Optional[list[str]] = None,
         query: Optional[str] = None,
         status: Optional[str] = None,
-        promo_type: Optional[str] = None,
         active: Optional[bool] = None,
         period_from: Optional[date] = None,
         period_to: Optional[date] = None,
@@ -310,10 +309,8 @@ class PromotionService:
                 active = False
 
         query_norm = (query or "").strip() or None
-        promo_type_norm = (promo_type or "").strip() or None
         narrowing_filter_present = bool(
             query_norm
-            or promo_type_norm
             or user_type
             or contact_access_codes
             or period_from
@@ -355,8 +352,6 @@ class PromotionService:
                         has_attachment_match,
                     )
                 )
-            if promo_type_norm:
-                q = q.filter(Promotion.promo_type == promo_type_norm)
             if user_type:
                 q = q.filter(Promotion.access_levels.contains([user_type]))
             if contact_access_codes is not None:
@@ -385,7 +380,6 @@ class PromotionService:
         sort_map = {
             "promo_code": Promotion.promo_code,
             "name": Promotion.name,
-            "promo_type": Promotion.promo_type,
             "start_date": Promotion.start_date,
             "end_date": Promotion.end_date,
             "is_active": Promotion.is_active,
@@ -555,7 +549,7 @@ class PromotionService:
             source_key=promotion.promo_code,
             source_updated_at=promotion.updated_at or promotion.created_at,
             event_type="promotion.created",
-            changed_fields=["promo_code", "name", "description", "promo_type", "start_date", "end_date", "access_levels"],
+            changed_fields=["promo_code", "name", "description", "start_date", "end_date", "access_levels"],
             triggered_by=created_by,
         )
         return promotion
@@ -664,6 +658,8 @@ class PromotionService:
         activated = 0
         deactivated = 0
         for p in rows:
+            if p.start_date is None or p.end_date is None:
+                continue
             start_my = _promotion_stored_boundary_date(p.start_date)
             end_my = _promotion_stored_boundary_date(p.end_date)
             in_window = start_my <= today_my <= end_my
@@ -847,6 +843,7 @@ class PromotionProductService:
         height_max: Optional[float] = None,
         any_dimension_min: Optional[float] = None,
         any_dimension_max: Optional[float] = None,
+        contact_access_codes: Optional[list[str]] = None,
     ):
         """List products for a promotion, several promotions, or all promotion products.
 
@@ -939,12 +936,22 @@ class PromotionProductService:
             or any_dimension_min is not None
             or any_dimension_max is not None
         )
-        needs_promotion_join = bool(query)
+        needs_promotion_join = bool(query) or contact_access_codes is not None
 
         if needs_product_join:
             q = q.join(Product, PromotionProduct.product_id == Product.id)
         if needs_promotion_join:
             q = q.join(Promotion, PromotionProduct.promotion_id == Promotion.id)
+
+        if contact_access_codes is not None:
+            if not contact_access_codes:
+                q = q.filter(text("false"))
+            else:
+                q = q.filter(
+                    Promotion.access_levels.op("?|")(
+                        cast(contact_access_codes, ARRAY(String))
+                    )
+                )
 
         if category_uuids is not None:
             q = q.filter(Product.category_id.in_(category_uuids))

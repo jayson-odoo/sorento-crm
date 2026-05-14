@@ -878,7 +878,6 @@ def _probe_promotion(db: Session, tokens: list[str]) -> dict[str, list[ResolvedE
         db.query(
             Promotion.promo_code,
             Promotion.name,
-            Promotion.promo_type,
             Promotion.start_date,
             Promotion.end_date,
             Promotion.is_active,
@@ -887,7 +886,7 @@ def _probe_promotion(db: Session, tokens: list[str]) -> dict[str, list[ResolvedE
         .all()
     )
     code_to_token = {t.lower(): t for t in tokens}
-    for code, name, ptype, start_date, end_date, is_active in rows:
+    for code, name, start_date, end_date, is_active in rows:
         token = code_to_token.get(str(code).lower())
         if not token:
             continue
@@ -898,7 +897,6 @@ def _probe_promotion(db: Session, tokens: list[str]) -> dict[str, list[ResolvedE
                 match_field="promo_code",
                 display={
                     "promotion_name": name,
-                    "promo_type": ptype,
                     "start_date": _iso(start_date),
                     "end_date": _iso(end_date),
                     "is_active": bool(is_active) if is_active is not None else True,

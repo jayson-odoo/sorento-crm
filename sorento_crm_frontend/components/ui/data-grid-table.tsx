@@ -259,11 +259,15 @@ function DataGridTableBodyRow<TData>({
   row,
   dndRef,
   dndStyle,
+  dndAttributes,
+  dndListeners,
 }: {
   children: ReactNode;
   row: Row<TData>;
   dndRef?: React.Ref<HTMLTableRowElement>;
   dndStyle?: CSSProperties;
+  dndAttributes?: Record<string, unknown>;
+  dndListeners?: Record<string, unknown>;
 }) {
   const { props, table } = useDataGrid();
 
@@ -273,6 +277,8 @@ function DataGridTableBodyRow<TData>({
       style={{ ...(dndStyle ? dndStyle : null) }}
       data-state={table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined}
       onClick={() => props.onRowClick && props.onRowClick(row.original)}
+      {...(dndAttributes ?? {})}
+      {...(dndListeners ?? {})}
       className={cn(
         'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
         props.onRowClick && 'cursor-pointer',

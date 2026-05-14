@@ -17,9 +17,8 @@ class PromotionHeader(BaseModel):
     )
     name: Optional[str] = None
     description: Optional[str] = None
-    start_date: str | date
-    end_date: str | date
-    promo_type: str
+    start_date: Optional[str | date] = None
+    end_date: Optional[str | date] = None
     is_active: Optional[bool] = None
     attachment_id: Optional[List[str]] = None
 

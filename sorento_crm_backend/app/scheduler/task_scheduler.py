@@ -14,7 +14,7 @@ from app.services.user_sla_daily_summary_service import run_user_sla_daily_summa
 from app.services.marketing_service import PromotionService
 from app.services.automation_service import AutomationService
 from app.config import settings
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +31,63 @@ def _handler_integration_log_retry(db, task):
 
 
 def _handler_import_job_processor(db, task):
-    """Handler for import_job_processor: process RQ import jobs (no db from task)."""
-    result = _run_import_jobs_impl()
-    return result
+    """Drain RQ imports queue (race-safe lpop) + reconcile orphan QUEUED rows."""
+    drain = run_sync_rq_jobs("imports", max_jobs=2)
+    orphans = _reconcile_orphan_import_jobs(db)
+    return {**drain, "orphans_failed": orphans}
+
+
+def _reconcile_orphan_import_jobs(db) -> int:
+    """Flip QUEUED `import_jobs` rows to FAILED when their RQ job is gone.
+
+    Catches rows where the worker exited before `start_job` ran (e.g. early
+    exception in task body or temp-file unreachable across containers). Only
+    rows older than 3 minutes are inspected so fresh enqueues are not raced.
+    """
+    from rq.job import Job
+    from rq.exceptions import NoSuchJobError
+    from app.models.job import ImportJob, JobStatus
+    from app.services.job_service import JobService
+    from app.services.queue_service import redis_conn
+
+    cutoff = datetime.utcnow() - timedelta(minutes=3)
+    rows = (
+        db.query(ImportJob)
+        .filter(
+            ImportJob.status == JobStatus.QUEUED.value,
+            ImportJob.created_at < cutoff,
+        )
+        .limit(50)
+        .all()
+    )
+    if not rows:
+        return 0
+    job_service = JobService(db)
+    failed = 0
+    for row in rows:
+        rq_job_id = str(row.job_id)
+        try:
+            rq_job = Job.fetch(rq_job_id, connection=redis_conn)
+            status = rq_job.get_status()
+        except NoSuchJobError:
+            status = None
+        except Exception:
+            continue
+        if status in (None, "failed", "canceled"):
+            try:
+                job_service.fail_job(
+                    rq_job_id,
+                    "Import did not start (worker dropped before processing).",
+                )
+                failed += 1
+            except Exception:
+                logger.exception("Failed to fail orphan import job %s", rq_job_id)
+    return failed
 
 
 def _handler_notification_delivery_processor(db, task):
-    """Handler for notification_delivery_processor: process notification email/push deliveries from queue."""
-    result = _run_notification_delivery_jobs_impl()
-    return result
+    """Handler for notification_delivery_processor: drain notifications queue (race-safe lpop)."""
+    return run_sync_rq_jobs("notifications", max_jobs=20)
 
 
 def _handler_embedding_job_processor(db, task):
@@ -120,112 +168,6 @@ def _handler_form_sla_overdue_scan(db, task):
     return FormSLAOrchestrator(db).scan_overdue_and_escalate()
 
 
-def _run_notification_delivery_jobs_impl():
-    """Process jobs from the notifications queue (email and web_push deliveries). Returns summary dict."""
-    from rq.job import Job
-    from app.services.queue_service import redis_conn
-
-    queue = get_queue("notifications")
-    queue_length = len(queue)
-    if queue_length == 0:
-        return {"processed": 0, "queued": 0}
-    all_job_ids = queue.get_job_ids()
-    if not all_job_ids:
-        return {"processed": 0, "queued": 0}
-    queued_jobs = []
-    for job_id in all_job_ids:
-        try:
-            job = Job.fetch(job_id, connection=redis_conn)
-            if job.get_status() == "queued":
-                queued_jobs.append(job)
-            else:
-                try:
-                    queue.remove(job)
-                except Exception:
-                    pass
-        except Exception:
-            continue
-    if not queued_jobs:
-        return {"processed": 0, "queued": 0}
-    max_jobs_per_run = 20
-    processed = 0
-    for job in queued_jobs[:max_jobs_per_run]:
-        try:
-            job.set_status("started")
-            job.save()
-            result = job.func(*job.args, **job.kwargs)
-            job.set_status("finished")
-            job.save()
-            try:
-                queue.remove(job)
-            except Exception:
-                pass
-            processed += 1
-        except Exception as e:
-            logger.error("Error processing notification job %s: %s", job.id, e, exc_info=True)
-            try:
-                job.set_status("failed")
-                job.meta["exc_info"] = str(e)
-                job.save()
-                queue.remove(job)
-            except Exception:
-                pass
-    return {"processed": processed, "queued": len(queued_jobs)}
-
-
-def _run_import_jobs_impl():
-    """Logic of process_import_jobs, returns summary dict."""
-    from rq.job import Job
-    from app.services.queue_service import redis_conn
-
-    queue = get_queue("imports")
-    queue_length = len(queue)
-    if queue_length == 0:
-        return {"processed": 0, "queued": 0}
-    all_job_ids = queue.get_job_ids()
-    if not all_job_ids:
-        return {"processed": 0, "queued": 0}
-    queued_jobs = []
-    for job_id in all_job_ids:
-        try:
-            job = Job.fetch(job_id, connection=redis_conn)
-            if job.get_status() == "queued":
-                queued_jobs.append(job)
-            else:
-                try:
-                    queue.remove(job)
-                except Exception:
-                    pass
-        except Exception:
-            continue
-    if not queued_jobs:
-        return {"processed": 0, "queued": 0}
-    max_jobs_per_run = 2
-    processed = 0
-    for job in queued_jobs[:max_jobs_per_run]:
-        try:
-            job.set_status("started")
-            job.save()
-            result = job.func(*job.args, **job.kwargs)
-            job.set_status("finished")
-            job.save()
-            try:
-                queue.remove(job)
-            except Exception:
-                pass
-            processed += 1
-        except Exception as e:
-            logger.error("Error processing import job %s: %s", job.id, e, exc_info=True)
-            try:
-                job.set_status("failed")
-                job.meta["exc_info"] = str(e)
-                job.save()
-                queue.remove(job)
-            except Exception:
-                pass
-    return {"processed": processed, "queued": len(queued_jobs)}
-
-
 def _run_queue_jobs_impl(queue_name: str, max_jobs_per_run: int) -> dict:
     """Generic queue processor used by scheduled task heartbeat."""
     return run_sync_rq_jobs(queue_name, max_jobs_per_run)
@@ -252,106 +194,6 @@ def process_pending_integration_logs():
         db.close()
 
 
-def process_import_jobs():
-    """
-    Process RQ import jobs from the queue.
-    This function is called periodically by the scheduler to process queued import jobs.
-    Manually executes jobs without registering a worker to avoid conflicts.
-    """
-    try:
-        from rq.job import Job
-        from app.services.queue_service import redis_conn
-        import time
-
-        # Get the imports queue
-        queue = get_queue("imports")
-
-        # Check if there are any job IDs in the RQ (Redis) queue.
-        # Note: This is the RQ queue, not the import_jobs DB table. Old processed
-        # jobs are removed below so this count stays accurate.
-        queue_length = len(queue)
-        if queue_length == 0:
-            logger.debug("RQ queue is empty, no jobs to process")
-            return
-
-        logger.debug(f"RQ queue has {queue_length} job ID(s), checking for queued jobs...")
-
-        # Get all job IDs from the queue
-        all_job_ids = queue.get_job_ids()
-        if not all_job_ids:
-            logger.debug("No job IDs found in queue")
-            return
-
-        # Filter for queued jobs only; remove stale (finished/failed) job IDs from queue
-        queued_jobs = []
-        for job_id in all_job_ids:
-            try:
-                job = Job.fetch(job_id, connection=redis_conn)
-                if job.get_status() == "queued":
-                    queued_jobs.append(job)
-                else:
-                    # Already processed or failed; remove from queue so len(queue) is accurate
-                    try:
-                        queue.remove(job)
-                    except Exception:
-                        pass
-            except Exception as e:
-                logger.debug(f"Could not fetch job {job_id}: {str(e)}")
-                continue
-
-        if not queued_jobs:
-            logger.debug("No queued jobs found (all jobs are already started/finished/failed)")
-            return
-
-        logger.info(f"Found {len(queued_jobs)} queued job(s) to process")
-
-        # Process up to 2 jobs per scheduler run
-        jobs_processed = 0
-        max_jobs_per_run = 2
-
-        for job in queued_jobs[:max_jobs_per_run]:
-            try:
-                logger.info(f"Processing job {job.id} (status: {job.get_status()})")
-
-                # Mark job as started in RQ
-                job.set_status("started")
-                job.save()
-
-                # Call the job function directly with its arguments
-                # This avoids signal handling issues in background threads
-                # The job function handles its own database job status updates
-                result = job.func(*job.args, **job.kwargs)
-
-                # Mark job as finished in RQ and remove from queue so queue length stays accurate
-                job.set_status("finished")
-                job.save()
-                try:
-                    queue.remove(job)
-                except Exception as remove_err:
-                    logger.debug(f"Could not remove job {job.id} from queue: {remove_err}")
-
-                jobs_processed += 1
-                logger.info(f"Successfully processed import job {job.id} via scheduler")
-            except Exception as e:
-                logger.error(f"Error processing import job {job.id}: {str(e)}", exc_info=True)
-                # Try to mark job as failed and remove from queue
-                try:
-                    job.set_status("failed")
-                    job.meta["exc_info"] = str(e)
-                    job.save()
-                    queue.remove(job)
-                except Exception as save_error:
-                    logger.debug(f"Could not update/remove job {job.id}: {save_error}")
-
-        if jobs_processed > 0:
-            logger.info(f"Scheduler successfully processed {jobs_processed} import job(s) from queue")
-        else:
-            logger.debug("No jobs were processed in this run")
-
-    except Exception as e:
-        logger.error(f"Error processing import jobs in scheduler: {str(e)}", exc_info=True)
-
-
 def _scheduled_tasks_heartbeat():
     """Heartbeat: run due DB-configured scheduled tasks and persist run logs."""
     db = SessionLocal()
@@ -363,12 +205,8 @@ def _scheduled_tasks_heartbeat():
         db.close()
 
 
-def start_scheduler():
-    """
-    Start the APScheduler background scheduler.
-    Uses a single heartbeat to execute due DB-configured tasks; handlers are registered below.
-    """
-    # Register handlers for task keys (used when tasks are due in DB)
+def register_task_handlers():
+    """Register all scheduled task handlers. Safe to call multiple times."""
     register_handler("integration_log_retry", _handler_integration_log_retry)
     register_handler("import_job_processor", _handler_import_job_processor)
     register_handler("notification_delivery_processor", _handler_notification_delivery_processor)
@@ -378,6 +216,14 @@ def start_scheduler():
     register_handler("respond_contacts_sync", run_respond_contacts_sync)
     register_handler("automation_runner", _handler_automation_runner)
     register_handler("form_sla_overdue_scan", _handler_form_sla_overdue_scan)
+
+
+def start_scheduler():
+    """
+    Start the APScheduler background scheduler.
+    Uses a single heartbeat to execute due DB-configured tasks.
+    """
+    register_task_handlers()
 
     scheduler = BackgroundScheduler()
 

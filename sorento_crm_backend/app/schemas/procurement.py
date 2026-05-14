@@ -152,7 +152,7 @@ class InboundShipmentLineResponse(InboundShipmentLineBase):
 
 
 class InboundShipmentBase(BaseModel):
-    shipment_number: str
+    shipment_number: Optional[str] = None
     supplier_id: Optional[str] = None
     shipment_date: date
     estimated_arrival_date: Optional[date] = None
@@ -300,7 +300,7 @@ class BulkDeletePurchaseRequestsRequest(BaseModel):
 
 class InboundShipmentSimple(BaseModel):
     id: str
-    shipment_number: str
+    shipment_number: Optional[str] = None
     shipping_container_number: Optional[str] = None
 
     class Config:

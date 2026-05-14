@@ -22,14 +22,14 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 interface WarehouseOption {
   id: string;
   warehouse_code: string;
-  warehouse_name: string;
+  warehouse_name: string | null;
 }
 
 interface WarehouseComboboxProps {
   value: string;
   onChange: (value: string) => void;
   warehouses: WarehouseOption[];
-  warehouseFallback?: { id: string; warehouse_code: string; warehouse_name: string } | null;
+  warehouseFallback?: { id: string; warehouse_code: string; warehouse_name: string | null } | null;
   placeholder?: string;
   disabled?: boolean;
   className?: string;
@@ -46,7 +46,11 @@ export function WarehouseCombobox({
 }: WarehouseComboboxProps) {
   const [open, setOpen] = useState(false);
   const selected = warehouses.find((w) => w.id === value) ?? (value ? warehouseFallback : null);
-  const displayLabel = selected ? `${selected.warehouse_code} - ${selected.warehouse_name}` : '';
+  const displayLabel = selected
+    ? selected.warehouse_name
+      ? `${selected.warehouse_code} - ${selected.warehouse_name}`
+      : selected.warehouse_code
+    : '';
 
   const options: WarehouseOption[] = [
     ...warehouses,
@@ -81,14 +85,14 @@ export function WarehouseCombobox({
                 {options.map((w) => (
                   <CommandItem
                     key={w.id}
-                    value={`${w.warehouse_code} ${w.warehouse_name}`}
+                    value={`${w.warehouse_code} ${w.warehouse_name ?? ''}`}
                     onSelect={() => {
                       onChange(value === w.id ? '' : w.id);
                       setOpen(false);
                     }}
                   >
                     <span className="truncate">
-                      {w.warehouse_code} - {w.warehouse_name}
+                      {w.warehouse_name ? `${w.warehouse_code} - ${w.warehouse_name}` : w.warehouse_code}
                     </span>
                     {value === w.id && <Check className="size-4 ms-auto" />}
                   </CommandItem>

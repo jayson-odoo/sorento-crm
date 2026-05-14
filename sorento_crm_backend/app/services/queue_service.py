@@ -1,5 +1,6 @@
 """Queue service for background job processing."""
 import redis
+import threading
 from rq import Queue
 from rq.job import Job, JobStatus
 from rq.command import send_stop_job_command
@@ -8,6 +9,10 @@ from app.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Queues whose enqueue should immediately kick a daemon-thread drain in the same
+# process. Pinned set keeps unrelated queues (e.g. embeddings) on their own scheduler.
+_IMMEDIATE_DRAIN_QUEUES: Dict[str, int] = {"imports": 1, "notifications": 5}
 
 # Initialize Redis connection for RQ (binary mode required for pickled jobs)
 # RQ stores pickled Python objects which are binary, so decode_responses must be False
@@ -29,7 +34,14 @@ def enqueue_job(
     job_timeout: int = 3600,  # 1 hour default timeout
     **kwargs
 ) -> Job:
-    """Enqueue a job to the specified queue."""
+    """Enqueue a job to the specified queue.
+
+    For queues in `_IMMEDIATE_DRAIN_QUEUES`, fire a daemon-thread drain in the
+    same process right after enqueue so the user does not wait up to one
+    scheduler heartbeat (~1 minute) for the queued job to start. The scheduler
+    heartbeat remains a safety net for jobs that any process failed to drain.
+    Drain uses atomic `lpop`, so concurrent drainers cannot double-claim.
+    """
     queue = get_queue(queue_name)
     job = queue.enqueue(
         func,
@@ -38,7 +50,25 @@ def enqueue_job(
         **kwargs
     )
     logger.info(f"Job {job.id} enqueued to {queue_name} queue")
+    max_jobs = _IMMEDIATE_DRAIN_QUEUES.get(queue_name)
+    if max_jobs:
+        trigger_drain_async(queue_name, max_jobs)
     return job
+
+
+def trigger_drain_async(queue_name: str, max_jobs: int = 1) -> None:
+    """Spawn a daemon thread that drains up to `max_jobs` from `queue_name` now."""
+    def _drain():
+        try:
+            run_sync_rq_jobs(queue_name, max_jobs)
+        except Exception:
+            logger.exception("Immediate drain failed for queue %s", queue_name)
+
+    threading.Thread(
+        target=_drain,
+        name=f"queue-drain-{queue_name}",
+        daemon=True,
+    ).start()
 
 
 def get_job_status(job_id: str) -> Optional[Dict[str, Any]]:

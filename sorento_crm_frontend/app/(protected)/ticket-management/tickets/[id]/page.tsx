@@ -36,6 +36,7 @@ import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/Form
 import {
   cancelTicketDraft,
   changeTicketStatus,
+  deleteTicket,
   getTicket,
   submitTicketDraft,
   updateTicket,
@@ -44,6 +45,8 @@ import {
   updateTicketResponse,
   updateTicketResponseAndReply,
 } from '../services/ticketService';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { Trash2 } from 'lucide-react';
 import {
   TICKET_CATEGORIES,
   TICKET_PRIORITIES,
@@ -93,6 +96,7 @@ export default function TicketDetailPage({ params }: PageProps) {
   const [priorityDraft, setPriorityDraft] = useState<TicketPriority>('medium');
   const [categoryDraft, setCategoryDraft] = useState<TicketCategory>('bug');
   const [busy, setBusy] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   async function reload() {
     setLoading(true);
@@ -272,6 +276,14 @@ export default function TicketDetailPage({ params }: PageProps) {
             <Button variant="outline" onClick={() => router.push('/ticket-management/tickets')}>
               Back to list
             </Button>
+            <Button
+              variant="destructive"
+              onClick={() => setDeleteOpen(true)}
+              disabled={busy}
+            >
+              <Trash2 className="size-4" />
+              Delete
+            </Button>
           </ToolbarActions>
         </Toolbar>
       </Container>
@@ -281,7 +293,7 @@ export default function TicketDetailPage({ params }: PageProps) {
           <FormDetailWithSLATabs sourceEntityType="ticket" sourceEntityId={ticket.id}>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* main column */}
-            <div className="lg:col-span-2 flex flex-col gap-4">
+            <div className="lg:col-span-2 min-w-0 flex flex-col gap-4">
               <Card className="p-5">
                 <div className="flex items-center gap-2 mb-3">
                   <TicketStatusBadge status={ticket.status} />
@@ -371,11 +383,11 @@ export default function TicketDetailPage({ params }: PageProps) {
                     <h2 className="text-xl font-semibold mb-2">{ticket.title}</h2>
                     {ticket.description_html ? (
                       <div
-                        className="prose prose-sm max-w-none text-sm"
+                        className="prose prose-sm max-w-none text-sm break-words [&_pre]:whitespace-pre-wrap [&_pre]:break-all [&_code]:break-all"
                         dangerouslySetInnerHTML={{ __html: ticket.description_html }}
                       />
                     ) : ticket.description_text ? (
-                      <div className="prose prose-sm max-w-none whitespace-pre-wrap text-sm">{ticket.description_text}</div>
+                      <div className="prose prose-sm max-w-none whitespace-pre-wrap break-words text-sm">{ticket.description_text}</div>
                     ) : (
                       <span className="text-muted-foreground text-sm">No description.</span>
                     )}
@@ -461,7 +473,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                   </div>
                 ) : ticket.response_html ? (
                   <div
-                    className="text-sm prose prose-sm max-w-none"
+                    className="text-sm prose prose-sm max-w-none break-words [&_pre]:whitespace-pre-wrap [&_pre]:break-all [&_code]:break-all"
                     dangerouslySetInnerHTML={{ __html: ticket.response_html }}
                   />
                 ) : (
@@ -507,7 +519,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                   </div>
                 ) : ticket.resolution_html ? (
                   <div
-                    className="text-sm prose prose-sm max-w-none"
+                    className="text-sm prose prose-sm max-w-none break-words [&_pre]:whitespace-pre-wrap [&_pre]:break-all [&_code]:break-all"
                     dangerouslySetInnerHTML={{ __html: ticket.resolution_html }}
                   />
                 ) : (
@@ -599,6 +611,21 @@ export default function TicketDetailPage({ params }: PageProps) {
           </FormDetailWithSLATabs>
         </Container>
       </EntityActivitiesLayout>
+
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        description={
+          <>
+            Permanently delete ticket <strong>{ticket.ticket_number ?? ticket.id}</strong>? This action cannot be undone.
+          </>
+        }
+        onDelete={async () => {
+          await deleteTicket(ticket.id);
+        }}
+        successMessage="Ticket deleted"
+        onSuccess={() => router.push('/ticket-management/tickets')}
+      />
     </>
   );
 }

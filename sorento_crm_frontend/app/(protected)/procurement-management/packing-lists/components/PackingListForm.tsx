@@ -83,7 +83,7 @@ export default function PackingListForm({
     if (!packingList || !isEditMode || lastInitializedIdRef.current === packingList.id) return;
 
     form.reset({
-      shipment_number: packingList.shipment_number,
+      shipment_number: packingList.shipment_number ?? '',
       supplier_id: packingList.supplier_id ?? '',
       shipment_date: packingList.shipment_date ? new Date(packingList.shipment_date).toISOString().slice(0, 10) : '',
       estimated_arrival_date: packingList.estimated_arrival_date
@@ -107,7 +107,7 @@ export default function PackingListForm({
   const onSubmit = async (data: PackingListSchemaType) => {
     try {
       const payload = {
-        shipment_number: data.shipment_number,
+        shipment_number: data.shipment_number?.trim() ? data.shipment_number.trim() : null,
         supplier_id: data.supplier_id || undefined,
         shipment_date: data.shipment_date,
         estimated_arrival_date: data.estimated_arrival_date || undefined,
@@ -162,7 +162,7 @@ export default function PackingListForm({
                 name="shipment_number"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Shipment Number *</FormLabel>
+                    <FormLabel>Shipment Number</FormLabel>
                     <FormControl>
                       <Input placeholder="e.g. FJ25476991" {...field} disabled={isEditMode} />
                     </FormControl>

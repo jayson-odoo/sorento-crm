@@ -63,7 +63,6 @@ class ListSearchRequest(BaseModel):
     workflow_submission_state_code: Optional[str] = None
     # Promotions (list-query + UI quick filters)
     promotion_status: Optional[str] = None
-    promotion_promo_type: Optional[str] = None
     promotion_access_level: Optional[str] = None
 
     @field_validator("resource")
@@ -99,7 +98,6 @@ class ListExportRequest(BaseModel):
     workflow_form_definition_id: Optional[str] = None
     workflow_submission_state_code: Optional[str] = None
     promotion_status: Optional[str] = None
-    promotion_promo_type: Optional[str] = None
     promotion_access_level: Optional[str] = None
 
     @field_validator("resource")

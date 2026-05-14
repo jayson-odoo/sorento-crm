@@ -17,9 +17,6 @@ export const PromotionSchema = z.object({
     .string()
     .min(3, { message: 'Promotion name must be at least 3 characters long.' })
     .max(255, { message: 'Promotion name must not exceed 255 characters.' }),
-  promo_type: z.enum(['price_override', 'discount_percent', 'discount_amount', 'bundle', 'other'], {
-    errorMap: () => ({ message: 'Please select a valid promotion type.' }),
-  }),
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
   start_date: ymd,
   end_date: ymd,

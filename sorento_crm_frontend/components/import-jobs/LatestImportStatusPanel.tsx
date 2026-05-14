@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useImportJobs } from '@/app/(protected)/system-management/import-jobs/hooks/useImportJobs';
 import type { ImportJob } from '@/app/(protected)/system-management/import-jobs/types/importJob.types';
@@ -10,6 +10,7 @@ import { Progress } from '@/components/ui/progress';
 import { formatDateTime } from '@/lib/helpers';
 import { ExternalLink, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useQueryClient } from '@tanstack/react-query';
 
 export interface LatestImportStatusPanelProps {
   /** Job type filter (e.g. product_import, order_tracking_import, grn_listing_import, spo_import). */
@@ -22,6 +23,10 @@ export interface LatestImportStatusPanelProps {
   defaultExpanded?: boolean;
   /** If true, show the panel even when there is no job (displays "No recent import" placeholder). */
   showWhenEmpty?: boolean;
+  /** Query keys to invalidate when the latest job transitions to finished/failed. */
+  invalidateQueryKeys?: readonly (readonly unknown[])[];
+  /** Called when the latest job transitions from in-progress to a terminal status. */
+  onJobFinished?: (job: ImportJob) => void;
 }
 
 function statusVariant(status: string): 'primary' | 'secondary' | 'success' | 'warning' | 'destructive' | 'outline' {
@@ -90,14 +95,19 @@ function JobPanelContent({ job }: { job: ImportJob }) {
   );
 }
 
+const TERMINAL_STATUSES = new Set(['finished', 'failed', 'cancelled']);
+
 export function LatestImportStatusPanel({
   jobType,
   title,
   className,
   defaultExpanded = false,
   showWhenEmpty = false,
+  invalidateQueryKeys,
+  onJobFinished,
 }: LatestImportStatusPanelProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const queryClient = useQueryClient();
   const { data, isLoading, isError } = useImportJobs({
     pageIndex: 0,
     pageSize: 1,
@@ -105,6 +115,23 @@ export function LatestImportStatusPanel({
   });
 
   const job: ImportJob | undefined = data?.data?.[0];
+  const lastStatusRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!job) {
+      lastStatusRef.current = null;
+      return;
+    }
+    const prev = lastStatusRef.current;
+    const curr = job.status;
+    lastStatusRef.current = curr;
+    if (prev && prev !== curr && !TERMINAL_STATUSES.has(prev) && TERMINAL_STATUSES.has(curr)) {
+      invalidateQueryKeys?.forEach((key) => {
+        queryClient.invalidateQueries({ queryKey: [...key] });
+      });
+      onJobFinished?.(job);
+    }
+  }, [job, invalidateQueryKeys, onJobFinished, queryClient]);
 
   if (isLoading && !job) {
     return (

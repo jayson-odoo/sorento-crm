@@ -68,7 +68,7 @@ class InboundShipment(Base):
     __tablename__ = "inbound_shipments"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    shipment_number = Column(String(50), unique=True, nullable=False)
+    shipment_number = Column(String(50), unique=True, nullable=True)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
     shipment_date = Column(Date, nullable=False)
     estimated_arrival_date = Column(Date, nullable=True)

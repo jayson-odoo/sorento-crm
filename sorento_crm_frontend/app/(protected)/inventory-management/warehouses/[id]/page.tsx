@@ -183,7 +183,7 @@ export default function WarehouseDetailPage({
           <div className="flex items-center justify-between">
             <div className="space-y-1">
               <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-bold">{warehouse.warehouse_name}</h1>
+                <h1 className="text-2xl font-bold">{warehouse.warehouse_name || warehouse.warehouse_code}</h1>
                 <Badge
                   variant={warehouse.is_active ? 'success' : 'secondary'}
                   appearance="ghost"
@@ -226,7 +226,7 @@ export default function WarehouseDetailPage({
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">System Location Description</p>
-                  <p className="font-medium">{warehouse.warehouse_name}</p>
+                  <p className="font-medium">{warehouse.warehouse_name || '-'}</p>
                 </div>
                 {warehouse.location && (
                   <div>

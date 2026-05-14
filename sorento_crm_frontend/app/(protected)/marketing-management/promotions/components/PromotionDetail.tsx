@@ -423,14 +423,6 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     setAddProductDialogOpen(true);
   };
 
-  const typeLabels: Record<string, string> = {
-    price_override: 'Price Override',
-    discount_percent: 'Discount %',
-    discount_amount: 'Discount Amount',
-    bundle: 'Bundle',
-    other: 'Other',
-  };
-
   const fmtMoney = (n: number) =>
     new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(n);
 
@@ -549,7 +541,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            Promo Code: {promotion.promo_code} • Type: {typeLabels[promotion.promo_type] || promotion.promo_type}
+            Promo Code: {promotion.promo_code}
           </p>
         </div>
         <div className="flex gap-2">

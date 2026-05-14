@@ -231,9 +231,8 @@ export interface Promotion {
   id: string;
   promo_code: string;
   name: string;
-  promo_type: 'price_override' | 'discount_percent' | 'discount_amount' | 'bundle' | 'other';
-  start_date: Date;
-  end_date: Date;
+  start_date: Date | null;
+  end_date: Date | null;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;

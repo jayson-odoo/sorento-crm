@@ -59,7 +59,6 @@ async def get_promotions(
         None,
         description="End of period window (YYYY-MM-DD). Filters promotions whose date range overlaps.",
     ),
-    promo_type: Optional[str] = Query(None, description="Filter by promotion type e.g. price_override"),
     sort: Optional[str] = Query(None, description="Sort field e.g. created_at, promo_code, products_count"),
     dir: Optional[str] = Query("desc", description="asc or desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -80,7 +79,6 @@ async def get_promotions(
             active=active,
             period_from=period_from,
             period_to=period_to,
-            promo_type=promo_type,
             sort_field=sort,
             sort_dir=dir,
         )
@@ -297,17 +295,26 @@ async def get_promotion_products_nested(
     promotion_id: str = Path(..., description="Promotion ID"),
     page: int = Query(1, ge=1),
     limit: int = Query(1000, ge=1, le=5000, description="Max promotion product lines per page."),
+    contact_id: Optional[str] = Query(None, description="Respond.io contact id. Pair with space_id to filter by the contact's access levels."),
+    space_id: Optional[str] = Query(None, description="Respond.io space id. Pair with contact_id."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get products for a specific promotion (nested route)."""
+    """Get products for a specific promotion (nested route). Use contact_id+space_id to enforce contact access_levels."""
     try:
         import logging
         logger = logging.getLogger(__name__)
         logger.debug(f"Fetching products for promotion_id: {promotion_id}")
-        
+
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
         service = PromotionProductService(db)
-        result = service.list_promotion_products(promotion_id, page=page, limit=limit)
+        result = service.list_promotion_products(
+            promotion_id,
+            page=page,
+            limit=limit,
+            contact_access_codes=contact_codes,
+        )
         products = result.get("data", [])
         logger.debug(f"Found {len(products)} products for promotion {promotion_id}")
         

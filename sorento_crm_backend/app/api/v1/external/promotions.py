@@ -163,11 +163,9 @@ def create_promotion(
 
     start_date = parse_date_value(payload.promotions.start_date)
     end_date = parse_date_value(payload.promotions.end_date)
-    if not start_date or not end_date:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid start or end date")
     today = datetime.utcnow().date()
 
-    ref_date = start_date
+    ref_date = start_date or today
     numbering = NumberingService(db)
     generated_promo_code = numbering.get_next_number(
         "external_promotion",
@@ -186,13 +184,15 @@ def create_promotion(
 
     is_active = payload.promotions.is_active
     if is_active is None:
-        is_active = start_date <= today <= end_date
+        if start_date and end_date:
+            is_active = start_date <= today <= end_date
+        else:
+            is_active = True
 
     created_by = None if current_user.get("id") == "system" else current_user["id"]
     promotion_kw: dict = {
         "promo_code": generated_promo_code,
         "name": payload.promotions.name or generated_promo_code,
-        "promo_type": payload.promotions.promo_type,
         "description": payload.promotions.description,
         "start_date": start_date,
         "end_date": end_date,

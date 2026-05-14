@@ -227,7 +227,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "List promotions (summary fields + linked attachments inline; no product lines). "
             "Each row already carries its `attachments` array — no second tool call needed for "
             "promotion documents. Default returns ACTIVE promotions (is_active=true AND today "
-            "within start_date/end_date); when a narrowing filter (query, promo_type, period) "
+            "within start_date/end_date); when a narrowing filter (query, period) "
             "yields zero active matches, falls back to INACTIVE matches automatically and sets "
             "fallback_used=true on the response. Pass active=false to fetch historical-only "
             "(no fallback). Use period_from / period_to (YYYY-MM-DD) to scope by overlap with the "
@@ -239,7 +239,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/marketing/promotions",
         (),
-        ("page", "limit", "query", "active", "promo_type", "period_from", "period_to", "sort", "dir", "contact_id", "space_id"),
+        ("page", "limit", "query", "active", "period_from", "period_to", "sort", "dir", "contact_id", "space_id"),
     ),
     ToolSpec(
         "crm_marketing_promotions_get",
@@ -264,7 +264,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/marketing/promotions/{promotion_id}/products",
         ("promotion_id",),
-        ("page", "limit"),
+        ("page", "limit", "contact_id", "space_id"),
     ),
     ToolSpec(
         "crm_marketing_promotion_products_list",
@@ -310,6 +310,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "width_min", "width_max",
             "height_min", "height_max",
             "any_dimension_min", "any_dimension_max",
+            "contact_id", "space_id",
         ),
     ),
     ToolSpec(

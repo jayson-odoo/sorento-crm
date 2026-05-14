@@ -9,7 +9,6 @@ def _build_promotion_namespace(attachments: list) -> SimpleNamespace:
         id="promo-1",
         promo_code="PROMO01",
         name="Promo 01",
-        promo_type="bundle",
         description="Demo",
         start_date="2026-01-01",
         end_date="2026-12-31",

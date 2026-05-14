@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments } from '../services/attachmentService';
+import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments, bulkMoveAttachments } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
 import { getDirectoryTree, createDirectory, updateDirectory, deleteDirectory, restoreDirectory, permanentDeleteDirectory } from '../services/directoryService';
 import { apiFetch } from '@/lib/api';
@@ -85,6 +85,19 @@ export function useUpdateAttachment() {
       queryClient.invalidateQueries({ queryKey: ['promotion-attachments-by-promotion'] });
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to update attachment'),
+  });
+}
+
+export function useBulkMoveAttachments() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ attachmentIds, directoryId }: { attachmentIds: string[]; directoryId: string | null }) =>
+      bulkMoveAttachments(attachmentIds, directoryId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to move attachments'),
   });
 }
 

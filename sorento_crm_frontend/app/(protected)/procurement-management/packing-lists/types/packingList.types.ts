@@ -39,7 +39,7 @@ export interface InboundShipmentLine {
 
 export interface PackingList {
   id: string;
-  shipment_number: string;
+  shipment_number: string | null;
   supplier_id: string;
   shipment_date: Date;
   estimated_arrival_date?: Date | null;
@@ -85,7 +85,7 @@ export interface PackingListDetail extends PackingList {
 }
 
 export interface PackingListFormData {
-  shipment_number: string;
+  shipment_number?: string | null;
   supplier_id?: string;
   shipment_date: string;
   estimated_arrival_date?: string;

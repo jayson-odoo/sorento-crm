@@ -343,7 +343,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Each row carries its `attachments` array — the agent does NOT need to call "
             "crm_marketing_promotion_attachments_* afterwards to get the promotion document. "
             "Default returns ACTIVE promotions (is_active=true AND today within start_date/end_date); "
-            "when the caller passes a narrowing filter (query, promo_type, period_from/period_to, "
+            "when the caller passes a narrowing filter (query, period_from/period_to, "
             "user_type) and zero active match, the tool automatically falls back to INACTIVE matches "
             "and sets fallback_used=true on the response so the agent can phrase the answer accordingly. "
             "Pass active=false for HISTORICAL-only retrieval (no fallback). Use period_from / period_to "
@@ -367,7 +367,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         category="general_enquiries.promotion",
         intent="Fetch one promotion's metadata, groups, and attachments by id.",
         description=(
-            "Get promotion metadata (name, promo_type, start/end dates, FOC tiers/groups) AND linked "
+            "Get promotion metadata (name, start/end dates, FOC tiers/groups) AND linked "
             "attachments inline on the same response — no second tool call needed for the promotion "
             "document. Does not include product lines by default — set include_products=true only if "
             "the user is asking specifically about the SKU coverage."

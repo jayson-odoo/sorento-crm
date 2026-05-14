@@ -237,11 +237,15 @@ async def list_all_promotion_products(
         None,
         description="Maximum value (mm) for ANY of length/width/height.",
     ),
+    contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id). Pair with space_id to filter promotions by the contact's M2M access types."),
+    space_id: Optional[str] = Query(None, description="Respond.io space id (respond_workspaces.space_id). Pair with contact_id."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get promotion products with pagination. Scope to one promotion via promotion_id; use query for text search."""
+    """Get promotion products with pagination. Scope to one promotion via promotion_id; use query for text search. Use contact_id+space_id to filter by the contact's access levels."""
     try:
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
         service = PromotionProductService(db)
         resolved_pid: Optional[str] = None
         resolved_pids: Optional[List[str]] = None
@@ -313,6 +317,7 @@ async def list_all_promotion_products(
             height_max=filter_state["height_max"],
             any_dimension_min=filter_state["any_dimension_min"],
             any_dimension_max=filter_state["any_dimension_max"],
+            contact_access_codes=contact_codes,
         )
         # Map promo_selling_price to promotion_price for each product
         products = result.get("data", [])

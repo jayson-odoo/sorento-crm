@@ -6,7 +6,6 @@ from typing import Optional
 from datetime import date, datetime
 
 from app.schemas.promotion_dates import (
-    normalize_promotion_start_end,
     normalize_promotion_start_end_optional,
     promotion_date_to_api_iso,
 )
@@ -17,10 +16,9 @@ import uuid
 class PromotionBase(BaseModel):
     promo_code: str
     name: str
-    promo_type: str
     description: Optional[str] = None
-    start_date: date
-    end_date: date
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
     is_active: bool = True
     access_levels: Optional[list[str]] = None
 
@@ -29,13 +27,12 @@ class PromotionCreate(PromotionBase):
     @field_validator("start_date", "end_date", mode="before")
     @classmethod
     def _normalize_promotion_dates(cls, v):
-        return normalize_promotion_start_end(v)
+        return normalize_promotion_start_end_optional(v)
 
 
 class PromotionUpdate(BaseModel):
     promo_code: Optional[str] = None  # editable; unique together with access_levels set
     name: Optional[str] = None
-    promo_type: Optional[str] = None
     description: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
@@ -122,8 +119,8 @@ class PromotionResponse(PromotionBase):
     attachments: list["PromotionAttachmentResponse"] = []
 
     @field_serializer("start_date", "end_date")
-    def _serialize_promotion_boundary_dates(self, v: date) -> str:
-        return promotion_date_to_api_iso(v)
+    def _serialize_promotion_boundary_dates(self, v: Optional[date]) -> Optional[str]:
+        return promotion_date_to_api_iso(v) if v is not None else None
 
     @field_validator('id', 'created_by', mode='before')
     @classmethod
@@ -148,8 +145,8 @@ class PromotionListItemResponse(PromotionBase):
     attachments: list["PromotionAttachmentResponse"] = []
 
     @field_serializer("start_date", "end_date")
-    def _serialize_promotion_boundary_dates_list(self, v: date) -> str:
-        return promotion_date_to_api_iso(v)
+    def _serialize_promotion_boundary_dates_list(self, v: Optional[date]) -> Optional[str]:
+        return promotion_date_to_api_iso(v) if v is not None else None
 
     @field_validator('id', 'created_by', mode='before')
     @classmethod
@@ -261,7 +258,6 @@ class PromotionSimple(BaseModel):
     id: str
     promo_code: str
     name: str
-    promo_type: Optional[str] = None
     is_active: Optional[bool] = None
     description: Optional[str] = None
 

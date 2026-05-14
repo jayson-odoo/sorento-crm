@@ -3,11 +3,9 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { useDraggable } from '@dnd-kit/core';
 import {
   ColumnDef,
   PaginationState,
-  Row,
   RowSelectionState,
   SortingState,
   useReactTable,
@@ -23,7 +21,6 @@ import {
   Trash2,
   Plus,
   RefreshCw,
-  GripVertical,
   FileArchive,
   RotateCcw,
   Shield,
@@ -36,7 +33,8 @@ import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { DataGridTable, DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
+import { DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
+import { DraggableAttachmentsTable } from './DraggableAttachmentsTable';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -76,45 +74,12 @@ import type { Attachment } from '../../attachments/types/attachment.types';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import AttachmentUploadDialog from '../../attachments/components/AttachmentUploadDialog';
 import AttachmentBulkImportDialog from '../../attachments/components/AttachmentBulkImportDialog';
+import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
 import AttachmentDeleteDialog from '../../attachments/components/attachment-delete-dialog';
 import AttachmentBulkDeleteDialog from '../../attachments/components/AttachmentBulkDeleteDialog';
 import AttachmentDetailModal from '../../attachments/components/AttachmentDetailModal';
 import EditAttachmentTypeDialog from '../../attachments/components/EditAttachmentTypeDialog';
 import { TRASH_VIEW_ID, TRASH_FOLDER_PREFIX, FOLDER_ALL_ID } from '../constants';
-
-const DRAG_ID_PREFIX = 'attachment-';
-
-function AttachmentDragHandle({
-  attachment,
-  currentDirectoryId,
-}: {
-  attachment: Attachment;
-  currentDirectoryId: string | null;
-}) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `${DRAG_ID_PREFIX}${attachment.id}`,
-    data: {
-      type: 'attachment',
-      attachmentId: attachment.id,
-      attachmentName: attachment.original_filename,
-      currentDirectoryId: currentDirectoryId ?? null,
-    },
-  });
-  return (
-    <Button
-      ref={setNodeRef}
-      variant="ghost"
-      size="icon"
-      className="size-7 cursor-grab active:cursor-grabbing touch-none"
-      aria-label="Drag to move to folder"
-      style={{ opacity: isDragging ? 0.5 : 1 }}
-      {...attributes}
-      {...listeners}
-    >
-      <GripVertical className="size-4 text-muted-foreground" />
-    </Button>
-  );
-}
 
 interface AttachmentsInFolderPanelProps {
   directoryId: string | null;
@@ -347,23 +312,6 @@ export default function AttachmentsInFolderPanel({
 
   const columns = useMemo<ColumnDef<Attachment>[]>(
     () => [
-      ...(isTrashView
-        ? []
-        : [
-            {
-              id: 'drag',
-              header: () => null,
-              cell: ({ row }: { row: Row<Attachment> }) => (
-                <AttachmentDragHandle
-                  attachment={row.original}
-                  currentDirectoryId={directoryId}
-                />
-              ),
-              size: 40,
-              enableSorting: false,
-              enableResizing: false,
-            },
-          ]),
       {
         id: 'select',
         header: () => <DataGridTableRowSelectAll />,
@@ -564,6 +512,7 @@ export default function AttachmentsInFolderPanel({
       pendingResubmitIds,
       restoreMutation.isPending,
       accessTypeNameByCode,
+      selectedDeletableIds,
     ]
   );
 
@@ -941,9 +890,20 @@ export default function AttachmentsInFolderPanel({
               )}
             </div>
           </CardHeader>
+          <div className="mx-5 mb-2 flex flex-wrap gap-4">
+            <LatestImportStatusPanel
+              jobType="attachment_bulk_import"
+              title="Latest bulk import"
+              invalidateQueryKeys={[['attachments'], ['attachment-directories-tree']]}
+            />
+          </div>
           <CardTable>
             <ScrollArea>
-              <DataGridTable />
+              <DraggableAttachmentsTable
+                currentDirectoryId={directoryId}
+                selectedIds={selectedDeletableIds}
+                draggable={!isTrashView}
+              />
               <ScrollBar orientation="horizontal" />
             </ScrollArea>
           </CardTable>

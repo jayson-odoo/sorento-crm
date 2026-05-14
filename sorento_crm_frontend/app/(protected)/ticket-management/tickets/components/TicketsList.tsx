@@ -24,8 +24,10 @@ import {
 } from '@/components/ui/table';
 import { ListBoardViewToggle } from '@/components/common/ListBoardViewToggle';
 import { useListBoardViewPreference } from '@/hooks/useListBoardViewPreference';
-import { Plus } from 'lucide-react';
-import { getTickets } from '../services/ticketService';
+import { Plus, Trash2 } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { bulkDeleteTickets, getTickets } from '../services/ticketService';
 import type {
   Ticket,
   TicketCategory,
@@ -69,6 +71,9 @@ export default function TicketsList() {
   const [priorityFilter, setPriorityFilter] = useState<TicketPriority | 'all'>('all');
   const [categoryFilter, setCategoryFilter] = useState<TicketCategory | 'all'>('all');
   const [sourceFilter, setSourceFilter] = useState<TicketSourceChannel | 'all'>('all');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
 
   // Debounce search input.
   useEffect(() => {
@@ -80,6 +85,11 @@ export default function TicketsList() {
   useEffect(() => {
     setPage(1);
   }, [debouncedSearch, statusFilter, priorityFilter, categoryFilter, sourceFilter]);
+
+  // Clear selection on filter / page change.
+  useEffect(() => {
+    setSelected(new Set());
+  }, [page, debouncedSearch, statusFilter, priorityFilter, categoryFilter, sourceFilter, mode]);
 
   // Only fetch list-mode data when in list mode.
   useEffect(() => {
@@ -110,7 +120,28 @@ export default function TicketsList() {
     return () => {
       cancelled = true;
     };
-  }, [mode, page, debouncedSearch, statusFilter, priorityFilter, categoryFilter, sourceFilter]);
+  }, [mode, page, debouncedSearch, statusFilter, priorityFilter, categoryFilter, sourceFilter, reloadTick]);
+
+  const allSelectedOnPage = rows.length > 0 && rows.every((r) => selected.has(r.id));
+  const someSelectedOnPage = rows.some((r) => selected.has(r.id));
+
+  function toggleAllOnPage(checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) rows.forEach((r) => next.add(r.id));
+      else rows.forEach((r) => next.delete(r.id));
+      return next;
+    });
+  }
+
+  function toggleRow(id: string, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / PAGE_SIZE)),
@@ -199,7 +230,16 @@ export default function TicketsList() {
           </Select>
         )}
         <ListBoardViewToggle value={mode} onChange={setMode} />
-        <div className="ms-auto">
+        <div className="ms-auto flex items-center gap-2">
+          {mode === 'list' && selected.size > 0 && (
+            <Button
+              variant="destructive"
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              <Trash2 className="size-4" />
+              Delete {selected.size} selected
+            </Button>
+          )}
           <Button asChild>
             <Link href="/ticket-management/tickets/new">
               <Plus className="size-4" /> Create Ticket
@@ -222,6 +262,19 @@ export default function TicketsList() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[40px]">
+                    <Checkbox
+                      checked={
+                        allSelectedOnPage
+                          ? true
+                          : someSelectedOnPage
+                          ? 'indeterminate'
+                          : false
+                      }
+                      onCheckedChange={(v) => toggleAllOnPage(v === true)}
+                      aria-label="Select all rows on this page"
+                    />
+                  </TableHead>
                   <TableHead className="w-[160px]">Ticket #</TableHead>
                   <TableHead>Title</TableHead>
                   <TableHead className="w-[120px]">Status</TableHead>
@@ -237,7 +290,7 @@ export default function TicketsList() {
                 {loading ? (
                   Array.from({ length: 5 }).map((_, i) => (
                     <TableRow key={`skel-${i}`}>
-                      {Array.from({ length: 9 }).map((__, j) => (
+                      {Array.from({ length: 10 }).map((__, j) => (
                         <TableCell key={j}>
                           <Skeleton className="h-4 w-full" />
                         </TableCell>
@@ -247,7 +300,7 @@ export default function TicketsList() {
                 ) : rows.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={9}
+                      colSpan={10}
                       className="h-24 text-center text-muted-foreground"
                     >
                       No tickets match these filters.
@@ -260,6 +313,13 @@ export default function TicketsList() {
                       className="cursor-pointer hover:bg-muted/30"
                       onClick={() => router.push(`/ticket-management/tickets/${t.id}`)}
                     >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selected.has(t.id)}
+                          onCheckedChange={(v) => toggleRow(t.id, v === true)}
+                          aria-label={`Select ticket ${t.ticket_number ?? t.id}`}
+                        />
+                      </TableCell>
                       <TableCell className="font-mono text-xs">
                         {t.ticket_number ?? '—'}
                       </TableCell>
@@ -322,6 +382,25 @@ export default function TicketsList() {
           </div>
         </>
       )}
+
+      <ConfirmDeleteDialog
+        open={bulkDeleteOpen}
+        onOpenChange={setBulkDeleteOpen}
+        description={
+          <>
+            Permanently delete <strong>{selected.size}</strong>{' '}
+            {selected.size === 1 ? 'ticket' : 'tickets'}? This action cannot be undone.
+          </>
+        }
+        onDelete={async () => {
+          await bulkDeleteTickets(Array.from(selected));
+        }}
+        successMessage={`${selected.size} ${selected.size === 1 ? 'ticket' : 'tickets'} deleted`}
+        onSuccess={() => {
+          setSelected(new Set());
+          setReloadTick((n) => n + 1);
+        }}
+      />
     </div>
   );
 }

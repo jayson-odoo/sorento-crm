@@ -66,6 +66,32 @@ PROMOTION_TOOL_NAMES: set[str] = {
 
 STOCK_TOOL_PREFIX = "crm_inventory_stock_"
 INVENTORY_TOOL_PREFIX = "crm_inventory_"
+ORDERS_LIST_TOOL = "crm_order_management_orders_list"
+_ORDERS_LIST_DROP_ROW_KEYS = {
+    "customer_id",
+    "billing_address_id",
+    "shipping_address_id",
+    "subtotal_amount",
+    "kpi_warning",
+    "discount_amount",
+    "tax_amount",
+    "total_amount",
+    "deleted_at",
+    "last_synced_to_excel",
+    "synced_to_excel",
+    "customer",
+    "order_status_id",
+    "customer_ref",
+}
+_ORDERS_LIST_DROP_LINE_KEYS = {
+    "unit_price",
+    "discount",
+    "total",
+    "tax",
+    "total_excluding_tax",
+    "total_including_tax",
+    "line_sequence",
+}
 _MALAYSIA_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 _STOCK_HIDDEN_FIELDS = {
     "quantity_available",
@@ -465,7 +491,83 @@ def _slim_stock_nested_warehouse(value: Any) -> Any:
     return out
 
 
-def _sanitize_tool_response(tool_name: str, raw: str) -> str:
+def _line_matches_product_query(line: Any, term_lower: str) -> bool:
+    """Substring match a single line against a lowercased product_query term.
+
+    Checks the embedded `product` block (product_code / product_name /
+    description) plus raw line-level `product_code` / `product_name` fields if
+    present.
+    """
+    if not isinstance(line, dict):
+        return False
+    product = line.get("product")
+    if isinstance(product, dict):
+        for k in ("product_code", "product_name", "description"):
+            val = product.get(k)
+            if isinstance(val, str) and term_lower in val.lower():
+                return True
+    for k in ("product_code", "product_name"):
+        val = line.get(k)
+        if isinstance(val, str) and term_lower in val.lower():
+            return True
+    return False
+
+
+def _slim_orders_list_row(row: Any, product_query: str | None = None) -> Any:
+    """Trim a single order row for crm_order_management_orders_list.
+
+    Drops fields the assistant never needs (address ids, amount aggregates,
+    sync metadata, embedded customer block). Collapses `order_status` to
+    `status_code` only. Trims each order line to non-pricing fields. When
+    `product_query` is set, filters lines to those matching the term.
+    """
+    if not isinstance(row, dict):
+        return row
+    term_lower = (product_query or "").strip().lower() or None
+    out: dict[str, Any] = {}
+    for key, value in row.items():
+        if key in _ORDERS_LIST_DROP_ROW_KEYS:
+            continue
+        if key == "order_status":
+            if isinstance(value, dict) and value.get("status_code") is not None:
+                out[key] = {"status_code": value["status_code"]}
+            else:
+                out[key] = value
+            continue
+        if key == "lines" and isinstance(value, list):
+            slim_lines: list[Any] = []
+            for line in value:
+                if term_lower and not _line_matches_product_query(line, term_lower):
+                    continue
+                if isinstance(line, dict):
+                    slim_lines.append(
+                        {k: v for k, v in line.items() if k not in _ORDERS_LIST_DROP_LINE_KEYS}
+                    )
+                else:
+                    slim_lines.append(line)
+            out[key] = slim_lines
+            continue
+        out[key] = value
+    return out
+
+
+def _slim_orders_list_response(data: Any, product_query: str | None = None) -> Any:
+    """Apply order-row slimming to list / dict payload shapes."""
+    if isinstance(data, list):
+        return [_slim_orders_list_row(item, product_query) for item in data]
+    if isinstance(data, dict):
+        if isinstance(data.get("data"), list):
+            data = {**data, "data": [_slim_orders_list_row(r, product_query) for r in data["data"]]}
+            return data
+        return _slim_orders_list_row(data, product_query)
+    return data
+
+
+def _sanitize_tool_response(
+    tool_name: str,
+    raw: str,
+    query: dict[str, Any] | None = None,
+) -> str:
     """Single sanitizer entry for every MCP tool response.
 
     * Always normalize `updated_at` → Malaysia time.
@@ -487,6 +589,9 @@ def _sanitize_tool_response(tool_name: str, raw: str) -> str:
         data = _relabel_warehouse_keys(data)
     if tool_name.startswith(STOCK_TOOL_PREFIX):
         data = _slim_stock_nested_warehouse(data)
+    if tool_name == ORDERS_LIST_TOOL:
+        product_query = (query or {}).get("product_query") if isinstance(query, dict) else None
+        data = _slim_orders_list_response(data, product_query if isinstance(product_query, str) else None)
     return json.dumps(data)
 
 
@@ -584,7 +689,7 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
         tool_name=spec.name,
     )
     response = _filter_active_promotion_records(spec.name, response)
-    return _sanitize_tool_response(spec.name, response)
+    return _sanitize_tool_response(spec.name, response, query=query)
 
 
 async def _execute_tool_request_with_body(
@@ -604,7 +709,7 @@ async def _execute_tool_request_with_body(
         body=body,
         tool_name=spec.name,
     )
-    return _sanitize_tool_response(spec.name, response)
+    return _sanitize_tool_response(spec.name, response, query=query)
 
 
 _GUARD_PARAM_NAMES = ("contact_id", "space_id")

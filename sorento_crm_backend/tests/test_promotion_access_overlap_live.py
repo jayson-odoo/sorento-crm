@@ -86,7 +86,6 @@ def fixtures(db: Session):
         id=str(uuid.uuid4()),
         promo_code=f"TEST_DEALER_{suffix}",
         name=f"Dealer-only {suffix}",
-        promo_type="other",
         access_levels=["dealer"],
         is_active=True,
         start_date=start,
@@ -96,7 +95,6 @@ def fixtures(db: Session):
         id=str(uuid.uuid4()),
         promo_code=f"TEST_VIP_{suffix}",
         name=f"VIP-only {suffix}",
-        promo_type="other",
         # Use a catalog code the contact will NOT be assigned to.
         access_levels=["end_user"],
         is_active=True,
@@ -107,7 +105,6 @@ def fixtures(db: Session):
         id=str(uuid.uuid4()),
         promo_code=f"TEST_BOTH_{suffix}",
         name=f"Dealer+End-user {suffix}",
-        promo_type="other",
         access_levels=["dealer", "end_user"],
         is_active=True,
         start_date=start,

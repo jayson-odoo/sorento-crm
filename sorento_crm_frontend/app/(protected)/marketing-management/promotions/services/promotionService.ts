@@ -11,9 +11,9 @@ import type {
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
 export async function getPromotions(
-  params: DataGridApiFetchParams & { promo_type?: string; status?: string; date_from?: string; date_to?: string; user_type?: string },
+  params: DataGridApiFetchParams & { status?: string; date_from?: string; date_to?: string; user_type?: string },
 ): Promise<DataGridApiResponse<Promotion>> {
-  const { pageIndex, pageSize, sorting, searchQuery, promo_type, status, date_from, date_to, user_type } = params;
+  const { pageIndex, pageSize, sorting, searchQuery, status, date_from, date_to, user_type } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -21,7 +21,6 @@ export async function getPromotions(
     limit: String(pageSize),
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
-    ...(promo_type ? { promo_type } : {}),
     ...(status ? { status } : {}),
     ...(date_from ? { date_from } : {}),
     ...(date_to ? { date_to } : {}),
