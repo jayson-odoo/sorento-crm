@@ -267,6 +267,7 @@ class PromotionService:
         whose [start_date, end_date] overlaps with the requested window.
         """
         # Back-compat: legacy `status` query param translates to `active`.
+        show_all = status == "all"
         if active is None and status and status != "all":
             if status == "active":
                 active = True
@@ -287,7 +288,14 @@ class PromotionService:
             Promotion.start_date <= today,
             Promotion.end_date >= today,
         )
-        active_clause = and_(Promotion.is_active.is_(True), is_within_window)
+        no_window = and_(
+            Promotion.start_date.is_(None),
+            Promotion.end_date.is_(None),
+        )
+        active_clause = and_(
+            Promotion.is_active.is_(True),
+            or_(no_window, is_within_window),
+        )
 
         def _apply_common_filters(q):
             if query_norm:
@@ -371,12 +379,15 @@ class PromotionService:
                 order_col = sort_map.get(sort_key, Promotion.created_at)
             return q.order_by(order_col.asc() if dir_norm == "asc" else order_col.desc())
 
-        primary_active_mode: Optional[bool] = True if active is None else active
+        if show_all:
+            primary_active_mode: Optional[bool] = None
+        else:
+            primary_active_mode = True if active is None else active
         q = _ordered_query(primary_active_mode)
         total = q.count()
         fallback_used = False
 
-        if total == 0 and narrowing_filter_present and active is not False:
+        if not show_all and total == 0 and narrowing_filter_present and active is not False:
             q = _ordered_query(False)
             total = q.count()
             fallback_used = total > 0

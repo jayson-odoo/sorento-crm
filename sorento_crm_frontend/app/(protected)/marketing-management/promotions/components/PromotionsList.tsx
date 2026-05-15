@@ -100,7 +100,7 @@ export default function PromotionsList() {
           sort: sortField || 'created_at',
           dir: sortDirection,
           quick_search: searchQuery || undefined,
-          promotion_status: filterStatus === 'all' ? undefined : filterStatus,
+          promotion_status: filterStatus,
           promotion_access_level: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
         });
       }
@@ -109,7 +109,7 @@ export default function PromotionsList() {
         pageSize: pagination.pageSize,
         sorting,
         searchQuery,
-        status: filterStatus === 'all' ? undefined : filterStatus,
+        status: filterStatus,
         user_type: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
       });
     },
@@ -524,7 +524,7 @@ export default function PromotionsList() {
             getPayload={() => ({
               filter: advancedFilter ?? undefined,
               quick_search: searchQuery || undefined,
-              promotion_status: filterStatus === 'all' ? undefined : filterStatus,
+              promotion_status: filterStatus,
               promotion_access_level: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
             })}
             selectedRecordIds={
