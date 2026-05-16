@@ -352,8 +352,27 @@ def process_attachment_bulk_import(
     access_levels_json: str,
     parent_directory_id: Optional[str],
     user_id: str,
+    on_conflict: str = "skip",
 ):
-    """Process attachment bulk import (ZIP) in background with batch processing. Reads ZIP from temp file path."""
+    """Process attachment bulk import (ZIP) in background with batch processing.
+
+    TCK-2026-000020 ZIP collision behaviour (`on_conflict`):
+      * `skip` (default): drop the second occurrence (intra-zip dupe) or keep
+        the existing system row (zip-vs-system dupe). Counted as `skipped`.
+      * `copy`: rename the incoming file with the Google-Drive style suffix
+        loop until free in the resolved directory.
+      * `replace`: update the colliding live attachment row in place
+        (preserves attachment_id + every linkage) and re-fires the
+        `attachment_replaced` webhook.
+
+    Detection key: `(resolved directory_id, lower(filename))` — same as the
+    interactive single-upload path. Empty `directory_id` (root) is also
+    scoped correctly because the partial unique index on attachments only
+    applies when directory_id IS NOT NULL.
+    """
+    on_conflict = (on_conflict or "skip").strip().lower()
+    if on_conflict not in ("skip", "copy", "replace"):
+        on_conflict = "skip"
     from rq import get_current_job
 
     db = SessionLocal()
@@ -457,6 +476,27 @@ def process_attachment_bulk_import(
         failed = 0
         skipped = 0
         processed = 0
+        # TCK-2026-000020 collision tracking.
+        collisions_skipped = 0
+        collisions_renamed_copy = 0
+        collisions_replaced = 0
+        # Intra-zip dedup key: (directory_id_or_None, lower(filename)).
+        seen_in_run: set[tuple[Optional[str], str]] = set()
+        # Helpers from the single-upload path. Local import avoids module-level
+        # circular dependency (attachments route imports services; this task
+        # module also imports services).
+        from app.api.v1.resources.attachments import (
+            _suffix_copy_name,
+            _find_filename_collision,
+        )
+
+        def _name_taken_in_dir(_dir_id: Optional[str], _name: str) -> bool:
+            key = (_dir_id, _name.lower())
+            if key in seen_in_run:
+                return True
+            if _dir_id and _find_filename_collision(db, _dir_id, _name) is not None:
+                return True
+            return False
 
         for i in range(0, len(file_paths), ATTACHMENT_BULK_IMPORT_BATCH_SIZE):
             batch = file_paths[i : i + ATTACHMENT_BULK_IMPORT_BATCH_SIZE]
@@ -486,6 +526,49 @@ def process_attachment_bulk_import(
                         processed += 1
                         continue
 
+                    dir_parts = [p for p in file_path.split("/")[:-1] if p.strip()]
+                    directory_id = dir_service.get_or_create_path(parent_directory_id, dir_parts)
+
+                    # ------------------------------------------------------------------
+                    # Collision detection (intra-zip + zip-vs-system).
+                    # ------------------------------------------------------------------
+                    intra_key = (directory_id, original_filename.lower())
+                    intra_collision = intra_key in seen_in_run
+                    sys_collision = (
+                        _find_filename_collision(db, directory_id, original_filename)
+                        if directory_id
+                        else None
+                    )
+
+                    existing_to_replace = None
+                    if intra_collision or sys_collision is not None:
+                        if on_conflict == "skip":
+                            errors.append(
+                                f"Skipped (filename already exists in target folder): {file_path}"
+                            )
+                            collisions_skipped += 1
+                            skipped += 1
+                            processed += 1
+                            continue
+                        if on_conflict == "copy":
+                            candidate = _suffix_copy_name(original_filename)
+                            while _name_taken_in_dir(directory_id, candidate):
+                                candidate = _suffix_copy_name(candidate)
+                            original_filename = candidate
+                            collisions_renamed_copy += 1
+                        else:  # replace
+                            if sys_collision is None:
+                                # Intra-zip-only collision: cannot "replace" a row that
+                                # doesn't exist yet in the system, so rename the second
+                                # occurrence to keep both.
+                                candidate = _suffix_copy_name(original_filename)
+                                while _name_taken_in_dir(directory_id, candidate):
+                                    candidate = _suffix_copy_name(candidate)
+                                original_filename = candidate
+                                collisions_renamed_copy += 1
+                            else:
+                                existing_to_replace = sys_collision
+
                     safe_filename = "".join(
                         c for c in original_filename if c.isalnum() or c in (" ", "-", "_", ".")
                     ).strip()
@@ -498,8 +581,45 @@ def process_attachment_bulk_import(
                         file_path=s3_file_path,
                         content_type=guessed_type,
                     )
-                    dir_parts = [p for p in file_path.split("/")[:-1] if p.strip()]
-                    directory_id = dir_service.get_or_create_path(parent_directory_id, dir_parts)
+
+                    if existing_to_replace is not None:
+                        # Replace-in-place: preserve attachment_id + every linkage.
+                        from datetime import datetime as _dt
+
+                        existing_to_replace.attachment_type_id = attachment_type_id  # type: ignore[assignment]
+                        existing_to_replace.stored_filename = stored_filename  # type: ignore[assignment]
+                        existing_to_replace.file_path = cdn_base_url(storage_provider, s3_key)  # type: ignore[assignment]
+                        existing_to_replace.file_size_bytes = len(file_content)  # type: ignore[assignment]
+                        existing_to_replace.mime_type = guessed_type or "application/octet-stream"  # type: ignore[assignment]
+                        existing_to_replace.file_hash = hashlib.sha256(file_content).hexdigest()  # type: ignore[assignment]
+                        existing_to_replace.uploaded_by = user_id  # type: ignore[assignment]
+                        existing_to_replace.uploaded_at = _dt.utcnow()  # type: ignore[assignment]
+                        existing_to_replace.access_levels = access_levels_payload  # type: ignore[assignment]
+                        existing_to_replace.storage_provider = storage_provider  # type: ignore[assignment]
+                        db.commit()
+                        db.refresh(existing_to_replace)
+                        attachment = existing_to_replace
+                        try:
+                            create_and_send_webhook(
+                                db,
+                                attachment,
+                                attachment_type,
+                                access_levels_payload,
+                                user_id,
+                                event_type="attachment_replaced",
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Webhook (replace) creation failed for %s: %s",
+                                attachment.id,
+                                e,
+                            )
+                        collisions_replaced += 1
+                        created_attachments.append({"id": attachment.id, "path": file_path, "replaced": True})
+                        successful += 1
+                        seen_in_run.add((directory_id, original_filename.lower()))
+                        processed += 1
+                        continue
 
                     attachment_data = AttachmentCreate(
                         attachment_type_id=attachment_type_id,
@@ -525,6 +645,7 @@ def process_attachment_bulk_import(
                             logger.warning("Webhook creation failed for %s: %s", attachment.id, e)
                         created_attachments.append({"id": attachment.id, "path": file_path})
                     successful += 1
+                    seen_in_run.add((directory_id, original_filename.lower()))
                 except Exception as e:
                     errors.append(f"{file_path}: {e}")
                     logger.exception("Bulk import file failed: %s", file_path)
@@ -542,6 +663,10 @@ def process_attachment_bulk_import(
                     "attachments_created": len(created_attachments),
                     "attachments": created_attachments[-100:],  # Last 100 for response size
                     "errors": errors[-50:],
+                    "on_conflict": on_conflict,
+                    "collisions_skipped": collisions_skipped,
+                    "collisions_renamed_copy": collisions_renamed_copy,
+                    "collisions_replaced": collisions_replaced,
                 },
             )
             if i + len(batch) < len(file_paths):
@@ -553,6 +678,10 @@ def process_attachment_bulk_import(
             "attachments_created": len(created_attachments),
             "attachments": created_attachments,
             "errors": errors,
+            "on_conflict": on_conflict,
+            "collisions_skipped": collisions_skipped,
+            "collisions_renamed_copy": collisions_renamed_copy,
+            "collisions_replaced": collisions_replaced,
         }
         job_service.complete_job(
             job_id=job_id_str,

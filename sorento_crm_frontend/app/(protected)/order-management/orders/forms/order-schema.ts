@@ -19,7 +19,7 @@ export const OrderSchema = z.object({
   is_cancelled: z.boolean().optional(),
   remarks_cs: z.string().optional().nullable(),
   order_type: z.string().optional().nullable(),
-  delivery_time: z.string().optional().nullable(),
+  pickup_time: z.string().optional().nullable(),
   checker: z.string().optional().nullable(),
   transporter: z.string().optional().nullable(),
   driver_name: z.string().optional().nullable(),

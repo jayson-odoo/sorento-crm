@@ -43,8 +43,14 @@ def create_and_send_webhook(
     attachment_type,
     access_levels_payload: Optional[list],
     current_user_id: str,
+    event_type: str = "attachment_uploaded",
 ) -> None:
-    """Create integration log for attachment and send webhook in background (same behaviour as single upload)."""
+    """Create integration log for attachment and send webhook in background (same behaviour as single upload).
+
+    `event_type` lets the dispatcher distinguish first-upload vs Google-Drive
+    style replace-in-place so n8n intake can update the linked row instead of
+    duplicate-rejecting (TCK-2026-000020).
+    """
     n8n_webhook_url = get_n8n_attachment_webhook_url(db)
     if not n8n_webhook_url:
         return
@@ -66,6 +72,7 @@ def create_and_send_webhook(
     )
     webhook_payload = {
         "integration_log_id": integration_log.id,
+        "event_type": event_type,
         "attachment_url": signed_attachment_url,
         "s3_url": signed_attachment_url,
         "file_path": attachment.file_path,

@@ -25,6 +25,7 @@ from app.services.embedding_change_listener import (
     suppress_embedding_events,
     bulk_enqueue_embedding_events,
 )
+from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class OrderService:
         query: Optional[str] = None,
         customer_query: Optional[str] = None,
         product_query: Optional[str] = None,
+        transporter_query: Optional[str] = None,
         customer_id: Optional[str] = None,
         order_status_id: Optional[str] = None,
         has_order_lines: Optional[str] = None,
@@ -138,37 +140,51 @@ class OrderService:
             )
             query_filter = Order.id.in_(direct_ids.union(customer_ids))
         if customer_query and (customer_query := (customer_query or "").strip()):
-            term = f"%{customer_query}%"
-            direct_ids = self.db.query(Order.id).filter(
-                or_(
-                    Order.debtor_name.ilike(term),
-                    Order.debtor_code.ilike(term),
-                )
+            customer_clause, _ = resolve_via_embedding_then_ilike(
+                self.db,
+                customer_query,
+                source_type="customer",
+                ilike_columns=[Order.debtor_name, Order.debtor_code],
+                canonical_model=Customer,
+                canonical_fields=("customer_name", "customer_code"),
+                extra_filter_builders=[
+                    lambda like: Order.customer.has(Customer.customer_name.ilike(like)),
+                    lambda like: Order.customer.has(Customer.customer_code.ilike(like)),
+                ],
             )
-            customer_ids = (
-                self.db.query(Order.id)
-                .join(Customer, Order.customer_id == Customer.id)
-                .filter(
-                    or_(
-                        Customer.customer_name.ilike(term),
-                        Customer.customer_code.ilike(term),
-                    )
-                )
-            )
-            filters.append(Order.id.in_(direct_ids.union(customer_ids)))
+            if customer_clause is not None:
+                filters.append(customer_clause)
         if product_query and (product_query := (product_query or "").strip()):
-            term = f"%{product_query}%"
-            filters.append(
-                Order.lines.any(
-                    OrderLine.product.has(
-                        or_(
-                            Product.product_code.ilike(term),
-                            Product.product_name.ilike(term),
-                            Product.description.ilike(term),
+            product_clause, _ = resolve_via_embedding_then_ilike(
+                self.db,
+                product_query,
+                source_type="product",
+                ilike_columns=[],
+                canonical_model=Product,
+                canonical_fields=("product_code", "product_name"),
+                extra_filter_builders=[
+                    lambda like: Order.lines.any(
+                        OrderLine.product.has(
+                            or_(
+                                Product.product_code.ilike(like),
+                                Product.product_name.ilike(like),
+                                Product.description.ilike(like),
+                            )
                         )
-                    )
-                )
+                    ),
+                ],
             )
+            if product_clause is not None:
+                filters.append(product_clause)
+        if transporter_query and (transporter_query := (transporter_query or "").strip()):
+            transporter_clause, _ = resolve_via_embedding_then_ilike(
+                self.db,
+                transporter_query,
+                source_type="transporter",
+                ilike_columns=[Order.transporter],
+            )
+            if transporter_clause is not None:
+                filters.append(transporter_clause)
 
         if advanced_filter_clause is not None:
             filters.append(advanced_filter_clause)
@@ -353,24 +369,35 @@ class OrderService:
                 Product.description.ilike(term),
             )
         if customer_query and (customer_query := (customer_query or "").strip()):
-            customer_term = f"%{customer_query}%"
-            filters.append(
-                or_(
-                    Order.debtor_name.ilike(customer_term),
-                    Order.debtor_code.ilike(customer_term),
-                    Order.customer.has(Customer.customer_name.ilike(customer_term)),
-                    Order.customer.has(Customer.customer_code.ilike(customer_term)),
-                )
+            customer_clause, _ = resolve_via_embedding_then_ilike(
+                self.db,
+                customer_query,
+                source_type="customer",
+                ilike_columns=[Order.debtor_name, Order.debtor_code],
+                canonical_model=Customer,
+                canonical_fields=("customer_name", "customer_code"),
+                extra_filter_builders=[
+                    lambda like: Order.customer.has(Customer.customer_name.ilike(like)),
+                    lambda like: Order.customer.has(Customer.customer_code.ilike(like)),
+                ],
             )
+            if customer_clause is not None:
+                filters.append(customer_clause)
         if product_query and (product_query := (product_query or "").strip()):
-            product_term = f"%{product_query}%"
-            filters.append(
-                or_(
-                    Product.product_code.ilike(product_term),
-                    Product.product_name.ilike(product_term),
-                    Product.description.ilike(product_term),
-                )
+            product_clause, _ = resolve_via_embedding_then_ilike(
+                self.db,
+                product_query,
+                source_type="product",
+                ilike_columns=[
+                    Product.product_code,
+                    Product.product_name,
+                    Product.description,
+                ],
+                canonical_model=Product,
+                canonical_fields=("product_code", "product_name"),
             )
+            if product_clause is not None:
+                filters.append(product_clause)
 
         base_q = q.filter(and_(*filters)) if filters else q
         q = base_q.filter(query_filter) if query_filter is not None else base_q
@@ -799,7 +826,7 @@ class OrderService:
             "Doc No.": "order_number",
             "Date": "actual_delivery_date",
             "Delivery Date": "actual_delivery_date",
-            "Time": "delivery_time",
+            "Time": "pickup_time",
             "Checker": "checker",
             "Transporter": "transporter",
             "Driver Name": "driver_name",
@@ -1035,12 +1062,12 @@ class OrderService:
                     continue
 
                 delivery_date = mapped.get("actual_delivery_date")
-                delivery_time = parse_time_value(row_data.get("Time"))
+                pickup_time = parse_time_value(row_data.get("Time"))
                 if delivery_date:
-                    if delivery_time:
+                    if pickup_time:
                         mapped["actual_delivery_date"] = datetime.combine(
                             delivery_date.date() if isinstance(delivery_date, datetime) else delivery_date,
-                            delivery_time,
+                            pickup_time,
                         )
                     else:
                         # Date only: store as midnight for DateTime column

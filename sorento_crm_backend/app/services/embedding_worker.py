@@ -19,7 +19,7 @@ from app.models.resources import Attachment
 from app.models.forms import Form
 from app.models.list_query_metadata import ListQueryResource, ListQueryField
 from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine
-from app.models.order import Order, OrderStatus, OrderLine
+from app.models.order import Order, OrderStatus, OrderLine, Customer, Transporter
 from app.models.product import ProductAttachment
 from app.services.embedding_service import EmbeddingReadService
 
@@ -124,6 +124,10 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
                 f"Path: {attachment.full_directory_path or ''}",
                 f"Entity Type: {attachment.entity_type or ''}",
                 f"Entity ID: {attachment.entity_id or ''}",
+                # TCK-2026-000015: include intent keywords so RAG tool-search
+                # routes catalogue / brochure / price-list phrasings here.
+                "Intent Keywords: catalog catalogue brochure price list spec sheet datasheet manual flyer",
+                f"Linked to: {(attachment.entity_type or 'general')}",
             ]
         ).strip()
         return {
@@ -294,6 +298,8 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
                 f"Attachment ID: {row.attachment_id}",
                 f"Is Primary: {row.is_primary}",
                 f"Sort Order: {row.sort_order}",
+                "Intent Keywords: catalog catalogue brochure price list spec sheet datasheet product manual",
+                "Linked to: product",
             ]
         ).strip()
         return {"source_key": f"{row.product_id}:{row.attachment_id}", "title": "Product Attachment", "body_text": body, "visibility_scope": "customer", "source_updated_at": row.updated_at or row.created_at, "metadata": {"access_levels": row.access_levels or []}}
@@ -309,6 +315,8 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
                 f"Attachment ID: {row.attachment_id}",
                 f"Is Primary: {row.is_primary}",
                 f"Sort Order: {row.sort_order}",
+                "Intent Keywords: catalog catalogue brochure price list promotion flyer leaflet",
+                "Linked to: promotion",
             ]
         ).strip()
         return {"source_key": f"{row.promotion_id}:{row.attachment_id}", "title": "Promotion Attachment", "body_text": body, "visibility_scope": "customer", "source_updated_at": row.updated_at or row.created_at, "metadata": {}}
@@ -324,10 +332,82 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
                 f"Debtor Name: {row.debtor_name or ''}",
                 f"Salesman: {row.salesman or ''}",
                 f"Order Type: {row.order_type or ''}",
+                f"Transporter: {row.transporter or ''}",
                 f"Remarks: {row.remarks or ''}",
             ]
         ).strip()
         return {"source_key": row.order_number, "title": row.order_number, "body_text": body, "visibility_scope": "internal", "source_updated_at": row.updated_at or row.created_at, "metadata": {"order_status_id": row.order_status_id, "is_cancelled": row.is_cancelled}}
+
+    if source_type == "customer":
+        # Customer source supports two shapes:
+        # 1. UUID source_id → Customer master row.
+        # 2. `debtor:<code>` synthetic source_id → distinct orders.debtor_code with no Customer match.
+        if isinstance(source_id, str) and source_id.startswith("debtor:"):
+            code = source_id.split(":", 1)[1]
+            row = (
+                db.query(Order.debtor_code, Order.debtor_name)
+                .filter(Order.debtor_code == code)
+                .filter(Order.deleted_at.is_(None))
+                .first()
+            )
+            if not row:
+                raise ValueError(f"Debtor not found: {source_id}")
+            body = "\n".join(
+                [
+                    "Source Type: Customer (debtor seed)",
+                    f"Customer Code: {row.debtor_code}",
+                    f"Customer Name: {row.debtor_name or ''}",
+                ]
+            ).strip()
+            return {
+                "source_key": source_id,
+                "title": row.debtor_name or row.debtor_code,
+                "body_text": body,
+                "visibility_scope": "internal",
+                "source_updated_at": datetime.utcnow(),
+                "metadata": {"debtor_code": row.debtor_code},
+            }
+        cust = db.query(Customer).filter(Customer.id == source_id).first()
+        if not cust:
+            raise ValueError(f"Customer not found: {source_id}")
+        body = "\n".join(
+            [
+                "Source Type: Customer",
+                f"Customer Code: {cust.customer_code}",
+                f"Customer Name: {cust.customer_name}",
+                f"Country: {getattr(cust, 'country', '') or ''}",
+                f"Email: {getattr(cust, 'contact_email', '') or ''}",
+                f"Phone: {getattr(cust, 'phone', '') or ''}",
+            ]
+        ).strip()
+        return {
+            "source_key": cust.customer_code,
+            "title": cust.customer_name,
+            "body_text": body,
+            "visibility_scope": "internal",
+            "source_updated_at": getattr(cust, "updated_at", None) or getattr(cust, "created_at", None),
+            "metadata": {"customer_code": cust.customer_code},
+        }
+
+    if source_type == "transporter":
+        trans = db.query(Transporter).filter(Transporter.id == source_id).first()
+        if not trans:
+            raise ValueError(f"Transporter not found: {source_id}")
+        body = "\n".join(
+            [
+                "Source Type: Transporter",
+                f"Code: {trans.code}",
+                f"Name: {trans.name}",
+            ]
+        ).strip()
+        return {
+            "source_key": trans.code,
+            "title": trans.name,
+            "body_text": body,
+            "visibility_scope": "internal",
+            "source_updated_at": getattr(trans, "updated_at", None) or trans.created_at,
+            "metadata": {"transporter_code": trans.code},
+        }
 
     if source_type == "order_status":
         row = db.query(OrderStatus).filter(OrderStatus.id == source_id).first()

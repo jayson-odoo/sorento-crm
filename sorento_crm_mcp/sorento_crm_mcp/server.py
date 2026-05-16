@@ -82,6 +82,9 @@ _ORDERS_LIST_DROP_ROW_KEYS = {
     "customer",
     "order_status_id",
     "customer_ref",
+    # TCK-2026-000023: agent only needs actual_delivery_date; the estimated
+    # field exists for the FE but adds noise to MCP responses.
+    "estimated_delivery_date",
 }
 _ORDERS_LIST_DROP_LINE_KEYS = {
     "unit_price",
@@ -528,9 +531,17 @@ def _slim_orders_list_row(row: Any, product_query: str | None = None) -> Any:
     for key, value in row.items():
         if key in _ORDERS_LIST_DROP_ROW_KEYS:
             continue
+        # TCK-2026-000023: accept stale callers still sending delivery_time.
+        if key == "delivery_time":
+            if "pickup_time" not in row:
+                out["pickup_time"] = value
+            continue
         if key == "order_status":
-            if isinstance(value, dict) and value.get("status_code") is not None:
-                out[key] = {"status_code": value["status_code"]}
+            # TCK-2026-000023: flatten to a human-readable string. Prefer
+            # status_name; fall back to status_code so we never emit null.
+            if isinstance(value, dict):
+                flat = value.get("status_name") or value.get("status_code")
+                out[key] = flat
             else:
                 out[key] = value
             continue
@@ -563,6 +574,152 @@ def _slim_orders_list_response(data: Any, product_query: str | None = None) -> A
     return data
 
 
+_PROMO_PRODUCT_TOOL_PREFIXES = (
+    "crm_marketing_promotion_products_",
+)
+_PROMO_PRODUCT_DROP_KEYS = frozenset({"discount_amount", "discount_percent"})
+
+
+def _slim_promotion_products_row(row: Any) -> Any:
+    """TCK-2026-000016: drop discount_amount/discount_percent, rename promotion_price → selling_price.
+
+    `selling_price` is the user-facing label across the UI; the legacy
+    `promotion_price` alias kept on the API for back-compat is unhelpful to
+    the AI agent.
+    """
+    if not isinstance(row, dict):
+        return row
+    out: dict[str, Any] = {}
+    for k, v in row.items():
+        if k in _PROMO_PRODUCT_DROP_KEYS:
+            continue
+        if k == "promotion_price":
+            if "selling_price" not in row:
+                out["selling_price"] = v
+            continue
+        out[k] = v
+    return out
+
+
+def _slim_promotion_products_response(data: Any) -> Any:
+    if isinstance(data, list):
+        return [_slim_promotion_products_row(r) for r in data]
+    if isinstance(data, dict):
+        if isinstance(data.get("data"), list):
+            return {**data, "data": [_slim_promotion_products_row(r) for r in data["data"]]}
+        # Handle nested-by-promotion shapes: {promotion: ..., products: [...]}
+        if isinstance(data.get("products"), list):
+            return {**data, "products": [_slim_promotion_products_row(r) for r in data["products"]]}
+        return _slim_promotion_products_row(data)
+    return data
+
+
+_ATTACHMENT_INTERNAL_KEYS = frozenset(
+    {
+        "full_directory_path",
+        "directory_id",
+        "storage_provider",
+        "uploaded_by",
+        "uploaded_by_user_id",
+    }
+)
+_ATTACHMENT_TOOL_PREFIXES = (
+    "crm_master_product_attachments_",
+    "crm_marketing_promotion_attachments_",
+    "crm_resource_attachments_",
+)
+
+
+def _strip_attachment_internals(node: Any) -> Any:
+    """Recurse + drop attachment internal fields (TCK-2026-000015).
+
+    Triggered for attachment-bearing tool responses. Recurses into dicts +
+    lists so nested `attachment` blocks (e.g. promotion_attachment rows that
+    embed an `attachment` sub-object) are slimmed too.
+    """
+    if isinstance(node, list):
+        return [_strip_attachment_internals(item) for item in node]
+    if isinstance(node, dict):
+        return {
+            k: _strip_attachment_internals(v)
+            for k, v in node.items()
+            if k not in _ATTACHMENT_INTERNAL_KEYS
+        }
+    return node
+
+
+GRN_LIST_LIMIT_DEFAULT = 50
+GRN_LIST_LIMIT_CAP = 200
+_GRN_TOOL_PREFIX = "crm_procurement_grn_"
+_GRN_LIST_TOOL = "crm_procurement_grn_list"
+_GRN_KEEP_KEYS = frozenset(
+    {
+        "document_number",
+        "spo_number",
+        "receiving_date",
+        "notes",
+        "picking_lines",
+        "lines_count",
+        "created_at",
+        "updated_at",
+    }
+)
+_GRN_RENAMES = (
+    ("picking_number", "document_number"),
+    ("picking_date", "receiving_date"),
+)
+
+
+def _coerce_grn_limit(value: Any) -> int:
+    """Clamp incoming limit to (default, cap). Invalid / empty → default."""
+    try:
+        n = int(value) if value not in (None, "") else 0
+    except (TypeError, ValueError):
+        return GRN_LIST_LIMIT_DEFAULT
+    if n <= 0:
+        return GRN_LIST_LIMIT_DEFAULT
+    if n > GRN_LIST_LIMIT_CAP:
+        return GRN_LIST_LIMIT_CAP
+    return n
+
+
+_GRN_SHAPE_MARKERS = ("picking_number", "document_number", "picking_lines", "picking_date")
+
+
+def _slim_grn_row(row: Any) -> Any:
+    if not isinstance(row, dict):
+        return row
+    if not any(m in row for m in _GRN_SHAPE_MARKERS):
+        return row
+    renamed: dict[str, str] = {}
+    preserve_sources: set[str] = set()
+    for src, dst in _GRN_RENAMES:
+        if src not in row:
+            continue
+        if dst in row:
+            preserve_sources.add(src)
+        else:
+            renamed[src] = dst
+    out: dict[str, Any] = {}
+    for k, v in row.items():
+        if k in renamed:
+            out[renamed[k]] = v
+            continue
+        if k in preserve_sources or k in _GRN_KEEP_KEYS:
+            out[k] = v
+    return out
+
+
+def _slim_grn_response(data: Any) -> Any:
+    if isinstance(data, list):
+        return [_slim_grn_row(r) for r in data]
+    if isinstance(data, dict):
+        if isinstance(data.get("data"), list):
+            return {**data, "data": [_slim_grn_row(r) for r in data["data"]]}
+        return _slim_grn_row(data)
+    return data
+
+
 def _sanitize_tool_response(
     tool_name: str,
     raw: str,
@@ -578,6 +735,8 @@ def _sanitize_tool_response(
       warehouse, system_location_id). Backend Pydantic response unchanged.
     * For `crm_inventory_stock_*` tools, finally slim the nested `warehouse`
       object on each row to its literal-text identifiers.
+    * For `crm_procurement_grn_*` tools, slim picking response (rename to
+      document_number/receiving_date, drop internal status/cost/inspection).
     """
     data = _json_loads_safe(raw)
     if data is None:
@@ -592,6 +751,12 @@ def _sanitize_tool_response(
     if tool_name == ORDERS_LIST_TOOL:
         product_query = (query or {}).get("product_query") if isinstance(query, dict) else None
         data = _slim_orders_list_response(data, product_query if isinstance(product_query, str) else None)
+    if tool_name.startswith(_GRN_TOOL_PREFIX):
+        data = _slim_grn_response(data)
+    if any(tool_name.startswith(p) for p in _ATTACHMENT_TOOL_PREFIXES):
+        data = _strip_attachment_internals(data)
+    if any(tool_name.startswith(p) for p in _PROMO_PRODUCT_TOOL_PREFIXES):
+        data = _slim_promotion_products_response(data)
     return json.dumps(data)
 
 
@@ -681,6 +846,9 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
         # on promotion activity precheck here; inactive rows are filtered from response payload.
         pass
 
+    if spec.name == _GRN_LIST_TOOL:
+        query = dict(query or {})
+        query["limit"] = _coerce_grn_limit(query.get("limit"))
     response = await client.request(
         spec.method,
         spec.path,

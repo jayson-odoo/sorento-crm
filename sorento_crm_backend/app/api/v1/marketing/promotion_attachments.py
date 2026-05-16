@@ -36,13 +36,22 @@ async def get_promotion_attachments(
     attachment_id: Optional[str] = Query(None),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id). Pair with space_id to filter by the contact's M2M access types."),
     space_id: Optional[str] = Query(None, description="Respond.io space id (respond_workspaces.space_id). Pair with contact_id."),
+    access_levels: Optional[list[str]] = Query(
+        None,
+        description="TCK-2026-000016: contact-scoped MCP calls must supply at least one currently-active code.",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get promotion attachments with pagination and filtering. Use contact_id+space_id to filter by the contact's access types."""
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
-        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
+        cats_svc = ContactAccessTypeService(db)
+        if contact_id and space_id:
+            access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
+            contact_codes = list(access_levels)
+        else:
+            contact_codes = cats_svc.resolve_optional_contact_access_codes(contact_id, space_id)
         service = PromotionAttachmentService(db)
         result = service.list_promotion_attachments(
             page=page,
@@ -140,13 +149,22 @@ async def get_promotion_attachments_by_promotion(
     ),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id)."),
     space_id: Optional[str] = Query(None, description="Respond.io space id."),
+    access_levels: Optional[list[str]] = Query(
+        None,
+        description="TCK-2026-000016: contact-scoped MCP calls must supply at least one currently-active code.",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get all attachments for a specific promotion. Use contact_id+space_id to filter by the contact's access types."""
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
-        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
+        cats_svc = ContactAccessTypeService(db)
+        if contact_id and space_id:
+            access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
+            contact_codes = list(access_levels)
+        else:
+            contact_codes = cats_svc.resolve_optional_contact_access_codes(contact_id, space_id)
         service = PromotionAttachmentService(db)
         promotion_attachments = service.get_promotion_attachments_by_promotion(
             promotion_id,

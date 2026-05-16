@@ -15,6 +15,7 @@ import { usePromotionAttachmentsByPromotion, useCreatePromotionAttachment, useDe
 import { createPromotionAttachment as createPromotionAttachmentApi } from '../../promotion-attachments/services/promotionAttachmentService';
 import { usePromotion } from '../hooks/usePromotions';
 import { useDownloadAttachment, useAttachments, useUploadAttachment, useDirectoryTree } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
+import { useUploadConflict } from '@/hooks/use-upload-conflict';
 import { toast } from 'sonner';
 import type { PromotionAttachment } from '../../promotion-attachments/types/promotionAttachment.types';
 import { formatDate } from '@/lib/helpers';
@@ -491,6 +492,7 @@ function AddPromotionAttachmentDialog({
   const { data: directoryTree = [], isLoading: isLoadingTree } = useDirectoryTree();
   const uploadMutation = useUploadAttachment();
   const createLinkMutation = useCreatePromotionAttachment();
+  const { runUpload, ConflictDialog } = useUploadConflict();
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -514,13 +516,20 @@ function AddPromotionAttachmentDialog({
       return;
     }
     try {
-      const attachment = await uploadMutation.mutateAsync({
-        file,
-        entityType: 'promotion',
-        entityId: promotionId,
-        directoryId: directoryId ?? undefined,
-        accessLevels: promotionAccessLevels && promotionAccessLevels.length > 0 ? promotionAccessLevels : ['dealer', 'end_user'],
-      });
+      const attachment = await runUpload((onConflict) =>
+        uploadMutation.mutateAsync({
+          file,
+          entityType: 'promotion',
+          entityId: promotionId,
+          directoryId: directoryId ?? undefined,
+          accessLevels: promotionAccessLevels && promotionAccessLevels.length > 0 ? promotionAccessLevels : ['dealer', 'end_user'],
+          onConflict,
+        })
+      );
+      if (attachment == null) {
+        // User cancelled the conflict prompt
+        return;
+      }
       await createLinkMutation.mutateAsync({
         promotion_id: promotionId,
         attachment_id: attachment.id,
@@ -623,6 +632,7 @@ function AddPromotionAttachmentDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      {ConflictDialog}
     </Dialog>
   );
 }

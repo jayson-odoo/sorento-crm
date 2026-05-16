@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { useUploadAttachment } from '../hooks/useAttachments';
+import { useUploadConflict } from '@/hooks/use-upload-conflict';
 
 interface FileUploadZoneProps {
   attachmentTypeId: string;
@@ -30,6 +31,7 @@ export default function FileUploadZone({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const uploadMutation = useUploadAttachment();
+  const { runUpload, ConflictDialog } = useUploadConflict();
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -89,12 +91,19 @@ export default function FileUploadZone({
       try {
         setUploadProgress((prev) => ({ ...prev, [file.name]: 0 }));
         // TODO: Implement progress tracking
-        await uploadMutation.mutateAsync({
-          file,
-          attachmentTypeId,
-          entityType,
-          entityId,
-        });
+        const result = await runUpload((onConflict) =>
+          uploadMutation.mutateAsync({
+            file,
+            attachmentTypeId,
+            entityType,
+            entityId,
+            onConflict,
+          })
+        );
+        if (result == null) {
+          setUploadProgress((prev) => ({ ...prev, [file.name]: -1 }));
+          continue;
+        }
         setUploadProgress((prev) => ({ ...prev, [file.name]: 100 }));
         if (onUploadComplete) {
           // onUploadComplete will be called by mutation onSuccess
@@ -183,6 +192,7 @@ export default function FileUploadZone({
           </CardContent>
         </Card>
       )}
+      {ConflictDialog}
     </div>
   );
 }

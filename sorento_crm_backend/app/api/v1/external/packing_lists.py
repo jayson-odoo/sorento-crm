@@ -131,13 +131,16 @@ def create_packing_list(
             summary_html=summary_html,
             entity_url=build_packing_list_detail_url(str(created.id)),
             entity_link_text="Open packing list in Sorento CRM",
+            warnings=skipped_product_codes or None,
         )
     except Exception as e:
         logger.warning("External packing list notification failed: %s", e, exc_info=True)
 
+    already_existed = bool(getattr(created, "_already_existed", False))
     return PackingListCreateResponse(
         shipment=InboundShipmentResponse.model_validate(created),
         skipped_product_codes=skipped_product_codes,
-        already_existed=False,
-        message=None,
+        unknown_product_codes=skipped_product_codes,
+        already_existed=already_existed,
+        message=("Packing list updated in place." if already_existed else None),
     )

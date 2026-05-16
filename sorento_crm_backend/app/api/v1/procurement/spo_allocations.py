@@ -106,17 +106,20 @@ async def import_spo_allocations(
             detail="At least one file is required.",
         )
 
+    from app.services.excel_macro_stripper import maybe_strip
+
     for upload in files:
-        if not upload.filename or not upload.filename.lower().endswith((".xlsx", ".xls")):
+        if not upload.filename or not upload.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid file type: {upload.filename}. Please upload Excel (.xlsx or .xls).",
+                detail=f"Invalid file type: {upload.filename}. Please upload Excel (.xlsx, .xls, or .xlsm).",
             )
 
     if validate_only:
         upload = files[0]
         file_data = await upload.read()
-        result = validate_spo_import(file_data, upload.filename or "unknown.xlsx")
+        file_data, cleaned_name = maybe_strip(file_data, upload.filename or "unknown.xlsx")
+        result = validate_spo_import(file_data, cleaned_name)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
@@ -131,17 +134,18 @@ async def import_spo_allocations(
     job_service = JobService(db)
     for upload in files:
         file_data = await upload.read()
+        file_data, cleaned_name = maybe_strip(file_data, upload.filename or "unknown.xlsx")
         job = job_service.create_job(
             job_type="spo_import",
             user_id=current_user["id"],
-            filename=upload.filename,
+            filename=cleaned_name,
         )
         db.commit()
         rq_job = enqueue_job(
             process_spo_import,
             str(job.id),
             file_data,
-            upload.filename or "unknown.xlsx",
+            cleaned_name,
             current_user["id"],
             queue_name="imports",
             job_timeout=3600,

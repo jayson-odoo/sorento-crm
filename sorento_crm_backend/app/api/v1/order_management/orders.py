@@ -219,6 +219,10 @@ async def get_orders(
         None,
         description="Partial product filter (matches product code/name/description across order lines, case-insensitive).",
     ),
+    transporter_query: Optional[str] = Query(
+        None,
+        description="Partial transporter filter (matches Order.transporter, case-insensitive).",
+    ),
     customer_id: Optional[str] = Query(None),
     order_status_id: Optional[str] = Query(None),
     has_order_lines: Optional[str] = Query(
@@ -273,6 +277,7 @@ async def get_orders(
             query=query,
             customer_query=customer_query,
             product_query=product_query,
+            transporter_query=transporter_query,
             customer_id=customer_id,
             order_status_id=order_status_id,
             has_order_lines=has_order_lines,
@@ -660,12 +665,14 @@ async def import_order_tracking(
 ):
     """Import orders from Excel file with Master and Overall Tracking sheets (queued). Use validate_only=true to test without importing."""
     try:
-        if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
+        if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file type. Please upload an Excel file (.xlsx or .xls)."
+                detail="Invalid file type. Please upload an Excel file (.xlsx, .xls, or .xlsm)."
             )
         file_data = await file.read()
+        from app.services.excel_macro_stripper import maybe_strip
+        file_data, cleaned_name = maybe_strip(file_data, file.filename or "upload.xlsx")
 
         if validate_only:
             service = OrderService(db)
@@ -688,7 +695,7 @@ async def import_order_tracking(
         job = job_service.create_job(
             job_type='order_tracking_import',
             user_id=current_user["id"],
-            filename=file.filename
+            filename=cleaned_name
         )
         db.commit()
 
@@ -724,12 +731,14 @@ async def import_delivery_order_detail(
 ):
     """Import delivery order detail (order lines) from Excel. Uses doc no -> order, item code -> product, location -> warehouse. Upserts by (order, product, warehouse)."""
     try:
-        if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
+        if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file type. Please upload an Excel file (.xlsx or .xls)."
+                detail="Invalid file type. Please upload an Excel file (.xlsx, .xls, or .xlsm)."
             )
         file_data = await file.read()
+        from app.services.excel_macro_stripper import maybe_strip
+        file_data, cleaned_name = maybe_strip(file_data, file.filename or "upload.xlsx")
         if validate_only:
             service = OrderService(db)
             result = service.validate_delivery_order_detail_excel(file_data)
@@ -751,7 +760,7 @@ async def import_delivery_order_detail(
         job = job_service.create_job(
             job_type="delivery_order_detail_import",
             user_id=current_user["id"],
-            filename=file.filename,
+            filename=cleaned_name,
         )
         db.commit()
 
@@ -759,7 +768,7 @@ async def import_delivery_order_detail(
             process_delivery_order_detail_import,
             str(job.id),
             file_data,
-            file.filename or "upload.xlsx",
+            cleaned_name,
             current_user["id"],
             queue_name="imports",
             job_timeout=3600,

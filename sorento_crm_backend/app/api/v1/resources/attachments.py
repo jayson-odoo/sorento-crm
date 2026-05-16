@@ -40,6 +40,40 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+import re as _re
+
+_COPY_NUMBERED_RE = _re.compile(r"^(?P<stem>.*) - copy \((?P<n>\d+)\)$")
+_COPY_PLAIN_SUFFIX = " - copy"
+
+
+def _suffix_copy_name(filename: str) -> str:
+    """Google-Drive style "- copy" suffix bump for the upload collision flow.
+
+    Splits at the rightmost dot so multi-dot basenames like `archive.tar.gz`
+    are treated as base=`archive.tar`, ext=`.gz`. Files without an extension
+    (e.g. `README`) get the suffix appended directly. The marker is matched
+    on the base only:
+
+      * `"x"` → `"x - copy"`
+      * `"x - copy"` → `"x - copy (2)"`
+      * `"x - copy (N)"` → `"x - copy (N+1)"`
+    """
+    if "." in filename:
+        base, ext = filename.rsplit(".", 1)
+        ext = f".{ext}"
+    else:
+        base, ext = filename, ""
+    m = _COPY_NUMBERED_RE.match(base)
+    if m:
+        n = int(m.group("n")) + 1
+        new_base = f"{m.group('stem')} - copy ({n})"
+    elif base.endswith(_COPY_PLAIN_SUFFIX):
+        new_base = f"{base} (2)"
+    else:
+        new_base = f"{base}{_COPY_PLAIN_SUFFIX}"
+    return f"{new_base}{ext}"
+
+
 class LinkPackingListRequest(BaseModel):
     packing_list_id: str
 
@@ -50,10 +84,44 @@ def _create_and_send_webhook(
     attachment_type,
     access_levels_payload: Optional[list],
     current_user_id: str,
+    event_type: str = "attachment_uploaded",
 ):
     """Delegate to shared helper (used by single upload and bulk-import task)."""
     from app.services.attachment_webhook_helper import create_and_send_webhook
-    create_and_send_webhook(db, attachment, attachment_type, access_levels_payload, current_user_id)
+    create_and_send_webhook(
+        db,
+        attachment,
+        attachment_type,
+        access_levels_payload,
+        current_user_id,
+        event_type=event_type,
+    )
+
+
+def _find_filename_collision(db: Session, directory_id: Optional[str], original_filename: str):
+    """Return the live Attachment row colliding on (directory_id, lower(original_filename)) or None."""
+    from sqlalchemy import func as _sa_func
+    from app.models.resources import Attachment
+
+    if not directory_id:
+        return None
+    return (
+        db.query(Attachment)
+        .filter(
+            Attachment.directory_id == directory_id,
+            _sa_func.lower(Attachment.original_filename) == (original_filename or "").lower(),
+            Attachment.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+
+def _next_copy_name(db: Session, directory_id: Optional[str], original_filename: str) -> str:
+    """Loop _suffix_copy_name until the candidate name is free in the directory."""
+    candidate = _suffix_copy_name(original_filename)
+    while _find_filename_collision(db, directory_id, candidate) is not None:
+        candidate = _suffix_copy_name(candidate)
+    return candidate
 
 
 def _enrich_uploaded_by_user(db, attachment) -> Optional[dict]:
@@ -339,6 +407,16 @@ async def create_attachment(
         None,
         description="Field-linkage template: JSON array of field keys this doc answers (validated against the registry).",
     ),
+    on_conflict: Optional[str] = Form(
+        None,
+        description=(
+            "Google-Drive style dup-filename behaviour (TCK-2026-000020). When a row already "
+            "exists with the same (directory_id, lower(original_filename)): omit → 409 with "
+            "collision detail; 'copy' → rename incoming to '<name> - copy.ext' (loop until free); "
+            "'replace' → update existing row in place (same id, new bytes / hash / size / "
+            "uploaded_by / uploaded_at) and retrigger webhook with event_type=attachment_replaced."
+        ),
+    ),
     current_user: dict = Depends(require_permission("resource.attachments.upload")),
     db: Session = Depends(get_db)
 ):
@@ -376,6 +454,41 @@ async def create_attachment(
         original_filename = file.filename or "unknown"
         safe_filename = "".join(c for c in original_filename if c.isalnum() or c in (' ', '-', '_', '.')).strip() or "file"
         stored_filename = safe_filename
+
+        # ------------------------------------------------------------------
+        # Google-Drive dup-filename behaviour (TCK-2026-000020).
+        # Only relevant when a directory_id is supplied — that scopes the
+        # collision check to "this folder". Resolved BEFORE the S3 upload so
+        # 409 paths don't waste storage.
+        # ------------------------------------------------------------------
+        on_conflict_clean = (on_conflict or "").strip().lower() or None
+        if on_conflict_clean not in (None, "copy", "replace"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="on_conflict must be one of 'copy', 'replace', or omitted.",
+            )
+        collision = _find_filename_collision(db, directory_id, original_filename)
+        existing_to_replace = None
+        if collision is not None:
+            if on_conflict_clean is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "ATTACHMENT_FILENAME_COLLISION",
+                        "existing_attachment_id": str(collision.id),
+                        "existing_file_name": collision.original_filename,
+                        "existing_target_entity_type": collision.target_entity_type,
+                        "existing_target_field_keys": collision.target_field_keys,
+                    },
+                )
+            if on_conflict_clean == "copy":
+                original_filename = _next_copy_name(db, directory_id, original_filename)
+                safe_filename = "".join(
+                    c for c in original_filename if c.isalnum() or c in (" ", "-", "_", ".")
+                ).strip() or "file"
+                stored_filename = safe_filename
+            else:  # "replace"
+                existing_to_replace = collision
 
         # Get attachment type: optional in DB (nullable); required by API for new uploads.
         # When entity_type is "promotion" and no type_id given, use the promotion attachment type (code='promotion').
@@ -487,6 +600,49 @@ async def create_attachment(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="target_field_keys must be valid JSON.",
                 )
+
+        # Replace-in-place branch (TCK-2026-000020). Same attachment_id, new
+        # bytes / hash / size / uploaded_by / uploaded_at. All four linkage
+        # tables (inbound_shipments, promotion_attachments, product_attachments,
+        # forms) stay valid via the preserved FK. Webhook re-fires with
+        # event_type=attachment_replaced so n8n intake updates the linked
+        # record instead of duplicate-rejecting.
+        if existing_to_replace is not None:
+            existing_to_replace.attachment_type_id = type_id  # type: ignore[assignment]
+            existing_to_replace.stored_filename = stored_filename  # type: ignore[assignment]
+            existing_to_replace.file_path = stored_file_path  # type: ignore[assignment]
+            existing_to_replace.file_size_bytes = file_size  # type: ignore[assignment]
+            existing_to_replace.mime_type = file.content_type or "application/octet-stream"  # type: ignore[assignment]
+            existing_to_replace.file_hash = file_hash  # type: ignore[assignment]
+            existing_to_replace.uploaded_by = current_user["id"]  # type: ignore[assignment]
+            existing_to_replace.uploaded_at = datetime.utcnow()  # type: ignore[assignment]
+            existing_to_replace.access_levels = access_levels_payload  # type: ignore[assignment]
+            existing_to_replace.storage_provider = provider  # type: ignore[assignment]
+            if target_entity_type_clean is not None:
+                existing_to_replace.target_entity_type = target_entity_type_clean  # type: ignore[assignment]
+            if target_field_keys_parsed is not None:
+                existing_to_replace.target_field_keys = target_field_keys_parsed  # type: ignore[assignment]
+            db.commit()
+            db.refresh(existing_to_replace)
+            attachment = existing_to_replace
+            if attachment_type is not None and not is_promotion_upload:
+                try:
+                    _create_and_send_webhook(
+                        db,
+                        attachment,
+                        attachment_type,
+                        access_levels_payload,
+                        current_user["id"],
+                        event_type="attachment_replaced",
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to fire attachment_replaced webhook for %s: %s",
+                        getattr(attachment, "id", None),
+                        e,
+                        exc_info=True,
+                    )
+            return attachment
 
         # Create attachment record. file_path stored as CDN base URL for consistency with other attachments.
         attachment_data = AttachmentCreate(
@@ -687,6 +843,16 @@ async def bulk_import_attachments(
     attachment_type_id: str = Form(...),
     access_levels: Optional[str] = Form(None),
     parent_directory_id: Optional[str] = Form(None),
+    on_conflict: Optional[str] = Form(
+        "skip",
+        description=(
+            "TCK-2026-000020 ZIP collision behaviour (intra-zip AND zip-vs-system "
+            "dupes detected on (resolved directory_id, lower(filename))). "
+            "'skip' (default) → skip the colliding entry, keep existing. "
+            "'copy' → rename incoming to '<name> - copy.ext' (loop until free). "
+            "'replace' → update existing row in place (preserves attachment_id and links)."
+        ),
+    ),
     current_user: dict = Depends(require_permission("resource.attachments.bulk_import")),
     db: Session = Depends(get_db),
 ):
@@ -696,6 +862,13 @@ async def bulk_import_attachments(
 
     if not file or not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A ZIP file is required")
+
+    on_conflict_clean = (on_conflict or "skip").strip().lower()
+    if on_conflict_clean not in ("skip", "copy", "replace"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="on_conflict must be one of 'skip', 'copy', or 'replace'.",
+        )
 
     type_service = AttachmentTypeService(db)
     try:
@@ -741,6 +914,7 @@ async def bulk_import_attachments(
         access_levels or "[]",
         parent_directory_id,
         current_user["id"],
+        on_conflict_clean,
         queue_name="imports",
         job_timeout=7200,
     )

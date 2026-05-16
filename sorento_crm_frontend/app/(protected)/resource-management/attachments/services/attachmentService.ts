@@ -34,6 +34,24 @@ export async function getAttachments(params: DataGridApiFetchParams & { entity_t
   return response.json();
 }
 
+export type AttachmentConflictResolution = 'replace' | 'copy';
+
+export interface AttachmentFilenameCollision {
+  existing_attachment_id: string;
+  existing_file_name: string;
+  existing_target_entity_type?: string | null;
+  existing_target_field_keys?: string[] | null;
+}
+
+export class AttachmentFilenameCollisionError extends Error {
+  detail: AttachmentFilenameCollision;
+  constructor(detail: AttachmentFilenameCollision) {
+    super(`Attachment with name '${detail.existing_file_name}' already exists in this folder`);
+    this.name = 'AttachmentFilenameCollisionError';
+    this.detail = detail;
+  }
+}
+
 export async function uploadAttachment(
   file: File,
   options: {
@@ -46,6 +64,8 @@ export async function uploadAttachment(
     targetEntityType?: string | null;
     /** Field-linkage template: list of field keys this doc answers. */
     targetFieldKeys?: string[] | null;
+    /** Google-Drive style collision resolution. Omit to receive 409 + AttachmentFilenameCollisionError. */
+    onConflict?: AttachmentConflictResolution;
   }
 ): Promise<Attachment> {
   const {
@@ -56,6 +76,7 @@ export async function uploadAttachment(
     directoryId,
     targetEntityType,
     targetFieldKeys,
+    onConflict,
   } = options;
   const formData = new FormData();
   formData.append('file', file);
@@ -72,11 +93,27 @@ export async function uploadAttachment(
   if (targetFieldKeys && targetFieldKeys.length > 0) {
     formData.append('target_field_keys', JSON.stringify(targetFieldKeys));
   }
+  if (onConflict) {
+    formData.append('on_conflict', onConflict);
+  }
 
   const response = await apiFetch('/api/v1/resource-management/attachments', {
     method: 'POST',
     body: formData,
   });
+
+  if (response.status === 409) {
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const body = await response.json().catch(() => null);
+      const detail = (body && typeof body === 'object' && 'detail' in body ? body.detail : body) as
+        | AttachmentFilenameCollision
+        | undefined;
+      if (detail && typeof detail === 'object' && 'existing_attachment_id' in detail) {
+        throw new AttachmentFilenameCollisionError(detail);
+      }
+    }
+  }
 
   if (!response.ok) {
     const contentType = response.headers.get('content-type') || '';

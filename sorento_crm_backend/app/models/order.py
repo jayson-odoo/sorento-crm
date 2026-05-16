@@ -121,9 +121,25 @@ class CustomerContact(Base):
     )
 
 
+class Transporter(Base):
+    """Lookup table for distinct transporter names referenced by orders.transporter.
+
+    Seeded by migration 200_transporters_table from existing orders. `orders.transporter`
+    (free-text) is retained for legacy compat; `orders.transporter_id` is the canonical FK.
+    """
+    __tablename__ = "transporters"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code = Column(String(100), nullable=False, unique=True)
+    name = Column(String(255), nullable=False)
+    normalized_name = Column(String(255), nullable=False, unique=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
+
+
 class Order(Base):
     __tablename__ = "orders"
-    
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     order_number = Column(String(100), unique=True, nullable=False)
     order_date = Column(DateTime(timezone=False), nullable=True)
@@ -131,6 +147,7 @@ class Order(Base):
     actual_delivery_date = Column(DateTime(timezone=False), nullable=True)
     customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
     order_status_id = Column(UUID(as_uuid=False), ForeignKey("order_statuses.id", ondelete="SET NULL"), nullable=True)
+    transporter_id = Column(UUID(as_uuid=False), ForeignKey("transporters.id", ondelete="SET NULL"), nullable=True)
     created_by = Column(String, nullable=True)
     updated_by = Column(String, nullable=True)
     billing_address_id = Column(String, nullable=True)
@@ -142,7 +159,7 @@ class Order(Base):
     is_cancelled = Column(Boolean, default=False, nullable=False)
     remarks_cs = Column(Text, nullable=True)
     order_type = Column(String(50), nullable=True)
-    delivery_time = Column(String(20), nullable=True)
+    pickup_time = Column(String(20), nullable=True)
     checker = Column(String(100), nullable=True)
     transporter = Column(String(100), nullable=True)
     driver_name = Column(String(100), nullable=True)

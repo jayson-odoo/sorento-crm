@@ -138,4 +138,8 @@ def register_embedding_change_listeners() -> None:
     _attach_listeners(Order, "order")
     _attach_listeners(OrderStatus, "order_status")
     _attach_listeners(OrderLine, "order_line")
+    # TCK-2026-000026
+    from app.models.order import Customer, Transporter
+    _attach_listeners(Customer, "customer")
+    _attach_listeners(Transporter, "transporter")
     _REGISTERED = True

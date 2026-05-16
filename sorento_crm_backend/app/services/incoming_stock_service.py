@@ -42,6 +42,7 @@ from app.models.procurement import (
 from app.models.product import Product
 from app.models.resources import Attachment
 from app.services.identifier_resolver import resolve_identifier
+from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 
 
 # Line statuses considered "received" and therefore excluded from incoming-stock results.
@@ -160,24 +161,35 @@ class IncomingStockService:
         limit = max(1, min(limit, 50))
 
         product_filters = []
+        matched_candidates: list[str] = []
         if product_id:
             ids = resolve_identifier(
                 self.db, product_id, Product, code_fields=("product_code",)
             )
             if ids is not None:
                 if not ids:
-                    return {"data": [], "empty": True}
+                    return {"data": [], "empty": True, "matched_candidates": []}
                 product_filters.append(Product.id.in_(ids))
-        if query:
-            term = f"%{query.strip()}%"
-            product_filters.append(
-                or_(Product.product_code.ilike(term), Product.product_name.ilike(term))
+        if query and query.strip():
+            fuzzy_clause, canonical_values = resolve_via_embedding_then_ilike(
+                self.db,
+                query,
+                source_type="product",
+                ilike_columns=[Product.product_code, Product.product_name],
+                canonical_model=Product,
+                canonical_fields=("product_code", "product_name"),
             )
+            if fuzzy_clause is not None:
+                product_filters.append(fuzzy_clause)
+            for v in canonical_values:
+                if v and v not in matched_candidates:
+                    matched_candidates.append(v)
         if not product_filters:
             # Require at least one product hint to avoid accidental full scans
             return {
                 "data": [],
                 "empty": True,
+                "matched_candidates": matched_candidates,
                 "message": "Provide product_id (UUID or product_code) or a query term.",
             }
 
@@ -206,7 +218,7 @@ class IncomingStockService:
         )
 
         if not rows:
-            return {"data": [], "empty": True}
+            return {"data": [], "empty": True, "matched_candidates": matched_candidates}
 
         pairs = [(str(r.shipment_id), str(r.product_id)) for r in rows]
         warehouse_map = self._warehouse_allocations_for(pairs)
@@ -270,6 +282,7 @@ class IncomingStockService:
             "data": data[:limit],
             "empty": False,
             "pagination": {"total": len(data), "page": 1, "limit": limit},
+            "matched_candidates": matched_candidates,
         }
 
     # ------------------------------------------------------------------

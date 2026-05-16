@@ -13,7 +13,7 @@ from app.models.resources import Attachment
 from app.models.forms import Form
 from app.models.list_query_metadata import ListQueryResource
 from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine
-from app.models.order import Order, OrderStatus, OrderLine
+from app.models.order import Order, OrderStatus, OrderLine, Customer, Transporter
 from app.services.embedding_service import EmbeddingEventService
 from app.services.mcp_tool_capability_service import build_capability_documents
 
@@ -34,6 +34,8 @@ BackfillSource = Literal[
     "order",
     "order_status",
     "order_line",
+    "customer",
+    "transporter",
     "mcp_tool",
     "all",
 ]
@@ -78,6 +80,8 @@ class EmbeddingBackfillService:
             "order",
             "order_status",
             "order_line",
+            "customer",
+            "transporter",
             "mcp_tool",
         ] if source == "all" else [source]
         results: list[BackfillStats] = []
@@ -247,5 +251,62 @@ class EmbeddingBackfillService:
             return [
                 {"id": d.source_id, "source_key": d.source_key, "source_updated_at": None, "payload": {"capability": {"title": d.title, "source_key": d.source_key, "body_text": d.body_text, "metadata": d.metadata}}}
                 for d in sliced
+            ]
+        if source == "customer":
+            # Master customers.
+            cust_rows = (
+                self.db.query(Customer.id, Customer.customer_code, Customer.created_at, Customer.updated_at)
+                .order_by(Customer.created_at.asc())
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
+            out = [
+                {
+                    "id": r.id,
+                    "source_key": r.customer_code,
+                    "source_updated_at": r.updated_at or r.created_at,
+                }
+                for r in cust_rows
+            ]
+            # When the customer master is exhausted, also seed embeddings for
+            # distinct orders.debtor_code values that have no matching Customer row.
+            if len(cust_rows) < limit:
+                from sqlalchemy import func as _sa_func
+
+                seen_codes = {c[0] for c in self.db.query(Customer.customer_code).all() if c[0]}
+                debtor_rows = (
+                    self.db.query(Order.debtor_code)
+                    .filter(Order.debtor_code.isnot(None))
+                    .filter(Order.deleted_at.is_(None))
+                    .group_by(Order.debtor_code)
+                    .order_by(_sa_func.min(Order.created_at).asc())
+                    .all()
+                )
+                for row in debtor_rows:
+                    code = (row[0] or "").strip()
+                    if not code or code in seen_codes:
+                        continue
+                    out.append(
+                        {
+                            "id": f"debtor:{code}",
+                            "source_key": f"debtor:{code}",
+                            "source_updated_at": None,
+                        }
+                    )
+                    if len(out) >= limit:
+                        break
+            return out
+        if source == "transporter":
+            rows = (
+                self.db.query(Transporter.id, Transporter.code, Transporter.created_at)
+                .order_by(Transporter.created_at.asc())
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
+            return [
+                {"id": r.id, "source_key": r.code, "source_updated_at": r.created_at}
+                for r in rows
             ]
         raise ValueError(f"Unsupported source: {source}")

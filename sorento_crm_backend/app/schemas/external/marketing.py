@@ -94,4 +94,7 @@ class PromotionCreateResponse(BaseModel):
     already_existed: bool = False
     message: Optional[str] = None
     warnings: List[dict] = []
+    # TCK-2026-000019: flat list mirror of missing product codes captured in `warnings`,
+    # for n8n / portal echo without parsing the structured warnings list.
+    unknown_product_codes: List[str] = []
 

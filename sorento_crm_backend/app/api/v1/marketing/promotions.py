@@ -42,6 +42,14 @@ async def get_promotions(
     user_type: Optional[str] = Query(None, description="Filter by a single access level (FE listing). Prefer contact_id+space_id for MCP/agent flows."),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id). Pair with space_id to filter by the contact's M2M access types."),
     space_id: Optional[str] = Query(None, description="Respond.io space id (matches respond_workspaces.space_id). Pair with contact_id."),
+    access_levels: Optional[list[str]] = Query(
+        None,
+        description=(
+            "TCK-2026-000016: contact-scoped MCP calls (contact_id+space_id) MUST supply at "
+            "least one code that is currently active for the contact. Omitted → 422 + the "
+            "allowed list; not active → 403 + refreshed allowed list."
+        ),
+    ),
     status: Optional[str] = Query(None, description="Legacy filter: active, inactive, all. Prefer `active` (bool)."),
     active: Optional[bool] = Query(
         None,
@@ -67,7 +75,12 @@ async def get_promotions(
     """Get promotions with pagination. Search by query/period, filter by access level (legacy `user_type`) or by contact context (`contact_id`+`space_id`)."""
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
-        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
+        cats_svc = ContactAccessTypeService(db)
+        if contact_id and space_id:
+            access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
+            contact_codes = list(access_levels)
+        else:
+            contact_codes = cats_svc.resolve_optional_contact_access_codes(contact_id, space_id)
         service = PromotionService(db)
         result = service.list_promotions(
             page=page,
@@ -95,6 +108,10 @@ async def get_promotion(
     user_type: Optional[str] = Query(None, description="Legacy single access-level filter."),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id. Pair with space_id."),
     space_id: Optional[str] = Query(None, description="Respond.io space id. Pair with contact_id."),
+    access_levels: Optional[list[str]] = Query(
+        None,
+        description="TCK-2026-000016: contact-scoped MCP calls must supply at least one currently-active code; omitted → 422 + allowed list.",
+    ),
     include_products: bool = Query(
         False,
         description="When true, include promotion product lines and nested Product details. When false, groups only (no lines).",
@@ -105,7 +122,12 @@ async def get_promotion(
     """Get a single promotion by ID. Use contact_id+space_id to also filter inline attachments."""
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
-        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
+        cats_svc = ContactAccessTypeService(db)
+        if contact_id and space_id:
+            access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
+            contact_codes = list(access_levels)
+        else:
+            contact_codes = cats_svc.resolve_optional_contact_access_codes(contact_id, space_id)
         service = PromotionService(db)
         promotion = service.get_promotion(
             promotion_id,

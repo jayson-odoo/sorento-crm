@@ -21,6 +21,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription, AlertIcon } from '@/components/ui/alert';
 import { useUploadAttachment, useAttachmentTypesList } from '../hooks/useAttachments';
+import { useUploadConflict } from '@/hooks/use-upload-conflict';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 import { toast } from 'sonner';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
@@ -71,6 +72,7 @@ export default function AttachmentUploadDialog({
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
   const uploadMutation = useUploadAttachment();
+  const { runUpload, ConflictDialog } = useUploadConflict();
 
   const selectedType = attachmentTypes.find((type: AttachmentType) => type.id === selectedTypeId);
 
@@ -280,20 +282,28 @@ export default function AttachmentUploadDialog({
         try {
           setUploadProgress(prev => ({ ...prev, [file.name]: 0 }));
           
-          const attachment = await uploadMutation.mutateAsync({
-            file: file,
-            attachmentTypeId: selectedTypeId,
-            entityType: entityType || propEntityType || undefined,
-            entityId: entityId || propEntityId || undefined,
-            accessLevels,
-            directoryId: defaultDirectoryId ?? undefined,
-            targetEntityType: showFieldLinkageSection && targetEntityType ? targetEntityType : null,
-            targetFieldKeys:
-              showFieldLinkageSection && targetEntityType && targetFieldKeys.length > 0
-                ? targetFieldKeys
-                : null,
-          });
-          
+          const attachment = await runUpload((onConflict) =>
+            uploadMutation.mutateAsync({
+              file: file,
+              attachmentTypeId: selectedTypeId,
+              entityType: entityType || propEntityType || undefined,
+              entityId: entityId || propEntityId || undefined,
+              accessLevels,
+              directoryId: defaultDirectoryId ?? undefined,
+              targetEntityType: showFieldLinkageSection && targetEntityType ? targetEntityType : null,
+              targetFieldKeys:
+                showFieldLinkageSection && targetEntityType && targetFieldKeys.length > 0
+                  ? targetFieldKeys
+                  : null,
+              onConflict,
+            })
+          );
+
+          if (attachment == null) {
+            // User cancelled the conflict prompt — mark this file as skipped and continue.
+            setUploadProgress(prev => ({ ...prev, [file.name]: -1 }));
+            continue;
+          }
           uploadedIds.push(attachment.id);
           setUploadProgress(prev => ({ ...prev, [file.name]: 100 }));
         } catch (error) {
@@ -609,6 +619,7 @@ export default function AttachmentUploadDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      {ConflictDialog}
     </Dialog>
   );
 }

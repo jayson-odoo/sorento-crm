@@ -334,7 +334,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Delivery Time</p>
-                  <p className="font-medium">{order.delivery_time || '-'}</p>
+                  <p className="font-medium">{order.pickup_time || '-'}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Checker</p>

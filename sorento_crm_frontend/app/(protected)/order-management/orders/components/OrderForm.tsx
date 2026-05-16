@@ -102,7 +102,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
       is_cancelled: false,
       remarks_cs: '',
       order_type: '',
-      delivery_time: '',
+      pickup_time: '',
       checker: '',
       transporter: '',
       driver_name: '',
@@ -180,7 +180,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
           is_cancelled: order.is_cancelled ?? false,
           remarks_cs: order.remarks_cs ?? '',
           order_type: order.order_type ?? '',
-          delivery_time: order.delivery_time ?? '',
+          pickup_time: order.pickup_time ?? '',
           checker: order.checker ?? '',
           transporter: order.transporter ?? '',
           driver_name: order.driver_name ?? '',
@@ -232,7 +232,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
         is_cancelled: data.is_cancelled ?? false,
         remarks_cs: data.remarks_cs || undefined,
         order_type: data.order_type || undefined,
-        delivery_time: data.delivery_time || undefined,
+        pickup_time: data.pickup_time || undefined,
         checker: data.checker || undefined,
         transporter: data.transporter || undefined,
         driver_name: data.driver_name || undefined,
@@ -676,7 +676,7 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <FormField
                       control={form.control}
-                      name="delivery_time"
+                      name="pickup_time"
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Delivery Time</FormLabel>

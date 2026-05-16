@@ -17,7 +17,7 @@ export interface Order {
   is_cancelled?: boolean | null;
   remarks_cs?: string | null;
   order_type?: string | null;
-  delivery_time?: string | null;
+  pickup_time?: string | null;
   checker?: string | null;
   transporter?: string | null;
   driver_name?: string | null;
@@ -88,7 +88,7 @@ export interface OrderFormData {
   is_cancelled?: boolean;
   remarks_cs?: string;
   order_type?: string;
-  delivery_time?: string;
+  pickup_time?: string;
   checker?: string;
   transporter?: string;
   driver_name?: string;

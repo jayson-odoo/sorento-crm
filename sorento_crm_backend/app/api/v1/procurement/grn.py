@@ -26,6 +26,14 @@ async def get_grns(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
+    product_query: Optional[str] = Query(
+        None,
+        description=(
+            "Partial product filter (matches product_code/product_name/description on linked "
+            "picking_lines, case-insensitive). Uses embedding pre-resolve when product "
+            "embeddings exist (e.g. 'WC101' expands to 'SRTWC101', 'SRTWC101-RL')."
+        ),
+    ),
     picking_status: Optional[str] = Query(None),
     inspection_status: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
@@ -40,6 +48,7 @@ async def get_grns(
             page=page,
             limit=limit,
             query=query,
+            product_query=product_query,
             picking_status=picking_status,
             inspection_status=inspection_status,
             sort_field=sort or "created_at",
@@ -58,9 +67,11 @@ async def import_grn_listing(
     db: Session = Depends(get_db),
 ):
     """Queue GRN listing import. Use validate_only=true to test without importing."""
-    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx or .xls) required")
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx, .xls or .xlsm) required")
     file_data = await file.read()
+    from app.services.excel_macro_stripper import maybe_strip
+    file_data, cleaned_name = maybe_strip(file_data, file.filename or "unknown.xlsx")
 
     if validate_only:
         from app.tasks.import_tasks import validate_grn_listing_import
@@ -80,14 +91,14 @@ async def import_grn_listing(
     job = job_service.create_job(
         job_type="grn_listing_import",
         user_id=current_user["id"],
-        filename=file.filename,
+        filename=cleaned_name,
     )
     db.commit()
     rq_job = enqueue_job(
         process_grn_listing_import,
         str(job.id),
         file_data,
-        file.filename or "unknown.xlsx",
+        cleaned_name,
         current_user["id"],
         queue_name="imports",
         job_timeout=3600,
@@ -104,9 +115,11 @@ async def import_grn_lines(
     db: Session = Depends(get_db),
 ):
     """Queue GRN lines import. Use validate_only=true to test without importing."""
-    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls")):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx or .xls) required")
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx, .xls or .xlsm) required")
     file_data = await file.read()
+    from app.services.excel_macro_stripper import maybe_strip
+    file_data, cleaned_name = maybe_strip(file_data, file.filename or "unknown.xlsx")
 
     if validate_only:
         from app.tasks.import_tasks import validate_grn_lines_import
@@ -126,14 +139,14 @@ async def import_grn_lines(
     job = job_service.create_job(
         job_type="grn_lines_import",
         user_id=current_user["id"],
-        filename=file.filename,
+        filename=cleaned_name,
     )
     db.commit()
     rq_job = enqueue_job(
         process_grn_lines_import,
         str(job.id),
         file_data,
-        file.filename or "unknown.xlsx",
+        cleaned_name,
         current_user["id"],
         queue_name="imports",
         job_timeout=3600,

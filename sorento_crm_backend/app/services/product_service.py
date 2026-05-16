@@ -1484,26 +1484,48 @@ class ProductAttachmentService:
         return product_attachment
     
     def create_product_attachment(self, product_attachment_data: ProductAttachmentCreate, created_by: Optional[str] = None):
-        """Create a new product attachment relationship."""
-        # Check if relationship already exists
+        """Create or refresh a product attachment relationship.
+
+        TCK-2026-000020: external n8n intake re-posts the same (product_id,
+        attachment_id) when an attachment is replaced. Switch from hard
+        conflict to idempotent update so the linked record refreshes its
+        sort_order / is_primary / access_levels instead of duplicate-rejecting.
+        The returned row carries `_already_existed=True` so the route can
+        echo it back to the caller.
+        """
+        from sqlalchemy.orm import joinedload
+
         existing = self.db.query(ProductAttachment).filter(
             ProductAttachment.product_id == product_attachment_data.product_id,
             ProductAttachment.attachment_id == product_attachment_data.attachment_id
         ).first()
         if existing:
-            raise handle_conflict("Product attachment relationship already exists.")
-        
+            update_dict = product_attachment_data.model_dump(exclude_unset=True)
+            for key, value in update_dict.items():
+                if key in ("product_id", "attachment_id"):
+                    continue
+                setattr(existing, key, value)
+            from datetime import datetime as _dt
+            existing.updated_at = _dt.utcnow()
+            self.db.commit()
+            self.db.refresh(existing)
+            row = self.db.query(ProductAttachment).options(
+                joinedload(ProductAttachment.product),
+                joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
+            ).filter(ProductAttachment.id == existing.id).first()
+            if row is not None:
+                setattr(row, "_already_existed", True)
+            return row
+
         attachment_dict = product_attachment_data.model_dump()
         if created_by:
             attachment_dict["created_by"] = created_by
-        
+
         product_attachment = ProductAttachment(**attachment_dict)
         self.db.add(product_attachment)
         self.db.commit()
         self.db.refresh(product_attachment)
-        
-        # Reload with relationships
-        from sqlalchemy.orm import joinedload
+
         return self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)

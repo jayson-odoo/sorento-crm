@@ -28,6 +28,7 @@ from app.models.resources import Attachment
 from app.models.user import User
 from app.models.inventory import Warehouse
 from app.services.identifier_resolver import resolve_identifier
+from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
@@ -502,14 +503,54 @@ class InboundShipmentService:
         self.db.commit()
     
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
-        """Create a new inbound shipment with lines."""
+        """Create or update-in-place an inbound shipment with lines.
+
+        TCK-2026-000020: on duplicate shipment_number we update the header + lines
+        when the shipment is still editable (status not in completed/fully_received).
+        When the shipment is already completed, reject with an explicit message so
+        the caller knows the update path is unavailable.
+        """
         if shipment_data.shipment_number:
             existing = self.db.query(InboundShipment).filter(
                 InboundShipment.shipment_number == shipment_data.shipment_number
             ).first()
             if existing:
-                raise handle_conflict("Shipment number already exists.")
-        
+                status_l = (getattr(existing, "shipment_status", None) or "").strip().lower()
+                if status_l in ("fully_received", "completed"):
+                    raise handle_conflict(
+                        f"Shipment '{shipment_data.shipment_number}' already completed, cannot update."
+                    )
+                # Update-in-place path: rewrite header + replace lines.
+                shipment_dict = shipment_data.model_dump(exclude={"shipment_lines"})
+                shipment_dict["shipment_status"] = _normalize_inbound_shipment_status(
+                    shipment_dict.get("shipment_status")
+                )
+                for k, v in shipment_dict.items():
+                    if v is not None:
+                        setattr(existing, k, v)
+                # Replace lines
+                for line in existing.shipment_lines[:]:
+                    self.db.delete(line)
+                self.db.flush()
+                if shipment_data.shipment_lines:
+                    merged: dict[str, dict] = {}
+                    for line_data in shipment_data.shipment_lines:
+                        d = line_data.model_dump()
+                        pid = d["product_id"]
+                        if pid in merged:
+                            merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
+                            merged[pid]["cartons_count"] += d.get("cartons_count", 1)
+                        else:
+                            merged[pid] = dict(d)
+                    for d in merged.values():
+                        line = InboundShipmentLine(**d, shipment_id=existing.id)
+                        self.db.add(line)
+                self.db.commit()
+                self.db.refresh(existing)
+                self.refresh_shipment_line_statuses(existing.id)
+                setattr(existing, "_already_existed", True)
+                return existing
+
         # Create shipment and lines in transaction
         shipment_dict = shipment_data.model_dump(exclude={"shipment_lines"})
         shipment_dict["shipment_status"] = _normalize_inbound_shipment_status(
@@ -1176,6 +1217,7 @@ class PickingHeaderService:
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
+        product_query: Optional[str] = None,
         picking_status: Optional[str] = None,
         inspection_status: Optional[str] = None,
         sort_field: str = "created_at",
@@ -1186,18 +1228,41 @@ class PickingHeaderService:
         q = self.db.query(PickingHeader).options(
             noload(PickingHeader.picking_lines)
         ).filter(PickingHeader.picking_type == "goods_received")
-        
+
         filters = []
-        
+
         if picking_status and picking_status != "all":
             filters.append(PickingHeader.picking_status == picking_status)
-        
+
         if inspection_status and inspection_status != "all":
             filters.append(PickingHeader.inspection_status == inspection_status)
-        
+
         if query:
             filters.append(PickingHeader.picking_number.ilike(f"%{query}%"))
-        
+
+        if product_query and product_query.strip():
+            product_clause, _ = resolve_via_embedding_then_ilike(
+                self.db,
+                product_query,
+                source_type="product",
+                ilike_columns=[],
+                canonical_model=Product,
+                canonical_fields=("product_code", "product_name"),
+                extra_filter_builders=[
+                    lambda like: PickingHeader.picking_lines.any(
+                        PickingLine.product.has(
+                            or_(
+                                Product.product_code.ilike(like),
+                                Product.product_name.ilike(like),
+                                Product.description.ilike(like),
+                            )
+                        )
+                    ),
+                ],
+            )
+            if product_clause is not None:
+                filters.append(product_clause)
+
         if filters:
             q = q.filter(and_(*filters))
         

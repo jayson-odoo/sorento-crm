@@ -178,9 +178,49 @@ def create_promotion(
     }
     if payload.access_levels is not None:
         promotion_kw["access_levels"] = payload.access_levels
-    promotion = Promotion(**promotion_kw)
-    db.add(promotion)
-    db.flush()
+
+    # TCK-2026-000020: when n8n re-sends a promotion with the same description,
+    # update the still-editable row in place (replace groups + products + links)
+    # instead of duplicate-creating. "Locked" = end_date already passed.
+    from sqlalchemy import func as _sa_func
+
+    desc_norm = (payload.promotions.description or "").strip()
+    existing_promotion = None
+    if desc_norm:
+        existing_promotion = (
+            db.query(Promotion)
+            .filter(_sa_func.lower(_sa_func.trim(Promotion.description)) == desc_norm.lower())
+            .order_by(Promotion.created_at.desc())
+            .first()
+        )
+    if existing_promotion is not None:
+        # If the promotion's window has ended, reject — it's locked.
+        if existing_promotion.end_date is not None and existing_promotion.end_date < today:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Promotion '{desc_norm}' already exists and is past end_date "
+                    f"({existing_promotion.end_date}); cannot update."
+                ),
+            )
+        for key, value in promotion_kw.items():
+            if key == "created_by":
+                continue
+            if value is not None:
+                setattr(existing_promotion, key, value)
+        # Drop existing groups + lines so we can rebuild from the payload.
+        for g in list(getattr(existing_promotion, "promotion_groups", []) or []):
+            db.delete(g)
+        for pa in list(getattr(existing_promotion, "promotion_attachments", []) or []):
+            db.delete(pa)
+        db.flush()
+        promotion = existing_promotion
+        already_existed_flag = True
+    else:
+        promotion = Promotion(**promotion_kw)
+        db.add(promotion)
+        db.flush()
+        already_existed_flag = False
 
     skipped_duplicate_rows: list[dict] = []
 
@@ -324,6 +364,7 @@ def create_promotion(
             promotion,
             attachment_ids,
             payload.notify_user_id,
+            warnings=missing_codes or None,
         )
     except Exception as e:
         logger.warning(
@@ -334,7 +375,8 @@ def create_promotion(
 
     return PromotionCreateResponse(
         promotion=PromotionResponse.model_validate(promotion),
-        already_existed=False,
-        message=None,
+        already_existed=already_existed_flag,
+        message=("Promotion updated in place." if already_existed_flag else None),
         warnings=warnings,
+        unknown_product_codes=missing_codes,
     )

@@ -192,6 +192,95 @@ class ContactAccessTypeService:
         )
         return [r[0] for r in rows]
 
+    def enforce_access_levels_for_contact(
+        self,
+        respond_io_id: str,
+        space_id: str,
+        access_levels: Optional[list[str]],
+    ) -> list[str]:
+        """TCK-2026-000016 two-call resolution.
+
+        - access_levels missing/empty → raise AppException(422, allowed=[{code,name,description},...])
+        - any code not in the contact's CURRENTLY-ACTIVE set → raise AppException(403, allowed=[...])
+        - otherwise return normalized codes (intersection with contact's active set).
+        """
+        from fastapi import HTTPException, status
+
+        allowed = self.resolve_active_access_levels_for_contact(respond_io_id, space_id)
+        allowed_codes = {entry["code"] for entry in allowed}
+
+        normalized: list[str] = []
+        for v in access_levels or []:
+            code = (v or "").strip()
+            if code and code not in normalized:
+                normalized.append(code)
+
+        if not normalized:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "ACCESS_LEVELS_REQUIRED",
+                    "message": "access_levels is required for contact-scoped requests.",
+                    "allowed": allowed,
+                },
+            )
+
+        invalid = [c for c in normalized if c not in allowed_codes]
+        if invalid:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "ACCESS_LEVELS_NOT_PERMITTED",
+                    "message": (
+                        f"access_levels not permitted for this contact: {invalid}. "
+                        "Pick one of the codes returned in `allowed` (refreshed live)."
+                    ),
+                    "allowed": allowed,
+                    "invalid": invalid,
+                },
+            )
+        return normalized
+
+    def resolve_active_access_levels_for_contact(
+        self,
+        respond_io_id: str,
+        space_id: str,
+    ) -> list[dict]:
+        """Return [{code, description}] for the contact's CURRENTLY-ACTIVE access codes.
+
+        Filtered against the active catalog so deactivated rows never surface.
+        Used by TCK-2026-000016 two-call resolution: when an MCP caller passes
+        no `access_levels`, the route responds with this list as the allowed
+        set, and the agent re-issues the call with one of the listed codes.
+        """
+        codes = self.resolve_contact_access_codes(respond_io_id, space_id)
+        if not codes:
+            return []
+        rows = (
+            self.db.query(
+                ContactAccessType.code,
+                ContactAccessType.name,
+                ContactAccessType.description,
+            )
+            .filter(
+                ContactAccessType.is_active.is_(True),
+                ContactAccessType.code.in_(codes),
+            )
+            .order_by(
+                ContactAccessType.sort_order.asc().nullslast(),
+                ContactAccessType.code.asc(),
+            )
+            .all()
+        )
+        return [
+            {
+                "code": r[0],
+                "name": r[1] or r[0],
+                "description": r[2],
+            }
+            for r in rows
+        ]
+
     def resolve_contact_access_codes(self, respond_io_id: str, space_id: str) -> List[str]:
         """Resolve a Respond.io (contact_id, space_id) pair to the contact's access codes.
 

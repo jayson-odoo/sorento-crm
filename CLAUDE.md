@@ -46,9 +46,8 @@ Pyright: root `pyrightconfig.json` points to `sorento_crm_backend/venv` and Pyth
 
 ```bash
 npm install --force          # React 19 peer-dep conflicts; --force is expected
-npm run dev                  # Next dev (3000)
 npm run build                # production
-npm run build:staging        # copies .env.staging -> .env.local first
+npm start        # copies .env.staging -> .env.local first
 npm run lint                 # eslint .
 npm run test                 # vitest run
 npm run test:watch
@@ -158,7 +157,7 @@ Two paths, pick one:
 
 Use the `mcp__plugin_playwright_playwright__*` tools to drive Chromium against the running dev server.
 
-- Ensure FE dev server runs at `http://localhost:3000` (`npm run dev` in `sorento_crm_frontend/`) and BE at `http://localhost:8000`.
+- Ensure FE dev server runs at `http://localhost:3000` (`npm run build && npm start` in `sorento_crm_frontend/`) and BE at `http://localhost:8000`.
 - **Always navigate to a feature by clicking through the sidebar / top nav from the home page — never `browser_navigate` directly to a deep URL.** Direct URL navigation hides nav-config bugs (missing entries, wrong `moduleKey`, broken permission gating, hidden behind a collapsed group). The first verification step for any new page is "open the sidebar group it belongs to and confirm the entry renders, then click it."
 - Tool flow: land on `/`, `browser_snapshot` to find the relevant sidebar group button, `browser_click` to expand, then `browser_click` the leaf entry → `browser_snapshot` the destination → continue with `browser_click` / `browser_fill_form` / `browser_type` → re-snapshot to assert state.
 - Always check `browser_console_messages` after the interaction. Treat unexpected `error` / `warning` as a regression.
@@ -184,7 +183,7 @@ If unable to reach a browser (server down, sandboxed, etc.), state that explicit
 
 ## Cache reset (frontend)
 
-If FE changes don't appear: stop dev server, `rm -rf sorento_crm_frontend/.next` (and optionally `node_modules/.cache`), restart `npm run dev`, hard-refresh browser.
+If FE changes don't appear: stop dev server, `rm -rf sorento_crm_frontend/.next` (and optionally `node_modules/.cache`), restart `npm run build && npm start`, hard-refresh browser.
 
 ## PR checklist
 

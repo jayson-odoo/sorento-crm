@@ -259,6 +259,31 @@ def notify_external_api_explicit_user(
         return []
 
 
+def _format_warnings_block(warnings: Optional[list[str]]) -> tuple[str, str]:
+    """Return (plain, html) warning section for unknown product codes (TCK-2026-000019).
+
+    Empty/None warnings → ('', '') so callers can concatenate without a stray block.
+    """
+    if not warnings:
+        return "", ""
+    items = ", ".join(warnings)
+    plain = (
+        "\nWarning — products not found in system (these lines were skipped "
+        "or imported without master-data linkage):\n"
+        f"{items}\n"
+    )
+    items_html = ", ".join(html.escape(code) for code in warnings)
+    html_block = (
+        '<section style="margin:0.5em 0;padding:0.75em 1em;'
+        'background:#fff7e6;border-left:4px solid #f0a020;color:#5a3a00;">'
+        "<strong>Warning — products not found in system</strong>"
+        "<p style=\"margin:0.25em 0;\">These lines were skipped or imported without "
+        f"master-data linkage: {items_html}</p>"
+        "</section>"
+    )
+    return plain, html_block
+
+
 def notify_after_external_attachment_entity(
     db: Session,
     attachment_ids: list[str],
@@ -270,13 +295,23 @@ def notify_after_external_attachment_entity(
     summary_html: str,
     entity_url: str,
     entity_link_text: str,
+    warnings: Optional[list[str]] = None,
 ) -> None:
     """
     Notify attachment uploaders and/or notify_user_id after external APIs (product attachment, form, packing list).
     Mirrors notify_after_external_promotion_created (batch id + flush).
+
+    `warnings` renders a TCK-2026-000019 warning block (unknown product codes)
+    above the success body when non-empty.
     """
     if not getattr(settings, "notifications_v1_enabled", True):
         return
+
+    warn_plain, warn_html = _format_warnings_block(warnings)
+    if warn_plain:
+        summary_plain = f"{warn_plain}\n{summary_plain}"
+    if warn_html:
+        summary_html = f"{warn_html}{summary_html}"
 
     batch_id = uuid.uuid4().hex[:16]
     ids: list[str] = []
@@ -339,6 +374,7 @@ def notify_uploaders_after_external_promotion_created(
     promotion,
     *,
     notification_batch_id: str,
+    warnings: Optional[list[str]] = None,
 ) -> tuple[list[str], set[str]]:
     """
     In-app + email when POST /external/promotions succeeds and links attachment(s).
@@ -405,7 +441,9 @@ def notify_uploaders_after_external_promotion_created(
         )
 
         title = f"Promotion created: {promo_name}"
+        warn_plain, warn_html = _format_warnings_block(warnings)
         body_plain = (
+            f"{warn_plain}"
             f'A promotion "{promo_name}" was created in Sorento CRM using your uploaded file(s): '
             f"{names_list}.\n\n"
             f"View promotion:\n{promo_url}\n\n"
@@ -413,6 +451,7 @@ def notify_uploaders_after_external_promotion_created(
             f"This is a system generated email. Please do not reply."
         )
         body_html = (
+            f"{warn_html}"
             f"<p>A promotion <strong>{html.escape(promo_name)}</strong> "
             f"was created in Sorento CRM using your uploaded file(s): "
             f"{safe_names_html}.</p>"
@@ -474,6 +513,7 @@ def notify_external_promotion_explicit_user(
     user_id: str,
     *,
     notification_batch_id: str,
+    warnings: Optional[list[str]] = None,
 ) -> list[str]:
     """
     Notify a CRM user by id that a promotion was created via the external API (no attachment uploader path).
@@ -499,13 +539,16 @@ def notify_external_promotion_explicit_user(
     promo_url = build_promotion_detail_url(promo_id)
 
     title = f"Promotion created: {promo_name}"
+    warn_plain, warn_html = _format_warnings_block(warnings)
     body_plain = (
+        f"{warn_plain}"
         f'A promotion "{promo_name}" was created in Sorento CRM via the external integration API '
         f"(for example n8n).\n\n"
         f"View promotion:\n{promo_url}\n\n"
         f"This is a system generated email. Please do not reply."
     )
     body_html = (
+        f"{warn_html}"
         f"<p>A promotion <strong>{html.escape(promo_name)}</strong> "
         f"was created in Sorento CRM via the external integration API "
         f"(for example n8n).</p>"
@@ -551,12 +594,16 @@ def notify_after_external_promotion_created(
     promotion,
     attachment_ids: list[str],
     notify_user_id: Optional[str],
+    warnings: Optional[list[str]] = None,
 ) -> None:
     """
     After POST /external/promotions succeeds: notify attachment uploaders and/or notify_user_id, then send email immediately.
 
     External API auth uses the system key, so promotion.created_by is usually null — pass notify_user_id from n8n
     (CRM user UUID) when attachment_ids are missing or uploaded_by is not set on files.
+
+    `warnings` renders a TCK-2026-000019 warning block (unknown product codes)
+    via the explicit-user path when non-empty.
     """
     if not getattr(settings, "notifications_v1_enabled", True):
         return
@@ -571,6 +618,7 @@ def notify_after_external_promotion_created(
             attachment_ids,
             promotion,
             notification_batch_id=batch_id,
+            warnings=warnings,
         )
         ids.extend(n_ids)
         uploaders.update(up)
@@ -580,7 +628,15 @@ def notify_after_external_promotion_created(
     nu = _user_id_str(notify_user_id)
     if nu and nu not in uploaders:
         try:
-            ids.extend(notify_external_promotion_explicit_user(db, promotion, nu, notification_batch_id=batch_id))
+            ids.extend(
+                notify_external_promotion_explicit_user(
+                    db,
+                    promotion,
+                    nu,
+                    notification_batch_id=batch_id,
+                    warnings=warnings,
+                )
+            )
         except Exception as e:
             logger.warning("External promotion notify_user_id failed: %s", e, exc_info=True)
 

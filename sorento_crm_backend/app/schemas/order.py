@@ -86,7 +86,7 @@ class OrderBase(BaseModel):
     is_cancelled: bool = False
     remarks_cs: Optional[str] = None
     order_type: Optional[str] = None
-    delivery_time: Optional[str] = None
+    pickup_time: Optional[str] = None
     checker: Optional[str] = None
     transporter: Optional[str] = None
     driver_name: Optional[str] = None
@@ -125,7 +125,7 @@ class OrderUpdate(BaseModel):
     is_cancelled: Optional[bool] = None
     remarks_cs: Optional[str] = None
     order_type: Optional[str] = None
-    delivery_time: Optional[str] = None
+    pickup_time: Optional[str] = None
     checker: Optional[str] = None
     transporter: Optional[str] = None
     driver_name: Optional[str] = None
