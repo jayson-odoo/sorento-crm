@@ -24,6 +24,7 @@ from app.api.v1.external import (
     rag,
     portal_tokens,
     it_support_tickets,
+    contact_access_types,
 )
 
 router = APIRouter()
@@ -51,3 +52,4 @@ router.include_router(view_link.router, prefix="/view-link", tags=["external"])
 router.include_router(rag.router, prefix="/rag", tags=["external"])
 router.include_router(portal_tokens.router, prefix="/portal-tokens", tags=["external"])
 router.include_router(it_support_tickets.router, prefix="/it-support/tickets", tags=["external"])
+router.include_router(contact_access_types.router, prefix="/contact-access-types", tags=["external"])

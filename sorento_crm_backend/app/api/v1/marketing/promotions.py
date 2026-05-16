@@ -319,6 +319,13 @@ async def get_promotion_products_nested(
     limit: int = Query(1000, ge=1, le=5000, description="Max promotion product lines per page."),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id. Pair with space_id to filter by the contact's access levels."),
     space_id: Optional[str] = Query(None, description="Respond.io space id. Pair with contact_id."),
+    access_levels: Optional[list[str]] = Query(
+        None,
+        description=(
+            "TCK-2026-000105: contact-scoped MCP calls must supply at least one currently-active "
+            "code. Omitted → 422 + allowed list unless the contact has exactly 1 active code (auto-defaulted)."
+        ),
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -329,7 +336,12 @@ async def get_promotion_products_nested(
         logger.debug(f"Fetching products for promotion_id: {promotion_id}")
 
         from app.services.contact_access_type_service import ContactAccessTypeService
-        contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
+        cats_svc = ContactAccessTypeService(db)
+        if contact_id and space_id:
+            access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
+            contact_codes = list(access_levels)
+        else:
+            contact_codes = cats_svc.resolve_optional_contact_access_codes(contact_id, space_id)
         service = PromotionProductService(db)
         result = service.list_promotion_products(
             promotion_id,

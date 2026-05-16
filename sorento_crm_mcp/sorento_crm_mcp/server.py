@@ -37,9 +37,18 @@ TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
     "crm_forms_management_forms_list": ("contact_id", "space_id"),
     # Promotion / attachment access-control: server resolves the contact's M2M
     # access types from these and applies an overlap filter against the
-    # resource's access_levels JSONB array. n8n must always supply both.
+    # resource's access_levels JSONB array. n8n must always supply contact_id,
+    # space_id, AND access_levels (a single code picked from the discovery tool
+    # crm_user_management_contact_access_levels_active — see TCK-2026-000105).
+    # access_levels stays OPTIONAL on the MCP schema so the backend auto-default
+    # (1-active → use that code) actually fires when the LLM omits it. Required
+    # only when the contact has >1 active code; the backend 422 carries the
+    # allowed list so the agent can recover by calling
+    # crm_user_management_contact_access_levels_active and re-issuing.
     "crm_marketing_promotions_list": ("contact_id", "space_id"),
     "crm_marketing_promotions_get": ("contact_id", "space_id"),
+    "crm_marketing_promotion_products_nested": ("contact_id", "space_id"),
+    "crm_marketing_promotion_products_list": ("contact_id", "space_id"),
     "crm_marketing_promotion_attachments_list": ("contact_id", "space_id"),
     "crm_marketing_promotion_attachments_by_promotion": ("contact_id", "space_id"),
     "crm_master_product_attachments_list": ("contact_id", "space_id"),
@@ -902,7 +911,23 @@ def _compile_tool(spec: ToolSpec):
     forward_space_id_query = "space_id" in query_params_with_aliases
     forward_contact_id_body = "contact_id" in spec.body_params
     forward_space_id_body = "space_id" in spec.body_params
-    qp_sig = ", ".join(f"{q}: str | None = None" for q in qp_for_sig)
+    # Promote any query param declared in TOOL_REQUIRED_QUERY_HINTS to a
+    # no-default `str` argument so the generated JSON schema marks it
+    # `required:true`. Without this the LLM treats it as optional and skips it.
+    # Sort required-first so the signature stays valid Python (no required after
+    # optional). Guard params (contact_id, space_id) are already required in
+    # `guard_sig`; we skip them here.
+    required_query_set = {
+        q for q in TOOL_REQUIRED_QUERY_HINTS.get(spec.name, ())
+        if q in qp_for_sig and q not in _GUARD_PARAM_NAMES
+    }
+    qp_required_sorted = [q for q in qp_for_sig if q in required_query_set]
+    qp_optional_sorted = [q for q in qp_for_sig if q not in required_query_set]
+    qp_for_sig = qp_required_sorted + qp_optional_sorted
+    qp_sig = ", ".join(
+        (f"{q}: str" if q in required_query_set else f"{q}: str | None = None")
+        for q in qp_for_sig
+    )
     bp_sig = ", ".join(f"{b}: str" for b in bp_for_sig)
     guard_sig = "contact_id: str, space_id: str"
     if pp_sig and qp_sig:

@@ -172,15 +172,20 @@ CATALOG: tuple[ToolSpec, ...] = (
             "general 'do you have a document for product X' question — these are all stored as "
             "product attachments. `product_id` accepts a product UUID or exact product code. "
             "Visibility is gated server-side by the contact's access types — pass the Respond.io "
-            "`contact_id` (respond_io_id) and `space_id` (workspace space id) and the CRM "
-            "filters attachments to those whose access_levels overlap the contact's assigned types. "
+            "`contact_id` (respond_io_id), `space_id` (workspace space id), and `access_levels`. "
             "Internal fields (directory_id, storage_provider, uploaded_by id, full_directory_path) "
             "are stripped from the response — caller sees only file_name, public URL, description, "
-            "uploaded_by_user_display_name, created_at."
+            "uploaded_by_user_display_name, created_at.\n\n"
+            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active code — "
+            "backend auto-defaults to it. REQUIRED when the contact has >1 active codes; calling "
+            "without it returns 422 + `allowed:[{code,name,description}]`. To pick safely, call "
+            "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
+            "passing access_levels, if it returns >1 ask the user to pick (show descriptions, not "
+            "codes) and pass the chosen `code`."
         ),
         "/api/v1/master-data/product-attachments",
         (),
-        ("page", "limit", "sort", "dir", "product_id", "attachment_id", "contact_id", "space_id"),
+        ("page", "limit", "sort", "dir", "product_id", "attachment_id", "contact_id", "space_id", "access_levels"),
     ),
     ToolSpec(
         "crm_master_product_attachments_get",
@@ -201,11 +206,17 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`product_code` so the caller can re-issue with a precise reference. Server filters "
             "attachments to those whose access_levels overlap the contact's M2M access types "
             "resolved from `contact_id` (respond_io_id) + `space_id`. Internal storage fields "
-            "(directory_id, storage_provider, uploaded_by id) are stripped."
+            "(directory_id, storage_provider, uploaded_by id) are stripped.\n\n"
+            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active code — "
+            "backend auto-defaults to it. REQUIRED when the contact has >1 active codes; calling "
+            "without it returns 422 + `allowed:[{code,name,description}]`. To pick safely, call "
+            "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
+            "passing access_levels, if it returns >1 ask the user to pick (show descriptions, not "
+            "codes) and pass the chosen `code`."
         ),
         "/api/v1/master-data/product-attachments/product/{product_id}",
         ("product_id",),
-        ("contact_id", "space_id"),
+        ("contact_id", "space_id", "access_levels"),
     ),
     # --- lookup sets ---
     ToolSpec(
@@ -229,6 +240,27 @@ CATALOG: tuple[ToolSpec, ...] = (
         body_params=("set_key", "raw", "locale"),
         module="master_data",
     ),
+    # --- user management / access discovery ---
+    ToolSpec(
+        "crm_user_management_contact_access_levels_active",
+        (
+            "Return the contact's CURRENTLY-ACTIVE access codes — `[{code, name, description}]`. "
+            "Call BEFORE any promotion / promotion-attachment / product-attachment tool when the "
+            "request is contact-scoped AND you have not yet established which access_levels apply. "
+            "Codes are DYNAMIC per contact (never guess from a static enum).\n\n"
+            "DECISION TREE for the gated tool:\n"
+            "  • Response has 1 entry → skip passing access_levels (backend auto-defaults).\n"
+            "  • Response has >1 entries → show DESCRIPTIONS (not raw codes) to the user, ask "
+            "them to pick, pass the chosen `code` as `access_levels`.\n"
+            "  • Response is empty → contact has no entitlements; gated tools will return no rows.\n"
+            "404 → unknown contact_id / space_id pair."
+        ),
+        "/api/v1/external/contact-access-types/active",
+        (),
+        ("contact_id", "space_id"),
+        module="user_management",
+    ),
+
     # --- marketing ---
     ToolSpec(
         "crm_marketing_promotions_list",
@@ -242,13 +274,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "(no fallback). Use period_from / period_to (YYYY-MM-DD) to scope by overlap with the "
             "promotion's [start_date, end_date] window. For product lines use "
             "crm_marketing_promotion_products_list.\n\n"
-            "ACCESS_LEVELS TWO-CALL PROTOCOL (TCK-2026-000016): when `contact_id` + `space_id` "
-            "are passed, `access_levels` is REQUIRED. Codes are DYNAMIC per contact — do NOT "
-            "guess from a static enum. Call once without `access_levels`; server responds 422 with "
-            "`{allowed: [{code, name, description}, ...]}` containing the contact's currently-active "
-            "access types. SHOW DESCRIPTIONS (not codes) to the user; if ambiguous and >1 active, "
-            "ask the user to pick. Re-call with the chosen code(s). Server validates against the "
-            "LIVE active set on every call (deactivated codes → 403 + refreshed allowed)."
+            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active code "
+            "— backend auto-defaults to it. REQUIRED when the contact has >1 active codes; calling "
+            "without it returns 422 + `allowed:[{code,name,description}]`. Codes are DYNAMIC per "
+            "contact — do NOT guess from a static enum. To pick safely, call "
+            "`crm_user_management_contact_access_levels_active` first; if 1 entry skip passing "
+            "access_levels, if >1 show descriptions (not codes) to the user and pass the chosen "
+            "`code`. A code not in the live active set → 403 + refreshed `allowed`."
         ),
         "/api/v1/marketing/promotions",
         (),
@@ -262,7 +294,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Does NOT include product lines by default; set include_products=true only if you need "
             "nested SKU lines. Visibility is gated server-side from the contact's M2M access types "
             "(`contact_id` + `space_id`); a 404 is returned when the promotion does not overlap the "
-            "contact's access types, and inline attachments are filtered the same way."
+            "contact's access types, and inline attachments are filtered the same way.\n\n"
+            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active code "
+            "— backend auto-defaults to it. REQUIRED when the contact has >1 active codes; calling "
+            "without it returns 422 + `allowed`. Call "
+            "`crm_user_management_contact_access_levels_active` first to discover; if 1 entry skip "
+            "passing access_levels, if >1 pick one and pass its `code`."
         ),
         "/api/v1/marketing/promotions/{promotion_id}",
         ("promotion_id",),
@@ -273,11 +310,17 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "Products linked to a promotion (nested under promotion). Each row also carries the "
             "parent promotion's `promotion_attachments` inline — no second call needed to fetch the "
-            "promotion document. Optional page/limit (default limit 1000, max 5000)."
+            "promotion document. Optional page/limit (default limit 1000, max 5000).\n\n"
+            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active code — "
+            "backend auto-defaults to it. REQUIRED when the contact has >1 active codes; calling "
+            "without it returns 422 + `allowed:[{code,name,description}]`. To pick safely, call "
+            "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
+            "passing access_levels, if it returns >1 ask the user to pick (show descriptions, not "
+            "codes) and pass the chosen `code`."
         ),
         "/api/v1/marketing/promotions/{promotion_id}/products",
         ("promotion_id",),
-        ("page", "limit", "contact_id", "space_id"),
+        ("page", "limit", "contact_id", "space_id", "access_levels"),
     ),
     ToolSpec(
         "crm_marketing_promotion_products_list",
@@ -311,7 +354,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "length_min=460 length_max=460 width_min=330 width_max=330 height_min=140 height_max=140\n"
             "  User says 'basin around 600mm'        →  query='basin', any_dimension_min=595, any_dimension_max=605\n"
             "  User says 'sorento wash basin under RM 500' →  query='sorento wash basin', price_max=500\n\n"
-            "Use this tool without promotion_id to find which promotions a product (or trait) appears in."
+            "Use this tool without promotion_id to find which promotions a product (or trait) appears in.\n\n"
+            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active code — "
+            "backend auto-defaults to it. REQUIRED when the contact has >1 active codes; calling "
+            "without it returns 422 + `allowed:[{code,name,description}]`. To pick safely, call "
+            "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
+            "passing access_levels, if it returns >1 ask the user to pick (show descriptions, not "
+            "codes) and pass the chosen `code`."
         ),
         "/api/v1/marketing/promotion-products",
         (),
@@ -335,7 +384,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "product code/name, promotion group name, and attachment metadata. Server filters "
             "results to links whose parent promotion AND attachment access_levels both overlap "
             "the contact's M2M access types (resolved from `contact_id` + `space_id`). Internal "
-            "storage fields are stripped from the response."
+            "storage fields are stripped from the response.\n\n"
+            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active code — "
+            "backend auto-defaults to it. REQUIRED when the contact has >1 active codes; calling "
+            "without it returns 422 + `allowed:[{code,name,description}]`. To pick safely, call "
+            "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
+            "passing access_levels, if it returns >1 ask the user to pick (show descriptions, not "
+            "codes) and pass the chosen `code`."
         ),
         "/api/v1/marketing/promotion-attachments",
         (),
@@ -355,7 +410,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "/ BROCHURE / FLYER / PRICE LIST / LEAFLET / SPEC SHEET tied to a specific promotion. "
             "promotion_id must be the UUID. Server filters to attachments whose parent promotion "
             "AND attachment access_levels both overlap the contact's M2M access types (resolved "
-            "from `contact_id` + `space_id`). Internal storage fields are stripped."
+            "from `contact_id` + `space_id`). Internal storage fields are stripped.\n\n"
+            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active code — "
+            "backend auto-defaults to it. REQUIRED when the contact has >1 active codes; calling "
+            "without it returns 422 + `allowed:[{code,name,description}]`. To pick safely, call "
+            "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
+            "passing access_levels, if it returns >1 ask the user to pick (show descriptions, not "
+            "codes) and pass the chosen `code`."
         ),
         "/api/v1/marketing/promotion-attachments/promotion/{promotion_id}",
         ("promotion_id",),

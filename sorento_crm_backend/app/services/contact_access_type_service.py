@@ -198,24 +198,65 @@ class ContactAccessTypeService:
         space_id: str,
         access_levels: Optional[list[str]],
     ) -> list[str]:
-        """TCK-2026-000016 two-call resolution.
+        """TCK-2026-000105 resolution (supersedes TCK-2026-000016 two-call).
 
-        - access_levels missing/empty → raise AppException(422, allowed=[{code,name,description},...])
-        - any code not in the contact's CURRENTLY-ACTIVE set → raise AppException(403, allowed=[...])
-        - otherwise return normalized codes (intersection with contact's active set).
+        Accepts each input value as EITHER a name ("Sorento Office") or a legacy
+        code ("sorento_office") and normalizes to the canonical code for the
+        JSONB overlap filter. The discovery surface (and 422/403 `allowed`
+        payload) exposes only `name`, so the agent passes the same name back —
+        no manual code-mapping required.
+
+        - access_levels empty AND contact has exactly ONE currently-active code →
+          auto-default to that code (no 422 — UX shortcut for the common
+          single-tier case).
+        - access_levels empty AND contact has >1 (or zero) active → raise 422
+          with the `allowed` name list so the caller can disambiguate.
+        - any value that resolves to neither a name nor a code in the contact's
+          CURRENTLY-ACTIVE set → raise 403 with refreshed `allowed`.
+        - otherwise return normalized canonical codes.
         """
         from fastapi import HTTPException, status
 
         allowed = self.resolve_active_access_levels_for_contact(respond_io_id, space_id)
-        allowed_codes = {entry["code"] for entry in allowed}
+        active_codes = self.resolve_contact_access_codes(respond_io_id, space_id)
+        # Build name→code and code→code maps from the live active catalog.
+        catalog = (
+            self.db.query(ContactAccessType.code, ContactAccessType.name)
+            .filter(
+                ContactAccessType.is_active.is_(True),
+                ContactAccessType.code.in_(active_codes),
+            )
+            .all()
+            if active_codes else []
+        )
+        name_to_code: dict[str, str] = {}
+        valid_codes: set[str] = set()
+        for code_val, name_val in catalog:
+            valid_codes.add(code_val)
+            if name_val:
+                name_to_code[name_val.strip().casefold()] = code_val
+            name_to_code[code_val.strip().casefold()] = code_val
 
         normalized: list[str] = []
+        invalid: list[str] = []
         for v in access_levels or []:
-            code = (v or "").strip()
-            if code and code not in normalized:
-                normalized.append(code)
+            raw = (v or "").strip()
+            if not raw:
+                continue
+            resolved = name_to_code.get(raw.casefold())
+            if resolved is None:
+                invalid.append(raw)
+                continue
+            if resolved not in normalized:
+                normalized.append(resolved)
 
-        if not normalized:
+        if not normalized and not invalid:
+            if len(allowed) == 1:
+                # Allowed entries only carry name; remap once to canonical code.
+                only_name = allowed[0]["name"].strip().casefold()
+                code = name_to_code.get(only_name)
+                if code:
+                    return [code]
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
@@ -225,7 +266,6 @@ class ContactAccessTypeService:
                 },
             )
 
-        invalid = [c for c in normalized if c not in allowed_codes]
         if invalid:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -233,7 +273,7 @@ class ContactAccessTypeService:
                     "code": "ACCESS_LEVELS_NOT_PERMITTED",
                     "message": (
                         f"access_levels not permitted for this contact: {invalid}. "
-                        "Pick one of the codes returned in `allowed` (refreshed live)."
+                        "Pick a name from the `allowed` list (refreshed live)."
                     ),
                     "allowed": allowed,
                     "invalid": invalid,
@@ -246,12 +286,13 @@ class ContactAccessTypeService:
         respond_io_id: str,
         space_id: str,
     ) -> list[dict]:
-        """Return [{code, description}] for the contact's CURRENTLY-ACTIVE access codes.
+        """Return [{name}] for the contact's CURRENTLY-ACTIVE access codes.
 
         Filtered against the active catalog so deactivated rows never surface.
-        Used by TCK-2026-000016 two-call resolution: when an MCP caller passes
-        no `access_levels`, the route responds with this list as the allowed
-        set, and the agent re-issues the call with one of the listed codes.
+        Surface-level callers (MCP discovery tool, 422/403 allowed payloads) only
+        need the display name; agent passes the same name back as `access_levels`
+        and `enforce_access_levels_for_contact` translates it to the canonical
+        code for the JSONB overlap filter.
         """
         codes = self.resolve_contact_access_codes(respond_io_id, space_id)
         if not codes:
@@ -260,7 +301,6 @@ class ContactAccessTypeService:
             self.db.query(
                 ContactAccessType.code,
                 ContactAccessType.name,
-                ContactAccessType.description,
             )
             .filter(
                 ContactAccessType.is_active.is_(True),
@@ -272,14 +312,7 @@ class ContactAccessTypeService:
             )
             .all()
         )
-        return [
-            {
-                "code": r[0],
-                "name": r[1] or r[0],
-                "description": r[2],
-            }
-            for r in rows
-        ]
+        return [{"name": r[1] or r[0]} for r in rows]
 
     def resolve_contact_access_codes(self, respond_io_id: str, space_id: str) -> List[str]:
         """Resolve a Respond.io (contact_id, space_id) pair to the contact's access codes.
