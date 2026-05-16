@@ -324,6 +324,8 @@ class ContactAccessTypeBase(BaseModel):
     description: Optional[str] = None
     is_active: bool = True
     sort_order: Optional[int] = None
+    # Admin-curated synonyms for fuzzy resolution (e.g. ["customer","homeowner"] → end_user).
+    keywords: List[str] = []
 
 
 class ContactAccessTypeCreate(ContactAccessTypeBase):
@@ -335,6 +337,7 @@ class ContactAccessTypeUpdate(BaseModel):
     description: Optional[str] = None
     is_active: Optional[bool] = None
     sort_order: Optional[int] = None
+    keywords: Optional[List[str]] = None
 
 
 class ContactAccessTypeResponse(ContactAccessTypeBase):

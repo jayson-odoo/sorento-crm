@@ -111,17 +111,19 @@ def test_validate_access_levels_accepts_any_catalog_code():
 
 
 def test_list_types_for_api_returns_active_only():
-    """list_types_for_api returns only active types with code, name, description, sort_order."""
+    """list_types_for_api returns only active types with code, name, description, sort_order, keywords."""
     mock_db = MagicMock()
     mock_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = [
-        ("dealer", "Dealer", "Dealer accounts", 0),
-        ("end_user", "End User", None, 1),
+        ("dealer", "Dealer", "Dealer accounts", 0, ["reseller", "shop"]),
+        ("end_user", "End User", None, 1, []),
     ]
     service = ContactAccessTypeService(mock_db)
     result = service.list_types_for_api()
     assert len(result) == 2
     assert result[0]["code"] == "dealer" and result[0]["name"] == "Dealer"
+    assert result[0]["keywords"] == ["reseller", "shop"]
     assert result[1]["code"] == "end_user" and result[1]["name"] == "End User"
+    assert result[1]["keywords"] == []
 
 
 def test_resolve_optional_contact_access_codes_both_missing_returns_none():

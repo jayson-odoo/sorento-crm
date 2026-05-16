@@ -6,6 +6,7 @@ export interface ContactAccessTypeOption {
   name: string;
   description: string | null;
   sort_order: number | null;
+  keywords: string[];
 }
 
 /** Full type for admin CRUD (includes is_active, timestamps). */
@@ -15,6 +16,7 @@ export interface ContactAccessTypeAdmin {
   description: string | null;
   is_active: boolean;
   sort_order: number | null;
+  keywords: string[];
   created_at: string;
   updated_at: string;
 }
@@ -55,7 +57,7 @@ export async function createContactAccessType(
 
 export async function updateContactAccessType(
   code: string,
-  body: Partial<Pick<ContactAccessTypeAdmin, 'name' | 'description' | 'is_active' | 'sort_order'>>
+  body: Partial<Pick<ContactAccessTypeAdmin, 'name' | 'description' | 'is_active' | 'sort_order' | 'keywords'>>
 ): Promise<ContactAccessTypeAdmin> {
   const response = await apiFetch(`${base}/${encodeURIComponent(code)}`, {
     method: 'PUT',

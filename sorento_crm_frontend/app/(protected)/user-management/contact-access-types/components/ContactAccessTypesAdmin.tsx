@@ -85,6 +85,7 @@ export default function ContactAccessTypesAdmin() {
     description: '',
     is_active: true,
     sort_order: '' as string | number,
+    keywords: '',
   });
 
   function resetTypeForm() {
@@ -94,6 +95,7 @@ export default function ContactAccessTypesAdmin() {
       description: '',
       is_active: true,
       sort_order: '',
+      keywords: '',
     });
     setEditingType(null);
   }
@@ -111,11 +113,24 @@ export default function ContactAccessTypesAdmin() {
       description: row.description ?? '',
       is_active: row.is_active,
       sort_order: row.sort_order ?? '',
+      keywords: (row.keywords ?? []).join(', '),
     });
     setTypeDialogOpen(true);
   }
 
+  function parseKeywords(raw: string): string[] {
+    return Array.from(
+      new Set(
+        raw
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0),
+      ),
+    );
+  }
+
   function saveType() {
+    const keywords = parseKeywords(typeForm.keywords);
     if (editingType) {
       const sort = typeForm.sort_order === '' ? undefined : Number(typeForm.sort_order);
       if (Number.isNaN(sort)) return;
@@ -126,6 +141,7 @@ export default function ContactAccessTypesAdmin() {
           description: typeForm.description || null,
           is_active: typeForm.is_active,
           sort_order: sort,
+          keywords,
         },
       });
     } else {
@@ -141,6 +157,7 @@ export default function ContactAccessTypesAdmin() {
         description: typeForm.description.trim() || null,
         is_active: typeForm.is_active,
         sort_order: sort ?? null,
+        keywords,
       });
     }
   }
@@ -175,6 +192,23 @@ export default function ContactAccessTypesAdmin() {
         cell: ({ row }) => (
           <span className="max-w-[200px] truncate">{row.original.description ?? '—'}</span>
         ),
+      },
+      {
+        id: 'keywords',
+        accessorFn: (row) => (row.keywords ?? []).join(', '),
+        header: ({ column }) => <DataGridColumnHeader title="Keywords" column={column} />,
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Keywords', skeleton: <Skeleton className="h-4 w-32" /> },
+        cell: ({ row }) => {
+          const kw = row.original.keywords ?? [];
+          const joined = kw.join(', ');
+          return (
+            <span className="max-w-[200px] truncate" title={joined || undefined}>
+              {kw.length ? joined : '—'}
+            </span>
+          );
+        },
       },
       {
         id: 'sort_order',
@@ -307,6 +341,19 @@ export default function ContactAccessTypesAdmin() {
                 onChange={(e) => setTypeForm((f) => ({ ...f, description: e.target.value }))}
                 placeholder="Optional description"
               />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="type-keywords">Keywords (optional)</Label>
+              <Input
+                id="type-keywords"
+                value={typeForm.keywords}
+                onChange={(e) => setTypeForm((f) => ({ ...f, keywords: e.target.value }))}
+                placeholder="customer, homeowner, b2c"
+              />
+              <p className="text-xs text-muted-foreground">
+                Comma-separated synonyms used by the AI matcher to resolve free-text phrasing
+                (e.g. &quot;customer&quot; → this access level). Case-insensitive.
+              </p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="type-sort">Sort order (optional)</Label>

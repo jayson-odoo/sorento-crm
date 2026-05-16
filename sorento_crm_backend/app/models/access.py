@@ -75,6 +75,10 @@ class ContactAccessType(Base):
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     sort_order = Column(Integer, nullable=True)
+    # Admin-curated synonym list ("customer", "homeowner" → end_user). Consumed by
+    # ContactAccessTypeService.enforce_access_levels_for_contact to resolve free-text
+    # AI / user phrasing against the canonical code.
+    keywords = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
