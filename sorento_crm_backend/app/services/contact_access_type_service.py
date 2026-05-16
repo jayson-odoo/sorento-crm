@@ -423,13 +423,14 @@ class ContactAccessTypeService:
         respond_io_id: str,
         space_id: str,
     ) -> list[dict]:
-        """Return [{name}] for the contact's CURRENTLY-ACTIVE access codes.
+        """Return [{name, keywords}] for the contact's CURRENTLY-ACTIVE access codes.
 
         Filtered against the active catalog so deactivated rows never surface.
-        Surface-level callers (MCP discovery tool, 422/403 allowed payloads) only
-        need the display name; agent passes the same name back as `access_levels`
-        and `enforce_access_levels_for_contact` translates it to the canonical
-        code for the JSONB overlap filter.
+        ``keywords`` exposes the admin-curated lookup synonyms so MCP agents can
+        match user phrasing without an extra catalog round-trip; pass any keyword
+        (or the name) back as `access_levels` and
+        `enforce_access_levels_for_contact` translates it to the canonical code
+        for the JSONB overlap filter.
         """
         codes = self.resolve_contact_access_codes(respond_io_id, space_id)
         if not codes:
@@ -438,6 +439,7 @@ class ContactAccessTypeService:
             self.db.query(
                 ContactAccessType.code,
                 ContactAccessType.name,
+                ContactAccessType.keywords,
             )
             .filter(
                 ContactAccessType.is_active.is_(True),
@@ -449,7 +451,13 @@ class ContactAccessTypeService:
             )
             .all()
         )
-        return [{"name": r[1] or r[0]} for r in rows]
+        return [
+            {
+                "name": r[1] or r[0],
+                "keywords": r[2] if isinstance(r[2], list) else [],
+            }
+            for r in rows
+        ]
 
     def resolve_contact_access_codes(self, respond_io_id: str, space_id: str) -> List[str]:
         """Resolve a Respond.io (contact_id, space_id) pair to the contact's access codes.

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import PromotionService, PromotionProductService
+from app.services.query_normalizer import strip_domain_stopwords
 from app.schemas.marketing import (
     PromotionCreate,
     PromotionUpdate,
@@ -82,6 +83,12 @@ async def get_promotions(
         else:
             contact_codes = cats_svc.resolve_optional_contact_access_codes(contact_id, space_id)
         service = PromotionService(db)
+        # Strip domain-noise tokens ("promotion", "promo", ...) from caller-supplied
+        # search text. The chatbot routes user phrases like "kitchen sink promotion"
+        # here verbatim; without this the trailing "promotion" prevents an ILIKE
+        # match against `Promotion.name` ("Kitchen Sink Special"). Catalog lives in
+        # `services.query_normalizer.DOMAIN_STOPWORDS`.
+        query = strip_domain_stopwords(query, "promotion")
         result = service.list_promotions(
             page=page,
             limit=limit,

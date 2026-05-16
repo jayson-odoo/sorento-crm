@@ -77,6 +77,13 @@ def resolve_via_embedding_then_ilike(
                 term,
                 exc,
             )
+            # Failure inside search_current may have poisoned the session
+            # (psycopg2 InFailedSqlTransaction). Roll back so the outer
+            # query/count can still execute against the same Session.
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                logger.exception("rollback after fuzzy-resolve failure also failed")
 
     patterns = [term, *canonical_values]
     clauses = []

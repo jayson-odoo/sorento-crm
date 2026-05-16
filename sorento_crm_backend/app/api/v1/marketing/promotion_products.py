@@ -302,6 +302,10 @@ async def list_all_promotion_products(
             "price_min": price_min, "price_max": price_max,
         }
         text_query, filter_state = _parse_query_dimensions(text_query, filter_state)
+        # Drop domain-noise tokens ("promotion", "promo", ...) from caller text.
+        # Catalog in `services.query_normalizer.DOMAIN_STOPWORDS`.
+        from app.services.query_normalizer import strip_domain_stopwords
+        text_query = strip_domain_stopwords(text_query, "promotion")
 
         result = service.list_promotion_products(
             promotion_id=resolved_pid,
