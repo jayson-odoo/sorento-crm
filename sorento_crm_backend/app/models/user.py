@@ -221,6 +221,15 @@ class SystemSetting(Base):
         nullable=True,
     )
 
+    # Email guardrail thresholds: global + per-recipient caps + drainer cadence.
+    # Tune below the SMTP provider's documented limits to prevent mail-server flagging.
+    email_global_rate_per_window = Column(Integer, nullable=False, server_default="60", default=60)
+    email_global_window_seconds = Column(Integer, nullable=False, server_default="60", default=60)
+    email_per_recipient_rate_per_window = Column(Integer, nullable=False, server_default="10", default=10)
+    email_per_recipient_window_seconds = Column(Integer, nullable=False, server_default="3600", default=3600)
+    email_outbox_drain_batch_size = Column(Integer, nullable=False, server_default="20", default=20)
+    email_outbox_drain_interval_seconds = Column(Integer, nullable=False, server_default="5", default=5)
+
 
 class UserQuickAccess(Base):
     """Per-user quick access (pinned menu items and attachment folders) for sidebar."""

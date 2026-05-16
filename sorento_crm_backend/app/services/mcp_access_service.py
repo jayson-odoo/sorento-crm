@@ -115,6 +115,7 @@ def evaluate(
             agent_mcp_tools.c.tool_id == tool.id,
             AccessAgent.is_active.is_(True),
         )
+        .distinct()
         .all()
     )
     if not linked_agents:

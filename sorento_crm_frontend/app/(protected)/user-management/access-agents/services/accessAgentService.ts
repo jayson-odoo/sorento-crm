@@ -177,3 +177,54 @@ export async function setAgentMcpTools(
   }
   return response.json();
 }
+
+export interface McpToolBinding {
+  id: string;
+  tool_id: string;
+  tool_name: string;
+  module_key: string;
+  description: string | null;
+  team_id: string | null;
+  team_name: string | null;
+  tier: number | null;
+}
+
+export interface McpToolBindingInput {
+  tool_id: string;
+  team_id: string | null;
+  tier: number | null;
+}
+
+export async function getAgentMcpToolBindings(
+  agentId: string,
+): Promise<McpToolBinding[]> {
+  const response = await apiFetch(
+    `/api/user-management/access-agents/${agentId}/mcp-tool-bindings`,
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Failed to fetch agent MCP tool bindings'),
+    );
+  }
+  return response.json();
+}
+
+export async function setAgentMcpToolBindings(
+  agentId: string,
+  bindings: McpToolBindingInput[],
+): Promise<McpToolBinding[]> {
+  const response = await apiFetch(
+    `/api/user-management/access-agents/${agentId}/mcp-tool-bindings`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bindings }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Failed to set agent MCP tool bindings'),
+    );
+  }
+  return response.json();
+}

@@ -1,11 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
-import { listMcpAccessLog, listMcpToolsCatalog } from '../services/mcpAdminService';
+import { getMcpToolRouting, listMcpAccessLog, listMcpToolsCatalog } from '../services/mcpAdminService';
 
 export function useMcpToolsCatalog(params: { is_active?: boolean } = {}) {
   return useQuery({
     queryKey: ['mcp-tools-catalog', params.is_active ?? true],
     queryFn: () => listMcpToolsCatalog({ is_active: params.is_active ?? true, limit: 500 }),
     staleTime: 1000 * 60,
+  });
+}
+
+export function useMcpToolRouting(toolName: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['mcp-tool-routing', toolName],
+    queryFn: () => getMcpToolRouting(toolName as string),
+    enabled: !!toolName && enabled,
+    staleTime: 1000 * 60 * 5,
   });
 }
 

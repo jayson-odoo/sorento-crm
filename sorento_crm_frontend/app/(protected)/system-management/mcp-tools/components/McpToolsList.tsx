@@ -14,6 +14,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { StatusPill } from '@/components/common/StatusPill';
+import { RoutingPreviewCell } from './RoutingPreviewCell';
 
 export function McpToolsList() {
   const [includeInactive, setIncludeInactive] = React.useState(false);
@@ -54,6 +55,7 @@ export function McpToolsList() {
               <TableHead className="w-[280px]">Tool</TableHead>
               <TableHead className="w-[140px]">Module</TableHead>
               <TableHead className="w-[260px]">Linked agents</TableHead>
+              <TableHead className="w-[160px]">Routing</TableHead>
               <TableHead className="w-[100px]">Status</TableHead>
               <TableHead>Description</TableHead>
             </TableRow>
@@ -61,13 +63,13 @@ export function McpToolsList() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
                   No tools match.
                 </TableCell>
               </TableRow>
@@ -82,6 +84,9 @@ export function McpToolsList() {
                     ) : (
                       <span className="text-amber-700">Unassigned</span>
                     )}
+                  </TableCell>
+                  <TableCell>
+                    <RoutingPreviewCell toolName={r.tool_name} />
                   </TableCell>
                   <TableCell>
                     <StatusPill

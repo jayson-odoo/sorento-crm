@@ -13,9 +13,16 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
-from app.schemas.user import AccessAgentMcpToolsUpdate, McpToolForAgentOut
+from app.schemas.user import (
+    AccessAgentMcpToolBindingsUpdate,
+    AccessAgentMcpToolsUpdate,
+    McpToolBindingOut,
+    McpToolForAgentOut,
+)
 from app.services.access_agent_mcp_tool_service import (
+    list_tool_bindings_for_agent,
     list_tools_for_agent,
+    set_tool_bindings_for_agent,
     set_tools_for_agent,
 )
 
@@ -40,8 +47,40 @@ def set_access_agent_mcp_tools(
     db: Session = Depends(get_db),
     _: dict = Depends(get_current_user_or_api_key),
 ) -> list[McpToolForAgentOut]:
-    """Replace this agent's MCP tool ownership set in one transaction."""
+    """Replace this agent's legacy (team_id NULL) MCP tool ownership set."""
     set_tools_for_agent(db, agent_id, list(payload.tool_ids))
     db.commit()
     rows = list_tools_for_agent(db, agent_id)
     return [McpToolForAgentOut.model_validate(r) for r in rows]
+
+
+@router.get(
+    "/{agent_id}/mcp-tool-bindings", response_model=list[McpToolBindingOut]
+)
+def get_access_agent_mcp_tool_bindings(
+    agent_id: str,
+    db: Session = Depends(get_db),
+    _: dict = Depends(get_current_user_or_api_key),
+) -> list[McpToolBindingOut]:
+    rows = list_tool_bindings_for_agent(db, agent_id)
+    return [McpToolBindingOut.model_validate(r) for r in rows]
+
+
+@router.put(
+    "/{agent_id}/mcp-tool-bindings", response_model=list[McpToolBindingOut]
+)
+def set_access_agent_mcp_tool_bindings(
+    agent_id: str,
+    payload: AccessAgentMcpToolBindingsUpdate,
+    db: Session = Depends(get_db),
+    _: dict = Depends(get_current_user_or_api_key),
+) -> list[McpToolBindingOut]:
+    """Replace this agent's full tool/team binding set in one transaction."""
+    set_tool_bindings_for_agent(
+        db,
+        agent_id,
+        [b.model_dump() for b in payload.bindings],
+    )
+    db.commit()
+    rows = list_tool_bindings_for_agent(db, agent_id)
+    return [McpToolBindingOut.model_validate(r) for r in rows]

@@ -15,6 +15,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from sorento_crm_mcp.access_guard import check_access, deny_payload
 from sorento_crm_mcp.catalog import CATALOG, ToolSpec
+from sorento_crm_mcp.escalation_hint import attach_suggested_escalation
 from sorento_crm_mcp.http_client import CRMClient
 from sorento_crm_mcp.module_loader import merged_catalog
 from sorento_crm_mcp.settings import Settings
@@ -1005,7 +1006,8 @@ def _compile_tool(spec: ToolSpec):
         f"    _missing = [k for k in _required if q.get(k) in (None, '')]\n"
         f"    if _missing:\n"
         f"        raise ValueError('Missing required query parameter(s): ' + ', '.join(_missing))\n"
-        f"    return await _execute_tool_request_with_body(_spec, client, _pp, q, body)\n"
+        f"    _resp = await _execute_tool_request_with_body(_spec, client, _pp, q, body)\n"
+        f"    return await _attach_suggested_escalation(_spec.name, _resp, api_url=_settings.crm_base_url, api_key=_settings.external_api_key)\n"
     )
     ns: dict[str, Any] = {
         "Context": Context,
@@ -1014,6 +1016,7 @@ def _compile_tool(spec: ToolSpec):
         "_execute_tool_request_with_body": _execute_tool_request_with_body,
         "_check_access": check_access,
         "_deny_payload": deny_payload,
+        "_attach_suggested_escalation": attach_suggested_escalation,
         "json": json,
         "_spec": spec,
     }

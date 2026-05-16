@@ -665,6 +665,16 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'system.outgoing_mails.view',
       },
       {
+        title: 'Email Outbox',
+        path: '/system-management/email-outbox',
+        permission: 'system.email_outbox.view',
+      },
+      {
+        title: 'Email Event Configs',
+        path: '/system-management/email-event-configs',
+        permission: 'system.email_event_configs.view',
+      },
+      {
         title: 'Email Templates',
         path: '/system-management/email-templates',
         permission: 'email_templates.templates.view',
@@ -708,6 +718,11 @@ export const MENU_SIDEBAR: MenuConfig = [
           {
             title: 'Wishlist',
             path: '/system-management/ai-assistant/wishlist',
+            permission: 'system.ai_assistant_settings.view',
+          },
+          {
+            title: 'MCP Tools',
+            path: '/system-management/mcp-tools',
             permission: 'system.ai_assistant_settings.view',
           },
         ],
@@ -1446,6 +1461,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Outgoing Mails',
         path: '/system-management/outgoing-mails',
         permission: 'system.outgoing_mails.view',
+      },
+      {
+        title: 'Email Outbox',
+        path: '/system-management/email-outbox',
+        permission: 'system.email_outbox.view',
+      },
+      {
+        title: 'Email Event Configs',
+        path: '/system-management/email-event-configs',
+        permission: 'system.email_event_configs.view',
       },
       {
         title: 'Email Templates',

@@ -39,11 +39,11 @@ import {
   useAccessAgent,
   useAgentTeams,
   useTeams,
-  useAgentMcpTools,
-  useSetAgentMcpTools,
+  useAgentMcpToolBindings,
+  useSetAgentMcpToolBindings,
 } from '../hooks/useAccessAgents';
-import { setAgentTeams } from '../services/accessAgentService';
-import { McpToolSelector } from './McpToolSelector';
+import { setAgentTeams, type McpToolBindingInput } from '../services/accessAgentService';
+import { McpToolBindingsEditor } from './McpToolBindingsEditor';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
 import type { AccessAgentFormData } from '../types/accessAgent.types';
 
@@ -72,18 +72,22 @@ export default function AccessAgentFormModal({
   const { data: teamsList = [] } = useTeams();
   const [assignmentGroups, setAssignmentGroups] = useState<AssignmentGroup[]>([]);
 
-  const { data: agentMcpToolsData } = useAgentMcpTools(isEditMode ? accessAgentId ?? null : null);
-  const setAgentMcpToolsMutation = useSetAgentMcpTools();
-  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([]);
-  const [initialToolIds, setInitialToolIds] = useState<string[]>([]);
+  const { data: agentMcpBindingsData } = useAgentMcpToolBindings(isEditMode ? accessAgentId ?? null : null);
+  const setAgentMcpToolBindingsMutation = useSetAgentMcpToolBindings();
+  const [bindings, setBindings] = useState<McpToolBindingInput[]>([]);
+  const [initialBindings, setInitialBindings] = useState<McpToolBindingInput[]>([]);
 
   useEffect(() => {
-    if (agentMcpToolsData) {
-      const ids = agentMcpToolsData.map((t) => t.id);
-      setSelectedToolIds(ids);
-      setInitialToolIds(ids);
+    if (agentMcpBindingsData) {
+      const next: McpToolBindingInput[] = agentMcpBindingsData.map((b) => ({
+        tool_id: b.tool_id,
+        team_id: b.team_id,
+        tier: b.tier,
+      }));
+      setBindings(next);
+      setInitialBindings(next);
     }
-  }, [agentMcpToolsData]);
+  }, [agentMcpBindingsData]);
 
   const form = useForm<AccessAgentSchemaType>({
     resolver: zodResolver(AccessAgentSchema),
@@ -163,14 +167,13 @@ export default function AccessAgentFormModal({
           .filter((a) => a.code && a.team_id);
         await setAgentTeams(accessAgentId, validAssignments);
         queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
-        const removedIds = initialToolIds.filter((id) => !selectedToolIds.includes(id));
-        const addedIds = selectedToolIds.filter((id) => !initialToolIds.includes(id));
-        if (addedIds.length > 0 || removedIds.length > 0) {
-          await setAgentMcpToolsMutation.mutateAsync({
+        const sanitized = bindings.filter((b) => b.tool_id);
+        if (JSON.stringify(sanitized) !== JSON.stringify(initialBindings)) {
+          await setAgentMcpToolBindingsMutation.mutateAsync({
             agentId: accessAgentId,
-            toolIds: selectedToolIds,
+            bindings: sanitized,
           });
-          setInitialToolIds(selectedToolIds);
+          setInitialBindings(sanitized);
         }
         toast.success('Access agent updated successfully');
       } else {
@@ -189,7 +192,7 @@ export default function AccessAgentFormModal({
   const isLoading =
     createMutation.isPending ||
     updateMutation.isPending ||
-    setAgentMcpToolsMutation.isPending;
+    setAgentMcpToolBindingsMutation.isPending;
   if (isEditMode && open && isLoadingAccessAgent) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -445,11 +448,15 @@ export default function AccessAgentFormModal({
 
               {isEditMode && accessAgentId && (
                 <div className="space-y-3">
-                  <h4 className="font-medium">MCP Tools</h4>
-                  <McpToolSelector
-                    value={selectedToolIds}
-                    onChange={setSelectedToolIds}
-                    currentAgentId={accessAgentId}
+                  <h4 className="font-medium">MCP Tool Bindings</h4>
+                  <p className="text-xs text-muted-foreground">
+                    Bind a tool to a specific team to route escalation for that tool only
+                    to that team. Leave team empty to fan out via this agent&apos;s team
+                    set above.
+                  </p>
+                  <McpToolBindingsEditor
+                    value={bindings}
+                    onChange={setBindings}
                     disabled={isLoading}
                   />
                 </div>

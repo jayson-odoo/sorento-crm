@@ -1,4 +1,4 @@
-"""Background tasks for notification delivery (email, web push)."""
+"""Background tasks for notification delivery (email via outbox, web push direct)."""
 import os
 import logging
 import importlib
@@ -6,20 +6,65 @@ from datetime import datetime
 
 from app.database import SessionLocal
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
-from app.models.user import User, SystemSetting
-from app.services.notification_email import (
-    send_notification_email,
-    send_notification_email_multi,
-    _smtp_config_from_settings,
-)
 
 logger = logging.getLogger(__name__)
 
 
-def send_notification_deliveries(notification_id: str) -> None:
+_NOTIFICATION_TYPE_TO_EVENT_KEY: dict[str, str] = {
+    "ticket_assigned": "ticket_assigned",
+    "ticket_team_new": "ticket_team_new",
+    "ticket_responded": "ticket_responded",
+    "ticket_resolved": "ticket_resolved",
+    "purchase_request_approved": "purchase_request_approved",
+    "purchase_request_rejected": "purchase_request_rejected",
+    "stock_inquiry_notification": "stock_inquiry_created",
+    "stock_inquiry_notification:external_created": "stock_inquiry_created_external",
+    "stock_inquiry_notification:external_resubmitted": "stock_inquiry_created_external",
+    "external_promotion_created": "external_promotion_uploader_notice",
+    "external_product_attachment_linked": "external_product_attachment",
+    "external_form_created": "external_form_created",
+    "external_packing_list_created": "external_packing_list_created",
+    "complaint_created": "complaint_created_external",
+    "complaint_notification": "complaint_created_external",
+    "complaint_notification:external_created": "complaint_created_external",
+    "form_sla": "form_sla_updated",
+    "form_sla:assigned": "form_sla_assigned",
+    "form_sla:escalated": "form_sla_escalated",
+    "form_sla:responded": "form_sla_updated",
+    "form_sla:resolved": "form_sla_updated",
+    "form_sla_assigned": "form_sla_assigned",
+    "form_sla_escalated": "form_sla_escalated",
+    "import_job_finished": "import_job_completed",
+    "import_job_failed": "import_job_completed",
+    "user_invitation": "user_invitation",
+    "daily_sla_summary": "daily_sla_summary",
+    "workflow_form_transition": "workflow_form_state_transition",
+}
+
+
+def _resolve_event_key(notification: Notification) -> str:
+    """Map a notification's `type` (+ optional `event_type` suffix) to an outbox event_key.
+
+    Falls back to `notification_delivery` for anything not in the map so the guardrail still
+    applies (and the row shows up in the admin UI). Add new mappings as new notification
+    types are introduced.
     """
-    Process pending email and web_push deliveries for a notification.
-    Updates each delivery row to sent or failed with error_message.
+    notif_type = str(getattr(notification, "type", "") or "")
+    event_type = str(getattr(notification, "event_type", "") or "")
+    composite = f"{notif_type}:{event_type}" if event_type else notif_type
+    if composite in _NOTIFICATION_TYPE_TO_EVENT_KEY:
+        return _NOTIFICATION_TYPE_TO_EVENT_KEY[composite]
+    if notif_type in _NOTIFICATION_TYPE_TO_EVENT_KEY:
+        return _NOTIFICATION_TYPE_TO_EVENT_KEY[notif_type]
+    return "notification_delivery"
+
+
+def send_notification_deliveries(notification_id: str) -> None:
+    """Enqueue pending email deliveries for a notification into the email outbox.
+
+    Web push deliveries still send directly (Browser push has no SMTP server to flood and
+    no per-event toggle requirement). Email deliveries flow through `email_outbox_service`
+    so the guardrail caps + per-event kill switch apply.
     """
     db = SessionLocal()
     try:
@@ -27,6 +72,8 @@ def send_notification_deliveries(notification_id: str) -> None:
         if not notification:
             logger.warning("Notification not found: %s", notification_id)
             return
+        from app.models.user import User
+
         user = db.query(User).filter(User.id == notification.user_id).first()
         if not user:
             logger.warning("User not found for notification %s", notification_id)
@@ -41,43 +88,12 @@ def send_notification_deliveries(notification_id: str) -> None:
             .all()
         )
 
-        settings = db.query(SystemSetting).first()
-        smtp_config = _smtp_config_from_settings(settings) if settings else None
+        event_key = _resolve_event_key(notification)
 
         for delivery in pending:
             channel = str(getattr(delivery, "channel", ""))
             if channel == "email":
-                raw_data = getattr(notification, "data", None)
-                data = raw_data if isinstance(raw_data, dict) else {}
-                notification_title = str(getattr(notification, "title", ""))
-                notification_body = getattr(notification, "body", None)
-                body_text = str(notification_body) if notification_body is not None else notification_title
-                from_name = data.get("from_name")
-                if data.get("single_email_to_all") and data.get("recipient_emails"):
-                    body_html = data.get("body_html")
-                    recipient_emails = [str(email) for email in data.get("recipient_emails", [])]
-                    err = send_notification_email_multi(
-                        to_list=recipient_emails,
-                        subject=notification_title,
-                        body_text=body_text,
-                        body_html=body_html,
-                        smtp_config=smtp_config,
-                        from_name=from_name,
-                    )
-                else:
-                    body_html = data.get("body_html")
-                    err = send_notification_email(
-                        to=str(getattr(user, "email", "")),
-                        subject=notification_title,
-                        body_text=body_text,
-                        body_html=body_html,
-                        smtp_config=smtp_config,
-                        from_name=from_name,
-                    )
-                setattr(delivery, "status", "failed" if err else "sent")
-                setattr(delivery, "sent_at", datetime.utcnow() if err is None else None)
-                setattr(delivery, "error_message", err)
-                db.commit()
+                _enqueue_email_for_delivery(db, notification, user, delivery, event_key)
             elif channel == "web_push":
                 _send_web_push_for_notification(
                     db,
@@ -89,13 +105,181 @@ def send_notification_deliveries(notification_id: str) -> None:
         db.close()
 
 
+def _enqueue_email_for_delivery(db, notification: Notification, user, delivery: NotificationDelivery, event_key: str) -> None:
+    """Hand the email off to email_outbox_service. Marks delivery as 'queued'."""
+    raw_data = getattr(notification, "data", None)
+    data = raw_data if isinstance(raw_data, dict) else {}
+    notification_title = str(getattr(notification, "title", ""))
+    notification_body = getattr(notification, "body", None)
+    body_text = str(notification_body) if notification_body is not None else notification_title
+    from_name = data.get("from_name")
+    body_html = data.get("body_html")
+
+    if data.get("single_email_to_all") and data.get("recipient_emails"):
+        recipients = [str(e) for e in data.get("recipient_emails", []) if e]
+        if not recipients:
+            delivery.status = "failed"
+            delivery.error_message = "No recipients"
+            db.commit()
+            return
+        primary = recipients[0]
+        cc_rest = recipients[1:] if len(recipients) > 1 else None
+        try:
+            from app.services.email_outbox_service import enqueue as enqueue_email
+
+            outbox_id = enqueue_email(
+                db,
+                event_key=event_key,
+                to=primary,
+                cc=cc_rest,
+                subject=notification_title,
+                body_text=body_text,
+                body_html=body_html,
+                from_name=from_name,
+                metadata={
+                    "notification_id": str(notification.id),
+                    "notification_delivery_id": str(delivery.id),
+                    "recipients": recipients,
+                },
+            )
+            delivery.status = "queued"
+            delivery.error_message = None
+            db.commit()
+            logger.debug("Enqueued multi-recipient email %s for delivery %s", outbox_id, delivery.id)
+        except Exception as e:
+            delivery.status = "failed"
+            delivery.error_message = f"Enqueue failed: {e}"
+            db.commit()
+            logger.exception("Failed to enqueue multi-recipient delivery %s", delivery.id)
+        return
+
+    recipient = str(getattr(user, "email", "") or "")
+    if not recipient:
+        delivery.status = "failed"
+        delivery.error_message = "User has no email address"
+        db.commit()
+        return
+
+    coalesce_meta = data.get("email_coalesce") if isinstance(data, dict) else None
+    try:
+        if isinstance(coalesce_meta, dict) and (coalesce_meta.get("attachment_plain_items") or coalesce_meta.get("attachment_html_items")):
+            outbox_id, merged = _enqueue_coalesced_attachment_email(
+                db=db,
+                event_key=event_key,
+                recipient=recipient,
+                notification=notification,
+                delivery=delivery,
+                user=user,
+                subject=notification_title,
+                from_name=from_name,
+                coalesce_meta=coalesce_meta,
+            )
+            logger.debug(
+                "Enqueued coalesced email %s for delivery %s (merged=%s)",
+                outbox_id, delivery.id, merged,
+            )
+        else:
+            from app.services.email_outbox_service import enqueue as enqueue_email
+
+            outbox_id = enqueue_email(
+                db,
+                event_key=event_key,
+                to=recipient,
+                subject=notification_title,
+                body_text=body_text,
+                body_html=body_html,
+                from_name=from_name,
+                metadata={
+                    "notification_id": str(notification.id),
+                    "notification_delivery_id": str(delivery.id),
+                    "user_id": str(getattr(user, "id", "") or ""),
+                },
+            )
+            logger.debug("Enqueued single-recipient email %s for delivery %s", outbox_id, delivery.id)
+        delivery.status = "queued"
+        delivery.error_message = None
+        db.commit()
+    except Exception as e:
+        delivery.status = "failed"
+        delivery.error_message = f"Enqueue failed: {e}"
+        db.commit()
+        logger.exception("Failed to enqueue single-recipient delivery %s", delivery.id)
+
+
+def _enqueue_coalesced_attachment_email(
+    *,
+    db,
+    event_key: str,
+    recipient: str,
+    notification: Notification,
+    delivery: NotificationDelivery,
+    user,
+    subject: str,
+    from_name,
+    coalesce_meta: dict,
+) -> tuple[str, bool]:
+    """Coalesce-aware enqueue for attachment-linkage events. Multiple n8n callbacks within the
+    event's coalesce window collapse into one outbox row whose body lists every attachment.
+    """
+    from app.services.email_outbox_service import enqueue_or_merge
+
+    intro_plain = str(coalesce_meta.get("intro_plain") or "")
+    intro_html = str(coalesce_meta.get("intro_html") or "")
+    footer_plain = str(coalesce_meta.get("footer_plain") or "")
+    footer_html = str(coalesce_meta.get("footer_html") or "")
+    att_plain_items = list(coalesce_meta.get("attachment_plain_items") or [])
+    att_html_items = list(coalesce_meta.get("attachment_html_items") or [])
+
+    def _rebuild(merged_meta: dict) -> tuple[str, str]:
+        plain_items = list(merged_meta.get("attachment_plain_items") or [])
+        html_items = list(merged_meta.get("attachment_html_items") or [])
+        rebuilt_plain = f"{intro_plain}\n" + "\n".join(plain_items) + f"\n\n{footer_plain}"
+        rebuilt_html = f"{intro_html}<ul>{''.join(html_items)}</ul>{footer_html}"
+        return rebuilt_plain, rebuilt_html
+
+    initial_plain = f"{intro_plain}\n" + "\n".join(att_plain_items) + f"\n\n{footer_plain}"
+    initial_html = f"{intro_html}<ul>{''.join(att_html_items)}</ul>{footer_html}"
+
+    coalesce_id = None
+    raw_data = getattr(notification, "data", None)
+    if isinstance(raw_data, dict):
+        coalesce_id = raw_data.get("batch_id") or raw_data.get("promotion_id") or raw_data.get("entity_url")
+
+    outbox_id, merged = enqueue_or_merge(
+        db,
+        event_key=event_key,
+        to=recipient,
+        subject=subject,
+        body_text=initial_plain,
+        body_html=initial_html,
+        from_name=from_name,
+        coalesce_id=str(coalesce_id) if coalesce_id else None,
+        merge_metadata_list_keys=["attachment_plain_items", "attachment_html_items", "attachment_ids", "notification_delivery_ids"],
+        rebuild_body=_rebuild,
+        metadata={
+            "notification_id": str(notification.id),
+            "notification_delivery_id": str(delivery.id),
+            "notification_delivery_ids": [str(delivery.id)],
+            "user_id": str(getattr(user, "id", "") or ""),
+            "attachment_plain_items": att_plain_items,
+            "attachment_html_items": att_html_items,
+            "attachment_ids": list(raw_data.get("attachment_ids", [])) if isinstance(raw_data, dict) else [],
+        },
+    )
+    return outbox_id, merged
+
+
 def _send_web_push_for_notification(
     db,
     notification: Notification,
     user_id: str,
     delivery: NotificationDelivery,
 ) -> None:
-    """Send web push to all subscriptions for user; update delivery row."""
+    """Send web push to all subscriptions for user; update delivery row.
+
+    Web push bypasses the email outbox because (a) it has no SMTP rate-limit concern and
+    (b) it talks directly to browser push services per subscription.
+    """
     subs = (
         db.query(PushSubscription)
         .filter(PushSubscription.user_id == user_id)
@@ -108,7 +292,7 @@ def _send_web_push_for_notification(
         db.commit()
         return
     if not subs:
-        setattr(delivery, "status", "sent")  # No subscriptions is not a failure
+        setattr(delivery, "status", "sent")
         setattr(delivery, "sent_at", datetime.utcnow())
         db.commit()
         return

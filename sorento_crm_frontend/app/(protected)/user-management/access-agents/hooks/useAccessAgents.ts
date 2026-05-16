@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentMcpTools, getMcpToolsForPicker, setAgentMcpTools } from '../services/accessAgentService';
+import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentMcpTools, getMcpToolsForPicker, setAgentMcpTools, getAgentMcpToolBindings, setAgentMcpToolBindings, type McpToolBindingInput } from '../services/accessAgentService';
 import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/accessAgent.types';
 
 export function useAccessAgents(params: DataGridApiFetchParams & { status?: string }) {
@@ -192,5 +192,42 @@ export function useSetAgentMcpTools() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to set MCP tools'),
+  });
+}
+
+export function useAgentMcpToolBindings(agentId: string | null) {
+  return useQuery({
+    queryKey: ['agent-mcp-tool-bindings', agentId],
+    queryFn: () => {
+      if (!agentId) throw new Error('Agent ID is required');
+      return getAgentMcpToolBindings(agentId);
+    },
+    enabled: !!agentId,
+    retry: 1,
+  });
+}
+
+export function useSetAgentMcpToolBindings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      agentId,
+      bindings,
+    }: {
+      agentId: string;
+      bindings: McpToolBindingInput[];
+    }) => setAgentMcpToolBindings(agentId, bindings),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ['agent-mcp-tool-bindings', variables.agentId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['agent-mcp-tools', variables.agentId],
+      });
+      queryClient.invalidateQueries({ queryKey: ['mcp-tools-picker'] });
+      toast.success('MCP tool bindings updated');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to set MCP tool bindings'),
   });
 }

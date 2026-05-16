@@ -47,6 +47,7 @@ from app.models.ai_assistant import (
     AIAssistantUnansweredQuery,
 )
 from app.models.chat_history import ChatHistory
+from app.models.conversation_frame import ConversationFrame
 from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
 from app.models.portal import PortalToken, PortalOtpCode
 from app.models.activities import ActivityEvent, InternalNote, ActivityMention
@@ -54,6 +55,7 @@ from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
 from app.models.email_template import EmailTemplate
 from app.models.automation import Automation, AutomationRun
 from app.models.impersonation import ImpersonationSession, ContactImpersonationSession
+from app.models.email_outbox import EmailOutbox, EmailEventConfig
 
 __all__ = [
     "User",
@@ -154,6 +156,7 @@ __all__ = [
     "AIAssistantWishlistCluster",
     "AIAssistantUnansweredQuery",
     "ChatHistory",
+    "ConversationFrame",
     "LookupSet",
     "LookupOption",
     "LookupOptionKeyword",
@@ -171,6 +174,8 @@ __all__ = [
     "AutomationRun",
     "ImpersonationSession",
     "ContactImpersonationSession",
+    "EmailOutbox",
+    "EmailEventConfig",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy

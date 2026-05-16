@@ -7,22 +7,38 @@ from app.database import Base
 import uuid
 
 
-# Join table — many-to-many between AccessAgent and McpTool.
+# Join table — agent × tool × (optional team, tier). Surrogate `id` PK so the
+# same (agent, tool) can bind to multiple teams. `team_id` NULL = legacy
+# "agent owns tool, route via AgentTeam" semantics; team_id set = per-tool
+# routing wins (see app/services/mcp_routing_service.py).
 agent_mcp_tools = Table(
     "agent_mcp_tools",
     Base.metadata,
     Column(
+        "id",
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+    ),
+    Column(
         "agent_id",
         UUID(as_uuid=False),
         ForeignKey("access_agents.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     ),
     Column(
         "tool_id",
         UUID(as_uuid=False),
         ForeignKey("mcp_tools.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     ),
+    Column(
+        "team_id",
+        UUID(as_uuid=False),
+        ForeignKey("teams.id", ondelete="CASCADE"),
+        nullable=True,
+    ),
+    Column("tier", Integer, nullable=True),
     Column(
         "created_at",
         DateTime(timezone=False),
@@ -31,6 +47,22 @@ agent_mcp_tools = Table(
     ),
     Index("ix_agent_mcp_tools_agent_id", "agent_id"),
     Index("ix_agent_mcp_tools_tool_id", "tool_id"),
+    Index("ix_agent_mcp_tools_tool_team", "tool_id", "team_id"),
+    Index(
+        "uq_agent_mcp_tools_agent_tool_team_null",
+        "agent_id",
+        "tool_id",
+        unique=True,
+        postgresql_where=text("team_id IS NULL"),
+    ),
+    Index(
+        "uq_agent_mcp_tools_agent_tool_team_not_null",
+        "agent_id",
+        "tool_id",
+        "team_id",
+        unique=True,
+        postgresql_where=text("team_id IS NOT NULL"),
+    ),
 )
 
 

@@ -184,6 +184,12 @@ PERMISSION_REGISTRY.append({
     "description": "Permission to view outgoing email log and delivery status.",
 })
 PERMISSION_REGISTRY.extend([
+    {"slug": "system.email_outbox.view", "name": "View Email Outbox", "description": "View pending and historical outbox rows for the email guardrail."},
+    {"slug": "system.email_outbox.manage", "name": "Manage Email Outbox", "description": "Retry, cancel, and otherwise manage outbox rows."},
+    {"slug": "system.email_event_configs.view", "name": "View Email Event Configs", "description": "View per-event email kill switches and rate overrides."},
+    {"slug": "system.email_event_configs.manage", "name": "Manage Email Event Configs", "description": "Toggle per-event email kill switches and adjust rate overrides."},
+])
+PERMISSION_REGISTRY.extend([
     {"slug": "system.numbering_rules.view", "name": "View Running Numbers", "description": "Permission to view document numbering rules."},
     {"slug": "system.numbering_rules.edit", "name": "Edit Running Numbers", "description": "Permission to edit document numbering rules."},
 ])

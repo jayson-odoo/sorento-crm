@@ -32,7 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { formatDateTime } from '@/lib/helpers';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Eye, Columns3 } from 'lucide-react';
 import { useOutgoingMails } from '../hooks/useOutgoingMails';
 import type { OutgoingMail } from '../types/outgoingMail.types';
@@ -94,7 +94,7 @@ export default function OutgoingMailsList() {
       {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Queued At" column={column} />,
-        cell: ({ row }) => formatDateTime(new Date(row.original.created_at)),
+        cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
         size: 180,
         meta: { skeleton: <Skeleton className="h-4 w-28" /> },
       },
@@ -164,7 +164,7 @@ export default function OutgoingMailsList() {
         accessorKey: 'sent_at',
         header: ({ column }) => <DataGridColumnHeader title="Sent At" column={column} />,
         cell: ({ row }) =>
-          row.original.sent_at ? formatDateTime(new Date(row.original.sent_at)) : '-',
+          row.original.sent_at ? formatDateTimeInMalaysia(row.original.sent_at) : '-',
         size: 180,
       },
       {

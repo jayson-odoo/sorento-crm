@@ -220,22 +220,22 @@ async def reset_password(
             "<p><em>This is a system-generated email. Please do not reply.</em></p>"
         )
         try:
-            from app.services.notification_email import send_notification_email, _smtp_config_from_settings
-            sys_settings = db.query(SystemSetting).first()
-            smtp_config = _smtp_config_from_settings(sys_settings) if sys_settings else None
+            from app.services.email_outbox_service import enqueue as enqueue_email
+
             user_email = str(getattr(user, "email", "") or "")
-            err = send_notification_email(
+            enqueue_email(
+                db,
+                event_key="password_reset",
                 to=user_email,
                 subject=subject,
                 body_text=body_text,
                 body_html=body_html,
-                smtp_config=smtp_config,
                 from_name="Sorento AI System",
+                metadata={"user_id": str(getattr(user, "id", "") or "")},
             )
-            if err:
-                logger.warning("Password reset email failed for %s: %s", user_email, err)
+            db.commit()
         except Exception as e:
-            logger.warning("Password reset email error: %s", e)
+            logger.warning("Password reset email enqueue failed: %s", e)
 
         return ResetPasswordResponse(
             message="A password reset link has been sent to your email."

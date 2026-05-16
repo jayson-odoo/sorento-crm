@@ -21,6 +21,7 @@ from app.models.list_query_metadata import ListQueryResource, ListQueryField
 from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine
 from app.models.order import Order, OrderStatus, OrderLine, Customer, Transporter
 from app.models.product import ProductAttachment
+from app.models.conversation_frame import ConversationFrame
 from app.services.embedding_service import EmbeddingReadService
 
 logger = logging.getLogger(__name__)
@@ -439,6 +440,32 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
             ]
         ).strip()
         return {"source_key": f"{row.order_id}:{row.line_sequence}", "title": "Order Line", "body_text": body, "visibility_scope": "internal", "source_updated_at": row.updated_at or row.created_at, "metadata": {"line_sequence": row.line_sequence}}
+
+    if source_type == "conversation_frame":
+        row = db.query(ConversationFrame).filter(ConversationFrame.id == source_id).first()
+        if not row:
+            raise ValueError(f"Conversation frame not found: {source_id}")
+        body = (row.summary or "").strip()
+        if not body:
+            raise ValueError(f"Conversation frame {source_id} has empty summary; nothing to embed")
+        title = f"Conversation: {row.domain or 'unspecified'} / {row.intent or 'unspecified'}"
+        access_levels_list = list(row.access_levels_used or [])
+        return {
+            "source_key": str(row.id),
+            "title": title,
+            "body_text": body,
+            "visibility_scope": "contact",
+            "source_updated_at": row.closed_at or row.last_activity_at,
+            "metadata": {
+                "contact_id": row.contact_id,
+                "space_id": row.space_id,
+                "channel": row.channel,
+                "domain": row.domain,
+                "intent": row.intent,
+                "access_levels_used": access_levels_list,
+                "closed_at": row.closed_at.isoformat() if row.closed_at else None,
+            },
+        }
 
     raise ValueError(f"Unsupported source type: {source_type}")
 

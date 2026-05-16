@@ -168,6 +168,25 @@ def _handler_form_sla_overdue_scan(db, task):
     return FormSLAOrchestrator(db).scan_overdue_and_escalate()
 
 
+def _handler_email_outbox_drainer(db, task):
+    """Drain pending email_outbox rows respecting guardrail caps."""
+    from app.tasks.email_outbox_tasks import drain_email_outbox
+
+    return drain_email_outbox()
+
+
+def _drain_email_outbox_tick():
+    """APScheduler tick wrapper. Owns its own DB session (drain_email_outbox handles errors)."""
+    try:
+        from app.tasks.email_outbox_tasks import drain_email_outbox
+
+        summary = drain_email_outbox()
+        if summary.get("picked"):
+            logger.info("Email outbox drainer tick: %s", summary)
+    except Exception as e:
+        logger.error("Email outbox drainer tick failed: %s", e, exc_info=True)
+
+
 def _run_queue_jobs_impl(queue_name: str, max_jobs_per_run: int) -> dict:
     """Generic queue processor used by scheduled task heartbeat."""
     return run_sync_rq_jobs(queue_name, max_jobs_per_run)
@@ -216,6 +235,7 @@ def register_task_handlers():
     register_handler("respond_contacts_sync", run_respond_contacts_sync)
     register_handler("automation_runner", _handler_automation_runner)
     register_handler("form_sla_overdue_scan", _handler_form_sla_overdue_scan)
+    register_handler("email_outbox_drainer", _handler_email_outbox_drainer)
 
 
 def start_scheduler():
@@ -236,6 +256,33 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # Email outbox drainer: read interval from SystemSetting (default 5s) so password-reset
+    # and approval-link emails leave the queue near-instantly while attachment-linkage
+    # bursts get throttled by the per-recipient cap inside drain_email_outbox.
+    drain_seconds = 5
+    try:
+        db = SessionLocal()
+        try:
+            from app.models.user import SystemSetting
+
+            settings_row = db.query(SystemSetting).first()
+            if settings_row and getattr(settings_row, "email_outbox_drain_interval_seconds", None):
+                drain_seconds = int(settings_row.email_outbox_drain_interval_seconds)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Email outbox drainer interval lookup failed (%s); using 5s default.", e)
+    scheduler.add_job(
+        _drain_email_outbox_tick,
+        trigger=IntervalTrigger(seconds=max(1, drain_seconds)),
+        id="email_outbox_drainer",
+        name="Email outbox drainer",
+        replace_existing=True,
+    )
+
     scheduler.start()
-    logger.info("Scheduler started: scheduled tasks heartbeat (every 10s)")
+    logger.info(
+        "Scheduler started: scheduled tasks heartbeat (every 10s), email outbox drainer (every %ds)",
+        max(1, drain_seconds),
+    )
     return scheduler

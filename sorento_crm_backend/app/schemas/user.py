@@ -378,6 +378,34 @@ class AccessAgentMcpToolsUpdate(BaseModel):
     tool_ids: list[str]
 
 
+class McpToolBindingIn(BaseModel):
+    """One row in PUT /access-agents/{id}/mcp-tool-bindings body.
+
+    ``team_id`` None = legacy ownership (route via AgentTeam fan-out). Set it
+    to bind this tool to one specific team for routing.
+    """
+    tool_id: str
+    team_id: str | None = None
+    tier: int | None = None
+
+
+class AccessAgentMcpToolBindingsUpdate(BaseModel):
+    bindings: list[McpToolBindingIn]
+
+
+class McpToolBindingOut(BaseModel):
+    id: str
+    tool_id: str
+    tool_name: str
+    module_key: str = ""
+    description: str | None = None
+    team_id: str | None = None
+    team_name: str | None = None
+    tier: int | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ---------------------------------------------------------------------------
 # MCP guard (Phase 3)
 # ---------------------------------------------------------------------------

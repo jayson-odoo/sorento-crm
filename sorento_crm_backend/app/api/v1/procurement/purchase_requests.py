@@ -418,10 +418,8 @@ async def send_approval_link(
                 email_sent = False
                 email_error = "No approver email available to send to."
             else:
-                from app.models.user import SystemSetting
-                from app.services.notification_email import send_notification_email, _smtp_config_from_settings
-                sys_settings = db.query(SystemSetting).first()
-                smtp_config = _smtp_config_from_settings(sys_settings) if sys_settings else None
+                from app.services.email_outbox_service import enqueue as enqueue_email
+
                 header = service.get_request(request_id)
                 type_label = "Purchase Request" if getattr(header, "request_type", None) == "purchase_request" else "Sponsorship Form"
                 subject = f"{type_label} – Approval link"
@@ -443,15 +441,25 @@ async def send_approval_link(
                     f'<p><a href="{url_escaped}" style="color: #2563eb; text-decoration: underline;">{url_escaped}</a></p>'
                     f"<p>Or copy and paste into your browser if the link does not work.</p>"
                 )
-                err = send_notification_email(
-                    to=to_email,
-                    subject=subject,
-                    body_text=body_text,
-                    body_html=body_html,
-                    smtp_config=smtp_config,
-                )
-                email_sent = err is None
-                email_error = err
+                try:
+                    enqueue_email(
+                        db,
+                        event_key="purchase_request_approval_link",
+                        to=to_email,
+                        subject=subject,
+                        body_text=body_text,
+                        body_html=body_html,
+                        metadata={
+                            "request_id": request_id,
+                            "approval_token_id": str(approval_token.id),
+                        },
+                    )
+                    db.commit()
+                    email_sent = True
+                    email_error = None
+                except Exception as e:
+                    email_sent = False
+                    email_error = f"Enqueue failed: {e}"
         expires_at = getattr(approval_token, "expires")
         return SendApprovalLinkResponse(
             approval_url=approval_url,

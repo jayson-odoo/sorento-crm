@@ -35,6 +35,30 @@ export async function listMcpToolsCatalog(params: {
   return response.json();
 }
 
+export interface McpToolRoutingEntry {
+  team_code: string;
+  team_name: string;
+  agent_code: string;
+  agent_name: string;
+  tier: number | null;
+}
+
+export interface McpToolRoutingResult {
+  tool_name: string;
+  entries: McpToolRoutingEntry[];
+  primary: McpToolRoutingEntry | null;
+}
+
+export async function getMcpToolRouting(toolName: string): Promise<McpToolRoutingResult> {
+  const usp = new URLSearchParams();
+  usp.set('tool_name', toolName);
+  const response = await apiFetch(`/api/system/mcp-routing?${usp.toString()}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to fetch MCP tool routing'));
+  }
+  return response.json();
+}
+
 export async function listMcpAccessLog(params: {
   decision?: string;
   tool_name?: string;

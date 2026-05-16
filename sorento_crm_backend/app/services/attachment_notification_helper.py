@@ -133,32 +133,42 @@ def notify_uploaders_after_external_attachment_event(
             continue
 
         names = [getattr(x, "original_filename", None) or "file" for x in user_atts]
-        att_lines_plain = "\n".join(
-            f'  - "{n}": {build_attachment_detail_url(str(x.id))}' for n, x in zip(names, user_atts)
-        )
-        att_li_html = "".join(
+        att_plain_items = [
+            f'  - "{n}": {build_attachment_detail_url(str(x.id))}'
+            for n, x in zip(names, user_atts)
+        ]
+        att_html_items = [
             f'<li><a href="{html.escape(build_attachment_detail_url(str(x.id)), quote=True)}">{html.escape(n)}</a></li>'
             for n, x in zip(names, user_atts)
-        )
+        ]
 
-        body_plain = (
-            f"{summary_plain}\n\n"
-            f"{entity_link_text}:\n{entity_url}\n\n"
-            f"Your attachment(s):\n{att_lines_plain}\n\n"
-            "This is a system generated email. Please do not reply."
-        )
-        body_html = (
+        intro_plain = f"{summary_plain}\n\n{entity_link_text}:\n{entity_url}\n\nYour attachment(s):"
+        intro_html = (
             f"{summary_html}"
             f'<p><a href="{entity_href}">{link_label_esc}</a></p>'
-            f"<p>Your attachment(s):</p><ul>{att_li_html}</ul>"
-            f'<p style="color:#666;font-size:12px;margin-top:1.5em;">This is a system generated email. '
+            f"<p>Your attachment(s):</p>"
+        )
+        footer_plain = "This is a system generated email. Please do not reply."
+        footer_html = (
+            '<p style="color:#666;font-size:12px;margin-top:1.5em;">This is a system generated email. '
             "Please do not reply.</p>"
         )
+
+        body_plain = f"{intro_plain}\n" + "\n".join(att_plain_items) + f"\n\n{footer_plain}"
+        body_html = f"{intro_html}<ul>{''.join(att_html_items)}</ul>{footer_html}"
 
         data = {
             "body_html": body_html,
             "entity_url": entity_url,
             "attachment_ids": [str(x.id) for x in user_atts],
+            "email_coalesce": {
+                "intro_plain": intro_plain,
+                "intro_html": intro_html,
+                "footer_plain": footer_plain,
+                "footer_html": footer_html,
+                "attachment_plain_items": att_plain_items,
+                "attachment_html_items": att_html_items,
+            },
         }
 
         email = (getattr(user, "email", None) or "").strip()
@@ -429,43 +439,55 @@ def notify_uploaders_after_external_promotion_created(
             continue
 
         names = [getattr(x, "original_filename", None) or "file" for x in user_atts]
-        names_list = ", ".join(f'"{n}"' for n in names)
-        safe_names_html = ", ".join(f"<strong>{html.escape(n)}</strong>" for n in names)
 
-        att_lines_plain = "\n".join(
-            f"  - {n}: {build_attachment_detail_url(str(x.id))}" for n, x in zip(names, user_atts)
-        )
-        att_li_html = "".join(
+        att_plain_items = [
+            f"  - {n}: {build_attachment_detail_url(str(x.id))}"
+            for n, x in zip(names, user_atts)
+        ]
+        att_html_items = [
             f'<li><a href="{html.escape(build_attachment_detail_url(str(x.id)), quote=True)}">{html.escape(n)}</a></li>'
             for n, x in zip(names, user_atts)
-        )
+        ]
 
         title = f"Promotion created: {promo_name}"
         warn_plain, warn_html = _format_warnings_block(warnings)
-        body_plain = (
+        promo_url_esc = html.escape(promo_url, quote=True)
+
+        intro_plain = (
             f"{warn_plain}"
-            f'A promotion "{promo_name}" was created in Sorento CRM using your uploaded file(s): '
-            f"{names_list}.\n\n"
+            f'A promotion "{promo_name}" was created in Sorento CRM using your uploaded file(s).\n\n'
             f"View promotion:\n{promo_url}\n\n"
-            f"Your attachment(s):\n{att_lines_plain}\n\n"
-            f"This is a system generated email. Please do not reply."
+            "Your attachment(s):"
         )
-        body_html = (
+        intro_html = (
             f"{warn_html}"
             f"<p>A promotion <strong>{html.escape(promo_name)}</strong> "
-            f"was created in Sorento CRM using your uploaded file(s): "
-            f"{safe_names_html}.</p>"
-            f'<p><a href="{html.escape(promo_url, quote=True)}">Open promotion in Sorento CRM</a></p>'
-            f"<p>Your attachment(s):</p><ul>{att_li_html}</ul>"
-            f'<p style="color:#666;font-size:12px;margin-top:1.5em;">This is a system generated email. '
-            f"Please do not reply.</p>"
+            "was created in Sorento CRM using your uploaded file(s).</p>"
+            f'<p><a href="{promo_url_esc}">Open promotion in Sorento CRM</a></p>'
+            "<p>Your attachment(s):</p>"
         )
+        footer_plain = "This is a system generated email. Please do not reply."
+        footer_html = (
+            '<p style="color:#666;font-size:12px;margin-top:1.5em;">This is a system generated email. '
+            "Please do not reply.</p>"
+        )
+
+        body_plain = f"{intro_plain}\n" + "\n".join(att_plain_items) + f"\n\n{footer_plain}"
+        body_html = f"{intro_html}<ul>{''.join(att_html_items)}</ul>{footer_html}"
 
         data = {
             "body_html": body_html,
             "promotion_url": promo_url,
             "promotion_id": promo_id,
             "attachment_ids": [str(x.id) for x in user_atts],
+            "email_coalesce": {
+                "intro_plain": intro_plain,
+                "intro_html": intro_html,
+                "footer_plain": footer_plain,
+                "footer_html": footer_html,
+                "attachment_plain_items": att_plain_items,
+                "attachment_html_items": att_html_items,
+            },
         }
 
         email = (getattr(user, "email", None) or "").strip()

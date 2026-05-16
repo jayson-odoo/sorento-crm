@@ -213,6 +213,18 @@ async def startup_event():
 
     try:
         from app.database import SessionLocal
+        from app.services.email_event_registry import seed_event_configs
+        _db = SessionLocal()
+        try:
+            created = seed_event_configs(_db)
+            logging.info("Email event configs seeded at startup: added=%d", created)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Failed to seed email event configs at startup: {str(e)}", exc_info=True)
+
+    try:
+        from app.database import SessionLocal
         from app.services import it_support_bootstrap
         _db = SessionLocal()
         try:
