@@ -99,13 +99,12 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     "crm_master_products_list": ToolIntent(
         category="general_enquiries.product",
-        intent="Browse and search the Sorento product catalog (what products we sell).",
+        intent="Search the structured product master (SKU rows with price, dimensions, brand, category).",
         description=(
-            "Search and list Sorento's product catalog with filters (query / category_id / brand_id "
-            "/ status / price_min / price_max / item_type / dimension filters). Use this for any question "
-            "about which products we sell, catalog browsing, finding products by keyword (e.g. 'matte black "
-            "kitchen sink'), brand, category, or physical size. Not for stock quantities, stock ledger "
-            "movements, orders, or promotions — those have dedicated tools. "
+            "Search and list rows from the structured product master table (SKU / product_code / "
+            "product_name / description / brand / category / price / dimensions). Use this when the "
+            "user wants STRUCTURED PRODUCT ROWS — by keyword (e.g. 'matte black kitchen sink'), brand, "
+            "category, price range, or physical size."
             "`query` is a free-text LIKE search over product_code/product_name/description ONLY — NEVER pass "
             "numeric or comparison expressions like 'price > 100' or 'dimensions > 300mm' as `query`; use the "
             "dedicated parameters instead. "
@@ -122,7 +121,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "(alias: width), dimensions_height (alias: height), largest_dimension (GREATEST(L,W,H) per row — "
             "use sort=largest_dimension&dir=desc for 'biggest product on any side'), smallest_dimension "
             "(LEAST(L,W,H) per row). Combine with dir=asc|desc. NULL dimensions sort to the bottom either way. "
-            "Each row carries an ISO 4217 `currency` (default MYR for all Sorento catalog rows). "
+            "Each row carries an ISO 4217 `currency` (default MYR for all Sorento product rows). "
             "When showing prices to a user, ALWAYS render the currency code from the row "
             "(e.g. 'RM 1,250.00' or 'MYR 1,250.00'). Never assume USD/$. "
             "Each row also carries `is_discontinued` (auto-derived from descriptions that start "
@@ -130,13 +129,12 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         ),
         typical_user_questions=(
             "What products do you sell?",
-            "Show me your product catalog.",
-            "List all products available in Sorento.",
+            "List all SKUs available in Sorento.",
             "Do you sell matte black kitchen sinks?",
-            "Show me bathtubs / toilets / basins / faucets in your catalog.",
-            "What items are in your catalog under the bathroom category?",
+            "Show me bathtubs / toilets / basins / faucets.",
+            "What items do you have under the bathroom category?",
             "Find products by brand or category.",
-            "Browse the Sorento product list with pricing.",
+            "Show product list with pricing.",
             "I want to see product information and list price in MYR.",
             "Do you have any products with length between 300 and 500 mm?",
             "Show products with width over 500mm.",
@@ -147,9 +145,9 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Which products fit within 500mm x 500mm x 500mm?",
             "Show me products under MYR 100.",
             "Products priced between RM500 and RM2000.",
-            "Find catalog items by L W H dimensions.",
+            "Find SKUs by L W H dimensions.",
             "What is the biggest bathtub we have?",
-            "Show me the largest product in our catalog.",
+            "Show me the largest product we carry.",
             "Smallest faucet by dimension.",
             "Top 5 products by length.",
             "Sort products by largest side, descending.",
@@ -157,9 +155,9 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         ),
         aliases=(
             "master products list",
-            "product catalog",
+            "product master",
+            "product SKU search",
             "products we sell",
-            "browse catalog",
             "products by size",
             "products by dimensions",
             "products by length",
@@ -192,7 +190,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="Lightweight product picker for dropdowns / typeaheads.",
         description=(
             "Minimal active-only product list intended for dropdown or select-control population. "
-            "Prefer crm_master_products_list for user-facing catalog questions. "
+            "Prefer crm_master_products_list for user-facing product search. "
             "Rows include `is_discontinued` (auto-derived from descriptions starting with `****`)."
         ),
         typical_user_questions=(
@@ -235,7 +233,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         typical_user_questions=(
             "List the product categories.",
             "What categories are available?",
-            "Show me all catalog categories.",
+            "Show me all product categories.",
         ),
     ),
     "crm_master_product_categories_tree": ToolIntent(
@@ -475,17 +473,42 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     "crm_resource_attachments_list": ToolIntent(
         category="general_enquiries.attachment",
-        intent="Search global file attachments by query/entity/directory.",
+        intent="Search the global document library (product catalogue PDFs, brochures, price lists, general docs).",
         description=(
             "List file attachments across entities with filters: free-text query, entity_type, "
-            "entity_id, directory_id, is_deleted. Use for general document search across the CRM. "
-            "For product-specific brochures prefer crm_master_product_attachments_list; for the "
-            "current stock list document prefer crm_resource_attachments_current_stock_list."
+            "entity_id, directory_id, is_deleted. THIS IS THE PRIMARY TOOL FOR PRODUCT CATALOGUE / "
+            "CATALOG / BROCHURE / PRICE LIST DOCUMENT REQUESTS — the full Sorento product catalogue "
+            "PDF lives in the global document library, not on individual SKU rows. Use this tool "
+            "whenever the user asks for 'the catalogue', 'catalog', 'product catalogue', 'master "
+            "catalogue', 'brochure PDF', 'price list document', or any general company document. "
+            "Pass the user's keyword (e.g. 'catalogue', 'price list') as `query` to filter. "
+            "Only fall through to crm_master_product_attachments_list when the user is asking about "
+            "a SPECIFIC SKU's brochure/datasheet/spec sheet (named product + document together); for "
+            "the standing 'Stock List' PDF use crm_resource_attachments_current_stock_list."
         ),
         typical_user_questions=(
+            "Send me the catalogue.",
+            "Do you have a catalog I can look at?",
+            "Share the Sorento product catalogue.",
+            "I need the latest product catalogue PDF.",
+            "Where can I download the master catalogue?",
+            "Email me the brochure / company brochure.",
+            "Send the price list document.",
+            "Do you have the price list PDF?",
             "Search the document library for this keyword.",
             "Find an uploaded file by name.",
             "Do you have a file in the company directory called X?",
+        ),
+        aliases=(
+            "catalogue",
+            "catalog",
+            "product catalogue",
+            "product catalog PDF",
+            "master catalogue",
+            "company brochure",
+            "price list document",
+            "document library",
+            "global attachments",
         ),
     ),
     "crm_resource_attachments_current_stock_list": ToolIntent(
@@ -575,9 +598,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Paged stock balances with warehouse / product / quantity filters. Use for 'how much "
             "stock do we have', 'stock availability', 'sufficient stock?', warehouse-level balance. "
             "THIS IS NOT FOR TRANSACTION / MOVEMENT HISTORY — use crm_inventory_stock_ledger_list "
-            "for stock movement/ledger; NOT for general product catalog — use "
-            "crm_master_products_list; NOT for incoming/inbound stock — use "
-            "crm_procurement_packing_lists_list."
+            "for stock movement/ledger;"
         ),
         typical_user_questions=(
             "How much stock do we have for this SKU?",
@@ -625,8 +646,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "Global stock ledger (inventory TRANSACTION HISTORY: IN, OUT, TRANSFER, ADJUSTMENT). "
             "Use ONLY when the user explicitly asks for stock movements, stock history, ledger "
-            "entries, or transaction audit trail. Do NOT use for general catalog browsing, current "
-            "stock balance, or incoming shipment questions."
+            "entries, or transaction audit trail."
         ),
         typical_user_questions=(
             "Show me the stock ledger transaction history.",
@@ -1408,7 +1428,6 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         aliases=(
             "customer list",
             "developer list",
-            "client catalog",
             "search customers",
             "debtor list",
             "search debtors",

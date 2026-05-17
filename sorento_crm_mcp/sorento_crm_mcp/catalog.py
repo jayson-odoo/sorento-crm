@@ -26,7 +26,12 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_master_products_list",
         (
-            "List products with filters and pagination. `query` is a free-text LIKE search over product_code, "
+            "List structured product master rows (SKU / code / name / description / brand / category / "
+            "price / dimensions) with filters and pagination. NOT for document/PDF requests: if the "
+            "user asks for the product CATALOGUE, CATALOG, MASTER CATALOGUE, COMPANY BROCHURE, or "
+            "PRICE LIST PDF, route to crm_resource_attachments_list instead; for per-SKU brochure / "
+            "datasheet / spec sheet of a named product, use crm_master_product_attachments_list. "
+            "`query` is a free-text LIKE search over product_code, "
             "product_name, description ONLY — DO NOT pass numeric/range expressions like 'price > 100' or "
             "'dimensions > 300mm' as `query`; use the dedicated numeric filter parameters below instead. "
             "`category_id` accepts UUID or category_code/name. `brand_id` accepts UUID or brand_code/name. "
@@ -167,31 +172,21 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_master_product_attachments_list",
         (
-            "List product–attachment links with filters. Use this for any product CATALOGUE, "
-            "CATALOG, BROCHURE, PRICE LIST, SPEC SHEET, DATASHEET, PRODUCT MANUAL, FLYER, or "
-            "general 'do you have a document for product X' question — these are all stored as "
-            "product attachments. `product_id` accepts a product UUID or exact product code. "
+            "List per-SKU product↔attachment links with filters. Use this for documents tied to a "
+            "SPECIFIC product (named SKU + document): BROCHURE, SPEC SHEET, DATASHEET, PRODUCT "
+            "MANUAL, INSTALLATION GUIDE, CERTIFICATE, or 'do you have a document for product X' "
+            "question."
+            "`product_id` accepts a product UUID or exact product code. "
             "Visibility is gated server-side by the contact's access types — pass the Respond.io "
-            "`contact_id` (respond_io_id), `space_id` (workspace space id), and `access_levels`. "
+            "`contact_id` (respond_io_id) and `space_id` (workspace space id); the backend resolves "
+            "the contact's access levels automatically (no `access_levels` param needed). "
             "Internal fields (directory_id, storage_provider, uploaded_by id, full_directory_path) "
             "are stripped from the response — caller sees only file_name, public URL, description, "
-            "uploaded_by_user_display_name, created_at.\n\n"
-            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active level — "
-            "backend auto-defaults to it. REQUIRED when the contact has >1 active levels; calling "
-            "without it returns 422 + `allowed:[{name}]`. To pick safely, call "
-            "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
-            "passing access_levels, if it returns >1 map the user's phrasing to one of the returned "
-            "`name` values and pass that name as `access_levels`.\n\n"
-            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `query`. If the user mentions a phrase "
-            "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
-            "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
-            "filter — NEVER pass it as `query`. `query` is for product / promotion descriptive text "
-            "only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
-            "and check whether the user's phrase fuzzy-matches any returned `name`."
+            "uploaded_by_user_display_name, created_at."
         ),
         "/api/v1/master-data/product-attachments",
         (),
-        ("page", "limit", "sort", "dir", "product_id", "attachment_id", "contact_id", "space_id", "access_levels"),
+        ("page", "limit", "sort", "dir", "product_id", "attachment_id", "contact_id", "space_id"),
     ),
     ToolSpec(
         "crm_master_product_attachments_get",
@@ -203,32 +198,22 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_master_product_attachments_by_product",
         (
-            "All attachment links for a product. Use for any 'CATALOGUE / CATALOG / BROCHURE / "
-            "PRICE LIST / SPEC SHEET / DATASHEET / PRODUCT MANUAL' question about a specific "
-            "product. `product_id` accepts a product UUID, an exact product_code (SKU), or a "
+            "All attachment links for a SPECIFIC product. Use for BROCHURE / SPEC SHEET / "
+            "DATASHEET / PRODUCT MANUAL / INSTALLATION GUIDE / CERTIFICATE questions about a "
+            "named SKU. `product_id` accepts a product UUID, "
+            "an exact product_code (SKU), or a "
             "free-text search term (LIKE on product_code, product_name, description) — same "
             "matcher as crm_master_products_list. When the term resolves to a single product, "
             "the attachments are returned; ambiguous matches return a candidate list with `id` + "
             "`product_code` so the caller can re-issue with a precise reference. Server filters "
             "attachments to those whose access_levels overlap the contact's M2M access types "
-            "resolved from `contact_id` (respond_io_id) + `space_id`. Internal storage fields "
-            "(directory_id, storage_provider, uploaded_by id) are stripped.\n\n"
-            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active level — "
-            "backend auto-defaults to it. REQUIRED when the contact has >1 active levels; calling "
-            "without it returns 422 + `allowed:[{name}]`. To pick safely, call "
-            "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
-            "passing access_levels, if it returns >1 map the user's phrasing to one of the returned "
-            "`name` values and pass that name as `access_levels`.\n\n"
-            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `query`. If the user mentions a phrase "
-            "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
-            "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
-            "filter — NEVER pass it as `query`. `query` is for product / promotion descriptive text "
-            "only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
-            "and check whether the user's phrase fuzzy-matches any returned `name`."
+            "resolved automatically from `contact_id` (respond_io_id) + `space_id` — no "
+            "`access_levels` param needed. Internal storage fields (directory_id, storage_provider, "
+            "uploaded_by id) are stripped."
         ),
         "/api/v1/master-data/product-attachments/product/{product_id}",
         ("product_id",),
-        ("contact_id", "space_id", "access_levels"),
+        ("contact_id", "space_id"),
     ),
     # --- lookup sets ---
     ToolSpec(
@@ -347,7 +332,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "without it returns 422 + `allowed:[{name}]`. To pick safely, call "
             "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
             "passing access_levels, if it returns >1 map the user's phrasing to one of the returned "
-            "`name` values and pass that name as `access_levels`.\n\n"
+            "`name` values and pass that name as `access_levels` (string for a single level, e.g. `\"Sorento Dealer\"`; or a JSON array of strings to match any of several, e.g. `[\"Sorento Dealer\",\"Mocha Office\"]`).\n\n"
             "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `query`. If the user mentions a phrase "
             "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
             "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
@@ -397,7 +382,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "without it returns 422 + `allowed:[{name}]`. To pick safely, call "
             "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
             "passing access_levels, if it returns >1 map the user's phrasing to one of the returned "
-            "`name` values and pass that name as `access_levels`.\n\n"
+            "`name` values and pass that name as `access_levels` (string for a single level, e.g. `\"Sorento Dealer\"`; or a JSON array of strings to match any of several, e.g. `[\"Sorento Dealer\",\"Mocha Office\"]`).\n\n"
             "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `query`. If the user mentions a phrase "
             "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
             "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
@@ -421,8 +406,8 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_marketing_promotion_attachments_list",
         (
-            "List/search promotion–attachment links. Use for any PROMOTION CATALOGUE / CATALOG / "
-            "BROCHURE / FLYER / PRICE LIST / LEAFLET / SPEC SHEET document. Optional promotion_id "
+            "List/search promotion–attachment links. Use for any "
+            "BROCHURE / FLYER document. Optional promotion_id "
             "scopes one promotion (UUID). Optional query searches promotion header details, "
             "product code/name, promotion group name, and attachment metadata. Server filters "
             "results to links whose parent promotion AND attachment access_levels both overlap "
@@ -433,7 +418,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "without it returns 422 + `allowed:[{name}]`. To pick safely, call "
             "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
             "passing access_levels, if it returns >1 map the user's phrasing to one of the returned "
-            "`name` values and pass that name as `access_levels`.\n\n"
+            "`name` values and pass that name as `access_levels` (string for a single level, e.g. `\"Sorento Dealer\"`; or a JSON array of strings to match any of several, e.g. `[\"Sorento Dealer\",\"Mocha Office\"]`).\n\n"
             "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `query`. If the user mentions a phrase "
             "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
             "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
@@ -455,8 +440,8 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_marketing_promotion_attachments_by_promotion",
         (
-            "All promotion attachments for a promotion. Use for any PROMOTION CATALOGUE / CATALOG "
-            "/ BROCHURE / FLYER / PRICE LIST / LEAFLET / SPEC SHEET tied to a specific promotion. "
+            "All promotion attachments for a promotion. Use for "
+            "/ BROCHURE / FLYER tied to a specific promotion. "
             "promotion_id must be the UUID. Server filters to attachments whose parent promotion "
             "AND attachment access_levels both overlap the contact's M2M access types (resolved "
             "from `contact_id` + `space_id`). Internal storage fields are stripped.\n\n"
@@ -465,7 +450,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "without it returns 422 + `allowed:[{name}]`. To pick safely, call "
             "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
             "passing access_levels, if it returns >1 map the user's phrasing to one of the returned "
-            "`name` values and pass that name as `access_levels`.\n\n"
+            "`name` values and pass that name as `access_levels` (string for a single level, e.g. `\"Sorento Dealer\"`; or a JSON array of strings to match any of several, e.g. `[\"Sorento Dealer\",\"Mocha Office\"]`).\n\n"
             "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `query`. If the user mentions a phrase "
             "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
             "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
@@ -508,7 +493,16 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- resource-management ---
     ToolSpec(
         "crm_resource_attachments_list",
-        "List file attachments (filters: query, entity, directory, trash).",
+        (
+            "List file attachments in the global document library (filters: query, entity, "
+            "directory, trash). PRIMARY TOOL FOR PRODUCT CATALOGUE / CATALOG / MASTER CATALOGUE "
+            "PDF / COMPANY BROCHURE / PRICE LIST DOCUMENT requests — the full Sorento product "
+            "catalogue PDF and similar company-wide documents live here, NOT on per-SKU "
+            "attachments. Pass the user keyword (e.g. 'catalogue', 'catalog', 'price list', "
+            "'brochure') as `query`. For per-SKU brochures/datasheets use "
+            "crm_master_product_attachments_list; for the standing Stock List PDF use "
+            "crm_resource_attachments_current_stock_list."
+        ),
         "/api/v1/resource-management/attachments",
         (),
         (

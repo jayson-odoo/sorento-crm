@@ -77,6 +77,8 @@ PROMOTION_TOOL_NAMES: set[str] = {
 STOCK_TOOL_PREFIX = "crm_inventory_stock_"
 INVENTORY_TOOL_PREFIX = "crm_inventory_"
 ORDERS_LIST_TOOL = "crm_order_management_orders_list"
+ORDERS_GET_TOOL = "crm_order_management_orders_get"
+_ORDERS_SLIM_TOOLS = (ORDERS_LIST_TOOL, ORDERS_GET_TOOL)
 _ORDERS_LIST_DROP_ROW_KEYS = {
     "customer_id",
     "billing_address_id",
@@ -149,9 +151,18 @@ _PRODUCT_CODE_RESOLVABLE_TOOLS: set[str] = {
 }
 
 
-def _normalize_query_value(value: str | None) -> str | None:
+def _normalize_query_value(value: Any) -> Any:
+    """Coerce LLM-supplied query values.
+
+    Accepts str | list[str] | None. Lists pass through so httpx serializes
+    them as repeated query params (?k=a&k=b), which FastAPI's
+    `List[str] = Query(...)` consumes natively. Strings get the "True"/"False"
+    lowercase fix for boolean query params.
+    """
     if value is None:
         return None
+    if isinstance(value, list):
+        return value
     if value in {"True", "False"}:
         return value.lower()
     return value
@@ -639,6 +650,18 @@ _ATTACHMENT_TOOL_PREFIXES = (
     "crm_resource_attachments_",
 )
 
+# Extra fields stripped only from the global resource library list view —
+# noisy for chat answers; admins use the UI when they need them.
+_RESOURCE_ATTACHMENT_LIST_EXTRA_KEYS = frozenset(
+    {
+        "file_size_bytes",
+        "file_hash",
+        "original_filename",
+        "uploaded_by_user",
+    }
+)
+_RESOURCE_ATTACHMENT_LIST_TOOL = "crm_resource_attachments_list"
+
 
 def _strip_attachment_internals(node: Any) -> Any:
     """Recurse + drop attachment internal fields (TCK-2026-000015).
@@ -654,6 +677,18 @@ def _strip_attachment_internals(node: Any) -> Any:
             k: _strip_attachment_internals(v)
             for k, v in node.items()
             if k not in _ATTACHMENT_INTERNAL_KEYS
+        }
+    return node
+
+
+def _strip_resource_attachment_list_extras(node: Any) -> Any:
+    if isinstance(node, list):
+        return [_strip_resource_attachment_list_extras(item) for item in node]
+    if isinstance(node, dict):
+        return {
+            k: _strip_resource_attachment_list_extras(v)
+            for k, v in node.items()
+            if k not in _RESOURCE_ATTACHMENT_LIST_EXTRA_KEYS
         }
     return node
 
@@ -758,13 +793,15 @@ def _sanitize_tool_response(
         data = _relabel_warehouse_keys(data)
     if tool_name.startswith(STOCK_TOOL_PREFIX):
         data = _slim_stock_nested_warehouse(data)
-    if tool_name == ORDERS_LIST_TOOL:
+    if tool_name in _ORDERS_SLIM_TOOLS:
         product_query = (query or {}).get("product_query") if isinstance(query, dict) else None
         data = _slim_orders_list_response(data, product_query if isinstance(product_query, str) else None)
     if tool_name.startswith(_GRN_TOOL_PREFIX):
         data = _slim_grn_response(data)
     if any(tool_name.startswith(p) for p in _ATTACHMENT_TOOL_PREFIXES):
         data = _strip_attachment_internals(data)
+    if tool_name == _RESOURCE_ATTACHMENT_LIST_TOOL:
+        data = _strip_resource_attachment_list_extras(data)
     if any(tool_name.startswith(p) for p in _PROMO_PRODUCT_TOOL_PREFIXES):
         data = _slim_promotion_products_response(data)
     return json.dumps(data)
@@ -832,7 +869,9 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
                     fallback_query.setdefault("page", "1")
                 # If sibling list endpoint has no free-text query, still return a bounded first page
                 # so callers get a useful response instead of a UUID cast failure.
-                return await client.get(list_spec.path, path_params={}, query=fallback_query, tool_name=spec.name)
+                fallback_resp = await client.get(list_spec.path, path_params={}, query=fallback_query, tool_name=spec.name)
+                fallback_resp = _filter_active_promotion_records(spec.name, fallback_resp)
+                return _sanitize_tool_response(spec.name, fallback_resp, query=fallback_query)
             return json.dumps(
                 {
                     "message": f"Parameter '{p_name}' expects a UUID for tool '{spec.name}'.",
@@ -926,7 +965,7 @@ def _compile_tool(spec: ToolSpec):
     qp_optional_sorted = [q for q in qp_for_sig if q not in required_query_set]
     qp_for_sig = qp_required_sorted + qp_optional_sorted
     qp_sig = ", ".join(
-        (f"{q}: str" if q in required_query_set else f"{q}: str | None = None")
+        (f"{q}: str | list[str]" if q in required_query_set else f"{q}: str | list[str] | None = None")
         for q in qp_for_sig
     )
     bp_sig = ", ".join(f"{b}: str" for b in bp_for_sig)
@@ -975,7 +1014,7 @@ def _compile_tool(spec: ToolSpec):
         f"                    break\n"
         f"    for _k, _v in list(_qq.items()):\n"
         f"        _qq[_k] = _normalize_query_value(_v)\n"
-        f"    q = {{k: v for k, v in _qq.items() if v is not None}}\n"
+        f"    q = {{k: v for k, v in _qq.items() if v is not None and v != []}}\n"
         f"    for _dk, _dv in _defaults.items():\n"
         f"        if q.get(_dk) in (None, ''):\n"
         f"            q[_dk] = _dv\n"
