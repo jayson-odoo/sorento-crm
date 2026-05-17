@@ -60,12 +60,12 @@ def create_form(
                 code = (existing.code or "").strip() or "—"
                 name = (existing.name or "").strip() or code
                 summary_plain = (
-                    f'Form "{name}" ({code}) was recorded in Sorento CRM via the external integration API '
-                    "(for example n8n). The form code already existed."
+                    f'Form "{name}" ({code}) was recorded in Sorento CRM.'
+                    " The form code already existed."
                 )
                 summary_html = (
                     f"<p>Form <strong>{html.escape(name)}</strong> (<strong>{html.escape(code)}</strong>) was "
-                    "recorded in Sorento CRM via the external integration API (for example n8n). "
+                    "recorded in Sorento CRM. "
                     "The form code already existed.</p>"
                 )
                 notify_after_external_attachment_entity(
@@ -96,12 +96,11 @@ def create_form(
                 code = (form.code or "").strip() or "—"
                 name = (form.name or "").strip() or code
                 summary_plain = (
-                    f'Form "{name}" ({code}) was created in Sorento CRM via the external integration API '
-                    "(for example n8n)."
+                    f'Form "{name}" ({code}) was created in Sorento CRM '
                 )
                 summary_html = (
                     f"<p>Form <strong>{html.escape(name)}</strong> (<strong>{html.escape(code)}</strong>) was "
-                    "created in Sorento CRM via the external integration API (for example n8n).</p>"
+                    "created in Sorento CRM.</p>"
                 )
                 notify_after_external_attachment_entity(
                     db,

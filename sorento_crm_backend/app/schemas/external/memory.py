@@ -17,7 +17,11 @@ class FrameOpenRequest(BaseModel):
     intent: Optional[str] = None
     active_entities: dict[str, Any] = Field(default_factory=dict)
     access_levels_used: list[str] = Field(default_factory=list)
+    tools_used: list[str] = Field(default_factory=list)
+    result_refs: list[Any] = Field(default_factory=list)
+    pending_request: dict[str, Any] = Field(default_factory=dict)
     last_user_message: Optional[str] = None
+    last_assistant_summary: Optional[str] = None
 
 
 class FrameOpenResponse(BaseModel):

@@ -82,6 +82,10 @@ def create_and_send_webhook(
         "file_size": getattr(attachment, "file_size_bytes", None),
         "attachment_type": attachment_type.type_name if attachment_type else None,
         "access_levels": access_levels_payload,
+        # Per-submit UUID; lets n8n optionally echo it back for correlation, and
+        # lets the BE notification layer collapse the per-attachment callbacks
+        # from one Create-Attachment submit into a single coalesced email.
+        "upload_batch_id": getattr(attachment, "upload_batch_id", None),
     }
     integration_log.request_payload = json.dumps(webhook_payload)
     db.commit()

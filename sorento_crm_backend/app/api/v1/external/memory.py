@@ -65,7 +65,11 @@ def open_frame(
             intent=payload.intent,
             active_entities=payload.active_entities,
             access_levels_used=payload.access_levels_used,
+            tools_used=payload.tools_used,
+            result_refs=payload.result_refs,
+            pending_request=payload.pending_request,
             last_user_message=payload.last_user_message,
+            last_assistant_summary=payload.last_assistant_summary,
         )
     except Exception as e:
         db.rollback()

@@ -274,6 +274,12 @@ export default function AttachmentUploadDialog({
     setIsUploading(true);
     const uploadedIds: string[] = [];
     let hasError = false;
+    // One UUID per multi-file submit so the BE notification helpers can coalesce
+    // the per-attachment n8n callbacks into a single email (see attachment_notification_helper).
+    const uploadBatchId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
     try {
       // Upload files sequentially so each triggers N8N integration
@@ -281,7 +287,7 @@ export default function AttachmentUploadDialog({
         const file = selectedFiles[i];
         try {
           setUploadProgress(prev => ({ ...prev, [file.name]: 0 }));
-          
+
           const attachment = await runUpload((onConflict) =>
             uploadMutation.mutateAsync({
               file: file,
@@ -296,6 +302,7 @@ export default function AttachmentUploadDialog({
                   ? targetFieldKeys
                   : null,
               onConflict,
+              uploadBatchId,
             })
           );
 

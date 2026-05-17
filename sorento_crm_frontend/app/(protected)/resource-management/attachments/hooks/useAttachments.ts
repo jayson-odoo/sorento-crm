@@ -33,6 +33,7 @@ export function useUploadAttachment() {
       targetEntityType,
       targetFieldKeys,
       onConflict,
+      uploadBatchId,
     }: {
       file: File;
       attachmentTypeId?: string | null;
@@ -43,6 +44,7 @@ export function useUploadAttachment() {
       targetEntityType?: string | null;
       targetFieldKeys?: string[] | null;
       onConflict?: 'copy' | 'replace';
+      uploadBatchId?: string;
     }) =>
       uploadAttachment(file, {
         attachmentTypeId: attachmentTypeId ?? undefined,
@@ -53,6 +55,7 @@ export function useUploadAttachment() {
         targetEntityType,
         targetFieldKeys,
         onConflict,
+        uploadBatchId,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });

@@ -97,6 +97,7 @@ class AttachmentBase(BaseModel):
     # specific row via any link API. See app.services.field_linkage.registry.
     target_entity_type: Optional[str] = None
     target_field_keys: Optional[list[str]] = None
+    upload_batch_id: Optional[str] = None
 
 
 def _validate_field_linkage_template(target_entity_type, target_field_keys):

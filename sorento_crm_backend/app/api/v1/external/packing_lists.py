@@ -115,11 +115,10 @@ def create_packing_list(
         aid = payload.packing_list.attachment_id
         summary_plain = (
             f'Packing list / inbound shipment "{sn}" was created in Sorento CRM via the external integration API '
-            "(for example n8n)."
         )
         summary_html = (
             f"<p>Packing list / inbound shipment <strong>{html.escape(sn)}</strong> was created "
-            "in Sorento CRM via the external integration API (for example n8n).</p>"
+            "in Sorento CRM via the external integration API.</p>"
         )
         notify_after_external_attachment_entity(
             db,

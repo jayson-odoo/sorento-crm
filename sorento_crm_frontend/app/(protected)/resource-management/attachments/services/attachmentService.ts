@@ -66,6 +66,8 @@ export async function uploadAttachment(
     targetFieldKeys?: string[] | null;
     /** Google-Drive style collision resolution. Omit to receive 409 + AttachmentFilenameCollisionError. */
     onConflict?: AttachmentConflictResolution;
+    /** Shared per-submit UUID so the BE notification layer coalesces n8n callbacks into one email. */
+    uploadBatchId?: string;
   }
 ): Promise<Attachment> {
   const {
@@ -77,6 +79,7 @@ export async function uploadAttachment(
     targetEntityType,
     targetFieldKeys,
     onConflict,
+    uploadBatchId,
   } = options;
   const formData = new FormData();
   formData.append('file', file);
@@ -95,6 +98,9 @@ export async function uploadAttachment(
   }
   if (onConflict) {
     formData.append('on_conflict', onConflict);
+  }
+  if (uploadBatchId) {
+    formData.append('upload_batch_id', uploadBatchId);
   }
 
   const response = await apiFetch('/api/v1/resource-management/attachments', {

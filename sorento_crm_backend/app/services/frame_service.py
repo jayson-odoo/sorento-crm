@@ -74,7 +74,11 @@ class FrameService:
         intent: Optional[str] = None,
         active_entities: Optional[dict[str, Any]] = None,
         access_levels_used: Optional[list[str]] = None,
+        tools_used: Optional[list[str]] = None,
+        result_refs: Optional[list[Any]] = None,
+        pending_request: Optional[dict[str, Any]] = None,
         last_user_message: Optional[str] = None,
+        last_assistant_summary: Optional[str] = None,
     ) -> ConversationFrame:
         # Defensive: close any stale open frame for the same contact/channel.
         stale = self.get_open_frame(contact_id, space_id, channel)
@@ -94,10 +98,11 @@ class FrameService:
             intent=intent,
             active_entities=active_entities or {},
             access_levels_used=access_levels_used or [],
-            tools_used=[],
-            result_refs=[],
-            pending_request={},
+            tools_used=tools_used or [],
+            result_refs=result_refs or [],
+            pending_request=pending_request or {},
             last_user_message=last_user_message,
+            last_assistant_summary=last_assistant_summary,
             status="open",
         )
         self.db.add(frame)

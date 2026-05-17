@@ -157,6 +157,15 @@ def notify_uploaders_after_external_attachment_event(
         body_plain = f"{intro_plain}\n" + "\n".join(att_plain_items) + f"\n\n{footer_plain}"
         body_html = f"{intro_html}<ul>{''.join(att_html_items)}</ul>{footer_html}"
 
+        # batch_id (when set on the uploaded attachment row) drives
+        # _enqueue_coalesced_attachment_email's coalesce_id ahead of entity_url, so per-attachment
+        # n8n callbacks from one Create-Attachment submit collapse into a single outbox row even
+        # when each callback creates a different downstream entity.
+        upload_batch_id = next(
+            (str(getattr(x, "upload_batch_id", "") or "") for x in user_atts if getattr(x, "upload_batch_id", None)),
+            "",
+        )
+
         data = {
             "body_html": body_html,
             "entity_url": entity_url,
@@ -170,6 +179,8 @@ def notify_uploaders_after_external_attachment_event(
                 "attachment_html_items": att_html_items,
             },
         }
+        if upload_batch_id:
+            data["batch_id"] = upload_batch_id
 
         email = (getattr(user, "email", None) or "").strip()
         try:
@@ -475,6 +486,14 @@ def notify_uploaders_after_external_promotion_created(
         body_plain = f"{intro_plain}\n" + "\n".join(att_plain_items) + f"\n\n{footer_plain}"
         body_html = f"{intro_html}<ul>{''.join(att_html_items)}</ul>{footer_html}"
 
+        # batch_id (when set on the uploaded attachment row) wins over promotion_id in
+        # _enqueue_coalesced_attachment_email's coalesce lookup, so multi-file submits where n8n
+        # creates a distinct promotion per attachment still collapse to one email.
+        upload_batch_id = next(
+            (str(getattr(x, "upload_batch_id", "") or "") for x in user_atts if getattr(x, "upload_batch_id", None)),
+            "",
+        )
+
         data = {
             "body_html": body_html,
             "promotion_url": promo_url,
@@ -489,6 +508,8 @@ def notify_uploaders_after_external_promotion_created(
                 "attachment_html_items": att_html_items,
             },
         }
+        if upload_batch_id:
+            data["batch_id"] = upload_batch_id
 
         email = (getattr(user, "email", None) or "").strip()
         try:
@@ -564,16 +585,14 @@ def notify_external_promotion_explicit_user(
     warn_plain, warn_html = _format_warnings_block(warnings)
     body_plain = (
         f"{warn_plain}"
-        f'A promotion "{promo_name}" was created in Sorento CRM via the external integration API '
-        f"(for example n8n).\n\n"
+        f'A promotion "{promo_name}" was created in Sorento CRM. '
         f"View promotion:\n{promo_url}\n\n"
         f"This is a system generated email. Please do not reply."
     )
     body_html = (
         f"{warn_html}"
         f"<p>A promotion <strong>{html.escape(promo_name)}</strong> "
-        f"was created in Sorento CRM via the external integration API "
-        f"(for example n8n).</p>"
+        f"was created in Sorento CRM "
         f'<p><a href="{html.escape(promo_url, quote=True)}">Open promotion in Sorento CRM</a></p>'
         f'<p style="color:#666;font-size:12px;margin-top:1.5em;">This is a system generated email. '
         f"Please do not reply.</p>"

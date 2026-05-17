@@ -741,7 +741,7 @@ def assign(
     return ticket_to_response(db, t)
 
 
-def _ensure_can_edit_response(t: Ticket, current_user: dict) -> str:
+def _ensure_can_edit_response(db: Session, t: Ticket, current_user: dict) -> str:
     if not (_is_admin(db, current_user) or (t.assigned_to and str(t.assigned_to) == str(current_user.get("id") or ""))):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -750,7 +750,7 @@ def _ensure_can_edit_response(t: Ticket, current_user: dict) -> str:
     return str(current_user.get("id") or "")
 
 
-def _ensure_can_edit_resolution(t: Ticket, current_user: dict) -> str:
+def _ensure_can_edit_resolution(db: Session, t: Ticket, current_user: dict) -> str:
     if not (_is_admin(db, current_user) or (t.assigned_to and str(t.assigned_to) == str(current_user.get("id") or ""))):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -771,7 +771,7 @@ def update_response(
     submitter. Use ``update_response_and_reply`` for the full flow."""
     t = _get_or_404(db, ticket_id)
     _ensure_visible(db, t, current_user)
-    me = _ensure_can_edit_response(t, current_user)
+    me = _ensure_can_edit_response(db, t, current_user)
     now = datetime.utcnow()
     is_first = t.first_response_at is None
 
@@ -814,7 +814,7 @@ def update_response_and_reply(
 
     t = _get_or_404(db, ticket_id)
     _ensure_visible(db, t, current_user)
-    me = _ensure_can_edit_response(t, current_user)
+    me = _ensure_can_edit_response(db, t, current_user)
     now = datetime.utcnow()
     is_first = t.first_response_at is None
 
@@ -870,7 +870,7 @@ def update_resolution(
     submitter. Use ``update_resolution_and_reply`` for the full flow."""
     t = _get_or_404(db, ticket_id)
     _ensure_visible(db, t, current_user)
-    me = _ensure_can_edit_resolution(t, current_user)
+    me = _ensure_can_edit_resolution(db, t, current_user)
     now = datetime.utcnow()
 
     t.resolution_html = resolution_html
@@ -908,7 +908,7 @@ def update_resolution_and_reply(
 
     t = _get_or_404(db, ticket_id)
     _ensure_visible(db, t, current_user)
-    me = _ensure_can_edit_resolution(t, current_user)
+    me = _ensure_can_edit_resolution(db, t, current_user)
     now = datetime.utcnow()
 
     t.resolution_html = resolution_html
