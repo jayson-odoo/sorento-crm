@@ -335,6 +335,18 @@ async def _resolve_incoming_shipment_reference(client: Any, identifier: str) -> 
     return None
 
 
+def _looks_like_promotion_record(obj: Any) -> bool:
+    """True only when obj resembles a real promotion row (has an id and an
+    activity signal). Distinguishes promotion payloads from backend error
+    envelopes (`detail`, `message`+`code`, `allowed`, `error`) so the filter
+    can passthrough errors instead of masking them as PROMOTION_INACTIVE."""
+    if not isinstance(obj, dict):
+        return False
+    if not obj.get("id"):
+        return False
+    return isinstance(obj.get("is_active"), bool) or isinstance(obj.get("status"), str)
+
+
 def _is_active_promotion_obj(obj: Any) -> bool:
     if not isinstance(obj, dict):
         return False
@@ -354,7 +366,7 @@ async def _ensure_promotion_active(client: Any, promotion_id: str | None) -> str
     except Exception:
         return None
     data = _json_loads_safe(raw)
-    if isinstance(data, dict) and not _is_active_promotion_obj(data):
+    if _looks_like_promotion_record(data) and not _is_active_promotion_obj(data):
         return json.dumps(
             {
                 "message": "Promotion is inactive.",
@@ -372,14 +384,17 @@ def _filter_active_promotion_records(tool_name: str, raw: str) -> str:
     if data is None:
         return raw
 
-    # Single-promotion details: block inactive promotion records.
+    # Single-promotion details: only block when payload is a real promotion
+    # record with is_active=false. Error envelopes (422 access_levels, 404
+    # not-found, etc.) pass through unchanged so callers see the real cause.
     if tool_name == "crm_marketing_promotions_get":
-        if isinstance(data, dict) and not _is_active_promotion_obj(data):
+        if _looks_like_promotion_record(data) and not _is_active_promotion_obj(data):
             return json.dumps({"message": "Promotion is inactive.", "code": "PROMOTION_INACTIVE"})
         return raw
 
-    # Single linked records (e.g. promotion attachment get): block if linked promotion inactive.
-    if isinstance(data, dict) and isinstance(data.get("promotion"), dict):
+    # Single linked records (e.g. promotion attachment get): block only when
+    # the nested promotion is a real record with is_active=false.
+    if isinstance(data, dict) and _looks_like_promotion_record(data.get("promotion")):
         if not _is_active_promotion_obj(data.get("promotion")):
             return json.dumps({"message": "Promotion is inactive.", "code": "PROMOTION_INACTIVE"})
         return raw
