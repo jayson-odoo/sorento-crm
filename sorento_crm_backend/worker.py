@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import logging
-from rq import Worker, Queue, Connection
+from rq import Worker, Queue
 from app.services.queue_service import redis_conn
 
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +36,6 @@ def _maybe_start_scheduler():
 
 if __name__ == '__main__':
     _maybe_start_scheduler()
-    with Connection(redis_conn):
-        worker = Worker(['imports', 'respond_io'])
-        logger.info("Starting RQ worker for 'imports' and 'respond_io' queues...")
-        worker.work()
+    worker = Worker(['imports', 'respond_io'], connection=redis_conn)
+    logger.info("Starting RQ worker for 'imports' and 'respond_io' queues...")
+    worker.work()

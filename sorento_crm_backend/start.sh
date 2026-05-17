@@ -27,6 +27,11 @@ echo "${DB_HOST}:${DB_PORT:-5432} - accepting connections"
 echo "Running database migrations..."
 # alembic upgrade head
 
+if [ $# -gt 0 ]; then
+  echo "Running override command: $@"
+  exec "$@"
+fi
+
 API_HOST="${API_HOST:-0.0.0.0}"
 API_PORT="${API_PORT:-8000}"
 
