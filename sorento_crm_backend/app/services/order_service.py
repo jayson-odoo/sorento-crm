@@ -361,10 +361,22 @@ class OrderService:
                 if ids:
                     product_ids.extend(ids)
                     continue
-                # Embedding fuzzy fallback: token is not a UUID and didn't
-                # match product_code exactly. Try resolving via RAG so partial
-                # SKUs / suffix variants ("...-UF") still find their owners.
-                fuzzy_clause, canonical_values = resolve_via_embedding_then_ilike(
+                # Prefix / substring ILIKE on product_code — deterministic
+                # match for partial SKUs like "SRTWC8608" → "SRTWC8608-SC",
+                # "SRTWC8608-SC-UF". Capped to avoid runaway broad tokens.
+                like_rows = (
+                    self.db.query(Product.id, Product.product_code)
+                    .filter(Product.product_code.ilike(f"%{token}%"))
+                    .limit(20)
+                    .all()
+                )
+                if like_rows:
+                    product_ids.extend(str(r[0]) for r in like_rows)
+                    continue
+                # Embedding fuzzy fallback only when prefix/substring code
+                # match yields nothing. Useful for descriptive tokens (e.g.
+                # "kitchen sink") rather than partial codes.
+                _fuzzy_clause, canonical_values = resolve_via_embedding_then_ilike(
                     self.db,
                     token,
                     source_type="product",
