@@ -13,9 +13,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import { useExcelAccept } from '@/hooks/use-excel-accept';
 import type { GRNImportResult, ValidateImportResult } from '../services/grnService';
-
-const ACCEPT = '.xlsx,.xls';
 
 interface GRNImportDialogProps {
   open: boolean;
@@ -35,6 +34,7 @@ export function GRNImportDialog({
   onUpload,
 }: GRNImportDialogProps) {
   const router = useRouter();
+  const ACCEPT = useExcelAccept();
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [testResult, setTestResult] = useState<ValidateImportResult | null>(null);
@@ -175,7 +175,7 @@ export function GRNImportDialog({
                 <span>Choose file</span>
               </Button>
             </label>
-            <p className="text-xs text-muted-foreground mt-2">.xlsx or .xls only</p>
+            <p className="text-xs text-muted-foreground mt-2">{ACCEPT} only</p>
           </div>
           {file && (
             <>

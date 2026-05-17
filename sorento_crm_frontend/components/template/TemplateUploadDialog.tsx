@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { parseExcelFile } from '@/lib/excel-utils';
+import { useExcelAccept } from '@/hooks/use-excel-accept';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
@@ -47,9 +48,11 @@ export function TemplateUploadDialog({
   onOpenChange,
   onUpload,
   onTest,
-  accept = '.xlsx,.xls',
+  accept: acceptProp,
   maxRows = 100000, // Increased default to 100,000 rows
 }: TemplateUploadDialogProps) {
+  const acceptFromSettings = useExcelAccept();
+  const accept = acceptProp ?? acceptFromSettings;
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isTesting, setIsTesting] = useState(false);

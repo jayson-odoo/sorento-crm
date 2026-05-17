@@ -17,6 +17,7 @@ import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { importDeliveryOrderDetail } from '../services/orderService';
+import { useExcelAccept } from '@/hooks/use-excel-accept';
 import type { ValidateImportResult } from '../services/orderService';
 
 interface OrderLinesImportDialogProps {
@@ -26,8 +27,6 @@ interface OrderLinesImportDialogProps {
   onTest?: (file: File) => Promise<ValidateImportResult>;
 }
 
-const ACCEPT = '.xlsx,.xls';
-
 export function OrderLinesImportDialog({
   open,
   onOpenChange,
@@ -35,6 +34,7 @@ export function OrderLinesImportDialog({
   onTest,
 }: OrderLinesImportDialogProps) {
   const router = useRouter();
+  const ACCEPT = useExcelAccept();
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -177,7 +177,7 @@ export function OrderLinesImportDialog({
                 onChange={handleFileSelect}
                 className="hidden"
               />
-              <p className="text-sm text-muted-foreground mt-2">Accepted: .xlsx, .xls</p>
+              <p className="text-sm text-muted-foreground mt-2">Accepted: {ACCEPT}</p>
             </div>
           ) : (
             <div className="border rounded-lg p-4 space-y-3">

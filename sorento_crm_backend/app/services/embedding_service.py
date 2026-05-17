@@ -480,12 +480,32 @@ class EmbeddingReadService:
                 "find do",
                 "search do",
                 "locate do",
+                "check do",
+                "lookup do",
+                "look up do",
+                "get do",
+                "show do",
+                "checking do",
                 "looking for do",
                 "find delivery order",
                 "search delivery order",
                 "locate delivery order",
+                "check delivery order",
             )
             _do_lookup_intent = any(w in q_lower for w in _do_lookup_words)
+            # Bare "do" token counts as DO intent only when paired with a product-code
+            # pattern or a customer/product/"for" anchor. "do" alone is too ambiguous
+            # (English verb) to trigger order_enquiries boosts on its own.
+            if not _do_lookup_intent and re.search(r"\bdo\b", q_lower):
+                _do_context_anchor = (
+                    looks_like_product_code
+                    or "customer" in q_lower
+                    or "product" in q_lower
+                    or "sku" in q_lower
+                    or re.search(r"\bdo for\b", q_lower) is not None
+                )
+                if _do_context_anchor:
+                    _do_lookup_intent = True
             _explicit_submit_intent = any(
                 w in q_lower
                 for w in (

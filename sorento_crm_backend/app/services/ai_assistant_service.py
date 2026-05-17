@@ -590,6 +590,10 @@ class AIAssistantChatService:
             "self-contained natural-language question that preserves all important entities "
             "(ids, codes, dates, names) from the prior conversation.\n"
             "- Resolve pronouns/ellipsis using the history.\n"
+            "- Expand common CRM abbreviations on first mention so downstream RAG can match: "
+            "DO -> delivery order, GRN -> goods received note, SPO -> supplier purchase order, "
+            "PO -> purchase order, SO -> sales order, PR -> purchase request, SKU -> product. "
+            "Keep the original abbreviation alongside the expansion (e.g. 'delivery order (DO)').\n"
             "- Keep it concise (<= 2 sentences).\n"
             "- Do not answer the question. Output plain text only, no quotes, no prefix."
         )

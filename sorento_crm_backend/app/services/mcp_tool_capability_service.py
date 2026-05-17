@@ -1628,6 +1628,42 @@ def _intent_for(tool_name: str) -> ToolIntent | None:
 # Seeding these directly into the body_text for the right tool steers cosine
 # similarity in the orchestrator's vocabulary, not just natural language.
 _ENVELOPE_MATCH_PHRASES: dict[str, tuple[str, ...]] = {
+    "crm_order_management_orders_list": (
+        # Abbreviation expansion so embedder ties bare "DO" to delivery order tools.
+        "DO = delivery order. DO is the abbreviation for delivery order.",
+        "DO short for delivery order; D.O. means delivery order.",
+        "Use this tool when the user types DO, D.O., or delivery order.",
+        # Bare-verb intent phrasings the orchestrator typically emits.
+        "check DO. check DO for customer. check DO for debtor. check DO for date.",
+        "find DO. search DO. lookup DO. look up DO. show DO. get DO. checking DO.",
+        "DO check. DO lookup. DO search. DO query. DO list. DO listing.",
+        "find delivery order. search delivery order. check delivery order.",
+        "list DO. list delivery orders. DO numbers. delivery order numbers.",
+        # Envelope-style lines the n8n orchestrator emits.
+        "Query type: tool_retrieval | Intent: order_enquiry | Domain: order_management | Operation: search | User goal: check DO",
+        "Query type: tool_retrieval | Intent: delivery_order_lookup | Domain: order_management | Operation: search | User goal: find DO",
+        "Intent: order_enquiry. Intent: delivery_order_lookup. Domain: order_management.",
+        "User goal: check DO. User goal: find DO. User goal: search delivery order.",
+    ),
+    "crm_order_management_orders_by_product_list": (
+        # Abbreviation expansion + product-code co-occurrence seeding.
+        "DO = delivery order. DO is the abbreviation for delivery order.",
+        "DO short for delivery order; D.O. means delivery order.",
+        "Use this tool when the user types DO, D.O., or delivery order, alongside a product code or SKU.",
+        # Bare-verb intent phrasings paired with product/SKU context.
+        "check DO for product. check DO for SKU. check DO for product code.",
+        "check DO for <product_code>. check DO for product <SKU>. check delivery order for product.",
+        "find DO for product. search DO for product. lookup DO by product. look up DO by SKU.",
+        "DO check product. DO lookup product. DO by product. DO for product code.",
+        "find delivery order for product. search delivery order for SKU. delivery order by product.",
+        "which DO contains this product. which delivery order has this SKU.",
+        "customer DO for product. DO for customer and product. DO by customer and product code.",
+        # Envelope-style lines.
+        "Query type: tool_retrieval | Intent: delivery_order_lookup | Domain: order_management | Operation: search | User goal: check DO for product",
+        "Query type: tool_retrieval | Intent: order_by_product | Domain: order_management | Operation: search | User goal: find DO for SKU",
+        "Intent: delivery_order_lookup. Intent: order_by_product. Domain: order_management.",
+        "User goal: check DO for product. User goal: find DO for SKU. User goal: search DO by product code.",
+    ),
     "crm_portal_link_get": (
         # Full-envelope mirror lines: shape the cosine target so the n8n
         # orchestrator's template ("Query type: tool_retrieval\nIntent: ...\n
@@ -1683,23 +1719,28 @@ _ENVELOPE_MATCH_PHRASES: dict[str, tuple[str, ...]] = {
 }
 
 
+_READONLY_LOOKUP_DISCLAIMER = (
+    "This tool is a read-only data lookup. It does NOT submit, file, lodge, or create any form.",
+    "Do not pick this tool when the user wants to file a stock inquiry, file a complaint, "
+    "file a purchase request, or file a sponsorship form. Pick crm_portal_link_get for those.",
+)
+
+
 def _envelope_match_phrases(tool_name: str) -> tuple[str, ...]:
-    if tool_name in _ENVELOPE_MATCH_PHRASES:
-        return _ENVELOPE_MATCH_PHRASES[tool_name]
-    # Inventory + order-management lookup tools must be cosine-distant from
-    # submission-flow queries. The n8n orchestrator often emits
-    # "Domain: warehouse" + "Operation: search" for "file stock inquiry"
-    # which used to drag these tools into top-k. Seeded disclaimer counters it.
-    if (
+    explicit = _ENVELOPE_MATCH_PHRASES.get(tool_name)
+    is_readonly_lookup = (
         tool_name.startswith("crm_inventory_")
         or tool_name.startswith("crm_incoming_stock_")
         or tool_name.startswith("crm_order_management_")
-    ):
-        return (
-            "This tool is a read-only data lookup. It does NOT submit, file, lodge, or create any form.",
-            "Do not pick this tool when the user wants to file a stock inquiry, file a complaint, "
-            "file a purchase request, or file a sponsorship form. Pick crm_portal_link_get for those.",
-        )
+    )
+    if explicit is not None:
+        # Order/inventory lookup tools with explicit positive seeding still need
+        # the anti-submission disclaimer so they don't surface for portal flows.
+        if is_readonly_lookup:
+            return tuple(explicit) + _READONLY_LOOKUP_DISCLAIMER
+        return explicit
+    if is_readonly_lookup:
+        return _READONLY_LOOKUP_DISCLAIMER
     return ()
 
 
