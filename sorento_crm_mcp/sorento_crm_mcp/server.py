@@ -613,40 +613,64 @@ def _slim_orders_list_response(data: Any, product_query: str | None = None) -> A
 _PROMO_PRODUCT_TOOL_PREFIXES = (
     "crm_marketing_promotion_products_",
 )
-_PROMO_PRODUCT_DROP_KEYS = frozenset({"discount_amount", "discount_percent"})
+# Keys removed recursively from every dict in the promotion-products payload
+# (top-level promotion_product row, nested `product`, `promotion`, and inline
+# `promotion_attachments`). Pure noise for the AI agent.
+_PROMO_PRODUCT_DROP_KEYS = frozenset(
+    {
+        "discount_amount",
+        "discount_percent",
+        "dealer_discount_percent",
+        "dealer_cost",
+        "list_to_dealer_margin_amount",
+        "synced_to_excel",
+        "last_synced_to_excel",
+        "original_filename",
+        "attachment_type",
+        "directory_id",
+        "cost_price",
+        "category_id",
+        "category_code",
+        "brand_id",
+        "brand_code",
+        "item_type",
+        "warranty_months"
+    }
+)
 
 
-def _slim_promotion_products_row(row: Any) -> Any:
-    """TCK-2026-000016: drop discount_amount/discount_percent, rename promotion_price → selling_price.
+def _slim_promotion_products_node(node: Any) -> Any:
+    """Recursive slim for promotion-product responses.
 
-    `selling_price` is the user-facing label across the UI; the legacy
-    `promotion_price` alias kept on the API for back-compat is unhelpful to
-    the AI agent.
+    * Drops every key in `_PROMO_PRODUCT_DROP_KEYS` at any depth.
+    * Renames `promotion_price` → `selling_price` (UI vocabulary).
     """
-    if not isinstance(row, dict):
-        return row
+    if isinstance(node, list):
+        return [_slim_promotion_products_node(item) for item in node]
+    if not isinstance(node, dict):
+        return node
     out: dict[str, Any] = {}
-    for k, v in row.items():
+    for k, v in node.items():
         if k in _PROMO_PRODUCT_DROP_KEYS:
             continue
         if k == "promotion_price":
-            if "selling_price" not in row:
-                out["selling_price"] = v
+            if "selling_price" not in node:
+                out["selling_price"] = _slim_promotion_products_node(v)
             continue
-        out[k] = v
+        out[k] = _slim_promotion_products_node(v)
     return out
 
 
 def _slim_promotion_products_response(data: Any) -> Any:
     if isinstance(data, list):
-        return [_slim_promotion_products_row(r) for r in data]
+        return [_slim_promotion_products_node(r) for r in data]
     if isinstance(data, dict):
         if isinstance(data.get("data"), list):
-            return {**data, "data": [_slim_promotion_products_row(r) for r in data["data"]]}
+            return {**data, "data": [_slim_promotion_products_node(r) for r in data["data"]]}
         # Handle nested-by-promotion shapes: {promotion: ..., products: [...]}
         if isinstance(data.get("products"), list):
-            return {**data, "products": [_slim_promotion_products_row(r) for r in data["products"]]}
-        return _slim_promotion_products_row(data)
+            return {**data, "products": [_slim_promotion_products_node(r) for r in data["products"]]}
+        return _slim_promotion_products_node(data)
     return data
 
 
