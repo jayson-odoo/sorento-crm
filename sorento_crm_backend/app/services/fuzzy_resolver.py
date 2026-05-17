@@ -58,18 +58,44 @@ def resolve_via_embedding_then_ilike(
             )
             source_ids = [str(c.source_id) for c, _, _ in hits if c.source_id]
             if source_ids:
-                cols = [getattr(canonical_model, f) for f in canonical_fields]
-                rows = (
-                    db.query(*cols)
-                    .filter(canonical_model.id.in_(source_ids))
-                    .all()
-                )
-                for row in rows:
-                    # SQLAlchemy Row is iterable but not a tuple subclass; iterate
-                    # directly so each column value is captured cleanly.
-                    for v in tuple(row):
-                        if v and v not in canonical_values:
-                            canonical_values.append(str(v))
+                # Real master rows: look up canonical fields by id.
+                master_ids = [sid for sid in source_ids if not sid.startswith("debtor:")]
+                if master_ids:
+                    cols = [getattr(canonical_model, f) for f in canonical_fields]
+                    rows = (
+                        db.query(*cols)
+                        .filter(canonical_model.id.in_(master_ids))
+                        .all()
+                    )
+                    for row in rows:
+                        # SQLAlchemy Row is iterable but not a tuple subclass; iterate
+                        # directly so each column value is captured cleanly.
+                        for v in tuple(row):
+                            if v and v not in canonical_values:
+                                canonical_values.append(str(v))
+                # Synthetic `debtor:<code>` ids point at a distinct
+                # `orders.debtor_code` with no master `customers` row. Resolve
+                # the debtor_name / debtor_code from Order so customer_query
+                # search expands to FIRA-style debtors too.
+                debtor_codes = [
+                    sid.split(":", 1)[1]
+                    for sid in source_ids
+                    if sid.startswith("debtor:") and ":" in sid
+                ]
+                if debtor_codes:
+                    from app.models.order import Order
+
+                    rows = (
+                        db.query(Order.debtor_name, Order.debtor_code)
+                        .filter(Order.debtor_code.in_(debtor_codes))
+                        .filter(Order.deleted_at.is_(None))
+                        .distinct()
+                        .all()
+                    )
+                    for debtor_name, debtor_code in rows:
+                        for v in (debtor_name, debtor_code):
+                            if v and v not in canonical_values:
+                                canonical_values.append(str(v))
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Fuzzy resolve failed for source_type=%s term=%r: %s",

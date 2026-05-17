@@ -154,16 +154,22 @@ _PRODUCT_CODE_RESOLVABLE_TOOLS: set[str] = {
 def _normalize_query_value(value: Any) -> Any:
     """Coerce LLM-supplied query values.
 
-    Accepts str | list[str] | None. Lists pass through so httpx serializes
-    them as repeated query params (?k=a&k=b), which FastAPI's
-    `List[str] = Query(...)` consumes natively. Strings get the "True"/"False"
-    lowercase fix for boolean query params.
+    Accepts str | int | float | bool | list[str] | None. Lists pass through so
+    httpx serializes them as repeated query params (?k=a&k=b), which FastAPI's
+    `List[str] = Query(...)` consumes natively. Numeric scalars are stringified
+    so httpx emits them verbatim. Booleans are stringified to lowercase so
+    FastAPI's bool parser (`true` / `false`) accepts them; the same coercion
+    applies to string "True" / "False" passed by older callers.
     """
     if value is None:
         return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
     if isinstance(value, list):
         return value
-    if value in {"True", "False"}:
+    if isinstance(value, str) and value in {"True", "False"}:
         return value.lower()
     return value
 
@@ -1003,8 +1009,13 @@ def _compile_tool(spec: ToolSpec):
     qp_required_sorted = [q for q in qp_for_sig if q in required_query_set]
     qp_optional_sorted = [q for q in qp_for_sig if q not in required_query_set]
     qp_for_sig = qp_required_sorted + qp_optional_sorted
+    # Accept str / int / float / bool / list so LLMs that hand back native JSON
+    # types (e.g. `limit: 10`, `is_active: true`) don't trip Pydantic's strict
+    # type validation. `_normalize_query_value` + httpx serialize scalars to
+    # str for the outbound HTTP query.
+    _scalar_union = "str | int | float | bool | list[str]"
     qp_sig = ", ".join(
-        (f"{q}: str | list[str]" if q in required_query_set else f"{q}: str | list[str] | None = None")
+        (f"{q}: {_scalar_union}" if q in required_query_set else f"{q}: {_scalar_union} | None = None")
         for q in qp_for_sig
     )
     bp_sig = ", ".join(f"{b}: str" for b in bp_for_sig)

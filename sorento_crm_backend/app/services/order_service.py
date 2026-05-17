@@ -324,15 +324,62 @@ class OrderService:
         )
 
         filters = []
-
-        product_ids = resolve_identifier(
-            self.db,
-            product_id,
-            Product,
-            code_fields=("product_code",),
-        )
         product_match_filters: list = []
-        if product_ids is not None:
+
+        # Normalize `product_id` into a list of raw tokens. Accepts a single
+        # UUID/SKU, a comma-separated string ("A,B"), or a Python list (n8n
+        # repeated ?product_id=A&product_id=B). Each token is resolved through
+        # the standard exact path first; tokens that still don't match a
+        # product_code fall through to an embedding fuzzy resolve so the LLM
+        # can hand us partials like "SRTWC8608" or "SRTWC8608-SC-UF" without
+        # n8n having to canonicalise the SKU upstream.
+        raw_tokens: list[str] = []
+        if isinstance(product_id, list):
+            for item in product_id:
+                if item is None:
+                    continue
+                for piece in str(item).split(","):
+                    piece = piece.strip()
+                    if piece:
+                        raw_tokens.append(piece)
+        elif product_id is not None:
+            for piece in str(product_id).split(","):
+                piece = piece.strip()
+                if piece:
+                    raw_tokens.append(piece)
+        raw_tokens = list(dict.fromkeys(raw_tokens))
+
+        product_ids: list[str] = []
+        if raw_tokens:
+            for token in raw_tokens:
+                ids = resolve_identifier(
+                    self.db,
+                    token,
+                    Product,
+                    code_fields=("product_code",),
+                )
+                if ids:
+                    product_ids.extend(ids)
+                    continue
+                # Embedding fuzzy fallback: token is not a UUID and didn't
+                # match product_code exactly. Try resolving via RAG so partial
+                # SKUs / suffix variants ("...-UF") still find their owners.
+                fuzzy_clause, canonical_values = resolve_via_embedding_then_ilike(
+                    self.db,
+                    token,
+                    source_type="product",
+                    ilike_columns=[Product.product_code],
+                    canonical_model=Product,
+                    canonical_fields=("product_code",),
+                )
+                if canonical_values:
+                    fuzzy_rows = (
+                        self.db.query(Product.id)
+                        .filter(Product.product_code.in_(canonical_values))
+                        .all()
+                    )
+                    product_ids.extend(str(r[0]) for r in fuzzy_rows)
+            product_ids = list(dict.fromkeys(product_ids))
             if not product_ids:
                 return {
                     "data": [],

@@ -784,7 +784,14 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Use explicit filters for DO lookup when available: `customer_query` (debtor/customer partial), "
             "`product_query` (product code/name partial), plus `order_date_from`/`order_date_to`. "
             "Parameter `query` matches product code, name, description, order number, and debtor name (case-insensitive partial match). "
-            "`product_id` accepts UUID or product_code (SKU)."
+            "`product_id` accepts a UUID, a product_code (SKU), a JSON array, or a "
+            "comma-separated string for multi-SKU lookup (e.g. "
+            "[\"SRTWC8608-SC\",\"SRTWC8608-SC-UF\"]). Partial / suffix variants are "
+            "fuzzy-resolved via embeddings, so n8n does NOT need to pre-canonicalise "
+            "the SKU. `customer_query` is also embedding-resolved — pass loose phrases "
+            "like \"fira ventures\" / \"yotu\" and the server will match the "
+            "customer/debtor (including FIRA-style debtors that have no customers "
+            "master row)."
         ),
         "/api/v1/order-management/orders/by-product",
         (),

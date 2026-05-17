@@ -388,7 +388,16 @@ async def get_orders_by_product(
         None,
         description="Partial product filter (product code/name/description). Useful when product_id is not exact.",
     ),
-    product_id: Optional[str] = Query(None),
+    product_id: Optional[list[str]] = Query(
+        None,
+        description=(
+            "One or more Product UUIDs / product_codes / SKUs. Accepts repeated query "
+            "params (?product_id=A&product_id=B), a JSON array, or a comma-separated "
+            "string (e.g. 'SRTWC8608-SC,SRTWC8608-SC-UF'). Tokens that don't match a "
+            "product_code exactly are passed through the embedding fuzzy resolver, so "
+            "partial SKUs / suffix variants still match."
+        ),
+    ),
     has_actual_delivery_date: Optional[str] = Query(
         None,
         description="Filter by actual delivery date: 'yes' = has date, 'no' = missing date, omit = all",
