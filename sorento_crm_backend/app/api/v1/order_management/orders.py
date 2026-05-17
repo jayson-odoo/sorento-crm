@@ -238,7 +238,10 @@ async def get_orders(
         description=(
             "Filter by order date from (inclusive). Accepts YYYY-MM-DD, DD/MM/YYYY, "
             "DD-MM-YYYY, YYYY/MM/DD, ISO datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY'. "
-            "Use this for any 'orders in [month/period]' or complaint DO discovery filtering."
+            "Only use when the user EXPLICITLY mentions the order/placement date (verbs: "
+            "'placed', 'created', 'raised', 'opened', 'booked', or literal 'order date'). "
+            "For bare time windows ('today', 'this week', 'February 2026') and DO discovery, "
+            "use actual_delivery_date_from instead."
         ),
     ),
     order_date_to: Optional[str] = Query(
@@ -249,8 +252,11 @@ async def get_orders(
         None,
         description=(
             "Filter by actual delivery date from (inclusive). Same flexible formats as "
-            "order_date_from. Only use when the user EXPLICITLY asks about the delivery date — "
-            "for general 'orders in [period]' / complaint DO discovery, use order_date_from instead."
+            "order_date_from. DEFAULT date param for DO discovery and bare 'orders in [today/"
+            "this week/month/period]' questions. Use for delivery verbs ('delivered', 'received', "
+            "'for delivery', 'pending delivery', 'arrived', 'delivery date') and ambiguous time "
+            "windows. Only fall back to order_date_from when the user EXPLICITLY says the "
+            "order/placement date."
         ),
     ),
     actual_delivery_date_to: Optional[str] = Query(
@@ -407,7 +413,9 @@ async def get_orders_by_product(
         description=(
             "Filter by order date from (inclusive). Accepts YYYY-MM-DD, DD/MM/YYYY, "
             "DD-MM-YYYY, YYYY/MM/DD, ISO datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY'. "
-            "Use this for complaint DO discovery — the relevant date is when the order was placed."
+            "Only use when the user EXPLICITLY mentions the order/placement date "
+            "(verbs: 'placed', 'created', 'raised', 'opened', 'booked', or literal 'order date'). "
+            "For DO discovery and bare time windows, use actual_delivery_date_from instead."
         ),
     ),
     order_date_to: Optional[str] = Query(
@@ -418,8 +426,10 @@ async def get_orders_by_product(
         None,
         description=(
             "Filter by actual delivery date from (inclusive). Same flexible formats. "
-            "Only use when the user EXPLICITLY asks about the delivery date — for complaint "
-            "DO discovery / 'orders in [period]', use order_date_from instead."
+            "DEFAULT date param for DO discovery and bare 'orders in [today/this week/month/"
+            "period]' questions. Use for delivery verbs ('delivered', 'received', 'for delivery', "
+            "'pending delivery', 'arrived', 'delivery date') and ambiguous time windows. Only "
+            "fall back to order_date_from when the user EXPLICITLY says order/placement date."
         ),
     ),
     actual_delivery_date_to: Optional[str] = Query(

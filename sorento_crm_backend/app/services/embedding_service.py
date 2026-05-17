@@ -436,6 +436,24 @@ class EmbeddingReadService:
                     score -= 0.04
             if ("order" in q_lower or "delivery" in q_lower or "lorry" in q_lower or "transporter" in q_lower) and cat == "order_enquiries":
                 score += 0.08
+            # "Delivery status" is OUTBOUND customer-order delivery (DO), NOT inbound stock.
+            # The incoming-stock tools share "delivery" / "shipment" vocabulary and often
+            # win cosine. Pin order tools above them whenever this phrase appears.
+            _delivery_status_intent = (
+                "delivery status" in q_lower
+                or "status of delivery" in q_lower
+                or "check delivery" in q_lower and "incoming" not in q_lower and "inbound" not in q_lower
+                or "is my order delivered" in q_lower
+                or "has order been delivered" in q_lower
+                or "where is my delivery" in q_lower
+            )
+            if _delivery_status_intent:
+                if cat == "order_enquiries":
+                    score += 0.15
+                if cat == "general_enquiries.incoming_stock":
+                    score -= 0.20
+                if cat in ("general_enquiries.stock", "general_enquiries.stock_ledger"):
+                    score -= 0.10
             # When the query clearly talks about customer sales orders (not incoming/inbound),
             # downrank procurement/incoming-stock tools so they don't beat orders_by_product.
             _procurement_words = ("incoming", "inbound", "arriv", "packing list", "shipment", "eta", "grn", "purchase order", "spo ")

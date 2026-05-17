@@ -738,9 +738,15 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "DEFAULT SORT: results are returned latest order first (sort=order_date, dir=desc) so the "
             "most recent matching order surfaces at the top — do not pass sort/dir unless the user "
             "explicitly asks for a different order. "
-            "DATE FILTER RULE: For DO discovery and any 'orders in [month/period/date range]' "
-            "question, ALWAYS use order_date_from/order_date_to. NEVER use actual_delivery_date_from/to "
-            "unless the user EXPLICITLY mentions the delivery date. "
+            "DATE FILTER RULE: For DO discovery and any bare 'orders in [today/yesterday/this week/"
+            "month/period/date range]' question, DEFAULT to actual_delivery_date_from/"
+            "actual_delivery_date_to. Only use order_date_from/order_date_to when the user EXPLICITLY "
+            "mentions the order/placement date (verbs: 'placed', 'created', 'raised', 'opened', "
+            "'booked', or the literal phrase 'order date'). Delivery verbs ('delivered', 'received', "
+            "'dropped off', 'for delivery', 'pending delivery', 'arrived', 'delivery date') and bare "
+            "time windows ('today', 'yesterday', 'this week', 'February 2026') => "
+            "actual_delivery_date_from/_to. Never pass both date families in one call unless the user "
+            "asks for an intersection. "
             "Date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO "
             "datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
             "Use this tool whenever the user asks to search/find DO numbers from customer OR product OR "
@@ -802,9 +808,15 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "`product_id`, optionally combined with explicit `customer_query` + `product_query` filters "
             "(or a customer/debtor partial match in `query`) and a "
             "date range. "
-            "DATE FILTER RULE: For DO discovery and any 'orders in [month/period/date "
-            "range]' question, ALWAYS use order_date_from/order_date_to. NEVER use "
-            "actual_delivery_date_from/to unless the user EXPLICITLY mentions the delivery date. "
+            "DATE FILTER RULE: For DO discovery and any bare 'orders in [today/yesterday/this week/"
+            "month/period/date range]' question, DEFAULT to actual_delivery_date_from/"
+            "actual_delivery_date_to. Only use order_date_from/order_date_to when the user EXPLICITLY "
+            "mentions the order/placement date (verbs: 'placed', 'created', 'raised', 'opened', "
+            "'booked', or literal 'order date'). Delivery verbs ('delivered', 'received', 'dropped "
+            "off', 'for delivery', 'pending delivery', 'arrived', 'delivery date') and bare time "
+            "windows ('today', 'yesterday', 'this week', 'February 2026') => "
+            "actual_delivery_date_from/_to. Never pass both date families in one call unless the user "
+            "asks for an intersection. "
             "Date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, "
             "ISO datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
             "This is about OUTGOING orders sold to customers — it is NOT about incoming stock, "
@@ -1639,11 +1651,19 @@ _ENVELOPE_MATCH_PHRASES: dict[str, tuple[str, ...]] = {
         "DO check. DO lookup. DO search. DO query. DO list. DO listing.",
         "find delivery order. search delivery order. check delivery order.",
         "list DO. list delivery orders. DO numbers. delivery order numbers.",
+        # Delivery / outbound shipment status phrasing — outbound customer sales, NOT inbound stock.
+        "check delivery status. delivery status. check status of delivery. status of delivery.",
+        "check delivery status for order. check delivery status for customer.",
+        "where is my delivery. is my order delivered. has order been delivered.",
+        "outbound delivery status. customer delivery status. order delivery status.",
+        "Delivery status here means OUTBOUND CUSTOMER ORDER delivery (DO), not inbound stock arrival.",
+        "Not about incoming stock. Not about inbound shipments. Not about supplier arrivals.",
         # Envelope-style lines the n8n orchestrator emits.
         "Query type: tool_retrieval | Intent: order_enquiry | Domain: order_management | Operation: search | User goal: check DO",
         "Query type: tool_retrieval | Intent: delivery_order_lookup | Domain: order_management | Operation: search | User goal: find DO",
-        "Intent: order_enquiry. Intent: delivery_order_lookup. Domain: order_management.",
-        "User goal: check DO. User goal: find DO. User goal: search delivery order.",
+        "Query type: tool_retrieval | Intent: delivery_status | Domain: order_management | Operation: search | User goal: check delivery status",
+        "Intent: order_enquiry. Intent: delivery_order_lookup. Intent: delivery_status. Domain: order_management.",
+        "User goal: check DO. User goal: find DO. User goal: search delivery order. User goal: check delivery status.",
     ),
     "crm_order_management_orders_by_product_list": (
         # Abbreviation expansion + product-code co-occurrence seeding.
@@ -1658,11 +1678,17 @@ _ENVELOPE_MATCH_PHRASES: dict[str, tuple[str, ...]] = {
         "find delivery order for product. search delivery order for SKU. delivery order by product.",
         "which DO contains this product. which delivery order has this SKU.",
         "customer DO for product. DO for customer and product. DO by customer and product code.",
+        # Delivery status for outbound product-level lookup.
+        "check delivery status for product. delivery status for SKU. delivery status of product.",
+        "check delivery status of order containing this product. delivery status by product.",
+        "Delivery status here means OUTBOUND CUSTOMER ORDER delivery (DO) for this product, NOT incoming stock for this product.",
+        "Not for incoming/inbound product. Not for supplier shipments. Use crm_incoming_stock_by_product for inbound stock.",
         # Envelope-style lines.
         "Query type: tool_retrieval | Intent: delivery_order_lookup | Domain: order_management | Operation: search | User goal: check DO for product",
         "Query type: tool_retrieval | Intent: order_by_product | Domain: order_management | Operation: search | User goal: find DO for SKU",
-        "Intent: delivery_order_lookup. Intent: order_by_product. Domain: order_management.",
-        "User goal: check DO for product. User goal: find DO for SKU. User goal: search DO by product code.",
+        "Query type: tool_retrieval | Intent: delivery_status | Domain: order_management | Operation: search | User goal: check delivery status for product",
+        "Intent: delivery_order_lookup. Intent: order_by_product. Intent: delivery_status. Domain: order_management.",
+        "User goal: check DO for product. User goal: find DO for SKU. User goal: search DO by product code. User goal: check delivery status for product.",
     ),
     "crm_portal_link_get": (
         # Full-envelope mirror lines: shape the cosine target so the n8n
