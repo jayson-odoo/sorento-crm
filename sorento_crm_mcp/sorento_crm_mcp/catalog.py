@@ -819,7 +819,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "(4) nearest_estimated_arrival_date. "
             "DO NOT also call crm_incoming_stock_shipments, crm_incoming_stock_shipment_products, crm_incoming_stock_shipment_attachment, or crm_incoming_stock_grn when answering a product-incoming question \u2014 this tool already includes their data. "
             "Does NOT expose received quantities, SPO numbers, or internal IDs. "
-            "`product_id` accepts UUID or product_code (SKU). Provide either product_id OR a free-text `query`."
+            "`product_id` accepts UUID or product_code (SKU). MULTI-SKU: pass a JSON array "
+            "(e.g. [\"SRTMCB8082-BL\",\"SRTWW8082-C\"]) or a comma-separated string "
+            "(\"SRTMCB8082-BL,SRTWW8082-C\") to fetch incoming summaries for several SKUs in "
+            "one call. Provide either product_id OR a free-text `query`."
         ),
         "/api/v1/incoming-stock/by-product",
         (),

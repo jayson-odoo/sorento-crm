@@ -34,9 +34,14 @@ router = APIRouter()
 
 @router.get("/by-product")
 def get_incoming_for_product(
-    product_id: Optional[str] = Query(
+    product_id: Optional[list[str]] = Query(
         None,
-        description="Product UUID or product_code / SKU (e.g. 'ACC-SRT1024'). Either product_id or query is required.",
+        description=(
+            "One or more Product UUIDs / product_codes / SKUs. Accepts repeated query "
+            "params (?product_id=A&product_id=B), a JSON array, or a comma-separated "
+            "string (e.g. 'SRTMCB8082-BL,SRTWW8082-C'). Either product_id or query "
+            "is required."
+        ),
     ),
     query: Optional[str] = Query(
         None,
@@ -53,9 +58,17 @@ def get_incoming_for_product(
     ETA, batch_number, remaining_incoming_quantity, per-shipment warehouse allocations,
     packing-list attachment).
     """
+    product_ids: list[str] = []
+    for raw in product_id or []:
+        if raw is None:
+            continue
+        for piece in str(raw).split(","):
+            piece = piece.strip()
+            if piece:
+                product_ids.append(piece)
     try:
         svc = IncomingStockService(db)
-        return svc.incoming_for_product(product_id=product_id, query=query, limit=limit)
+        return svc.incoming_for_product(product_ids=product_ids or None, query=query, limit=limit)
     except Exception as e:
         raise handle_internal_error(str(e))
 

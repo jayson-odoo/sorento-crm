@@ -150,26 +150,42 @@ class IncomingStockService:
         self,
         *,
         product_id: Optional[str] = None,
+        product_ids: Optional[list[str]] = None,
         query: Optional[str] = None,
         limit: int = 10,
     ) -> dict[str, Any]:
         """Return incoming-stock summary grouped by product.
 
-        Accepts `product_id` (UUID or product_code / SKU) OR a free-text `query` matched against
-        product_code / product_name. Filters to still-incoming lines only.
+        Accepts one or many `product_ids` (UUID or product_code / SKU). Legacy
+        single `product_id` parameter is folded into the list. A free-text
+        `query` may be supplied instead; results are filtered to still-incoming
+        lines only.
         """
         limit = max(1, min(limit, 50))
 
+        raw_ids: list[str] = []
+        if product_id:
+            raw_ids.append(product_id)
+        for value in product_ids or []:
+            if value:
+                raw_ids.append(value)
+        # Dedupe while preserving order.
+        raw_ids = list(dict.fromkeys(raw_ids))
+
         product_filters = []
         matched_candidates: list[str] = []
-        if product_id:
-            ids = resolve_identifier(
-                self.db, product_id, Product, code_fields=("product_code",)
-            )
-            if ids is not None:
-                if not ids:
-                    return {"data": [], "empty": True, "matched_candidates": []}
-                product_filters.append(Product.id.in_(ids))
+        if raw_ids:
+            resolved_ids: list[str] = []
+            for ident in raw_ids:
+                ids = resolve_identifier(
+                    self.db, ident, Product, code_fields=("product_code",)
+                )
+                if ids:
+                    resolved_ids.extend(ids)
+            resolved_ids = list(dict.fromkeys(resolved_ids))
+            if not resolved_ids:
+                return {"data": [], "empty": True, "matched_candidates": []}
+            product_filters.append(Product.id.in_(resolved_ids))
         if query and query.strip():
             fuzzy_clause, canonical_values = resolve_via_embedding_then_ilike(
                 self.db,
