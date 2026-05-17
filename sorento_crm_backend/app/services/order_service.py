@@ -331,6 +331,7 @@ class OrderService:
             Product,
             code_fields=("product_code",),
         )
+        product_match_filters: list = []
         if product_ids is not None:
             if not product_ids:
                 return {
@@ -339,6 +340,7 @@ class OrderService:
                     "empty": True,
                 }
             filters.append(OrderLine.product_id.in_(product_ids))
+            product_match_filters.append(OrderLine.product_id.in_(product_ids))
 
         hadd = (has_actual_delivery_date or "").strip().lower()
         if hadd == "yes":
@@ -367,6 +369,13 @@ class OrderService:
                 Product.product_code.ilike(term),
                 Product.product_name.ilike(term),
                 Product.description.ilike(term),
+            )
+            product_match_filters.append(
+                or_(
+                    Product.product_code.ilike(term),
+                    Product.product_name.ilike(term),
+                    Product.description.ilike(term),
+                )
             )
         if customer_query and (customer_query := (customer_query or "").strip()):
             customer_clause, _ = resolve_via_embedding_then_ilike(
@@ -398,6 +407,7 @@ class OrderService:
             )
             if product_clause is not None:
                 filters.append(product_clause)
+                product_match_filters.append(product_clause)
 
         base_q = q.filter(and_(*filters)) if filters else q
         q = base_q.filter(query_filter) if query_filter is not None else base_q
@@ -423,6 +433,35 @@ class OrderService:
             total = q.count()
         offset = (page - 1) * limit
         orders = q.offset(offset).limit(limit).all()
+
+        # Attach matched_products per order so callers know which order line
+        # caused the match (esp. important when product_id was an ilike /
+        # fuzzy hit rather than an exact UUID).
+        order_ids = [str(o.id) for o in orders]
+        matched_by_order: dict[str, list[dict]] = {}
+        if order_ids and product_match_filters:
+            mq = (
+                self.db.query(
+                    OrderLine.order_id,
+                    Product.id,
+                    Product.product_code,
+                    Product.product_name,
+                )
+                .join(Product, Product.id == OrderLine.product_id)
+                .filter(OrderLine.order_id.in_(order_ids))
+                .filter(and_(*product_match_filters))
+            )
+            seen: set[tuple[str, str]] = set()
+            for oid, pid, pcode, pname in mq.distinct().all():
+                key = (str(oid), str(pid))
+                if key in seen:
+                    continue
+                seen.add(key)
+                matched_by_order.setdefault(str(oid), []).append(
+                    {"id": str(pid), "product_code": pcode, "product_name": pname}
+                )
+        for o in orders:
+            setattr(o, "matched_products", matched_by_order.get(str(o.id), []))
 
         return {
             "data": orders,

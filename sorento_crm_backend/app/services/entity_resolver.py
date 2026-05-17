@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
 from app.models.marketing import Promotion
-from app.models.order import Customer, Order, OrderStatus
+from app.models.order import Customer, Order, OrderStatus, Transporter
 from app.models.procurement import (
     InboundShipment,
     PickingHeader,
@@ -675,6 +675,113 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
                 display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
             )
         )
+
+    # Tier 2 fallback — partial / fuzzy ILIKE on debtor_name for any token still
+    # unresolved. The debtor master is denormalised onto `orders`, so customers
+    # without a `customers` row (e.g. "FIRA VENTURE ENTERPRISE (PROJECT-CASH)")
+    # are only reachable via this scan. Also tolerates pluralised input
+    # ("fira ventures" → "FIRA VENTURE …") by stripping a trailing 's'.
+    unresolved = [t for t in tokens if not result[t]]
+    for token in unresolved:
+        # Guard: a 2-3 char token (e.g. "DO" meaning Delivery Order) is too
+        # short to safely substring-match a debtor name without false hits
+        # like "FREDONIA". Tier-1 exact match above still catches short
+        # tokens that legitimately equal a full debtor_name.
+        if len(token) < 4:
+            continue
+        variants: list[str] = [token]
+        stripped = token.rstrip("s")
+        if stripped and stripped != token and len(stripped) >= 4:
+            variants.append(stripped)
+        like_clauses = [Order.debtor_name.ilike(f"%{v}%") for v in variants if v]
+        if not like_clauses:
+            continue
+        rows = (
+            db.query(Order.debtor_name, Order.debtor_code)
+            .filter(
+                Order.deleted_at.is_(None),
+                Order.debtor_name.isnot(None),
+                or_(*like_clauses),
+            )
+            .distinct()
+            .limit(5)
+            .all()
+        )
+        for debtor_name, debtor_code in rows:
+            if any(m.canonical_code == debtor_name for m in result[token]):
+                continue
+            result[token].append(
+                ResolvedEntity(
+                    entity_type="customer",
+                    canonical_code=debtor_name,
+                    match_field="debtor_name",
+                    display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
+                )
+            )
+    return result
+
+
+def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Exact match on transporter code/name/normalized_name; ilike fallback for
+    tokens that look like a transporter label (e.g. "suncrest", "asac")."""
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens if t]
+    rows = (
+        db.query(Transporter.code, Transporter.name, Transporter.normalized_name)
+        .filter(
+            or_(
+                func.lower(Transporter.code).in_(lowered),
+                func.lower(Transporter.name).in_(lowered),
+                func.lower(Transporter.normalized_name).in_(lowered),
+            )
+        )
+        .all()
+    )
+    for code, name, norm in rows:
+        for token in tokens:
+            tl = token.lower()
+            if tl not in {(code or "").lower(), (name or "").lower(), (norm or "").lower()}:
+                continue
+            if any(m.canonical_code == code for m in result[token]):
+                continue
+            result[token].append(
+                ResolvedEntity(
+                    entity_type="transporter",
+                    canonical_code=code,
+                    match_field="transporter_code" if tl == (code or "").lower() else "transporter_name",
+                    display={"code": code, "name": name},
+                )
+            )
+    # Substring fallback for unresolved tokens.
+    unresolved = [t for t in tokens if not result[t]]
+    for token in unresolved:
+        if len(token) < 4:
+            continue
+        term = f"%{token}%"
+        rows = (
+            db.query(Transporter.code, Transporter.name, Transporter.normalized_name)
+            .filter(
+                or_(
+                    Transporter.name.ilike(term),
+                    Transporter.normalized_name.ilike(term),
+                )
+            )
+            .limit(5)
+            .all()
+        )
+        for code, name, _norm in rows:
+            if any(m.canonical_code == code for m in result[token]):
+                continue
+            result[token].append(
+                ResolvedEntity(
+                    entity_type="transporter",
+                    canonical_code=code,
+                    match_field="transporter_name",
+                    display={"code": code, "name": name},
+                )
+            )
     return result
 
 
@@ -1205,6 +1312,14 @@ _EMBEDDING_SOURCE_TYPES: dict[str, str] = {
     "spo_allocation": "spo_allocation",
     "picking_header": "grn",
     "promotion": "promotion",
+    # Customer master rows + synthetic `debtor:<code>` chunks seeded from
+    # distinct orders.debtor_code with no master row. Lets tokens like
+    # "fira ventures" resolve to entity_type=customer via vector similarity
+    # against the seeded debtor chunk text.
+    "customer": "customer",
+    # Transporter master (code + name) so "search DO by transporter X"
+    # resolves to entity_type=transporter via vector similarity.
+    "transporter": "transporter",
 }
 EMBEDDING_MIN_SIMILARITY = 0.80
 EMBEDDING_CONFIDENCE_GAP = 0.05
@@ -1285,6 +1400,7 @@ _TIER1_PROBES = (
     _probe_warehouse,
     _probe_supplier,
     _probe_promotion,
+    _probe_transporter,
     _probe_customer,
     _probe_customer_debtor_name,
 )
