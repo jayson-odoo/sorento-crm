@@ -31,9 +31,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "user asks for the product CATALOGUE, CATALOG, MASTER CATALOGUE, COMPANY BROCHURE, or "
             "PRICE LIST PDF, route to crm_resource_attachments_list instead; for per-SKU brochure / "
             "datasheet / spec sheet of a named product, use crm_master_product_attachments_list. "
-            "`query` is a free-text LIKE search over product_code, "
-            "product_name, description ONLY — DO NOT pass numeric/range expressions like 'price > 100' or "
-            "'dimensions > 300mm' as `query`; use the dedicated numeric filter parameters below instead. "
+            "`entities` is the free-text bag for product references (code, name, partial SKU, "
+            "descriptive phrase). ONE ENTITY PER ARRAY ELEMENT. Hybrid resolver (substring → "
+            "pg_trgm → RAG semantic). DO NOT pass numeric/range expressions like 'price > 100' or "
+            "'dimensions > 300mm' as `entities`; use the dedicated numeric filter parameters below. "
             "`category_id` accepts UUID or category_code/name. `brand_id` accepts UUID or brand_code/name. "
             "PRICE: price_min, price_max (MYR). "
             "DIMENSIONS (all in millimetres): per-axis length_min/length_max, width_min/width_max, "
@@ -60,7 +61,6 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "page",
             "limit",
-            "query",
             "entities",
             "status",
             "price_min",
@@ -253,8 +253,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "with a more specific name.\n"
             "  • Response is empty → contact has no entitlements; gated tools will return no rows.\n\n"
             "CRITICAL — A user phrase that matches (or partially matches) one of the returned "
-            "`name` values is the `access_levels` filter, NEVER the `query` field of the gated "
-            "tool. `query` is reserved for product/promotion descriptive text (e.g. `kitchen sink`, "
+            "`name` values is the `access_levels` filter, NEVER the `entities` field of the gated "
+            "tool. `entities` is reserved for product/promotion descriptive text (e.g. `kitchen sink`, "
             "`NL series`).\n\n"
             "404 → unknown contact_id / space_id pair."
         ),
@@ -271,7 +271,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "List promotions (summary fields + linked attachments inline; no product lines). "
             "Each row already carries its `attachments` array — no second tool call needed for "
             "promotion documents. Default returns ACTIVE promotions (is_active=true AND today "
-            "within start_date/end_date); when a narrowing filter (query, period) "
+            "within start_date/end_date); when a narrowing filter (entities, period) "
             "yields zero active matches, falls back to INACTIVE matches automatically and sets "
             "fallback_used=true on the response. Pass active=false to fetch historical-only "
             "(no fallback). Use period_from / period_to (YYYY-MM-DD) to scope by overlap with the "
@@ -284,16 +284,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`crm_user_management_contact_access_levels_active` first; if 1 entry skip passing "
             "access_levels, if >1 map the user's phrasing to one of the returned `name` values and "
             "pass that name. A value not in the live active set → 403 + refreshed `allowed`.\n\n"
-            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `query`. If the user mentions a phrase "
+            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `entities`. If the user mentions a phrase "
             "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
             "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
-            "filter — NEVER pass it as `query`. `query` is for product / promotion descriptive text "
-            "only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
+            "filter — NEVER pass it as `entities`. `entities` is for product / promotion descriptive "
+            "text only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
             "and check whether the user's phrase fuzzy-matches any returned `name`."
         ),
         "/api/v1/marketing/promotions",
         (),
-        ("page", "limit", "query", "entities", "active", "period_from", "period_to", "sort", "dir", "contact_id", "space_id", "access_levels"),
+        ("page", "limit", "entities", "active", "period_from", "period_to", "sort", "dir", "contact_id", "space_id", "access_levels"),
     ),
     ToolSpec(
         "crm_marketing_promotions_get",
@@ -310,7 +310,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`crm_user_management_contact_access_levels_active` first; if 1 entry skip passing, "
             "if >1 map user's phrasing to one of the returned `name` values and pass it.\n\n"
             "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO ANY OTHER PARAM. Phrases like `sorento "
-            "dealer`, `dealer`, `mocha office`, `end user` are `access_levels`, never `query`."
+            "dealer`, `dealer`, `mocha office`, `end user` are `access_levels`, never `entities`."
         ),
         "/api/v1/marketing/promotions",
         (),
@@ -328,11 +328,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
             "passing access_levels, if it returns >1 map the user's phrasing to one of the returned "
             "`name` values and pass that name as `access_levels` (string for a single level, e.g. `\"Sorento Dealer\"`; or a JSON array of strings to match any of several, e.g. `[\"Sorento Dealer\",\"Mocha Office\"]`).\n\n"
-            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `query`. If the user mentions a phrase "
+            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `entities`. If the user mentions a phrase "
             "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
             "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
-            "filter — NEVER pass it as `query`. `query` is for product / promotion descriptive text "
-            "only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
+            "filter — NEVER pass it as `entities`. `entities` is for product / promotion descriptive "
+            "text only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
             "and check whether the user's phrase fuzzy-matches any returned `name`."
         ),
         "/api/v1/marketing/promotion-products",
@@ -343,15 +343,15 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_marketing_promotion_products_list",
         (
             "Promotion product lines (paginated). Each row carries the parent promotion's "
-            "`promotion_attachments` inline — no second call needed for the promotion document. "
-            "Optional promotion_id (UUID) scopes to one promotion.\n\n"
-            "TEXT QUERY (`query`): tokenized on whitespace; every token must match (case-insensitive) "
-            "somewhere across product_code, product_name, description, item_type, or promotion description. "
-            "Pass ONLY word-like traits (nouns/adjectives): 'sorento wash basin', 'cabinet', "
-            "'irene project'.\n\n"
+            "`promotion_attachments` inline — no second call needed for the promotion document.\n\n"
+            "ENTITY FILTER (`entities`): free-text bag — product codes/SKUs, product names, "
+            "promotion references, descriptive phrases. *** ONE ENTITY PER ARRAY ELEMENT. *** "
+            "Hybrid resolver (substring → pg_trgm → RAG semantic) maps each entry to its type and "
+            "applies the right filter. CORRECT: entities=[\"sorento wash basin\", \"kitchen sink\"]. "
+            "WRONG: entities=[\"sorento wash basin kitchen sink\"]. Pass ONLY word-like traits "
+            "(nouns/adjectives) — do NOT bury numbers inside `entities`.\n\n"
             "STRUCTURED FILTERS — USE THESE WHENEVER THE USER MENTIONS A NUMBER OR DIMENSION. "
-            "Do NOT bury numbers inside `query`. Even though the server auto-extracts dimension tokens "
-            "as a safety net, explicit params are faster and more precise.\n"
+            "Explicit params are faster and more precise.\n"
             "  • PRICE: price_min, price_max (MYR)\n"
             "  • DIMENSIONS (mm): per-axis length_min/max, width_min/max, height_min/max\n"
             "  • AXIS-AGNOSTIC: any_dimension_min / any_dimension_max — matches when ANY of L/W/H "
@@ -364,31 +364,32 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • Hedge words ('around', 'about', '~', 'approx', 'roughly', 'near') = FUZZY. "
             "    Apply a ±5 mm tolerance (or wider if the user says 'around 600mm or so').\n\n"
             "EXAMPLES — copy this pattern:\n"
-            "  User says 'basin 365 width'           →  query='basin', width_min=365, width_max=365\n"
-            "  User says 'basin around 365 width'    →  query='basin', width_min=360, width_max=370\n"
-            "  User says 'cabinet L600'              →  query='cabinet', length_min=600, length_max=600\n"
-            "  User says 'wash basin 460×330×140'    →  query='wash basin', "
+            "  User says 'basin 365 width'           →  entities=['basin'], width_min=365, width_max=365\n"
+            "  User says 'basin around 365 width'    →  entities=['basin'], width_min=360, width_max=370\n"
+            "  User says 'cabinet L600'              →  entities=['cabinet'], length_min=600, length_max=600\n"
+            "  User says 'wash basin 460×330×140'    →  entities=['wash basin'], "
             "length_min=460 length_max=460 width_min=330 width_max=330 height_min=140 height_max=140\n"
-            "  User says 'basin around 600mm'        →  query='basin', any_dimension_min=595, any_dimension_max=605\n"
-            "  User says 'sorento wash basin under RM 500' →  query='sorento wash basin', price_max=500\n\n"
-            "Use this tool without promotion_id to find which promotions a product (or trait) appears in.\n\n"
+            "  User says 'basin around 600mm'        →  entities=['basin'], any_dimension_min=595, any_dimension_max=605\n"
+            "  User says 'sorento wash basin under RM 500' →  entities=['sorento wash basin'], price_max=500\n\n"
+            "Pass a promotion reference inside `entities` to scope to one promotion; omit to find "
+            "which promotions a product (or trait) appears in.\n\n"
             "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active level — "
             "backend auto-defaults to it. REQUIRED when the contact has >1 active levels; calling "
             "without it returns 422 + `allowed:[{name}]`. To pick safely, call "
             "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
             "passing access_levels, if it returns >1 map the user's phrasing to one of the returned "
             "`name` values and pass that name as `access_levels` (string for a single level, e.g. `\"Sorento Dealer\"`; or a JSON array of strings to match any of several, e.g. `[\"Sorento Dealer\",\"Mocha Office\"]`).\n\n"
-            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `query`. If the user mentions a phrase "
+            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `entities`. If the user mentions a phrase "
             "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
             "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
-            "filter — NEVER pass it as `query`. `query` is for product / promotion descriptive text "
-            "only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
+            "filter — NEVER pass it as `entities`. `entities` is for product / promotion descriptive "
+            "text only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
             "and check whether the user's phrase fuzzy-matches any returned `name`."
         ),
         "/api/v1/marketing/promotion-products",
         (),
         (
-            "page", "limit", "sort", "dir", "query", "entities",
+            "page", "limit", "sort", "dir", "entities",
             "item_type", "status",
             "price_min", "price_max",
             "length_min", "length_max",
@@ -402,28 +403,27 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_marketing_promotion_attachments_list",
         (
             "List/search promotion–attachment links. Use for any "
-            "BROCHURE / FLYER document. Optional promotion_id "
-            "scopes one promotion (UUID). Optional query searches promotion header details, "
-            "product code/name, promotion group name, and attachment metadata. Server filters "
-            "results to links whose parent promotion AND attachment access_levels both overlap "
-            "the contact's M2M access types (resolved from `contact_id` + `space_id`). Internal "
-            "storage fields are stripped from the response.\n\n"
+            "BROCHURE / FLYER document. Pass promotion / product / attachment references "
+            "(name, code, descriptive phrase) via `entities` — hybrid resolver picks the matches. "
+            "ONE ENTITY PER ARRAY ELEMENT. Server filters results to links whose parent promotion "
+            "AND attachment access_levels both overlap the contact's M2M access types (resolved "
+            "from `contact_id` + `space_id`). Internal storage fields are stripped from the response.\n\n"
             "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active level — "
             "backend auto-defaults to it. REQUIRED when the contact has >1 active levels; calling "
             "without it returns 422 + `allowed:[{name}]`. To pick safely, call "
             "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
             "passing access_levels, if it returns >1 map the user's phrasing to one of the returned "
             "`name` values and pass that name as `access_levels` (string for a single level, e.g. `\"Sorento Dealer\"`; or a JSON array of strings to match any of several, e.g. `[\"Sorento Dealer\",\"Mocha Office\"]`).\n\n"
-            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `query`. If the user mentions a phrase "
+            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `entities`. If the user mentions a phrase "
             "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
             "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
-            "filter — NEVER pass it as `query`. `query` is for product / promotion descriptive text "
-            "only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
+            "filter — NEVER pass it as `entities`. `entities` is for product / promotion descriptive "
+            "text only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
             "and check whether the user's phrase fuzzy-matches any returned `name`."
         ),
         "/api/v1/marketing/promotion-attachments",
         (),
-        ("page", "limit", "sort", "dir", "query", "entities", "attachment_id", "contact_id", "space_id", "access_levels"),
+        ("page", "limit", "sort", "dir", "entities", "attachment_id", "contact_id", "space_id", "access_levels"),
     ),
     ToolSpec(
         "crm_marketing_promotion_attachments_get",
@@ -446,11 +446,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`crm_user_management_contact_access_levels_active` first; if it returns 1 entry skip "
             "passing access_levels, if it returns >1 map the user's phrasing to one of the returned "
             "`name` values and pass that name as `access_levels` (string for a single level, e.g. `\"Sorento Dealer\"`; or a JSON array of strings to match any of several, e.g. `[\"Sorento Dealer\",\"Mocha Office\"]`).\n\n"
-            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `query`. If the user mentions a phrase "
+            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `entities`. If the user mentions a phrase "
             "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
             "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
-            "filter — NEVER pass it as `query`. `query` is for product / promotion descriptive text "
-            "only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
+            "filter — NEVER pass it as `entities`. `entities` is for product / promotion descriptive "
+            "text only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
             "and check whether the user's phrase fuzzy-matches any returned `name`."
         ),
         "/api/v1/marketing/promotion-attachments/promotion/{promotion_id}",
@@ -489,21 +489,20 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_resource_attachments_list",
         (
-            "List file attachments in the global document library (filters: query, entity, "
-            "directory, trash). PRIMARY TOOL FOR PRODUCT CATALOGUE / CATALOG / MASTER CATALOGUE "
+            "List file attachments in the global document library (filters: entities, directory, "
+            "trash). PRIMARY TOOL FOR PRODUCT CATALOGUE / CATALOG / MASTER CATALOGUE "
             "PDF / COMPANY BROCHURE / PRICE LIST DOCUMENT requests — the full Sorento product "
             "catalogue PDF and similar company-wide documents live here, NOT on per-SKU "
             "attachments. Pass the user keyword (e.g. 'catalogue', 'catalog', 'price list', "
-            "'brochure') as `query`. For per-SKU brochures/datasheets use "
-            "crm_master_product_attachments_list; for the standing Stock List PDF use "
-            "crm_resource_attachments_current_stock_list."
+            "'brochure') as a string in `entities`. ONE ENTITY PER ARRAY ELEMENT. For per-SKU "
+            "brochures/datasheets use crm_master_product_attachments_list; for the standing Stock "
+            "List PDF use crm_resource_attachments_current_stock_list."
         ),
         "/api/v1/resource-management/attachments",
         (),
         (
             "page",
             "limit",
-            "query",
             "entities",
             "sort",
             "dir",
@@ -614,7 +613,6 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "page",
             "limit",
-            "query",
             "entities",
             "sort",
             "dir",
@@ -856,14 +854,14 @@ CATALOG: tuple[ToolSpec, ...] = (
             "(4) nearest_estimated_arrival_date. "
             "DO NOT also call crm_incoming_stock_shipments, crm_incoming_stock_shipment_products, crm_incoming_stock_shipment_attachment, or crm_incoming_stock_grn when answering a product-incoming question \u2014 this tool already includes their data. "
             "Does NOT expose received quantities, SPO numbers, or internal IDs. "
-            "`product_id` accepts UUID or product_code (SKU). MULTI-SKU: pass a JSON array "
-            "(e.g. [\"SRTMCB8082-BL\",\"SRTWW8082-C\"]) or a comma-separated string "
-            "(\"SRTMCB8082-BL,SRTWW8082-C\") to fetch incoming summaries for several SKUs in "
-            "one call. Provide either product_id OR a free-text `query`."
+            "Pass product references (UUID, product_code/SKU, name, descriptive phrase) via "
+            "`entities`. ONE ENTITY PER ARRAY ELEMENT. Hybrid resolver (substring → pg_trgm → "
+            "RAG) handles partial codes and typos. Multi-SKU: pass each as a separate element "
+            "(e.g. entities=[\"SRTMCB8082-BL\", \"SRTWW8082-C\"])."
         ),
         "/api/v1/incoming-stock/by-product",
         (),
-        ("entities", "query", "limit"),
+        ("entities", "limit"),
     ),
     ToolSpec(
         "crm_incoming_stock_shipments",
@@ -871,11 +869,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Use ONLY for SHIPMENT-CENTRIC questions (not product questions): 'any incoming shipments this month?' / 'what is arriving with ETA on date X?' / 'list open shipments from supplier Y'. "
             "Do NOT use this for 'any incoming for product X' \u2014 use crm_incoming_stock_by_product (which already includes per-shipment breakdown). "
             "Returns shipment headers (shipment_number, shipping_container_number, estimated_arrival_date, total_remaining_incoming_quantity, distinct_products_incoming, packing-list attachment). "
-            "`query` searches shipment_number / container / BOL / invoice."
+            "Pass shipment references (shipment_number / container / BOL / invoice / supplier "
+            "name) via `entities`. ONE ENTITY PER ARRAY ELEMENT."
         ),
         "/api/v1/incoming-stock/shipments",
         (),
-        ("entities", "query", "eta_from", "eta_to", "page", "limit"),
+        ("entities", "eta_from", "eta_to", "page", "limit"),
     ),
     ToolSpec(
         "crm_incoming_stock_shipment_products",
@@ -998,7 +997,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/procurement/grn",
         (),
-        ("page", "limit", "query", "entities", "picking_status", "inspection_status", "sort", "dir"),
+        ("page", "limit", "entities", "picking_status", "inspection_status", "sort", "dir"),
     ),
     ToolSpec(
         "crm_procurement_grn_get",
