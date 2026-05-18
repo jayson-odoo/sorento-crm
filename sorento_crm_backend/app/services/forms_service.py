@@ -41,7 +41,15 @@ class FormService:
 
         filters = []
         if form_type and str(form_type).strip().lower() not in ("", "all"):
-            filters.append(Form.form_type == str(form_type).strip().lower())
+            from sqlalchemy import func as _f
+            ft = str(form_type).strip().lower()
+            # Normalize common agent aliases: "marketing_form" → "marketing",
+            # "marketing form" → "marketing", "marketing-form" → "marketing".
+            for suffix in ("_form", " form", "-form", "_forms", " forms"):
+                if ft.endswith(suffix):
+                    ft = ft[: -len(suffix)]
+                    break
+            filters.append(_f.lower(Form.form_type) == ft)
         if entity_form_codes:
             lowered = [c.lower() for c in entity_form_codes if c]
             filters.append(func.lower(Form.code).in_(lowered))

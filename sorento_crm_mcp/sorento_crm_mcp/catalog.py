@@ -1021,12 +1021,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "form code, form name, OR purpose phrase. Resolver matches against Form.code, "
             "Form.name, and Form.purpose (purpose is the primary signal — covers descriptive "
             "asks like 'renovation form', 'sponsorship request', 'dealer application'). "
-            "ONE ENTITY PER ARRAY ELEMENT. Pass form_type to filter department/category "
-            "(e.g. 'marketing_form')."
+            "ONE ENTITY PER ARRAY ELEMENT."
         ),
         "/api/v1/forms-management/forms",
         (),
-        ("page", "limit", "entities", "language", "status", "form_type", "contact_id", "space_id", "sort", "dir"),
+        ("page", "limit", "entities", "language", "status", "contact_id", "space_id", "sort", "dir"),
     ),
     ToolSpec(
         "crm_forms_management_forms_get",
@@ -1038,7 +1037,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/forms-management/forms",
         (),
-        ("entities", "limit", "form_type", "contact_id", "space_id"),
+        ("entities", "limit", "contact_id", "space_id"),
     ),
     # --- workflow-forms ---
     ToolSpec(
