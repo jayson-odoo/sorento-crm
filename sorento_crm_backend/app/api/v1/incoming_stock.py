@@ -34,18 +34,20 @@ router = APIRouter()
 
 @router.get("/by-product")
 def get_incoming_for_product(
-    product_id: Optional[list[str]] = Query(
+    entities: Optional[list[str]] = Query(
         None,
         description=(
-            "One or more Product UUIDs / product_codes / SKUs. Accepts repeated query "
-            "params (?product_id=A&product_id=B), a JSON array, or a comma-separated "
-            "string (e.g. 'SRTMCB8082-BL,SRTWW8082-C'). Either product_id or query "
-            "is required."
+            "Free-text entity bag. Resolve via hybrid (substring → pg_trgm → RAG). "
+            "Product matches narrow the search. ONE ENTITY PER ARRAY ELEMENT."
         ),
+    ),
+    product_id: Optional[list[str]] = Query(
+        None,
+        description="Legacy: product UUID / product_code. Direct callers can keep using this.",
     ),
     query: Optional[str] = Query(
         None,
-        description="Free-text search over product_code and product_name. Either product_id or query is required.",
+        description="Free-text search over product_code and product_name.",
     ),
     limit: int = Query(10, ge=1, le=50),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -54,10 +56,13 @@ def get_incoming_for_product(
     """Answer 'any incoming for product X?' questions.
 
     Returns, per matched product: total remaining incoming quantity, nearest ETA, per-warehouse
-    allocation summary, and the individual open shipments (shipment_number, container_number,
-    ETA, batch_number, remaining_incoming_quantity, per-shipment warehouse allocations,
-    packing-list attachment).
+    allocation summary, and the individual open shipments.
     """
+    from app.services.entity_filter_helpers import (
+        normalize_entities_query_param,
+        resolve_or_empty,
+    )
+
     product_ids: list[str] = []
     for raw in product_id or []:
         if raw is None:
@@ -66,18 +71,43 @@ def get_incoming_for_product(
             piece = piece.strip()
             if piece:
                 product_ids.append(piece)
+
+    # Resolve entities → product_codes → push through legacy product_ids path.
+    entity_echo = None
+    norm = normalize_entities_query_param(entities)
+    if norm:
+        buckets = resolve_or_empty(db, norm)
+        if buckets is not None:
+            entity_echo = buckets.as_echo()
+            if not buckets.product_codes:
+                return {
+                    "data": [],
+                    "empty": True,
+                    "resolved_entities": entity_echo,
+                }
+            product_ids.extend(buckets.product_codes)
     try:
         svc = IncomingStockService(db)
-        return svc.incoming_for_product(product_ids=product_ids or None, query=query, limit=limit)
+        result = svc.incoming_for_product(product_ids=product_ids or None, query=query, limit=limit)
+        if entity_echo is not None and isinstance(result, dict):
+            result["resolved_entities"] = entity_echo
+        return result
     except Exception as e:
         raise handle_internal_error(str(e))
 
 
 @router.get("/shipments")
 def get_incoming_shipments(
+    entities: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag. Shipment-number matches narrow the search. "
+            "ONE ENTITY PER ARRAY ELEMENT."
+        ),
+    ),
     query: Optional[str] = Query(
         None,
-        description="Free-text search over shipment_number, shipping_container_number, bill_of_lading_number, invoice_number.",
+        description="Free-text search over shipment_number, container, BOL, invoice.",
     ),
     eta_from: Optional[date] = Query(None, description="Include shipments with ETA on/after this date."),
     eta_to: Optional[date] = Query(None, description="Include shipments with ETA on/before this date."),
@@ -86,19 +116,43 @@ def get_incoming_shipments(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """Answer 'any incoming shipments?' / 'what is arriving this month?' questions.
+    """Answer 'any incoming shipments?' / 'what is arriving this month?' questions."""
+    from app.services.entity_filter_helpers import (
+        normalize_entities_query_param,
+        resolve_or_empty,
+    )
 
-    Only shipments that still have at least one still-incoming line are returned.
-    """
+    entity_echo = None
+    extra_query = query
+    norm = normalize_entities_query_param(entities)
+    if norm:
+        buckets = resolve_or_empty(db, norm)
+        if buckets is not None:
+            entity_echo = buckets.as_echo()
+            if buckets.shipment_numbers:
+                # service supports free-text `query` that searches shipment_number;
+                # join multiple resolved numbers with OR via repeated calls? Simplest:
+                # use first resolved shipment_number as the search term. If multiple,
+                # narrow via service-side IN by extending `query` to first hit.
+                extra_query = buckets.shipment_numbers[0]
+            elif not buckets.has_resolved_filter:
+                return {
+                    "data": [],
+                    "empty": True,
+                    "resolved_entities": entity_echo,
+                }
     try:
         svc = IncomingStockService(db)
-        return svc.incoming_shipments(
-            query=query,
+        result = svc.incoming_shipments(
+            query=extra_query,
             eta_from=eta_from,
             eta_to=eta_to,
             page=page,
             limit=limit,
         )
+        if entity_echo is not None and isinstance(result, dict):
+            result["resolved_entities"] = entity_echo
+        return result
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -144,31 +198,60 @@ def get_incoming_shipment_attachment(
 
 @router.get("/grn")
 def get_incoming_stock_grn(
+    entities: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag. Server resolves product / shipment / picking refs. "
+            "ONE ENTITY PER ARRAY ELEMENT."
+        ),
+    ),
     shipment_id: Optional[str] = Query(
         None,
-        description="Shipment UUID or any business reference (shipment_number / container / BOL / invoice).",
+        description="Legacy: shipment UUID or business reference. Direct callers can keep using.",
     ),
     product_id: Optional[str] = Query(
         None,
-        description="Product UUID or product_code / SKU.",
+        description="Legacy: product UUID or product_code.",
     ),
     limit: int = Query(10, ge=1, le=50),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """Surface GRN (goods received note) records only when the user explicitly asks.
+    """Surface GRN (goods received note) records only when the user explicitly asks."""
+    from app.services.entity_filter_helpers import (
+        normalize_entities_query_param,
+        resolve_or_empty,
+    )
 
-    Returns minimal fields (`grn_number`, `grn_date`, `grn_status`, `shipment_number`) — no
-    quantities and no internal IDs. Requires at least one of `shipment_id` or `product_id`.
-    """
+    entity_echo = None
+    norm = normalize_entities_query_param(entities)
+    if norm:
+        buckets = resolve_or_empty(db, norm)
+        if buckets is not None:
+            entity_echo = buckets.as_echo()
+            # Prefer first resolved shipment / product to feed service.
+            if buckets.shipment_numbers and not shipment_id:
+                shipment_id = buckets.shipment_numbers[0]
+            if buckets.product_codes and not product_id:
+                product_id = buckets.product_codes[0]
+            if not shipment_id and not product_id:
+                return {
+                    "data": [],
+                    "empty": True,
+                    "message": "No product or shipment resolved from entities.",
+                    "resolved_entities": entity_echo,
+                }
     try:
         if not shipment_id and not product_id:
             return {
                 "data": [],
                 "empty": True,
-                "message": "Provide shipment_id or product_id.",
+                "message": "Provide entities or shipment_id or product_id.",
             }
         svc = IncomingStockService(db)
-        return svc.grn_records(shipment_id=shipment_id, product_id=product_id, limit=limit)
+        result = svc.grn_records(shipment_id=shipment_id, product_id=product_id, limit=limit)
+        if entity_echo is not None and isinstance(result, dict):
+            result["resolved_entities"] = entity_echo
+        return result
     except Exception as e:
         raise handle_internal_error(str(e))

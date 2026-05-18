@@ -548,6 +548,7 @@ class StockService:
         quantity_operator: Optional[str] = None,
         quantity_value: Optional[str] = None,
         status: Optional[str] = None,
+        entities: Optional[list[str]] = None,
     ):
         """List stock with product and warehouse info.
 
@@ -555,10 +556,42 @@ class StockService:
             sort: Column to sort by (e.g. product_code, product_name, available).
             dir: 'asc' or 'desc'.
             status: Filter by computed status: critical, low, normal, overstock.
+            entities: Free-text bag (product codes, customer/transporter/etc.) — resolved
+                via the entity_resolver and applied as additional filters. For stock balance
+                only product matches translate into a filter (Stock.product_id IN ...). Any
+                other resolved type is echoed back but does not narrow the listing because
+                stock rows are keyed by product + warehouse only.
         """
         from sqlalchemy import or_, func
         from sqlalchemy.orm import selectinload
         from app.models.product import Product, ProductCategory
+        from app.services.entity_resolver import (
+            EntityFilterBuckets,
+            resolve_entities_to_filters,
+        )
+
+        entity_buckets: Optional[EntityFilterBuckets] = None
+        if entities:
+            entity_buckets = resolve_entities_to_filters(
+                self.db,
+                entities,
+                allowed_entity_types=(
+                    "product", "customer", "customer_order", "transporter",
+                    "inbound_shipment", "spo_allocation", "grn", "promotion",
+                    "attachment", "form",
+                ),
+            )
+            if not entity_buckets.product_codes:
+                # Stock balance can only filter on product. If no product resolved
+                # from `entities`, return empty rather than fall through to the
+                # unfiltered full listing — caller would otherwise read it as
+                # "no match" while seeing every row.
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                    "resolved_entities": entity_buckets.as_echo(),
+                }
 
         q = self.db.query(Stock).options(
             selectinload(Stock.product),
@@ -589,6 +622,12 @@ class StockService:
                     "empty": True,
                 }
             q = q.filter(Stock.product_id == resolved_pid)
+
+        if entity_buckets is not None and entity_buckets.product_codes:
+            lowered = [c.lower() for c in entity_buckets.product_codes]
+            q = q.filter(
+                Stock.product.has(func.lower(Product.product_code).in_(lowered))
+            )
 
         # Join Product once when needed for search, status filter, or product-related sort
         sort_key = (sort or '').replace('product.category.category_name', 'category_name').replace('product.reorder_level', 'reorder_level').replace('warehouse.warehouse_name', 'warehouse_name').replace('product.product_code', 'product_code').replace('product.product_name', 'product_name')
@@ -661,11 +700,14 @@ class StockService:
         offset = (page - 1) * limit
         stock_items = q.offset(offset).limit(limit).all()
 
-        return {
+        payload = {
             "data": stock_items,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
+        if entity_buckets is not None:
+            payload["resolved_entities"] = entity_buckets.as_echo()
+        return payload
 
     def bulk_delete_stock(self, stock_ids: list[str]) -> dict:
         """Delete multiple stock records by id. Returns deleted_count and message."""
@@ -799,25 +841,48 @@ class StockService:
         warehouse_id: Optional[str] = None,
         product_id: Optional[str] = None,
         quantity_operator: Optional[str] = None,
-        quantity_value: Optional[str] = None
+        quantity_value: Optional[str] = None,
+        entities: Optional[list[str]] = None,
     ):
         """Get all stock for export (no pagination).
-        
+
         Args:
             warehouse_id: Optional warehouse filter
             product_id: Optional product filter
             quantity_operator: One of 'gt', 'gte', 'lt', 'lte', 'eq' for available quantity filtering
             quantity_value: Numeric value to compare against available quantity
+            entities: Free-text bag — resolved product matches narrow Stock.product_id
+                (other resolved types are echoed but do not filter).
         """
+        from sqlalchemy import func
         from sqlalchemy.orm import selectinload
-        
+        from app.models.product import Product
+        from app.services.entity_resolver import (
+            EntityFilterBuckets,
+            resolve_entities_to_filters,
+        )
+
+        entity_buckets: Optional[EntityFilterBuckets] = None
+        if entities:
+            entity_buckets = resolve_entities_to_filters(
+                self.db,
+                entities,
+                allowed_entity_types=(
+                    "product", "customer", "customer_order", "transporter",
+                    "inbound_shipment", "spo_allocation", "grn", "promotion",
+                    "attachment", "form",
+                ),
+            )
+            if not entity_buckets.product_codes:
+                return []
+
         # Use selectinload to eagerly load relationships and avoid N+1 queries
         # selectinload is better for one-to-many/many-to-one and doesn't cause duplicate rows
         q = self.db.query(Stock).options(
             selectinload(Stock.product),
             selectinload(Stock.warehouse)
         ).filter(Stock.warehouse.has(Warehouse.is_active.is_(True)))
-        
+
         warehouse_ids = resolve_identifier(
             self.db,
             warehouse_id,
@@ -828,12 +893,18 @@ class StockService:
             if not warehouse_ids:
                 return []
             q = q.filter(Stock.warehouse_id.in_(warehouse_ids))
-        
+
         if product_id:
             resolved_pid = _resolve_stock_product_id(self.db, product_id)
             if resolved_pid is None:
                 return []
             q = q.filter(Stock.product_id == resolved_pid)
+
+        if entity_buckets is not None and entity_buckets.product_codes:
+            lowered = [c.lower() for c in entity_buckets.product_codes]
+            q = q.filter(
+                Stock.product.has(func.lower(Product.product_code).in_(lowered))
+            )
         
         # Filter by available quantity using the quantity_available column
         if quantity_operator and quantity_value:

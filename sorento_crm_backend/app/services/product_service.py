@@ -148,13 +148,47 @@ class ProductService:
         sort_field: str = "created_at",
         sort_dir: str = "asc",
         advanced_filter_clause: Optional[Any] = None,
+        entities: Optional[list[str]] = None,
     ):
-        """List products with filtering and pagination."""
+        """List products with filtering and pagination.
+
+        `entities` is the single-bag free-text filter for AI/MCP callers. Product
+        matches narrow Product.product_code; other resolved types echo back but
+        do not filter (products are keyed by product master).
+        """
+        from app.services.entity_resolver import (
+            EntityFilterBuckets,
+            resolve_entities_to_filters,
+        )
+
+        entity_buckets: Optional[EntityFilterBuckets] = None
+        if entities:
+            entity_buckets = resolve_entities_to_filters(
+                self.db,
+                entities,
+                allowed_entity_types=(
+                    "product", "customer", "customer_order", "transporter",
+                    "inbound_shipment", "spo_allocation", "grn", "promotion",
+                    "attachment", "form", "supplier",
+                ),
+            )
+            if not entity_buckets.product_codes:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                    "resolved_entities": entity_buckets.as_echo(),
+                }
+
         # Build query
         q = self.db.query(Product)
-        
+
         # Apply filters
         filters = []
+        if entity_buckets is not None and entity_buckets.product_codes:
+            from sqlalchemy import func as _func
+            lowered = [c.lower() for c in entity_buckets.product_codes]
+            filters.append(_func.lower(Product.product_code).in_(lowered))
 
         category_ids = resolve_identifier(
             self.db,
@@ -309,7 +343,7 @@ class ProductService:
         )
         _populate_field_attachments(self.db, products)
 
-        return {
+        payload = {
             "data": products,
             "pagination": {
                 "total": total,
@@ -318,6 +352,9 @@ class ProductService:
             },
             "empty": total == 0
         }
+        if entity_buckets is not None:
+            payload["resolved_entities"] = entity_buckets.as_echo()
+        return payload
     
     def get_product(self, product_id: str):
         """Get a single product by UUID or product_code (SKU)."""
@@ -1408,6 +1445,7 @@ class ProductAttachmentService:
         attachment_id: Optional[str] = None,
         user_type: Optional[str] = None,
         contact_access_codes: Optional[list[str]] = None,
+        entities: Optional[list[str]] = None,
     ):
         """List product attachments with filtering and pagination.
 
@@ -1416,13 +1454,28 @@ class ProductAttachmentService:
         returns nothing (contact has no assigned access types).
         """
         from sqlalchemy.orm import joinedload
-        from sqlalchemy import cast as _sa_cast, text as _sa_text, String as _sa_String
+        from sqlalchemy import cast as _sa_cast, text as _sa_text, String as _sa_String, func as _sa_func
         from sqlalchemy.dialects.postgresql import ARRAY as _PG_ARRAY
+        from app.services.entity_filter_helpers import (
+            attach_echo,
+            empty_payload,
+            resolve_or_empty,
+        )
+
+        entity_buckets = resolve_or_empty(self.db, entities)
+        if entity_buckets is not None and not entity_buckets.product_codes:
+            return empty_payload(entity_buckets, page=page, limit=limit)
 
         q = self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
         )
+
+        if entity_buckets is not None and entity_buckets.product_codes:
+            lowered = [c.lower() for c in entity_buckets.product_codes]
+            q = q.filter(
+                ProductAttachment.product.has(_sa_func.lower(Product.product_code).in_(lowered))
+            )
 
         if product_id:
             resolved_product_ids = self._resolve_product_identifiers(product_id)
@@ -1465,13 +1518,16 @@ class ProductAttachmentService:
         total = q.count()
         offset = (page - 1) * limit
         product_attachments = q.offset(offset).limit(limit).all()
-        
-        return {
-            "data": product_attachments,
-            "pagination": {"total": total, "page": page, "limit": limit},
-            "empty": total == 0
-        }
-    
+
+        return attach_echo(
+            {
+                "data": product_attachments,
+                "pagination": {"total": total, "page": page, "limit": limit},
+                "empty": total == 0,
+            },
+            entity_buckets,
+        )
+
     def get_product_attachment(self, product_attachment_id: str):
         """Get a product attachment by ID."""
         from sqlalchemy.orm import joinedload

@@ -78,7 +78,11 @@ class OrderService:
             entity_buckets = resolve_entities_to_filters(
                 self.db,
                 entities,
-                allowed_entity_types=("product", "customer", "customer_order", "transporter"),
+                allowed_entity_types=(
+                    "product", "customer", "customer_order", "transporter",
+                    "inbound_shipment", "spo_allocation", "grn", "promotion",
+                    "attachment", "form",
+                ),
             )
             # Caller passed `entities` but nothing resolved above the RAG
             # similarity threshold → return empty rather than fall through and
@@ -466,7 +470,11 @@ class OrderService:
             entity_buckets = resolve_entities_to_filters(
                 self.db,
                 entities,
-                allowed_entity_types=("product", "customer", "customer_order", "transporter"),
+                allowed_entity_types=(
+                    "product", "customer", "customer_order", "transporter",
+                    "inbound_shipment", "spo_allocation", "grn", "promotion",
+                    "attachment", "form",
+                ),
             )
             # Caller passed `entities` but nothing resolved above the RAG
             # similarity threshold → return empty rather than fall through and

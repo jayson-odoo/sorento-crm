@@ -1030,7 +1030,7 @@ def _probe_promotion(db: Session, tokens: list[str]) -> dict[str, list[ResolvedE
 # - Preference order: prefix match first, then substring.
 # - Any token with >1 candidate is surfaced to the LLM as "ambiguous" so it asks
 #   the user to pick, rather than silently guessing or failing with "no record".
-PREFIX_LIMIT = 8
+PREFIX_LIMIT = 20
 
 
 def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
@@ -1356,23 +1356,59 @@ def _prefix_probe_transporter(db: Session, token: str) -> list[ResolvedEntity]:
 
 
 def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
+    """Prefix → substring ILIKE on Promotion.description.
+
+    Phrase like "kitchen sink" should hit BOTH descriptions that start with it
+    ("Kitchen Sink Promotion") and descriptions that contain it elsewhere
+    ("Sorento Kitchen Sink Promo"). Prefix-only would miss the latter.
+    """
+    if not token or len(token) < 3:
+        return []
     prefix = f"{token}%"
+    substr = f"%{token}%"
     rows = (
         db.query(Promotion.id, Promotion.description, Promotion.is_active)
         .filter(Promotion.description.ilike(prefix))
         .limit(PREFIX_LIMIT)
         .all()
     )
-    return [
-        ResolvedEntity(
-            entity_type="promotion",
-            canonical_code=str(pid),
-            match_field="description",
-            match_tier="prefix",
-            display={"description": description, "is_active": bool(is_active)},
+    tier = "prefix"
+    if not rows:
+        rows = (
+            db.query(Promotion.id, Promotion.description, Promotion.is_active)
+            .filter(Promotion.description.ilike(substr))
+            .limit(PREFIX_LIMIT)
+            .all()
         )
-        for pid, description, is_active in rows
-    ]
+        tier = "substring"
+    seen: set[str] = set()
+    out: list[ResolvedEntity] = []
+    # Merge: also include substring hits not already captured by prefix.
+    if tier == "prefix" and rows:
+        substring_rows = (
+            db.query(Promotion.id, Promotion.description, Promotion.is_active)
+            .filter(Promotion.description.ilike(substr))
+            .filter(~Promotion.description.ilike(prefix))
+            .limit(PREFIX_LIMIT)
+            .all()
+        )
+        rows = list(rows) + list(substring_rows)
+    for pid, description, is_active in rows:
+        key = str(pid)
+        if key in seen:
+            continue
+        seen.add(key)
+        is_substring_match = description and not str(description).lower().startswith(token.lower())
+        out.append(
+            ResolvedEntity(
+                entity_type="promotion",
+                canonical_code=str(pid),
+                match_field="description",
+                match_tier="substring" if is_substring_match else "prefix",
+                display={"description": description, "is_active": bool(is_active)},
+            )
+        )
+    return out[: PREFIX_LIMIT * 2]
 
 
 # Tier-2 probes paired with the entity_type(s) they produce, so callers can opt
@@ -1433,6 +1469,8 @@ _EMBEDDING_SOURCE_TYPES: dict[str, str] = {
     # Transporter master (code + name) so "search DO by transporter X"
     # resolves to entity_type=transporter via vector similarity.
     "transporter": "transporter",
+    "attachment": "attachment",
+    "form": "form",
 }
 EMBEDDING_MIN_SIMILARITY = 0.80
 EMBEDDING_CONFIDENCE_GAP = 0.05
@@ -1510,6 +1548,242 @@ def _tier3_embedding_lookup(
             display={"semantic_match": True},
         )
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Tier 2.5 — pg_trgm typo-tolerant SQL match
+# --------------------------------------------------------------------------- #
+# Substring ILIKE (Tier-2) misses on typos / missing characters; embedding RAG
+# (Tier-3) tolerates them but ranks noisily on short codes. pg_trgm sits in the
+# middle: deterministic similarity-based SQL using GIN trigram indexes
+# (migration 169 covers products.{product_code,product_name,description},
+# orders.{order_number,debtor_name,debtor_code}, customers.{customer_code,
+# customer_name}). Catches "sind entrprise" → "SVIND ENTERPRISE", "SRWC8088" →
+# "SRTWC8088", etc.
+TRGM_THRESHOLD = 0.25
+TRGM_LIMIT = 15
+
+
+def _trgm_lookup(
+    db: Session,
+    phrase: str,
+    allowed_entity_types: frozenset[str],
+) -> list[ResolvedEntity]:
+    """Run pg_trgm similarity probes across allowed entity types' name+code columns.
+
+    Returns up to `TRGM_LIMIT` hits per entity type sorted by similarity desc,
+    filtered by `>= TRGM_THRESHOLD`. Uses indexed columns where available.
+    """
+    phrase = (phrase or "").strip()
+    if not phrase or len(phrase) < 3:
+        return []
+    out: list[ResolvedEntity] = []
+
+    if "product" in allowed_entity_types:
+        try:
+            rows = db.execute(
+                text(
+                    """
+                    SELECT product_code, product_name,
+                           GREATEST(
+                               similarity(product_code, :p),
+                               similarity(product_name, :p),
+                               similarity(COALESCE(description, ''), :p)
+                           ) AS sim
+                    FROM products
+                    WHERE (product_code % :p OR product_name % :p OR description % :p)
+                    ORDER BY sim DESC
+                    LIMIT :n
+                    """
+                ),
+                {"p": phrase, "n": TRGM_LIMIT},
+            ).all()
+            for r in rows:
+                sim = float(r.sim or 0.0)
+                if sim < TRGM_THRESHOLD:
+                    continue
+                out.append(
+                    ResolvedEntity(
+                        entity_type="product",
+                        canonical_code=r.product_code,
+                        match_field="product_code",
+                        match_tier="trgm",
+                        similarity=sim,
+                        display={"product_name": r.product_name},
+                    )
+                )
+        except Exception:
+            logger.exception("trgm product probe failed for phrase=%s", phrase)
+
+    if "customer" in allowed_entity_types:
+        try:
+            rows = db.execute(
+                text(
+                    """
+                    SELECT debtor_name, debtor_code,
+                           GREATEST(
+                               similarity(COALESCE(debtor_name, ''), :p),
+                               similarity(COALESCE(debtor_code, ''), :p)
+                           ) AS sim
+                    FROM orders
+                    WHERE deleted_at IS NULL
+                      AND debtor_name IS NOT NULL
+                      AND (debtor_name % :p OR debtor_code % :p)
+                    GROUP BY debtor_name, debtor_code
+                    ORDER BY sim DESC
+                    LIMIT :n
+                    """
+                ),
+                {"p": phrase, "n": TRGM_LIMIT},
+            ).all()
+            for r in rows:
+                sim = float(r.sim or 0.0)
+                if sim < TRGM_THRESHOLD:
+                    continue
+                out.append(
+                    ResolvedEntity(
+                        entity_type="customer",
+                        canonical_code=r.debtor_name,
+                        match_field="debtor_name",
+                        match_tier="trgm",
+                        similarity=sim,
+                        display={"debtor_name": r.debtor_name, "debtor_code": r.debtor_code, "source": "orders"},
+                    )
+                )
+            rows = db.execute(
+                text(
+                    """
+                    SELECT customer_code, customer_name,
+                           GREATEST(
+                               similarity(customer_code, :p),
+                               similarity(customer_name, :p)
+                           ) AS sim
+                    FROM customers
+                    WHERE (customer_code % :p OR customer_name % :p)
+                    ORDER BY sim DESC
+                    LIMIT :n
+                    """
+                ),
+                {"p": phrase, "n": TRGM_LIMIT},
+            ).all()
+            for r in rows:
+                sim = float(r.sim or 0.0)
+                if sim < TRGM_THRESHOLD:
+                    continue
+                out.append(
+                    ResolvedEntity(
+                        entity_type="customer",
+                        canonical_code=r.customer_code,
+                        match_field="customer_code",
+                        match_tier="trgm",
+                        similarity=sim,
+                        display={"customer_name": r.customer_name},
+                    )
+                )
+        except Exception:
+            logger.exception("trgm customer probe failed for phrase=%s", phrase)
+
+    if "customer_order" in allowed_entity_types:
+        try:
+            rows = db.execute(
+                text(
+                    """
+                    SELECT order_number, similarity(order_number, :p) AS sim
+                    FROM orders
+                    WHERE deleted_at IS NULL AND order_number % :p
+                    ORDER BY sim DESC
+                    LIMIT :n
+                    """
+                ),
+                {"p": phrase, "n": TRGM_LIMIT},
+            ).all()
+            for r in rows:
+                sim = float(r.sim or 0.0)
+                if sim < TRGM_THRESHOLD:
+                    continue
+                out.append(
+                    ResolvedEntity(
+                        entity_type="customer_order",
+                        canonical_code=r.order_number,
+                        match_field="order_number",
+                        match_tier="trgm",
+                        similarity=sim,
+                        display={},
+                    )
+                )
+        except Exception:
+            logger.exception("trgm order probe failed for phrase=%s", phrase)
+
+    if "promotion" in allowed_entity_types:
+        try:
+            rows = db.execute(
+                text(
+                    """
+                    SELECT id, description,
+                           similarity(COALESCE(description, ''), :p) AS sim
+                    FROM promotions
+                    WHERE description % :p
+                    ORDER BY sim DESC
+                    LIMIT :n
+                    """
+                ),
+                {"p": phrase, "n": TRGM_LIMIT},
+            ).all()
+            for r in rows:
+                sim = float(r.sim or 0.0)
+                if sim < TRGM_THRESHOLD:
+                    continue
+                out.append(
+                    ResolvedEntity(
+                        entity_type="promotion",
+                        canonical_code=str(r.id),
+                        match_field="promotion_id",
+                        match_tier="trgm",
+                        similarity=sim,
+                        display={"description": r.description},
+                    )
+                )
+        except Exception:
+            logger.exception("trgm promotion probe failed for phrase=%s", phrase)
+
+    if "transporter" in allowed_entity_types:
+        try:
+            rows = db.execute(
+                text(
+                    """
+                    SELECT code, name, normalized_name,
+                           GREATEST(
+                               similarity(COALESCE(code, ''), :p),
+                               similarity(COALESCE(name, ''), :p),
+                               similarity(COALESCE(normalized_name, ''), :p)
+                           ) AS sim
+                    FROM transporters
+                    WHERE (code % :p OR name % :p OR normalized_name % :p)
+                    ORDER BY sim DESC
+                    LIMIT :n
+                    """
+                ),
+                {"p": phrase, "n": TRGM_LIMIT},
+            ).all()
+            for r in rows:
+                sim = float(r.sim or 0.0)
+                if sim < TRGM_THRESHOLD:
+                    continue
+                out.append(
+                    ResolvedEntity(
+                        entity_type="transporter",
+                        canonical_code=r.code,
+                        match_field="transporter_code",
+                        match_tier="trgm",
+                        similarity=sim,
+                        display={"code": r.code, "name": r.name},
+                    )
+                )
+        except Exception:
+            logger.exception("trgm transporter probe failed for phrase=%s", phrase)
+
+    out.sort(key=lambda e: e.similarity or 0.0, reverse=True)
+    return out[: TRGM_LIMIT * 2]
 
 
 # --------------------------------------------------------------------------- #
@@ -1671,6 +1945,13 @@ class EntityFilterBuckets:
     transporter_codes: list[str] = field(default_factory=list)
     transporter_names: list[str] = field(default_factory=list)
     order_numbers: list[str] = field(default_factory=list)
+    shipment_numbers: list[str] = field(default_factory=list)
+    picking_numbers: list[str] = field(default_factory=list)
+    spo_numbers: list[str] = field(default_factory=list)
+    supplier_codes: list[str] = field(default_factory=list)
+    promotion_ids: list[str] = field(default_factory=list)
+    attachment_filenames: list[str] = field(default_factory=list)
+    form_codes: list[str] = field(default_factory=list)
     resolved: list[dict[str, Any]] = field(default_factory=list)
     ambiguous: list[dict[str, Any]] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
@@ -1686,6 +1967,13 @@ class EntityFilterBuckets:
             or self.transporter_codes
             or self.transporter_names
             or self.order_numbers
+            or self.shipment_numbers
+            or self.picking_numbers
+            or self.spo_numbers
+            or self.supplier_codes
+            or self.promotion_ids
+            or self.attachment_filenames
+            or self.form_codes
         )
 
     def as_echo(self) -> dict[str, Any]:
@@ -1713,8 +2001,8 @@ def _dedupe_preserve_order(values: Iterable[Optional[str]]) -> list[str]:
     return out
 
 
-RAG_MIN_SIMILARITY = 0.30
-RAG_TOP_K = 5
+RAG_MIN_SIMILARITY = 0.20
+RAG_TOP_K = 15
 RAG_AMBIGUOUS_GAP = 0.04
 
 
@@ -1808,6 +2096,18 @@ def _rag_resolve_phrase(
             match_field = "transporter_code"
         elif entity_type == "customer_order":
             match_field = "order_number"
+        elif entity_type == "inbound_shipment":
+            match_field = "shipment_number"
+        elif entity_type == "spo_allocation":
+            match_field = "spo_number"
+        elif entity_type == "grn":
+            match_field = "picking_number"
+        elif entity_type == "promotion":
+            match_field = "promotion_id"
+        elif entity_type == "attachment":
+            match_field = "filename"
+        elif entity_type == "form":
+            match_field = "form_code"
         dedupe_key = (entity_type, canonical.lower() if canonical else str(r.source_id))
         if dedupe_key in seen_keys:
             continue
@@ -1822,6 +2122,22 @@ def _rag_resolve_phrase(
                 display={"source_type": str(r.source_type)},
             )
         )
+
+    # Substring re-rank: embedding similarity on short product/customer codes is
+    # noisy — the top-K above similarity threshold is often a mix of relevant
+    # and completely unrelated codes that happen to share token shape. When ANY
+    # candidate's canonical_code (case-insensitive) contains the input phrase
+    # as a substring, keep only those candidates — substring containment is a
+    # stronger human-meaningful signal than embedding rank, and it cuts the
+    # noise from 15 candidates down to the ones the user could plausibly mean.
+    phrase_lower = (phrase or "").strip().lower()
+    if phrase_lower and len(phrase_lower) >= 3:
+        substring_hits = [
+            h for h in out
+            if h.canonical_code and phrase_lower in str(h.canonical_code).lower()
+        ]
+        if substring_hits:
+            return substring_hits
     return out
 
 
@@ -1858,6 +2174,42 @@ def resolve_entities_to_filters(
     t_start = time.perf_counter()
     aggregated: list[TokenResolution] = []
     for phrase in inputs:
+        # Hybrid retrieval. The agent's input is unpredictable — sometimes a full
+        # product_code, sometimes a partial prefix the user typed, sometimes a
+        # loose customer phrase. Sequence:
+        #   1. Tier-2 prefix / substring ILIKE across every allowed entity type's
+        #      name + code columns. Deterministic. Matches what the in-app list
+        #      search does — "SRTWC8088" returns every product_code containing it.
+        #   2. Only if Tier-2 finds nothing → RAG embedding top-K fallback.
+        #      Catches semantic phrasings ("fira ventures" → "FIRA VENTURE
+        #      ENTERPRISE SDN BHD") that pure substring would miss.
+        substring_hits = _tier2_fuzzy_lookup(
+            db, phrase, allowed_entity_types=allowed_set
+        )
+        if substring_hits:
+            ambiguous = len(substring_hits) > 1
+            aggregated.append(
+                TokenResolution(
+                    token=phrase,
+                    matches=substring_hits,
+                    ambiguous=ambiguous,
+                )
+            )
+            continue
+
+        # Tier 2.5: pg_trgm fuzzy SQL — catches typos / missing chars before
+        # falling through to the heavier embedding lookup.
+        trgm_hits = _trgm_lookup(db, phrase, allowed_set)
+        if trgm_hits:
+            aggregated.append(
+                TokenResolution(
+                    token=phrase,
+                    matches=trgm_hits,
+                    ambiguous=len(trgm_hits) > 1,
+                )
+            )
+            continue
+
         hits = _rag_resolve_phrase(
             db,
             phrase,
@@ -1869,18 +2221,12 @@ def resolve_entities_to_filters(
             aggregated.append(TokenResolution(token=phrase, matches=[]))
             continue
         top = hits[0]
-        runners = hits[1:]
-        same_type_runners = [
-            h
-            for h in runners
-            if h.entity_type == top.entity_type
-            and (top.similarity or 0) - (h.similarity or 0) < RAG_AMBIGUOUS_GAP
-        ]
-        if same_type_runners:
+        same_type_candidates = [h for h in hits if h.entity_type == top.entity_type]
+        if len(same_type_candidates) > 1:
             aggregated.append(
                 TokenResolution(
                     token=phrase,
-                    matches=[top, *same_type_runners],
+                    matches=same_type_candidates,
                     ambiguous=True,
                 )
             )
@@ -1895,6 +2241,11 @@ def resolve_entities_to_filters(
 
     for tr in result.resolutions:
         if tr.ambiguous:
+            # Surface the ambiguity in the echo so the agent can tell the user
+            # we matched several near-equal candidates, but ALSO let every
+            # candidate flow into the filter buckets below. Returning empty on
+            # ambiguity is worse than over-matching — caller sees stock for all
+            # near matches and the user can disambiguate verbally.
             buckets.ambiguous.append(
                 {
                     "input": tr.token,
@@ -1910,7 +2261,6 @@ def resolve_entities_to_filters(
                     ],
                 }
             )
-            continue
         if not tr.matches:
             buckets.unresolved.append(tr.token)
             continue
@@ -1938,6 +2288,20 @@ def resolve_entities_to_filters(
                     )
                     if m.canonical_code:
                         buckets.transporter_codes.append(m.canonical_code)
+            elif m.entity_type == "inbound_shipment":
+                buckets.shipment_numbers.append(m.canonical_code)
+            elif m.entity_type == "grn":
+                buckets.picking_numbers.append(m.canonical_code)
+            elif m.entity_type == "spo_allocation":
+                buckets.spo_numbers.append(m.canonical_code)
+            elif m.entity_type == "supplier":
+                buckets.supplier_codes.append(m.canonical_code)
+            elif m.entity_type == "promotion":
+                buckets.promotion_ids.append(m.canonical_code)
+            elif m.entity_type == "attachment":
+                buckets.attachment_filenames.append(m.canonical_code)
+            elif m.entity_type == "form":
+                buckets.form_codes.append(m.canonical_code)
             buckets.resolved.append(
                 {
                     "input": tr.token,
@@ -1957,4 +2321,11 @@ def resolve_entities_to_filters(
     buckets.transporter_codes = _dedupe_preserve_order(buckets.transporter_codes)
     buckets.transporter_names = _dedupe_preserve_order(buckets.transporter_names)
     buckets.order_numbers = _dedupe_preserve_order(buckets.order_numbers)
+    buckets.shipment_numbers = _dedupe_preserve_order(buckets.shipment_numbers)
+    buckets.picking_numbers = _dedupe_preserve_order(buckets.picking_numbers)
+    buckets.spo_numbers = _dedupe_preserve_order(buckets.spo_numbers)
+    buckets.supplier_codes = _dedupe_preserve_order(buckets.supplier_codes)
+    buckets.promotion_ids = _dedupe_preserve_order(buckets.promotion_ids)
+    buckets.attachment_filenames = _dedupe_preserve_order(buckets.attachment_filenames)
+    buckets.form_codes = _dedupe_preserve_order(buckets.form_codes)
     return buckets

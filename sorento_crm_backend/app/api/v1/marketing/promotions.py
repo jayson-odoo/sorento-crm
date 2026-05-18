@@ -40,6 +40,13 @@ async def get_promotions(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
+    entities: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag. Hybrid resolver. Promotion / product / customer "
+            "matches feed the search. ONE ENTITY PER ARRAY ELEMENT."
+        ),
+    ),
     user_type: Optional[str] = Query(None, description="Filter by a single access level (FE listing). Prefer contact_id+space_id for MCP/agent flows."),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id). Pair with space_id to filter by the contact's M2M access types."),
     space_id: Optional[str] = Query(None, description="Respond.io space id (matches respond_workspaces.space_id). Pair with contact_id."),
@@ -89,6 +96,7 @@ async def get_promotions(
         # match against `Promotion.name` ("Kitchen Sink Special"). Catalog lives in
         # `services.query_normalizer.DOMAIN_STOPWORDS`.
         query = strip_domain_stopwords(query, "promotion")
+        from app.services.entity_filter_helpers import normalize_entities_query_param
         result = service.list_promotions(
             page=page,
             limit=limit,
@@ -101,6 +109,7 @@ async def get_promotions(
             period_to=period_to,
             sort_field=sort,
             sort_dir=dir,
+            entities=normalize_entities_query_param(entities),
         )
         return result
     except HTTPException:

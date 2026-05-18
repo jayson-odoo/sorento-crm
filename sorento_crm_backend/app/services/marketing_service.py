@@ -250,6 +250,7 @@ class PromotionService:
         sort_field: Optional[str] = None,
         sort_dir: Optional[str] = "desc",
         advanced_filter_clause: Optional[Any] = None,
+        entities: Optional[list[str]] = None,
     ):
         """List promotions with active-first fallback semantics.
 
@@ -266,6 +267,23 @@ class PromotionService:
         period_from/period_to: optional date bounds. Filters to promotions
         whose [start_date, end_date] overlaps with the requested window.
         """
+        # Entity resolution: when caller passes `entities`, filter by the resolved
+        # Promotion.id set (IN clause). Folding promotion UUIDs into `query` would
+        # be wrong — the resolver returns the promotion UUIDs, not free-text terms.
+        from app.services.entity_filter_helpers import resolve_or_empty as _resolve_or_empty
+        entity_buckets = _resolve_or_empty(self.db, entities)
+        if entity_buckets is not None and not entity_buckets.has_resolved_filter:
+            from app.schemas.common import PaginationResponse
+            return {
+                "data": [],
+                "pagination": PaginationResponse(total=0, page=page, limit=limit),
+                "empty": True,
+                "resolved_entities": entity_buckets.as_echo(),
+            }
+        entity_promotion_ids: Optional[list[str]] = None
+        if entity_buckets is not None and entity_buckets.promotion_ids:
+            entity_promotion_ids = list(entity_buckets.promotion_ids)
+
         # Back-compat: legacy `status` query param translates to `active`.
         show_all = status == "all"
         if active is None and status and status != "all":
@@ -341,6 +359,8 @@ class PromotionService:
                 q = q.filter(Promotion.end_date >= period_from)
             if period_to is not None:
                 q = q.filter(Promotion.start_date <= period_to)
+            if entity_promotion_ids:
+                q = q.filter(Promotion.id.in_(entity_promotion_ids))
             if advanced_filter_clause is not None:
                 q = q.filter(advanced_filter_clause)
             return q
@@ -408,13 +428,16 @@ class PromotionService:
                 contact_access_codes,
             )
 
-        return {
+        payload = {
             "data": promotions,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
             "fallback_used": fallback_used,
         }
-    
+        if entity_buckets is not None:
+            payload["resolved_entities"] = entity_buckets.as_echo()
+        return payload
+
     def get_promotion(
         self,
         promotion_id: str,
@@ -773,6 +796,7 @@ class PromotionProductService:
         any_dimension_min: Optional[float] = None,
         any_dimension_max: Optional[float] = None,
         contact_access_codes: Optional[list[str]] = None,
+        entities: Optional[list[str]] = None,
     ):
         """List products for a promotion, several promotions, or all promotion products.
 
@@ -783,8 +807,24 @@ class PromotionProductService:
         """
         from sqlalchemy.orm import joinedload
         from sqlalchemy import or_, and_
+        from sqlalchemy import func as _sa_func
         import logging
         logger = logging.getLogger(__name__)
+        from app.services.entity_filter_helpers import (
+            resolve_or_empty as _resolve_or_empty,
+        )
+
+        _entity_buckets = _resolve_or_empty(self.db, entities)
+        if _entity_buckets is not None and not _entity_buckets.has_resolved_filter:
+            from app.schemas.common import PaginationResponse
+            return {
+                "data": [],
+                "pagination": PaginationResponse(total=0, page=page, limit=limit),
+                "empty": True,
+                "resolved_entities": _entity_buckets.as_echo(),
+            }
+        if _entity_buckets is not None and _entity_buckets.promotion_ids:
+            promotion_ids = list({*(promotion_ids or []), *_entity_buckets.promotion_ids})
 
         q = self.db.query(PromotionProduct).options(
             joinedload(PromotionProduct.product).joinedload(Product.category),
@@ -955,11 +995,14 @@ class PromotionProductService:
         for line in products:
             line.promotion_attachments = attachments_map.get(line.promotion_id, [])
 
-        return {
+        payload = {
             "data": products,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
+        if _entity_buckets is not None:
+            payload["resolved_entities"] = _entity_buckets.as_echo()
+        return payload
 
     def get_promotion_line(self, promotion_id: str, line_id: str):
         """Get a promotion product row by junction id (supports same SKU in multiple groups)."""
@@ -1318,6 +1361,7 @@ class PromotionAttachmentService:
         attachment_id: Optional[str] = None,
         query: Optional[str] = None,
         contact_access_codes: Optional[list[str]] = None,
+        entities: Optional[list[str]] = None,
     ):
         """List promotion attachments with pagination and filtering.
 
@@ -1329,6 +1373,19 @@ class PromotionAttachmentService:
         from sqlalchemy.orm import joinedload
         from sqlalchemy import or_
         from app.schemas.common import PaginationResponse
+        from app.services.entity_filter_helpers import resolve_or_empty as _resolve_or_empty
+
+        _entity_buckets = _resolve_or_empty(self.db, entities)
+        if _entity_buckets is not None and not _entity_buckets.has_resolved_filter:
+            return {
+                "data": [],
+                "pagination": PaginationResponse(total=0, page=page, limit=limit),
+                "empty": True,
+                "resolved_entities": _entity_buckets.as_echo(),
+            }
+        if _entity_buckets is not None and _entity_buckets.promotion_ids and not promotion_id:
+            # Use first resolved promotion as the scope filter.
+            promotion_id = _entity_buckets.promotion_ids[0]
 
         q = self.db.query(PromotionAttachment).options(
             joinedload(PromotionAttachment.promotion),
@@ -1395,12 +1452,15 @@ class PromotionAttachmentService:
         offset = (page - 1) * limit
         promotion_attachments = q.offset(offset).limit(limit).all()
 
-        return {
+        payload = {
             "data": promotion_attachments,
             "pagination": PaginationResponse(total=total, page=page, limit=limit),
-            "empty": total == 0
+            "empty": total == 0,
         }
-    
+        if _entity_buckets is not None:
+            payload["resolved_entities"] = _entity_buckets.as_echo()
+        return payload
+
     def get_promotion_attachment(self, promotion_attachment_id: str):
         """Get a promotion attachment by ID."""
         from sqlalchemy.orm import joinedload

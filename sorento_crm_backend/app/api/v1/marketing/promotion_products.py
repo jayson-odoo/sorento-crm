@@ -207,11 +207,19 @@ async def list_all_promotion_products(
     dir: Optional[str] = Query("asc"),
     query: Optional[str] = Query(
         None,
-        description="Tokenized text search (whitespace-split, AND across tokens) over Product.product_code, product_name, description, item_type, and Promotion.description. Or (if promotion_id omitted) one UUID / promotion_id='<uuid>' / comma-separated UUIDs to filter by promotion(s).",
+        description="Tokenized text search (whitespace-split, AND across tokens) over Product.product_code, product_name, description, item_type, and Promotion.description.",
+    ),
+    entities: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag. Resolver picks the matching promotion(s) and "
+            "scopes the listing to those rows. Pass promotion description / name / "
+            "code / product reference. ONE ENTITY PER ARRAY ELEMENT."
+        ),
     ),
     promotion_id: Optional[str] = Query(
         None,
-        description="Single promotion UUID.",
+        description="Legacy: single promotion UUID.",
     ),
     product_id: Optional[str] = Query(
         None,
@@ -307,6 +315,7 @@ async def list_all_promotion_products(
         from app.services.query_normalizer import strip_domain_stopwords
         text_query = strip_domain_stopwords(text_query, "promotion")
 
+        from app.services.entity_filter_helpers import normalize_entities_query_param
         result = service.list_promotion_products(
             promotion_id=resolved_pid,
             promotion_ids=resolved_pids,
@@ -316,6 +325,7 @@ async def list_all_promotion_products(
             sort_field=sort or "created_at",
             sort_dir=dir or "asc",
             query=text_query,
+            entities=normalize_entities_query_param(entities),
             category_id=category_id,
             brand_id=brand_id,
             item_type=item_type,

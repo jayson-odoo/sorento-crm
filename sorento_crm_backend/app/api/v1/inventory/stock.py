@@ -1,4 +1,5 @@
 """Stock API routes."""
+import json as _json
 import logging
 import time
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Body, Path
@@ -6,6 +7,48 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
+
+
+def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
+    """Flatten an `entities` query param into a clean list[str].
+
+    Accepts None, a list of strings (repeated query param), or a single-element list
+    containing a JSON array or comma-separated string — all forms n8n / curl callers
+    produce depending on how they encode the param.
+    """
+    if raw is None:
+        return None
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if item is None:
+            continue
+        s = str(item).strip()
+        if not s:
+            continue
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                parsed = _json.loads(s)
+                if isinstance(parsed, list):
+                    for p in parsed:
+                        ps = str(p).strip()
+                        key = ps.lower()
+                        if ps and key not in seen:
+                            seen.add(key)
+                            out.append(ps)
+                    continue
+            except Exception:
+                pass
+        for piece in s.split(","):
+            piece = piece.strip()
+            if not piece:
+                continue
+            key = piece.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(piece)
+    return out or None
 
 from app.database import get_db
 from app.dependencies import (
@@ -32,12 +75,24 @@ def get_stock_balance(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
     query: Optional[str] = Query(None),
+    entities: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag. Pass product codes/SKUs (and any other entity the "
+            "user names) as strings. Server resolves each via the entity_resolver "
+            "(pgvector RAG) and applies product matches to Stock.product_id. Other "
+            "resolved entity types are echoed under `resolved_entities` but do not "
+            "narrow the listing — stock rows are keyed by product + warehouse only. "
+            "Accepts repeated params (?entities=A&entities=B), a JSON array, or a "
+            "comma-separated string."
+        ),
+    ),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     warehouse_id: Optional[str] = Query(None),
     product_id: Optional[str] = Query(
         None,
-        description="Product UUID or product_code (e.g. SKU).",
+        description="Product UUID or product_code (e.g. SKU). Kept for direct callers; AI/MCP should use `entities`.",
     ),
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
@@ -59,6 +114,7 @@ def get_stock_balance(
             quantity_operator=quantity_operator,
             quantity_value=quantity_value,
             status=status,
+            entities=_normalize_entities(entities),
         )
         return result
     except Exception as e:
@@ -106,7 +162,14 @@ def export_stock_balance(
     warehouse_id: Optional[str] = Query(None),
     product_id: Optional[str] = Query(
         None,
-        description="Product UUID or product_code (e.g. SKU).",
+        description="Product UUID or product_code (e.g. SKU). Kept for direct callers; AI/MCP should use `entities`.",
+    ),
+    entities: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag — resolved product matches narrow Stock.product_id. "
+            "Accepts repeated params, JSON array, or comma-separated."
+        ),
     ),
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
@@ -128,7 +191,8 @@ def export_stock_balance(
             warehouse_id=warehouse_id,
             product_id=product_id,
             quantity_operator=quantity_operator,
-            quantity_value=quantity_value
+            quantity_value=quantity_value,
+            entities=_normalize_entities(entities),
         )
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info("inventory.stock_balance_export done elapsed_ms=%.1f rows=%s", elapsed_ms, len(stock_items))

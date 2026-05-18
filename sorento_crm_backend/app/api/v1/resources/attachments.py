@@ -152,6 +152,13 @@ async def get_attachments(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
     query: Optional[str] = Query(None),
+    entities: Optional[List[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag. Hybrid resolver. Attachment-filename matches "
+            "narrow original_filename. ONE ENTITY PER ARRAY ELEMENT."
+        ),
+    ),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     entity_type: Optional[str] = Query(None),
@@ -171,6 +178,7 @@ async def get_attachments(
     """Get attachments with pagination and filtering (optional directory_id, query by filename, is_deleted for trash)."""
     try:
         service = AttachmentService(db)
+        from app.services.entity_filter_helpers import normalize_entities_query_param
         result = service.list_attachments(
             page=page,
             limit=limit,
@@ -187,6 +195,7 @@ async def get_attachments(
             uploaded_at_to=uploaded_at_to,
             access_levels=access_levels,
             access_levels_match=access_levels_match,
+            entities=normalize_entities_query_param(entities),
         )
         # Enrich each attachment with uploaded_by_user for display
         enriched = []

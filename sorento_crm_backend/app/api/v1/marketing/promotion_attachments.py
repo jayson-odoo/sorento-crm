@@ -25,9 +25,16 @@ async def get_promotion_attachments(
     limit: int = Query(50, ge=1, le=100),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
+    entities: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag. Hybrid resolver. Promotion / attachment matches "
+            "narrow the listing. ONE ENTITY PER ARRAY ELEMENT."
+        ),
+    ),
     promotion_id: Optional[str] = Query(
         None,
-        description="Promotion UUID.",
+        description="Legacy: promotion UUID.",
     ),
     query: Optional[str] = Query(
         None,
@@ -53,6 +60,7 @@ async def get_promotion_attachments(
         else:
             contact_codes = cats_svc.resolve_optional_contact_access_codes(contact_id, space_id)
         service = PromotionAttachmentService(db)
+        from app.services.entity_filter_helpers import normalize_entities_query_param
         result = service.list_promotion_attachments(
             page=page,
             limit=limit,
@@ -62,6 +70,7 @@ async def get_promotion_attachments(
             attachment_id=attachment_id,
             query=query,
             contact_access_codes=contact_codes,
+            entities=normalize_entities_query_param(entities),
         )
         result["data"] = [_promotion_attachment_to_response(pa) for pa in result["data"]]
         return result

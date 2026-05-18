@@ -72,8 +72,6 @@ async def test_tool_runs_with_fake_context(spec, monkeypatch):
     # (path mismatch would break the `spec.path in out` assertion below).
     _PP_UUID = "11111111-1111-4111-8111-111111111111"
     kwargs: dict[str, str] = {p: _PP_UUID for p in spec.path_params}
-    if spec.name == "crm_marketing_promotion_products_list":
-        kwargs["promotion_id"] = _PP_UUID
     # Every compiled tool requires guard params (contact_id, space_id) — the
     # generated signature prepends them regardless of whether the backend
     # endpoint consumes them.

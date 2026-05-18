@@ -26,13 +26,17 @@ async def get_grns(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
-    product_query: Optional[str] = Query(
+    entities: Optional[list[str]] = Query(
         None,
         description=(
-            "Partial product filter (matches product_code/product_name/description on linked "
-            "picking_lines, case-insensitive). Uses embedding pre-resolve when product "
-            "embeddings exist (e.g. 'WC101' expands to 'SRTWC101', 'SRTWC101-RL')."
+            "Free-text entity bag. Server resolves via hybrid (substring → pg_trgm → RAG). "
+            "Product matches narrow linked picking_lines; picking_number matches narrow header. "
+            "ONE ENTITY PER ARRAY ELEMENT."
         ),
+    ),
+    product_query: Optional[str] = Query(
+        None,
+        description="Legacy: partial product filter on linked picking_lines.",
     ),
     picking_status: Optional[str] = Query(None),
     inspection_status: Optional[str] = Query(None),
@@ -42,6 +46,29 @@ async def get_grns(
     db: Session = Depends(get_db)
 ):
     """Get GRNs (Goods Receipt Notes) with pagination, filtering, and sorting."""
+    from app.services.entity_filter_helpers import (
+        normalize_entities_query_param,
+        resolve_or_empty,
+    )
+
+    entity_echo = None
+    norm = normalize_entities_query_param(entities)
+    if norm:
+        buckets = resolve_or_empty(db, norm)
+        if buckets is not None:
+            entity_echo = buckets.as_echo()
+            if buckets.product_codes and not product_query:
+                product_query = buckets.product_codes[0]
+            if buckets.picking_numbers and not query:
+                query = buckets.picking_numbers[0]
+            # If nothing relevant resolved → empty
+            if not (buckets.product_codes or buckets.picking_numbers or query or product_query):
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                    "resolved_entities": entity_echo,
+                }
     try:
         service = PickingHeaderService(db)
         result = service.list_grns(
@@ -54,6 +81,8 @@ async def get_grns(
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
         )
+        if entity_echo is not None and isinstance(result, dict):
+            result["resolved_entities"] = entity_echo
         return result
     except Exception as e:
         raise handle_internal_error(str(e))

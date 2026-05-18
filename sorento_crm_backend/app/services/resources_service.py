@@ -432,6 +432,7 @@ class AttachmentService:
         uploaded_at_to: Optional[Any] = None,
         access_levels: Optional[List[str]] = None,
         access_levels_match: Optional[str] = "any",
+        entities: Optional[list[str]] = None,
     ):
         """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash.
 
@@ -443,9 +444,27 @@ class AttachmentService:
         from sqlalchemy.orm import joinedload
         from sqlalchemy import cast, String
         from sqlalchemy.dialects.postgresql import JSONB, ARRAY
+        from app.services.entity_filter_helpers import (
+            attach_echo,
+            empty_payload,
+            resolve_or_empty,
+        )
+
+        entity_buckets = resolve_or_empty(self.db, entities)
+        if entity_buckets is not None and not (
+            entity_buckets.attachment_filenames or entity_buckets.product_codes
+        ):
+            return empty_payload(entity_buckets, page=page, limit=limit)
+
         q = self.db.query(Attachment).options(
             joinedload(Attachment.attachment_type)
         )
+        if entity_buckets is not None and entity_buckets.attachment_filenames:
+            from sqlalchemy import or_ as _or
+            terms = [f"%{f}%" for f in entity_buckets.attachment_filenames]
+            q = q.filter(
+                _or(*[Attachment.original_filename.ilike(t) for t in terms])
+            )
         if is_deleted is not None:
             q = q.filter(Attachment.is_deleted == is_deleted)
         else:
@@ -525,13 +544,16 @@ class AttachmentService:
         attachments = q.offset(offset).limit(limit).all()
         
         from app.schemas.common import PaginationResponse
-        
-        return {
-            "data": attachments,
-            "pagination": PaginationResponse(total=total, page=page, limit=limit),
-            "empty": total == 0
-        }
-    
+
+        return attach_echo(
+            {
+                "data": attachments,
+                "pagination": PaginationResponse(total=total, page=page, limit=limit),
+                "empty": total == 0,
+            },
+            entity_buckets,
+        )
+
     def _get_attachment_any(self, attachment_id: str):
         """Get attachment by ID (active or archived)."""
         from sqlalchemy.orm import joinedload

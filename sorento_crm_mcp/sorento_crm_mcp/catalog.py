@@ -61,8 +61,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "page",
             "limit",
             "query",
-            "category_id",
-            "brand_id",
+            "entities",
             "status",
             "price_min",
             "price_max",
@@ -82,15 +81,16 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_master_products_get",
         (
-            "Get one product full detail record. `product_id` accepts UUID or product_code (SKU). "
-            "For keyword searches like 'bathtubs' or product names, use crm_master_products_list with query. "
-            "Response may include `field_attachments` — a map of product field name "
-            "(e.g. `weight`, `dimensions_length`) to an array of linked docs. Use it to answer "
-            "dimensions / weight / warranty questions without a second `crm_product_attachments_*` call."
+            "Get one product (first match). Pass the product reference via `entities` — code, "
+            "name, partial SKU, or descriptive phrase. Resolver: hybrid (substring ILIKE → "
+            "pg_trgm typo-tolerant → RAG semantic). The endpoint is the products list with "
+            "limit=1; the first row is the answer. ONE ENTITY PER ARRAY ELEMENT. Response may "
+            "include `field_attachments` — a map of product field name (e.g. `weight`, "
+            "`dimensions_length`) to an array of linked docs."
         ),
-        "/api/v1/master-data/products/{product_id}",
-        ("product_id",),
+        "/api/v1/master-data/products",
         (),
+        ("entities", "limit"),
     ),
     ToolSpec(
         "crm_master_products_select",
@@ -186,7 +186,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/master-data/product-attachments",
         (),
-        ("page", "limit", "sort", "dir", "product_id", "attachment_id", "contact_id", "space_id"),
+        ("page", "limit", "sort", "dir", "entities", "attachment_id", "contact_id", "space_id"),
     ),
     ToolSpec(
         "crm_master_product_attachments_get",
@@ -200,20 +200,15 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "All attachment links for a SPECIFIC product. Use for BROCHURE / SPEC SHEET / "
             "DATASHEET / PRODUCT MANUAL / INSTALLATION GUIDE / CERTIFICATE questions about a "
-            "named SKU. `product_id` accepts a product UUID, "
-            "an exact product_code (SKU), or a "
-            "free-text search term (LIKE on product_code, product_name, description) — same "
-            "matcher as crm_master_products_list. When the term resolves to a single product, "
-            "the attachments are returned; ambiguous matches return a candidate list with `id` + "
-            "`product_code` so the caller can re-issue with a precise reference. Server filters "
-            "attachments to those whose access_levels overlap the contact's M2M access types "
-            "resolved automatically from `contact_id` (respond_io_id) + `space_id` — no "
-            "`access_levels` param needed. Internal storage fields (directory_id, storage_provider, "
-            "uploaded_by id) are stripped."
+            "named SKU. Pass the product reference via `entities` — code, name, partial SKU, "
+            "or descriptive phrase. Hybrid resolver (substring → pg_trgm → RAG) picks the "
+            "matching product(s) and the response includes their linked attachments. Server "
+            "filters attachments by the contact's M2M access types (auto-resolved from "
+            "`contact_id` + `space_id`)."
         ),
-        "/api/v1/master-data/product-attachments/product/{product_id}",
-        ("product_id",),
-        ("contact_id", "space_id"),
+        "/api/v1/master-data/product-attachments",
+        (),
+        ("entities", "contact_id", "space_id"),
     ),
     # --- lookup sets ---
     ToolSpec(
@@ -298,7 +293,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/marketing/promotions",
         (),
-        ("page", "limit", "query", "active", "period_from", "period_to", "sort", "dir", "contact_id", "space_id", "access_levels"),
+        ("page", "limit", "query", "entities", "active", "period_from", "period_to", "sort", "dir", "contact_id", "space_id", "access_levels"),
     ),
     ToolSpec(
         "crm_marketing_promotions_get",
@@ -317,9 +312,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO ANY OTHER PARAM. Phrases like `sorento "
             "dealer`, `dealer`, `mocha office`, `end user` are `access_levels`, never `query`."
         ),
-        "/api/v1/marketing/promotions/{promotion_id}",
-        ("promotion_id",),
-        ("include_products", "contact_id", "space_id", "access_levels"),
+        "/api/v1/marketing/promotions",
+        (),
+        ("entities", "limit", "contact_id", "space_id", "access_levels"),
     ),
     ToolSpec(
         "crm_marketing_promotion_products_nested",
@@ -340,9 +335,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
             "and check whether the user's phrase fuzzy-matches any returned `name`."
         ),
-        "/api/v1/marketing/promotions/{promotion_id}/products",
-        ("promotion_id",),
-        ("page", "limit", "contact_id", "space_id", "access_levels"),
+        "/api/v1/marketing/promotion-products",
+        (),
+        ("entities", "page", "limit", "contact_id", "space_id", "access_levels"),
     ),
     ToolSpec(
         "crm_marketing_promotion_products_list",
@@ -393,8 +388,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/marketing/promotion-products",
         (),
         (
-            "page", "limit", "sort", "dir", "query", "promotion_id",
-            "category_id", "brand_id", "item_type", "status",
+            "page", "limit", "sort", "dir", "query", "entities",
+            "item_type", "status",
             "price_min", "price_max",
             "length_min", "length_max",
             "width_min", "width_max",
@@ -428,7 +423,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/marketing/promotion-attachments",
         (),
-        ("page", "limit", "sort", "dir", "query", "promotion_id", "attachment_id", "contact_id", "space_id", "access_levels"),
+        ("page", "limit", "sort", "dir", "query", "entities", "attachment_id", "contact_id", "space_id", "access_levels"),
     ),
     ToolSpec(
         "crm_marketing_promotion_attachments_get",
@@ -509,10 +504,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "page",
             "limit",
             "query",
+            "entities",
             "sort",
             "dir",
-            "entity_type",
-            "entity_id",
             "directory_id",
             "attachment_type_id",
             "uploaded_by",
@@ -595,17 +589,36 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- inventory ---
     ToolSpec(
         "crm_inventory_stock_balance_list",
-        "Paged active-warehouse stock balances. Exposes quantity_on_hand and Malaysia-time updated_at only for stock quantities; does not reveal available/reserved/damaged/status. Response uses Sage-aligned warehouse vocabulary: `system_location` (was warehouse_code), `system_location_description` (was warehouse_name), `warehouse` (was location). Each row exposes the warehouse identifiers under a nested `system_location` object (renamed from `warehouse`) containing `system_location` (code) and `warehouse` (label). `product_id` accepts UUID or product_code (SKU). `warehouse_id` accepts UUID or system_location / system_location_description (still resolves against the underlying warehouse_code/name columns).",
+        (
+            "Paged active-warehouse stock balances. Exposes quantity_on_hand and Malaysia-time "
+            "updated_at only for stock quantities; does not reveal available/reserved/damaged/status. "
+            "Response uses Sage-aligned warehouse vocabulary: `system_location` (was warehouse_code), "
+            "`system_location_description` (was warehouse_name), `warehouse` (was location). Each row "
+            "exposes the warehouse identifiers under a nested `system_location` object (renamed from "
+            "`warehouse`) containing `system_location` (code) and `warehouse` (label).\n\n"
+            "ENTITY FILTER (single bag): pass anything the user names — product codes/SKUs, customer "
+            "names, etc. — as STRINGS in `entities`. *** ONE ENTITY PER ARRAY ELEMENT. *** Do NOT "
+            "concatenate. Do NOT prefix with type labels. CORRECT: entities=[\"SRTWC101\", \"WESERP10B\"]. "
+            "WRONG: entities=[\"product SRTWC101 and WESERP10B\"]. The server resolves each via the "
+            "entity_resolver (pgvector RAG over product/customer/order/transporter/... chunks) and "
+            "applies PRODUCT matches to Stock.product_id (multiple products → IN). Other resolved "
+            "types (customer, order, transporter, ...) are echoed under `resolved_entities` but DO NOT "
+            "filter stock rows — stock is keyed by product + warehouse only. If nothing resolves to a "
+            "product the response is empty + echo.\n\n"
+            "`warehouse_id` (separate from `entities`) accepts UUID or system_location / "
+            "system_location_description and still resolves against the underlying warehouse_code/name "
+            "columns. Use it for warehouse filtering until warehouse is added to the embedding index."
+        ),
         "/api/v1/inventory/stock/balance",
         (),
         (
             "page",
             "limit",
             "query",
+            "entities",
             "sort",
             "dir",
             "warehouse_id",
-            "product_id",
             "quantity_operator",
             "quantity_value",
             "status",
@@ -634,10 +647,21 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_inventory_stock_balance_export",
-        "Export active-warehouse stock rows with optional filters. MCP output exposes quantity_on_hand and Malaysia-time updated_at only for stock quantities. Warehouse keys use the Sage-aligned vocabulary: system_location, system_location_description, warehouse. Each row carries the warehouse identifiers under a nested `system_location` object (renamed from `warehouse`) with `system_location` (code) and `warehouse` (label). product_id accepts UUID or product_code (SKU). warehouse_id accepts UUID or system_location / system_location_description.",
+        (
+            "Export active-warehouse stock rows with optional filters. MCP output exposes "
+            "quantity_on_hand and Malaysia-time updated_at only for stock quantities. Warehouse "
+            "keys use the Sage-aligned vocabulary: system_location, system_location_description, "
+            "warehouse. Each row carries the warehouse identifiers under a nested `system_location` "
+            "object (renamed from `warehouse`) with `system_location` (code) and `warehouse` (label).\n\n"
+            "ENTITY FILTER: pass product codes / customer / etc as separate strings in `entities`. "
+            "Only PRODUCT matches narrow the export (Stock.product_id IN ...). Other resolved types "
+            "echo back but don't filter. *** ONE ENTITY PER ARRAY ELEMENT ***.\n\n"
+            "`warehouse_id` accepts UUID or system_location / system_location_description and stays "
+            "as a separate param for warehouse filtering."
+        ),
         "/api/v1/inventory/stock/balance/export",
         (),
-        ("warehouse_id", "product_id", "quantity_operator", "quantity_value"),
+        ("warehouse_id", "entities", "quantity_operator", "quantity_value"),
     ),
     ToolSpec(
         "crm_inventory_stock_ledger_by_product_warehouse",
@@ -763,10 +787,15 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_order_management_orders_get",
-        "Get one order by id (includes order lines in response). `order_id` accepts UUID or order_number.",
-        "/api/v1/order-management/orders/{order_id}",
-        ("order_id",),
+        (
+            "Get one order (first match). Pass the order reference via `entities` — order "
+            "number, customer name, etc. Hybrid resolver (substring → pg_trgm → RAG). Returns "
+            "list with limit=1 from the same endpoint as orders_list; first row is the order. "
+            "ONE ENTITY PER ARRAY ELEMENT."
+        ),
+        "/api/v1/order-management/orders",
         (),
+        ("entities", "limit"),
     ),
     ToolSpec(
         "crm_order_management_orders_by_product_list",
@@ -834,7 +863,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/incoming-stock/by-product",
         (),
-        ("product_id", "query", "limit"),
+        ("entities", "query", "limit"),
     ),
     ToolSpec(
         "crm_incoming_stock_shipments",
@@ -846,7 +875,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/incoming-stock/shipments",
         (),
-        ("query", "eta_from", "eta_to", "page", "limit"),
+        ("entities", "query", "eta_from", "eta_to", "page", "limit"),
     ),
     ToolSpec(
         "crm_incoming_stock_shipment_products",
@@ -881,7 +910,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/incoming-stock/grn",
         (),
-        ("shipment_id", "product_id", "limit"),
+        ("entities", "limit"),
     ),
     # --- procurement (ADMIN / INTERNAL raw data) ---
     # These expose raw receipt data (quantity_received, quantity_rejected, SPO numbers,
@@ -969,7 +998,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/procurement/grn",
         (),
-        ("page", "limit", "query", "product_query", "picking_status", "inspection_status", "sort", "dir"),
+        ("page", "limit", "query", "entities", "picking_status", "inspection_status", "sort", "dir"),
     ),
     ToolSpec(
         "crm_procurement_grn_get",

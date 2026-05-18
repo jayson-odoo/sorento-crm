@@ -18,11 +18,58 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
+    """Flatten an `entities` query param into clean list[str] (JSON / comma / repeated)."""
+    if raw is None:
+        return None
+    import json as _json
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if item is None:
+            continue
+        s = str(item).strip()
+        if not s:
+            continue
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                parsed = _json.loads(s)
+                if isinstance(parsed, list):
+                    for p in parsed:
+                        ps = str(p).strip()
+                        key = ps.lower()
+                        if ps and key not in seen:
+                            seen.add(key)
+                            out.append(ps)
+                    continue
+            except Exception:
+                pass
+        for piece in s.split(","):
+            piece = piece.strip()
+            if not piece:
+                continue
+            key = piece.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(piece)
+    return out or None
+
+
 @router.get("/", response_model=ListResponse[ProductResponse])
 def get_products(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
     query: Optional[str] = Query(None),
+    entities: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag. ONE ENTITY PER ARRAY ELEMENT. Server resolves "
+            "via hybrid (substring ILIKE → pg_trgm typo-tolerant → RAG semantic) "
+            "and applies PRODUCT matches to Product.product_code. Other resolved "
+            "types echo back but do not filter."
+        ),
+    ),
     category_id: Optional[str] = Query(None),
     brand_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
@@ -66,6 +113,7 @@ def get_products(
             page=page,
             limit=limit,
             query=query,
+            entities=_normalize_entities(entities),
             category_id=category_id,
             brand_id=brand_id,
             status=status,
