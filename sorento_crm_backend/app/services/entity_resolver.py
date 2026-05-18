@@ -194,6 +194,7 @@ def _extract_name_tokens(query: str, *, max_candidates: int) -> list[str]:
     return out
 
 
+
 def _extract_freeword_tokens(query: str, *, max_candidates: int) -> list[str]:
     """Pull alphabetic word/phrase candidates that may be customer (debtor) names.
 
@@ -716,6 +717,48 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
                     canonical_code=debtor_name,
                     match_field="debtor_name",
                     display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
+                )
+            )
+    return result
+
+
+def _probe_transporter_freeword(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Free-text substring lookup against `Transporter.name` / `normalized_name`.
+
+    The free-text debtor_name scan handles customer phrases like "fira ventures";
+    this mirror covers transporter phrases like "gt delivery" or "suncrest" so
+    a single `entities` bag can resolve transporter mentions without an explicit
+    marker. Token length >= 4 to avoid false positives like "DO".
+    """
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    for token in tokens:
+        if not token or len(token) < 4:
+            continue
+        term = f"%{token}%"
+        rows = (
+            db.query(Transporter.code, Transporter.name, Transporter.normalized_name)
+            .filter(
+                or_(
+                    Transporter.name.ilike(term),
+                    Transporter.normalized_name.ilike(term),
+                    Transporter.code.ilike(term),
+                )
+            )
+            .limit(5)
+            .all()
+        )
+        for code, name, _norm in rows:
+            if any(m.canonical_code == code for m in result[token]):
+                continue
+            result[token].append(
+                ResolvedEntity(
+                    entity_type="transporter",
+                    canonical_code=code,
+                    match_field="transporter_name",
+                    match_tier="substring",
+                    display={"code": code, "name": name},
                 )
             )
     return result
@@ -1255,6 +1298,63 @@ def _prefix_probe_grn(db: Session, token: str) -> list[ResolvedEntity]:
     ]
 
 
+def _prefix_probe_transporter(db: Session, token: str) -> list[ResolvedEntity]:
+    """Prefix → substring ILIKE on `Transporter.code` / `name` / `normalized_name`.
+
+    Lets a free-text chunk like "gt delivery" / "suncrest" resolve to a transporter
+    without needing an explicit marker word in the user's phrasing. Tier-2 keeps
+    short noise tokens out via the >=3 length guard.
+    """
+    if not token or len(token) < 3:
+        return []
+    prefix = f"{token}%"
+    substr = f"%{token}%"
+    rows = (
+        db.query(Transporter.code, Transporter.name, Transporter.normalized_name)
+        .filter(
+            or_(
+                Transporter.code.ilike(prefix),
+                Transporter.name.ilike(prefix),
+                Transporter.normalized_name.ilike(prefix),
+            )
+        )
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    tier = "prefix"
+    if not rows:
+        rows = (
+            db.query(Transporter.code, Transporter.name, Transporter.normalized_name)
+            .filter(
+                or_(
+                    Transporter.code.ilike(substr),
+                    Transporter.name.ilike(substr),
+                    Transporter.normalized_name.ilike(substr),
+                )
+            )
+            .limit(PREFIX_LIMIT)
+            .all()
+        )
+        tier = "substring"
+    seen: set[str] = set()
+    out: list[ResolvedEntity] = []
+    for code, name, _norm in rows:
+        key = (code or name or "").lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            ResolvedEntity(
+                entity_type="transporter",
+                canonical_code=code,
+                match_field="transporter_name",
+                match_tier=tier,
+                display={"code": code, "name": name},
+            )
+        )
+    return out
+
+
 def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
     prefix = f"{token}%"
     rows = (
@@ -1283,6 +1383,7 @@ _TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], froze
     (_prefix_probe_inbound_shipment, frozenset({"inbound_shipment"})),
     (_prefix_probe_customer, frozenset({"customer"})),
     (_prefix_probe_customer_debtor_name, frozenset({"customer"})),
+    (_prefix_probe_transporter, frozenset({"transporter"})),
     (_prefix_probe_warehouse, frozenset({"warehouse"})),
     (_prefix_probe_supplier, frozenset({"supplier"})),
     (_prefix_probe_spo, frozenset({"spo_allocation"})),
@@ -1505,11 +1606,13 @@ def resolve_references(
             if hits:
                 per_token[tok] = hits
 
-    # ----- Free-text debtor scan (only when the caller passed a raw query string) -----
-    # Lets "Find DO for jayson Feb 2026" resolve "jayson" → entity_type=customer even
-    # though no `customer:` marker is present. Single bulk query, cheap.
+    # ----- Free-text debtor + transporter scan (when raw query string was given) -----
+    # Lets "Find DO for jayson Feb 2026" resolve "jayson" → entity_type=customer, and
+    # "transporter Svind gt delivery" resolve "gt delivery" → entity_type=transporter,
+    # without explicit markers. Free-word candidates are bulk-queried so the cost
+    # stays bounded regardless of how many surface from the phrase.
     freeword_resolutions: list[TokenResolution] = []
-    if raw_query and (allowed is None or "customer" in allowed):
+    if raw_query and (allowed is None or {"customer", "transporter"} & allowed):
         existing_lower = {t.lower() for t in tokens}
         freeword_candidates = [
             w
@@ -1517,13 +1620,24 @@ def resolve_references(
             if w.lower() not in existing_lower
         ]
         if freeword_candidates:
-            try:
-                hits = _probe_customer_debtor_name(db, freeword_candidates)
-            except Exception:
-                logger.exception("Free-word debtor probe failed")
-                hits = {t: [] for t in freeword_candidates}
+            customer_hits: dict[str, list[ResolvedEntity]] = {}
+            transporter_hits: dict[str, list[ResolvedEntity]] = {}
+            if allowed is None or "customer" in allowed:
+                try:
+                    customer_hits = _probe_customer_debtor_name(db, freeword_candidates)
+                except Exception:
+                    logger.exception("Free-word debtor probe failed")
+                    customer_hits = {t: [] for t in freeword_candidates}
+            if allowed is None or "transporter" in allowed:
+                try:
+                    transporter_hits = _probe_transporter_freeword(db, freeword_candidates)
+                except Exception:
+                    logger.exception("Free-word transporter probe failed")
+                    transporter_hits = {t: [] for t in freeword_candidates}
             for tok in freeword_candidates:
-                matches = hits.get(tok) or []
+                matches: list[ResolvedEntity] = []
+                matches.extend(customer_hits.get(tok) or [])
+                matches.extend(transporter_hits.get(tok) or [])
                 if matches:
                     freeword_resolutions.append(TokenResolution(token=tok, matches=matches))
 
@@ -1599,6 +1713,118 @@ def _dedupe_preserve_order(values: Iterable[Optional[str]]) -> list[str]:
     return out
 
 
+RAG_MIN_SIMILARITY = 0.30
+RAG_TOP_K = 5
+RAG_AMBIGUOUS_GAP = 0.04
+
+
+def _rag_resolve_phrase(
+    db: Session,
+    phrase: str,
+    allowed_entity_types: frozenset[str],
+    *,
+    top_k: int = RAG_TOP_K,
+    min_similarity: float = RAG_MIN_SIMILARITY,
+) -> list[ResolvedEntity]:
+    """One embed call + top-k vector search against embedding_chunks.
+
+    Returns the top-k hits filtered by `allowed_entity_types`, ranked by cosine
+    similarity desc, dropping anything below `min_similarity`. No tokenization,
+    no fallback tiers — the entire surface area is "embed the user's phrase,
+    ask pgvector who looks closest, trust the score."
+
+    `embedding_documents.source_key` is populated per source_type by the embedding
+    backfill service (`product` → product_code, `transporter` → code,
+    `customer_order` → order_number, `customer` → customer_code or
+    `debtor:<code>`), so the returned `canonical_code` is the value the caller
+    should feed directly into SQL filter buckets.
+    """
+    try:
+        from app.services.embedding_worker import _embed_text_chunks
+    except Exception:
+        logger.exception("RAG embedding worker import failed; phrase=%s", phrase)
+        return []
+
+    allowed_source_types = [
+        src for src, ent in _EMBEDDING_SOURCE_TYPES.items() if ent in allowed_entity_types
+    ]
+    if not allowed_source_types:
+        return []
+
+    try:
+        query_vec = _embed_text_chunks([phrase])[0]
+    except Exception:
+        logger.exception("RAG embed failed for phrase=%s", phrase)
+        return []
+
+    sql = text(
+        """
+        SELECT ec.source_type, ec.source_id, ed.source_key,
+               1 - (ec.embedding <=> CAST(:vec AS vector)) AS similarity
+        FROM embedding_chunks ec
+        JOIN embedding_documents ed
+          ON ed.source_type = ec.source_type AND ed.source_id = ec.source_id
+        WHERE ec.is_current = TRUE
+          AND ec.source_type = ANY(:types)
+        ORDER BY ec.embedding <=> CAST(:vec AS vector)
+        LIMIT :k
+        """
+    )
+    try:
+        rows = db.execute(
+            sql,
+            {"vec": list(query_vec), "types": allowed_source_types, "k": top_k},
+        ).all()
+    except Exception:
+        logger.exception("RAG vector query failed for phrase=%s", phrase)
+        try:
+            db.rollback()
+        except Exception:
+            logger.exception("rollback after RAG query failure also failed")
+        return []
+
+    out: list[ResolvedEntity] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for r in rows:
+        sim = float(r.similarity or 0.0)
+        if sim < min_similarity:
+            continue
+        entity_type = _EMBEDDING_SOURCE_TYPES.get(str(r.source_type))
+        if not entity_type:
+            continue
+        raw_key = r.source_key or str(r.source_id)
+        # Customer debtor-synthetic keys arrive as "debtor:<code>" — strip the
+        # prefix so the canonical_code matches `Order.debtor_code` directly.
+        match_field = "embedding"
+        canonical = raw_key
+        if entity_type == "customer" and isinstance(raw_key, str) and raw_key.startswith("debtor:"):
+            canonical = raw_key.split(":", 1)[1]
+            match_field = "debtor_code"
+        elif entity_type == "customer":
+            match_field = "customer_code"
+        elif entity_type == "product":
+            match_field = "product_code"
+        elif entity_type == "transporter":
+            match_field = "transporter_code"
+        elif entity_type == "customer_order":
+            match_field = "order_number"
+        dedupe_key = (entity_type, canonical.lower() if canonical else str(r.source_id))
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        out.append(
+            ResolvedEntity(
+                entity_type=entity_type,
+                canonical_code=canonical,
+                match_field=match_field,
+                match_tier="embedding",
+                similarity=sim,
+                display={"source_type": str(r.source_type)},
+            )
+        )
+    return out
+
+
 def resolve_entities_to_filters(
     db: Session,
     entities: Optional[list[str]],
@@ -1606,14 +1832,19 @@ def resolve_entities_to_filters(
     allowed_entity_types: Iterable[str],
     max_candidates: int = 8,
 ) -> EntityFilterBuckets:
-    """Resolve a free-text `entities` bag into filter-ready buckets per entity type.
+    """Resolve a free-text `entities` bag via pure-RAG top-k vector search.
 
-    Each input string is sent through the standard 3-tier resolver. Confident matches
-    populate the relevant bucket; ambiguous and unresolved inputs are surfaced in the
-    echo so the agent can ask the user to pick or rephrase.
+    Strategy: for each entity string, one embedding call + one pgvector top-K
+    lookup against `embedding_chunks` restricted to source_types matching
+    `allowed_entity_types`. The top hit is treated as the resolved entity; if
+    the top-2 hits are within `RAG_AMBIGUOUS_GAP` of each other the input is
+    flagged ambiguous and ALL near-tie candidates surface in the echo so the
+    agent can ask the user to pick one. Anything below `RAG_MIN_SIMILARITY`
+    falls into `unresolved` so the agent can tell the user no match was found.
 
-    `allowed_entity_types` MUST match the filter types the caller can actually apply,
-    so the resolver doesn't waste cycles producing entities the caller can't use.
+    No token extraction, no n-gram sweep, no Tier-1 / Tier-2 ILIKE — the
+    embedding pipeline already indexed the relevant business vocabulary, so we
+    let pgvector do the work in one round-trip per entity.
     """
     buckets = EntityFilterBuckets()
     if not entities:
@@ -1624,11 +1855,41 @@ def resolve_entities_to_filters(
     if not inputs:
         return buckets
 
-    result = resolve_references(
-        db,
-        inputs,
-        max_candidates=max_candidates,
-        allowed_entity_types=allowed_set,
+    t_start = time.perf_counter()
+    aggregated: list[TokenResolution] = []
+    for phrase in inputs:
+        hits = _rag_resolve_phrase(
+            db,
+            phrase,
+            allowed_set,
+            top_k=max(RAG_TOP_K, 1),
+            min_similarity=RAG_MIN_SIMILARITY,
+        )
+        if not hits:
+            aggregated.append(TokenResolution(token=phrase, matches=[]))
+            continue
+        top = hits[0]
+        runners = hits[1:]
+        same_type_runners = [
+            h
+            for h in runners
+            if h.entity_type == top.entity_type
+            and (top.similarity or 0) - (h.similarity or 0) < RAG_AMBIGUOUS_GAP
+        ]
+        if same_type_runners:
+            aggregated.append(
+                TokenResolution(
+                    token=phrase,
+                    matches=[top, *same_type_runners],
+                    ambiguous=True,
+                )
+            )
+        else:
+            aggregated.append(TokenResolution(token=phrase, matches=[top]))
+    result = ResolutionResult(
+        tokens=[tr.token for tr in aggregated],
+        resolutions=aggregated,
+        elapsed_ms=(time.perf_counter() - t_start) * 1000.0,
     )
     buckets.elapsed_ms = result.elapsed_ms
 
@@ -1664,7 +1925,7 @@ def resolve_entities_to_filters(
             elif m.entity_type == "customer":
                 if m.match_field == "debtor_name":
                     buckets.debtor_names.append(m.canonical_code)
-                elif m.match_field == "customer_code":
+                elif m.match_field in ("customer_code", "debtor_code"):
                     buckets.customer_codes.append(m.canonical_code)
                 else:
                     buckets.customer_names.append(m.canonical_code)

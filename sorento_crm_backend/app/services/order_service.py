@@ -80,6 +80,17 @@ class OrderService:
                 entities,
                 allowed_entity_types=("product", "customer", "customer_order", "transporter"),
             )
+            # Caller passed `entities` but nothing resolved above the RAG
+            # similarity threshold → return empty rather than fall through and
+            # unintentionally list every order. Echo the unresolved inputs so the
+            # agent surfaces "no match" to the user.
+            if not entity_buckets.has_resolved_filter:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                    "resolved_entities": entity_buckets.as_echo(),
+                }
 
         filters = []
 
@@ -457,6 +468,17 @@ class OrderService:
                 entities,
                 allowed_entity_types=("product", "customer", "customer_order", "transporter"),
             )
+            # Caller passed `entities` but nothing resolved above the RAG
+            # similarity threshold → return empty rather than fall through and
+            # unintentionally list every order. Echo the unresolved inputs so the
+            # agent surfaces "no match" to the user.
+            if not entity_buckets.has_resolved_filter:
+                return {
+                    "data": [],
+                    "pagination": {"total": 0, "page": page, "limit": limit},
+                    "empty": True,
+                    "resolved_entities": entity_buckets.as_echo(),
+                }
 
         filters = []
         product_match_filters: list = []
