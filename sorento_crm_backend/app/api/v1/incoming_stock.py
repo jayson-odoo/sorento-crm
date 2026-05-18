@@ -222,19 +222,46 @@ def get_incoming_stock_grn(
         normalize_entities_query_param,
         resolve_or_empty,
     )
+    from app.services.identifier_resolver import resolve_identifier
+    from app.models.procurement import InboundShipment as _InboundShipment
+    from app.models.product import Product as _Product
 
     entity_echo = None
+    shipment_uuids: Optional[list[str]] = None
+    product_uuids: Optional[list[str]] = None
     norm = normalize_entities_query_param(entities)
     if norm:
         buckets = resolve_or_empty(db, norm)
         if buckets is not None:
             entity_echo = buckets.as_echo()
-            # Prefer first resolved shipment / product to feed service.
-            if buckets.shipment_numbers and not shipment_id:
-                shipment_id = buckets.shipment_numbers[0]
-            if buckets.product_codes and not product_id:
-                product_id = buckets.product_codes[0]
-            if not shipment_id and not product_id:
+            # Resolve ALL bucket entries to UUIDs (do not collapse to [0]).
+            if buckets.shipment_numbers:
+                acc: list[str] = []
+                for code in buckets.shipment_numbers:
+                    ids = resolve_identifier(
+                        db,
+                        code,
+                        _InboundShipment,
+                        code_fields=(
+                            "shipment_number",
+                            "shipping_container_number",
+                            "bill_of_lading_number",
+                            "invoice_number",
+                        ),
+                    )
+                    if ids:
+                        acc.extend(ids)
+                shipment_uuids = list(dict.fromkeys(acc)) or None
+            if buckets.product_codes:
+                acc = []
+                for code in buckets.product_codes:
+                    ids = resolve_identifier(
+                        db, code, _Product, code_fields=("product_code",)
+                    )
+                    if ids:
+                        acc.extend(ids)
+                product_uuids = list(dict.fromkeys(acc)) or None
+            if not shipment_uuids and not product_uuids and not shipment_id and not product_id:
                 return {
                     "data": [],
                     "empty": True,
@@ -242,14 +269,20 @@ def get_incoming_stock_grn(
                     "resolved_entities": entity_echo,
                 }
     try:
-        if not shipment_id and not product_id:
+        if not shipment_uuids and not product_uuids and not shipment_id and not product_id:
             return {
                 "data": [],
                 "empty": True,
                 "message": "Provide entities or shipment_id or product_id.",
             }
         svc = IncomingStockService(db)
-        result = svc.grn_records(shipment_id=shipment_id, product_id=product_id, limit=limit)
+        result = svc.grn_records(
+            shipment_id=shipment_id,
+            product_id=product_id,
+            shipment_uuids=shipment_uuids,
+            product_uuids=product_uuids,
+            limit=limit,
+        )
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
         return result

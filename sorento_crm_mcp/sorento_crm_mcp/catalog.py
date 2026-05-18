@@ -1016,17 +1016,29 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- forms ---
     ToolSpec(
         "crm_forms_management_forms_list",
-        "List forms visible to a Respond contact. Query searches code, name, purpose, form_type, and linked attachment filename. Pass form_type to filter department/category.",
+        (
+            "List forms visible to a Respond contact. Pass the form reference via `entities` — "
+            "form code, form name, OR purpose phrase. Resolver matches against Form.code, "
+            "Form.name, and Form.purpose (purpose is the primary signal — covers descriptive "
+            "asks like 'renovation form', 'sponsorship request', 'dealer application'). "
+            "ONE ENTITY PER ARRAY ELEMENT. Pass form_type to filter department/category "
+            "(e.g. 'marketing_form')."
+        ),
         "/api/v1/forms-management/forms",
         (),
-        ("page", "limit", "query", "language", "status", "form_type", "contact_id", "space_id", "sort", "dir"),
+        ("page", "limit", "entities", "language", "status", "form_type", "contact_id", "space_id", "sort", "dir"),
     ),
     ToolSpec(
         "crm_forms_management_forms_get",
-        "Get a form by id if visible to the Respond contact. Returns form_type so the requester knows which department/category the form belongs to.",
-        "/api/v1/forms-management/forms/{form_id}",
-        ("form_id",),
-        ("contact_id", "space_id"),
+        (
+            "Get one form (first match). Pass the form reference via `entities` — form code, "
+            "form name, or purpose phrase. Hybrid resolver matches Form.code / Form.name / "
+            "Form.purpose. Returns the forms list with limit=1; first row is the form. "
+            "ONE ENTITY PER ARRAY ELEMENT."
+        ),
+        "/api/v1/forms-management/forms",
+        (),
+        ("entities", "limit", "form_type", "contact_id", "space_id"),
     ),
     # --- workflow-forms ---
     ToolSpec(

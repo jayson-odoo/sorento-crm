@@ -512,18 +512,24 @@ class IncomingStockService:
         *,
         shipment_id: Optional[str] = None,
         product_id: Optional[str] = None,
+        shipment_uuids: Optional[list[str]] = None,
+        product_uuids: Optional[list[str]] = None,
         limit: int = 10,
     ) -> dict[str, Any]:
         """Minimal GRN records for explicit 'has a GRN been created?' enquiries.
 
-        No quantities are surfaced. GRN is matched through SPO number linkage between
-        `picking_headers` and `spo_allocations` (which carry the shipment + product).
+        No quantities are surfaced. GRN matches via two paths (union):
+          (1) SPO path: PickingHeader.spo_number → SPOAllocation (shipment + product)
+          (2) Direct path: PickingLine.product_id (covers GRNs without SPO linkage)
+        Either path satisfies the filter; both run when product is supplied.
+
+        Callers may pass either single string ids (legacy: resolved via `resolve_identifier`)
+        or pre-resolved UUID lists (`shipment_uuids` / `product_uuids` from entity buckets).
+        UUID lists take precedence when both are supplied.
         """
         limit = max(1, min(limit, 50))
 
-        shipment_uuids: Optional[list[str]] = None
-        product_uuids: Optional[list[str]] = None
-        if shipment_id:
+        if shipment_uuids is None and shipment_id:
             shipment_uuids = resolve_identifier(
                 self.db,
                 shipment_id,
@@ -537,53 +543,103 @@ class IncomingStockService:
             )
             if shipment_uuids is not None and not shipment_uuids:
                 return {"data": [], "empty": True}
-        if product_id:
+        if product_uuids is None and product_id:
             product_uuids = resolve_identifier(
                 self.db, product_id, Product, code_fields=("product_code",)
             )
             if product_uuids is not None and not product_uuids:
                 return {"data": [], "empty": True}
 
-        alloc_filter = []
-        if shipment_uuids:
-            alloc_filter.append(SPOAllocation.inbound_shipment_id.in_(shipment_uuids))
-        if product_uuids:
-            alloc_filter.append(SPOAllocation.product_id.in_(product_uuids))
-
-        spo_numbers = (
-            self.db.query(func.distinct(SPOAllocation.spo_number))
-            .filter(SPOAllocation.spo_number.isnot(None), *alloc_filter)
-            .all()
-        )
-        spo_numbers = [s[0] for s in spo_numbers if s[0]]
-        if not spo_numbers:
+        if not shipment_uuids and not product_uuids:
             return {"data": [], "empty": True}
 
         shipment_number_expr = InboundShipment.shipment_number
-        rows = (
-            self.db.query(
-                PickingHeader.picking_number,
-                PickingHeader.picking_date,
-                PickingHeader.picking_status,
-                shipment_number_expr.label("shipment_number"),
-            )
-            .join(PickingLine, PickingLine.picking_header_id == PickingHeader.id)
-            .join(SPOAllocation, SPOAllocation.id == PickingLine.spo_allocation_id)
-            .join(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
-            .filter(
-                PickingHeader.picking_type == "goods_received",
-                PickingHeader.spo_number.in_(spo_numbers),
-            )
-            .group_by(
-                PickingHeader.picking_number,
-                PickingHeader.picking_date,
-                PickingHeader.picking_status,
-                shipment_number_expr,
-            )
-            .order_by(PickingHeader.picking_date.desc().nulls_last())
-            .limit(limit)
+
+        # Path 1: via SPO allocations + PickingHeader.spo_number.
+        spo_alloc_filter = [SPOAllocation.spo_number.isnot(None)]
+        if shipment_uuids:
+            spo_alloc_filter.append(SPOAllocation.inbound_shipment_id.in_(shipment_uuids))
+        if product_uuids:
+            spo_alloc_filter.append(SPOAllocation.product_id.in_(product_uuids))
+        spo_numbers = [
+            s[0]
+            for s in self.db.query(func.distinct(SPOAllocation.spo_number))
+            .filter(*spo_alloc_filter)
             .all()
+            if s[0]
+        ]
+
+        spo_rows: list = []
+        if spo_numbers:
+            spo_rows = (
+                self.db.query(
+                    PickingHeader.picking_number,
+                    PickingHeader.picking_date,
+                    PickingHeader.picking_status,
+                    shipment_number_expr.label("shipment_number"),
+                )
+                .join(PickingLine, PickingLine.picking_header_id == PickingHeader.id)
+                .join(SPOAllocation, SPOAllocation.id == PickingLine.spo_allocation_id)
+                .join(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+                .filter(
+                    PickingHeader.picking_type == "goods_received",
+                    PickingHeader.spo_number.in_(spo_numbers),
+                )
+                .group_by(
+                    PickingHeader.picking_number,
+                    PickingHeader.picking_date,
+                    PickingHeader.picking_status,
+                    shipment_number_expr,
+                )
+                .all()
+            )
+
+        # Path 2: direct via PickingLine.product_id (no SPO required). Shipment_number
+        # comes from SPOAllocation when picking_line links to one; otherwise NULL.
+        direct_rows: list = []
+        if product_uuids:
+            direct_q = (
+                self.db.query(
+                    PickingHeader.picking_number,
+                    PickingHeader.picking_date,
+                    PickingHeader.picking_status,
+                    func.max(shipment_number_expr).label("shipment_number"),
+                )
+                .join(PickingLine, PickingLine.picking_header_id == PickingHeader.id)
+                .outerjoin(
+                    SPOAllocation, SPOAllocation.id == PickingLine.spo_allocation_id
+                )
+                .outerjoin(
+                    InboundShipment,
+                    InboundShipment.id == SPOAllocation.inbound_shipment_id,
+                )
+                .filter(
+                    PickingHeader.picking_type == "goods_received",
+                    PickingLine.product_id.in_(product_uuids),
+                )
+                .group_by(
+                    PickingHeader.picking_number,
+                    PickingHeader.picking_date,
+                    PickingHeader.picking_status,
+                )
+            )
+            direct_rows = direct_q.all()
+
+        # Merge + dedupe by picking_number. Sort by picking_date desc, NULL last.
+        seen: dict[str, Any] = {}
+        for r in list(spo_rows) + list(direct_rows):
+            key = r.picking_number
+            if key in seen:
+                continue
+            seen[key] = r
+        merged = sorted(
+            seen.values(),
+            key=lambda r: (r.picking_date is None, r.picking_date),
+            reverse=False,
         )
+        merged.sort(key=lambda r: r.picking_date or date.min, reverse=True)
+        merged = merged[:limit]
+
         data = [
             {
                 "grn_number": r.picking_number,
@@ -591,6 +647,6 @@ class IncomingStockService:
                 "grn_status": r.picking_status,
                 "shipment_number": r.shipment_number,
             }
-            for r in rows
+            for r in merged
         ]
         return {"data": data, "empty": not data}

@@ -29,6 +29,7 @@ from typing import Any, Callable, Iterable, Optional
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
+from app.models.forms import Form
 from app.models.inventory import Warehouse
 from app.models.marketing import Promotion
 from app.models.order import Customer, Order, OrderStatus, Transporter
@@ -1411,6 +1412,96 @@ def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
     return out[: PREFIX_LIMIT * 2]
 
 
+def _prefix_probe_form(db: Session, token: str) -> list[ResolvedEntity]:
+    """Prefix → substring ILIKE on Form.code / Form.name / Form.purpose, with
+    multi-token AND fallback.
+
+    Forms have three searchable text columns. Match code first (highest signal),
+    then name, then purpose (longest text, lowest signal). Each column tries
+    prefix first, then substring. For multi-word inputs ("renovation form",
+    "sponsorship request"), a final AND-tokenized pass requires every token to
+    appear somewhere across code/name/purpose — covers descriptive phrasings
+    where no single column carries the literal phrase.
+    """
+    if not token or len(token) < 3:
+        return []
+    from sqlalchemy import or_, and_
+    prefix = f"{token}%"
+    substr = f"%{token}%"
+    fields = (
+        (Form.code, "form_code"),
+        (Form.name, "form_name"),
+        (Form.purpose, "purpose"),
+    )
+    seen: set[str] = set()
+    out: list[ResolvedEntity] = []
+
+    def _append(fid, code, name, purpose, is_active, form_type, label, tier):
+        key = str(fid)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(
+            ResolvedEntity(
+                entity_type="form",
+                canonical_code=code,
+                match_field=label,
+                match_tier=tier,
+                display={
+                    "form_code": code,
+                    "form_name": name,
+                    "form_type": form_type,
+                    "is_active": bool(is_active),
+                },
+            )
+        )
+
+    for col, label in fields:
+        rows = (
+            db.query(Form.id, Form.code, Form.name, Form.purpose, Form.is_active, Form.form_type)
+            .filter(col.ilike(prefix))
+            .limit(PREFIX_LIMIT)
+            .all()
+        )
+        substring_rows = (
+            db.query(Form.id, Form.code, Form.name, Form.purpose, Form.is_active, Form.form_type)
+            .filter(col.ilike(substr))
+            .filter(~col.ilike(prefix))
+            .limit(PREFIX_LIMIT)
+            .all()
+        )
+        for fid, code, name, purpose, is_active, form_type in list(rows) + list(substring_rows):
+            col_value = {"form_code": code, "form_name": name, "purpose": purpose}[label]
+            tier = (
+                "substring"
+                if col_value and not str(col_value).lower().startswith(token.lower())
+                else "prefix"
+            )
+            _append(fid, code, name, purpose, is_active, form_type, label, tier)
+
+    # Multi-token AND fallback: each token must appear in code OR name OR purpose.
+    tokens = [t for t in token.lower().split() if len(t) >= 3]
+    if len(tokens) >= 2:
+        token_conds = [
+            or_(
+                Form.code.ilike(f"%{t}%"),
+                Form.name.ilike(f"%{t}%"),
+                Form.purpose.ilike(f"%{t}%"),
+            )
+            for t in tokens
+        ]
+        and_rows = (
+            db.query(Form.id, Form.code, Form.name, Form.purpose, Form.is_active, Form.form_type)
+            .filter(and_(*token_conds))
+            .limit(PREFIX_LIMIT)
+            .all()
+        )
+        for fid, code, name, purpose, is_active, form_type in and_rows:
+            _append(fid, code, name, purpose, is_active, form_type, "form_name", "tokenized")
+
+    return out[: PREFIX_LIMIT * 2]
+
+
 # Tier-2 probes paired with the entity_type(s) they produce, so callers can opt
 # out of probes that can't return anything they accept.
 _TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], frozenset[str]], ...] = (
@@ -1425,6 +1516,7 @@ _TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], froze
     (_prefix_probe_spo, frozenset({"spo_allocation"})),
     (_prefix_probe_grn, frozenset({"grn"})),
     (_prefix_probe_promotion, frozenset({"promotion"})),
+    (_prefix_probe_form, frozenset({"form"})),
 )
 
 

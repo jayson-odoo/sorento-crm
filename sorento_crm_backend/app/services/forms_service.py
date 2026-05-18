@@ -29,18 +29,22 @@ class FormService:
         contact_access_codes: Optional[list[str]] = None,
         sort_field: str = "updated_at",
         sort_dir: str = "desc",
+        entity_form_codes: Optional[list[str]] = None,
     ):
         """List forms."""
-        from sqlalchemy import or_, and_, cast, String, text
+        from sqlalchemy import or_, and_, cast, String, text, func
         from sqlalchemy.dialects.postgresql import ARRAY
         from sqlalchemy.orm import joinedload
         q = self.db.query(Form).options(
             joinedload(Form.attachment).joinedload(Attachment.attachment_type)
         )
-        
+
         filters = []
         if form_type and str(form_type).strip().lower() not in ("", "all"):
             filters.append(Form.form_type == str(form_type).strip().lower())
+        if entity_form_codes:
+            lowered = [c.lower() for c in entity_form_codes if c]
+            filters.append(func.lower(Form.code).in_(lowered))
         if query:
             ql = query.strip()
             q = q.outerjoin(Attachment, Form.attachment_id == Attachment.id)

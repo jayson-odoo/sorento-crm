@@ -29,7 +29,14 @@ router = APIRouter()
 async def get_forms(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
-    query: Optional[str] = Query(None),
+    entities: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag. Hybrid resolver matches against Form.code, Form.name, and "
+            "Form.purpose. ONE ENTITY PER ARRAY ELEMENT."
+        ),
+    ),
+    query: Optional[str] = Query(None, description="Legacy free-text. Prefer `entities`."),
     language: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     form_type: Optional[str] = Query(None, description="Filter by form type (e.g. marketing)"),
@@ -42,23 +49,47 @@ async def get_forms(
 ):
     """Get forms with pagination and filtering."""
     try:
+        from app.services.entity_filter_helpers import (
+            normalize_entities_query_param,
+            resolve_or_empty,
+        )
         service = FormService(db)
-        # Handle empty strings or None values
         from app.services.contact_access_type_service import ContactAccessTypeService
         contact_codes = ContactAccessTypeService(db).resolve_optional_contact_access_codes(contact_id, space_id)
         sort_field = (sort and sort.strip()) or "updated_at"
         sort_dir = (dir and dir.strip()) or "desc"
+
+        entity_form_codes: Optional[list[str]] = None
+        entity_echo = None
+        norm = normalize_entities_query_param(entities)
+        if norm:
+            buckets = resolve_or_empty(db, norm)
+            if buckets is not None:
+                entity_echo = buckets.as_echo()
+                if buckets.form_codes:
+                    entity_form_codes = list(buckets.form_codes)
+                else:
+                    return {
+                        "data": [],
+                        "pagination": {"total": 0, "page": page, "limit": limit},
+                        "empty": True,
+                        "resolved_entities": entity_echo,
+                    }
+
         result = service.list_forms(
-            page=page, 
-            limit=limit, 
-            query=query, 
-            language=language, 
+            page=page,
+            limit=limit,
+            query=query,
+            language=language,
             status=status,
             form_type=form_type,
             contact_access_codes=contact_codes,
             sort_field=sort_field,
-            sort_dir=sort_dir
+            sort_dir=sort_dir,
+            entity_form_codes=entity_form_codes,
         )
+        if entity_echo is not None and isinstance(result, dict):
+            result["resolved_entities"] = entity_echo
         return result
     except Exception as e:
         import logging
