@@ -26,6 +26,10 @@ from app.services.embedding_change_listener import (
     bulk_enqueue_embedding_events,
 )
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
+from app.services.entity_resolver import (
+    EntityFilterBuckets,
+    resolve_entities_to_filters,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +59,28 @@ class OrderService:
         sort_field: str = "created_at",
         sort_dir: str = "asc",
         advanced_filter_clause: Optional[Any] = None,
+        entities: Optional[list[str]] = None,
     ):
-        """List orders with filtering and pagination."""
+        """List orders with filtering and pagination.
+
+        `entities` is the single-bag entity filter for AI/MCP callers: pass a list of
+        free-text strings (customer names, product codes, transporter labels, order
+        numbers). The server resolves each via the entity_resolver and applies the
+        matched filters internally. The resolution is echoed back as
+        `_resolved_entities` on the response so the agent can show the user what
+        was actually matched. Typed params (`customer_query`, `product_query`, ...)
+        remain for direct callers and are AND'd with `entities`.
+        """
         q = self.db.query(Order).filter(Order.deleted_at.is_(None))
-        
+
+        entity_buckets: Optional[EntityFilterBuckets] = None
+        if entities:
+            entity_buckets = resolve_entities_to_filters(
+                self.db,
+                entities,
+                allowed_entity_types=("product", "customer", "customer_order", "transporter"),
+            )
+
         filters = []
 
         customer_ids = resolve_identifier(
@@ -186,6 +208,10 @@ class OrderService:
             if transporter_clause is not None:
                 filters.append(transporter_clause)
 
+        if entity_buckets is not None and entity_buckets.has_resolved_filter:
+            entity_clauses = self._build_entity_filter_clauses(entity_buckets)
+            filters.extend(entity_clauses)
+
         if advanced_filter_clause is not None:
             filters.append(advanced_filter_clause)
 
@@ -265,7 +291,7 @@ class OrderService:
             .all()
         )
 
-        return {
+        payload = {
             "data": orders,
             "pagination": {
                 "total": total,
@@ -274,7 +300,101 @@ class OrderService:
             },
             "empty": total == 0
         }
-    
+        if entity_buckets is not None:
+            payload["resolved_entities"] = entity_buckets.as_echo()
+        return payload
+
+    def _build_entity_filter_clauses(
+        self,
+        buckets: "EntityFilterBuckets",
+        *,
+        product_join_already_present: bool = False,
+    ) -> list[Any]:
+        """Translate resolved entity buckets into SQL filter clauses for Order queries.
+
+        Same-type entities are OR'd (e.g. two product codes → IN). Different types are
+        returned as separate clauses so the caller AND's them across types — the user
+        said "orders for X and product Y" should intersect, not union. When the caller
+        has already joined OrderLine + Product (e.g. list_orders_by_product), pass
+        `product_join_already_present=True` so the product clause filters on the
+        existing join instead of adding a redundant EXISTS subquery.
+        """
+        clauses: list[Any] = []
+        if buckets.product_codes:
+            lowered_codes = [c.lower() for c in buckets.product_codes]
+            if product_join_already_present:
+                clauses.append(func.lower(Product.product_code).in_(lowered_codes))
+            else:
+                clauses.append(
+                    Order.lines.any(
+                        OrderLine.product.has(
+                            func.lower(Product.product_code).in_(lowered_codes)
+                        )
+                    )
+                )
+        if buckets.order_numbers:
+            clauses.append(
+                func.lower(Order.order_number).in_([o.lower() for o in buckets.order_numbers])
+            )
+        customer_subclauses: list[Any] = []
+        if buckets.debtor_names:
+            lowered = [d.lower() for d in buckets.debtor_names]
+            customer_subclauses.append(func.lower(Order.debtor_name).in_(lowered))
+        if buckets.customer_codes:
+            lowered = [c.lower() for c in buckets.customer_codes]
+            customer_subclauses.append(func.lower(Order.debtor_code).in_(lowered))
+            customer_subclauses.append(
+                Order.customer.has(func.lower(Customer.customer_code).in_(lowered))
+            )
+        if buckets.customer_names:
+            lowered = [n.lower() for n in buckets.customer_names]
+            customer_subclauses.append(
+                Order.customer.has(func.lower(Customer.customer_name).in_(lowered))
+            )
+            customer_subclauses.append(func.lower(Order.debtor_name).in_(lowered))
+        if customer_subclauses:
+            clauses.append(or_(*customer_subclauses))
+        if buckets.transporter_codes or buckets.transporter_names:
+            from app.models.order import Transporter
+
+            transporter_subclauses: list[Any] = []
+            transporter_ids: list[str] = []
+            if buckets.transporter_codes:
+                lowered = [c.lower() for c in buckets.transporter_codes]
+                rows = (
+                    self.db.query(Transporter.id)
+                    .filter(func.lower(Transporter.code).in_(lowered))
+                    .all()
+                )
+                transporter_ids = [str(r[0]) for r in rows if r[0]]
+                if transporter_ids:
+                    transporter_subclauses.append(Order.transporter_id.in_(transporter_ids))
+                for c in buckets.transporter_codes:
+                    transporter_subclauses.append(Order.transporter.ilike(f"%{c}%"))
+            if buckets.transporter_names:
+                for n in buckets.transporter_names:
+                    transporter_subclauses.append(Order.transporter.ilike(f"%{n}%"))
+                rows = (
+                    self.db.query(Transporter.id)
+                    .filter(
+                        or_(
+                            func.lower(Transporter.name).in_(
+                                [n.lower() for n in buckets.transporter_names]
+                            ),
+                            func.lower(Transporter.normalized_name).in_(
+                                [n.lower() for n in buckets.transporter_names]
+                            ),
+                        )
+                    )
+                    .all()
+                )
+                extra_ids = [str(r[0]) for r in rows if r[0] and str(r[0]) not in transporter_ids]
+                if extra_ids:
+                    transporter_subclauses.append(Order.transporter_id.in_(extra_ids))
+            if transporter_subclauses:
+                clauses.append(or_(*transporter_subclauses))
+        return clauses
+
     def get_order(self, order_id: str):
         """Get a single order by UUID or order_number (accepts either form)."""
         resolved_ids = resolve_identifier(
@@ -313,8 +433,15 @@ class OrderService:
         actual_delivery_date_to: Optional[datetime] = None,
         sort_field: str = "order_date",
         sort_dir: str = "desc",
+        entities: Optional[list[str]] = None,
     ):
-        """List distinct orders matched by product search."""
+        """List distinct orders matched by product search.
+
+        `entities` is the single-bag entity filter (see list_orders). At least one
+        entity must resolve to a product — the endpoint is product-centric and falls
+        back to empty otherwise. Customer / transporter / order_number entities are
+        applied as additional AND filters.
+        """
         q = (
             self.db.query(Order)
             .join(Order.lines)
@@ -322,6 +449,14 @@ class OrderService:
             .filter(Order.deleted_at.is_(None))
             .distinct()
         )
+
+        entity_buckets: Optional[EntityFilterBuckets] = None
+        if entities:
+            entity_buckets = resolve_entities_to_filters(
+                self.db,
+                entities,
+                allowed_entity_types=("product", "customer", "customer_order", "transporter"),
+            )
 
         filters = []
         product_match_filters: list = []
@@ -468,6 +603,37 @@ class OrderService:
                 filters.append(product_clause)
                 product_match_filters.append(product_clause)
 
+        if entity_buckets is not None and entity_buckets.has_resolved_filter:
+            entity_clauses = self._build_entity_filter_clauses(
+                entity_buckets, product_join_already_present=True
+            )
+            filters.extend(entity_clauses)
+            if entity_buckets.product_codes:
+                product_match_filters.append(
+                    func.lower(Product.product_code).in_(
+                        [c.lower() for c in entity_buckets.product_codes]
+                    )
+                )
+
+        # By-product endpoint is product-centric: if the caller passed `entities` but
+        # zero of them resolved to a product (and no other product filter is in
+        # play), there's nothing to look up. Return an explicit empty rather than
+        # silently fanning across every order.
+        if (
+            entity_buckets is not None
+            and entities
+            and not entity_buckets.product_codes
+            and not product_id
+            and not product_query
+            and not (query and query.strip())
+        ):
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+                "resolved_entities": entity_buckets.as_echo(),
+            }
+
         base_q = q.filter(and_(*filters)) if filters else q
         q = base_q.filter(query_filter) if query_filter is not None else base_q
 
@@ -522,7 +688,7 @@ class OrderService:
         for o in orders:
             setattr(o, "matched_products", matched_by_order.get(str(o.id), []))
 
-        return {
+        payload = {
             "data": orders,
             "pagination": {
                 "total": total,
@@ -531,7 +697,10 @@ class OrderService:
             },
             "empty": total == 0,
         }
-    
+        if entity_buckets is not None:
+            payload["resolved_entities"] = entity_buckets.as_echo()
+        return payload
+
     @staticmethod
     def _normalize_uuid_fields(data: dict, keys: tuple = ("customer_id", "order_status_id", "billing_address_id", "shipping_address_id")) -> dict:
         """Set empty-string UUID fields to None so PostgreSQL accepts them."""

@@ -122,6 +122,51 @@ def _try_strptime(value: str, fmt: str) -> Optional[datetime]:
         return None
 
 
+def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
+    """Flatten an `entities` query param into a clean list[str].
+
+    Accepts None, a list of strings (repeated query param), or a single-element list
+    holding a JSON array or comma-separated string — all of which n8n / curl callers
+    produce depending on how they encode the param.
+    """
+    if raw is None:
+        return None
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if item is None:
+            continue
+        s = str(item).strip()
+        if not s:
+            continue
+        # Strip a JSON-array wrapper so '["A","B"]' splits as ["A","B"].
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                import json as _json
+
+                parsed = _json.loads(s)
+                if isinstance(parsed, list):
+                    for p in parsed:
+                        ps = str(p).strip()
+                        key = ps.lower()
+                        if ps and key not in seen:
+                            seen.add(key)
+                            out.append(ps)
+                    continue
+            except Exception:
+                pass
+        for piece in s.split(","):
+            piece = piece.strip()
+            if not piece:
+                continue
+            key = piece.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(piece)
+    return out or None
+
+
 def _parse_flex_date(value: Optional[str], *, end_of_day: bool = False) -> Optional[datetime]:
     """Parse a date string in any of the supported formats. Returns None if value is empty.
 
@@ -211,6 +256,20 @@ async def get_orders(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None),
+    entities: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag — pass any combination of customer names/codes, "
+            "product codes/SKUs, transporter labels, or order numbers as strings. "
+            "Server resolves each input's entity type via the entity_resolver "
+            "(exact / prefix / embedding) and applies the matching filter internally. "
+            "Multiple values of the same type → IN; multiple types → AND across types. "
+            "Resolution is echoed under `resolved_entities` so the caller sees what "
+            "matched, which inputs were ambiguous, and which were unresolved. "
+            "Accepts repeated params (?entities=A&entities=B), a JSON array, or a "
+            "single comma-separated string."
+        ),
+    ),
     customer_query: Optional[str] = Query(
         None,
         description="Partial customer/debtor filter (matches debtor_name/debtor_code/customer name/code, case-insensitive).",
@@ -281,6 +340,7 @@ async def get_orders(
             page=page,
             limit=limit,
             query=query,
+            entities=_normalize_entities(entities),
             customer_query=customer_query,
             product_query=product_query,
             transporter_query=transporter_query,
@@ -386,6 +446,17 @@ async def get_orders_by_product(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None, description="Matches product code, name, description, order number, or debtor name"),
+    entities: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Free-text entity bag. Pass customer names/codes, product codes/SKUs, "
+            "transporter labels, or order numbers as strings. At least one entity "
+            "MUST resolve to a product — endpoint is product-centric. Server "
+            "resolves each input's type via entity_resolver and applies the "
+            "matching filter internally. Resolution is echoed under "
+            "`resolved_entities` on the response."
+        ),
+    ),
     customer_query: Optional[str] = Query(
         None,
         description="Partial customer/debtor filter for complaint DO discovery (debtor_name/debtor_code/customer name/code).",
@@ -448,6 +519,7 @@ async def get_orders_by_product(
             page=page,
             limit=limit,
             query=query,
+            entities=_normalize_entities(entities),
             customer_query=customer_query,
             product_query=product_query,
             product_id=product_id,

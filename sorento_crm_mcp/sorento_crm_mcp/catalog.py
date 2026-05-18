@@ -706,22 +706,25 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_order_management_orders_list",
         (
-            "List orders (customer, status, has_order_lines, ORDER DATE filters, optional actual delivery date filters, search). "
-            "Response uses `pickup_time` (was `delivery_time`) for the lorry pickup time-of-day; `estimated_delivery_date` is not returned; "
-            "`order_status` is a plain human-readable string (e.g. \"New\", \"Delivered\"), not an object. "
-            "External/AI-agent callers are HARD-CAPPED at limit=10 server-side regardless of the value sent — "
-            "narrow with customer_query / product_query / transporter_query / order_date_from / order_date_to instead of asking for more rows. "
-            "FUZZY SEARCH: `customer_query`, `product_query`, and `transporter_query` use embedding pre-resolve + ilike, "
-            "so shortforms / fragments / aliases work (e.g. customer_query='YOTU' matches 'YOTU BUILDER SDN BHD (PROJECT)'; "
-            "product_query='WC101' matches 'SRTWC101' and 'SRTWC101-RL'). The server echoes the canonical values it expanded "
-            "to under `matched_candidates: {customer:[], product:[], transporter:[]}` — surface those back to the user. "
-            "DATE FILTER RULE — pick the param family from the user's verb, not the time window. "
+            "List orders. Response uses `pickup_time` (was `delivery_time`) for the lorry pickup "
+            "time-of-day; `estimated_delivery_date` is not returned; `order_status` is a plain "
+            "human-readable string (e.g. \"New\", \"Delivered\"), not an object. "
+            "External/AI-agent callers are HARD-CAPPED at limit=10 server-side regardless of the "
+            "value sent — narrow via `entities` and date filters instead of asking for more rows.\n\n"
+            "ENTITY FILTER (single bag): pass anything the user names — customer names/codes, "
+            "product codes/SKUs, transporter labels, order numbers — as STRINGS in `entities`. "
+            "Do NOT try to classify the type yourself; the server resolves each input via the "
+            "entity_resolver (exact → prefix ILIKE → semantic embedding) and routes it to the "
+            "right filter. Multiple values of the same type are OR'd (IN); different types are "
+            "AND'd (intersection). The response includes "
+            "`resolved_entities` with `resolved` (what matched), `ambiguous` (multiple candidates "
+            "— ask the user to pick), and `unresolved` (no match — tell the user). ALWAYS surface "
+            "ambiguous/unresolved back to the user before declaring a result.\n\n"
+            "DATE FILTER RULE — pick the param family from the user's verb, not the time window.\n"
             "DELIVERY verbs ('delivered', 'received', 'dropped off', 'for delivery', 'pending delivery', 'arrived', 'delivery date') "
-            "=> use `actual_delivery_date_from` / `actual_delivery_date_to`. "
+            "=> use `actual_delivery_date_from` / `actual_delivery_date_to`.\n"
             "ORDER verbs ('ordered', 'placed', 'created', 'raised', 'opened', 'booked', 'order date') "
-            "=> use `order_date_from` / `order_date_to`. "
-            "When the verb is ambiguous (bare 'orders in February', 'orders last week', 'DO for today', complaint Delivery-Order discovery), "
-            "DEFAULT to `actual_delivery_date_from` / `actual_delivery_date_to`. "
+            "DEFAULT to `actual_delivery_date_from` / `actual_delivery_date_to`.\n"
             "Decision table (phrasing => param):\n"
             "  'orders delivered today'              => actual_delivery_date_from = today, _to = today\n"
             "  'orders delivered last week'          => actual_delivery_date_from / _to = last week\n"
@@ -733,31 +736,17 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  'DO for product X today'              => actual_delivery_date_from / _to = today\n"
             "  'orders in February' (no verb)        => actual_delivery_date_from / _to = Feb 2026\n"
             "  'orders last week' (no verb)          => actual_delivery_date_from / _to = last week\n"
-            "  'orders placed last week'             => order_date_from / _to = last week\n"
-            "  'orders created today'                => order_date_from / _to = today\n"
-            "  'orders raised in February 2026'      => order_date_from / _to = Feb 2026\n"
             "Do NOT pass both families in one call unless the user explicitly asks for an intersection. "
             "Both date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO datetime, "
             "'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
-            "For complaint DO filtering, pass customer + product + order date range together. "
-            "Parameter `query` matches order number, debtor name/code, and customer name/code (case-insensitive partial match — pass partial debtor / customer names). "
-            "`customer_id` accepts UUID or customer_code/name. `order_status_id` accepts UUID or status_code/name."
+            "For complaint DO filtering, pass customer + product into `entities` together plus an order date range."
         ),
         "/api/v1/order-management/orders",
         (),
         (
             "page",
             "limit",
-            "query",
-            "customer_query",
-            "product_query",
-            "transporter_query",
-            "customer_id",
-            "order_status_id",
-            "has_order_lines",
-            "has_actual_delivery_date",
-            "order_date_from",
-            "order_date_to",
+            "entities",
             "actual_delivery_date_from",
             "actual_delivery_date_to",
             "sort",
@@ -774,43 +763,37 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_order_management_orders_by_product_list",
         (
-            "List distinct CUSTOMER SALES orders containing a specific product (outgoing / sold, NOT incoming stock). "
-            "DATE FILTER RULE: For Delivery-Order (DO) discovery and any bare 'orders in [today/yesterday/this week/month/period/date range]' question, "
-            "DEFAULT to `actual_delivery_date_from`/`actual_delivery_date_to`. Only use "
-            "`order_date_from`/`order_date_to` when the user EXPLICITLY mentions the order/placement date "
-            "(verbs: 'placed', 'created', 'raised', 'opened', 'booked', or literal 'order date'). "
-            "Delivery verbs ('delivered', 'received', 'for delivery', 'pending delivery', 'arrived', 'delivery date') "
-            "and bare time windows ('today', 'this week', 'February 2026') => `actual_delivery_date_from/_to`. "
-            "Both date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO datetime, "
-            "'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
-            "Use when asked 'which customers bought SKU X', 'pending customer orders for product X', or to find DO "
-            "numbers via product+customer+date range (independent of complaint filing flow). "
-            "DO NOT use for 'any incoming for product X' / 'is product X arriving' — that is procurement, use "
-            "crm_procurement_spo_allocations_grouped_by_shipment instead. "
-            "Use explicit filters for DO lookup when available: `customer_query` (debtor/customer partial), "
-            "`product_query` (product code/name partial), plus `order_date_from`/`order_date_to`. "
-            "Parameter `query` matches product code, name, description, order number, and debtor name (case-insensitive partial match). "
-            "`product_id` accepts a UUID, a product_code (SKU), a JSON array, or a "
-            "comma-separated string for multi-SKU lookup (e.g. "
-            "[\"SRTWC8608-SC\",\"SRTWC8608-SC-UF\"]). Partial / suffix variants are "
-            "fuzzy-resolved via embeddings, so n8n does NOT need to pre-canonicalise "
-            "the SKU. `customer_query` is also embedding-resolved — pass loose phrases "
-            "like \"fira ventures\" / \"yotu\" and the server will match the "
-            "customer/debtor (including FIRA-style debtors that have no customers "
-            "master row)."
+            "List distinct CUSTOMER SALES orders containing a specific product (outgoing / sold, "
+            "NOT incoming stock). Endpoint is product-centric — at least one item in `entities` "
+            "MUST resolve to a product, otherwise the response is empty.\n\n"
+            "ENTITY FILTER (single bag): pass anything the user names — product codes/SKUs, "
+            "customer names/codes, transporter labels, order numbers — as STRINGS in `entities`. "
+            "Do NOT try to classify the type yourself; the server resolves each via "
+            "entity_resolver (exact → prefix ILIKE → embedding) and routes to the matching filter. "
+            "Partial / suffix variants and loose phrases work: \"SRTWC8608\", \"fira ventures\", "
+            "\"yotu\", \"Suncrest\", \"SO-2026-001\" all resolve correctly without pre-canonicalising. "
+            "Multiple values of the same type are OR'd (IN); different types are AND'd. The "
+            "response echoes `resolved_entities` with `resolved` / `ambiguous` / `unresolved` — "
+            "ALWAYS surface ambiguous/unresolved back to the user before declaring a result.\n\n"
+            "DATE FILTER RULE: For Delivery-Order (DO) discovery and any bare 'orders in [today/"
+            "yesterday/this week/month/period/date range]' question, DEFAULT to "
+            "`actual_delivery_date_from`/`actual_delivery_date_to`."
+            "Delivery verbs ('delivered', 'received', 'for delivery', 'pending delivery', 'arrived', "
+            "'delivery date') and bare time windows ('today', 'this week', 'February 2026') => "
+            "`actual_delivery_date_from/_to`. Both date params accept flexible formats: "
+            "YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO datetime, 'YYYY-MM', 'MM/YYYY', or "
+            "'Month YYYY' (e.g. 'February 2026').\n\n"
+            "Use when asked 'which customers bought SKU X', 'pending customer orders for product X', "
+            "or to find DO numbers via product+customer+date range (independent of complaint filing "
+            "flow). DO NOT use for 'any incoming for product X' / 'is product X arriving' — that is "
+            "procurement, use crm_procurement_spo_allocations_grouped_by_shipment instead."
         ),
         "/api/v1/order-management/orders/by-product",
         (),
         (
             "page",
             "limit",
-            "query",
-            "customer_query",
-            "product_query",
-            "product_id",
-            "has_actual_delivery_date",
-            "order_date_from",
-            "order_date_to",
+            "entities",
             "actual_delivery_date_from",
             "actual_delivery_date_to",
             "sort",

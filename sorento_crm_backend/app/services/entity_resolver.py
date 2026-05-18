@@ -24,7 +24,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
@@ -1275,24 +1275,36 @@ def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
     ]
 
 
-_TIER2_PROBES = (
-    _prefix_probe_product,
-    _prefix_probe_customer_order,
-    _prefix_probe_inbound_shipment,
-    _prefix_probe_customer,
-    _prefix_probe_customer_debtor_name,
-    _prefix_probe_warehouse,
-    _prefix_probe_supplier,
-    _prefix_probe_spo,
-    _prefix_probe_grn,
-    _prefix_probe_promotion,
+# Tier-2 probes paired with the entity_type(s) they produce, so callers can opt
+# out of probes that can't return anything they accept.
+_TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], frozenset[str]], ...] = (
+    (_prefix_probe_product, frozenset({"product"})),
+    (_prefix_probe_customer_order, frozenset({"customer_order"})),
+    (_prefix_probe_inbound_shipment, frozenset({"inbound_shipment"})),
+    (_prefix_probe_customer, frozenset({"customer"})),
+    (_prefix_probe_customer_debtor_name, frozenset({"customer"})),
+    (_prefix_probe_warehouse, frozenset({"warehouse"})),
+    (_prefix_probe_supplier, frozenset({"supplier"})),
+    (_prefix_probe_spo, frozenset({"spo_allocation"})),
+    (_prefix_probe_grn, frozenset({"grn"})),
+    (_prefix_probe_promotion, frozenset({"promotion"})),
 )
 
 
-def _tier2_fuzzy_lookup(db: Session, token: str) -> list[ResolvedEntity]:
-    """Run all Tier-2 prefix probes for a single token and return combined candidates."""
+def _tier2_fuzzy_lookup(
+    db: Session,
+    token: str,
+    allowed_entity_types: Optional[frozenset[str]] = None,
+) -> list[ResolvedEntity]:
+    """Run Tier-2 prefix probes for a single token and return combined candidates.
+
+    When `allowed_entity_types` is provided, probes whose output type is not in the set
+    are skipped entirely — keeps per-tool resolution lean.
+    """
     combined: list[ResolvedEntity] = []
-    for probe in _TIER2_PROBES:
+    for probe, produces in _TIER2_PROBES:
+        if allowed_entity_types is not None and produces.isdisjoint(allowed_entity_types):
+            continue
         try:
             combined.extend(probe(db, token))
         except Exception:
@@ -1325,7 +1337,11 @@ EMBEDDING_MIN_SIMILARITY = 0.80
 EMBEDDING_CONFIDENCE_GAP = 0.05
 
 
-def _tier3_embedding_lookup(db: Session, token: str) -> list[ResolvedEntity]:
+def _tier3_embedding_lookup(
+    db: Session,
+    token: str,
+    allowed_entity_types: Optional[frozenset[str]] = None,
+) -> list[ResolvedEntity]:
     """Vector search over embedding_chunks for primary entities. Returns at most one
     confident match, or an empty list when ambiguous / below threshold."""
     # Local imports: these modules pull in heavy deps; we only want to pay the cost
@@ -1342,7 +1358,14 @@ def _tier3_embedding_lookup(db: Session, token: str) -> list[ResolvedEntity]:
         logger.exception("Tier-3 query embedding failed for token=%s", token)
         return []
 
-    allowed_types = tuple(_EMBEDDING_SOURCE_TYPES.keys())
+    if allowed_entity_types is None:
+        allowed_types = tuple(_EMBEDDING_SOURCE_TYPES.keys())
+    else:
+        allowed_types = tuple(
+            src for src, ent in _EMBEDDING_SOURCE_TYPES.items() if ent in allowed_entity_types
+        )
+        if not allowed_types:
+            return []
     sql = text(
         """
         SELECT ec.source_type, ec.source_id, ed.source_key,
@@ -1391,18 +1414,18 @@ def _tier3_embedding_lookup(db: Session, token: str) -> list[ResolvedEntity]:
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
-_TIER1_PROBES = (
-    _probe_product,
-    _probe_customer_order,
-    _probe_inbound_shipment,
-    _probe_spo,
-    _probe_grn,
-    _probe_warehouse,
-    _probe_supplier,
-    _probe_promotion,
-    _probe_transporter,
-    _probe_customer,
-    _probe_customer_debtor_name,
+_TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[ResolvedEntity]]], frozenset[str]], ...] = (
+    (_probe_product, frozenset({"product"})),
+    (_probe_customer_order, frozenset({"customer_order"})),
+    (_probe_inbound_shipment, frozenset({"inbound_shipment"})),
+    (_probe_spo, frozenset({"spo_allocation"})),
+    (_probe_grn, frozenset({"grn"})),
+    (_probe_warehouse, frozenset({"warehouse"})),
+    (_probe_supplier, frozenset({"supplier"})),
+    (_probe_promotion, frozenset({"promotion"})),
+    (_probe_transporter, frozenset({"transporter"})),
+    (_probe_customer, frozenset({"customer"})),
+    (_probe_customer_debtor_name, frozenset({"customer"})),
 )
 
 
@@ -1413,6 +1436,7 @@ def resolve_references(
     max_candidates: int = 8,
     enable_prefix_fallback: bool = True,
     enable_embedding_fallback: bool = True,
+    allowed_entity_types: Optional[Iterable[str]] = None,
 ) -> ResolutionResult:
     """Main entry point.
 
@@ -1424,6 +1448,11 @@ def resolve_references(
 
     Tier 2/3 results with ambiguity (multiple candidates, or low confidence gap) are
     flagged `ambiguous=True` so the LLM asks the user to pick rather than guessing.
+
+    When `allowed_entity_types` is set, probes whose output type is outside the set are
+    skipped, and Tier-3 vector search filters to allowed source_types. Per-list-tool
+    callers pass the types they can filter on so resolution doesn't return entities the
+    caller has nowhere to send.
     """
     t0 = time.perf_counter()
     raw_query: Optional[str] = None
@@ -1433,11 +1462,17 @@ def resolve_references(
         raw_query = query_or_tokens or ""
         tokens = extract_candidate_tokens(raw_query, max_candidates=max_candidates)
 
+    allowed: Optional[frozenset[str]] = (
+        frozenset(allowed_entity_types) if allowed_entity_types is not None else None
+    )
+
     # ----- Tier 1: exact -----
     per_token: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     ambiguous_tokens: set[str] = set()
     if tokens:
-        for probe in _TIER1_PROBES:
+        for probe, produces in _TIER1_PROBES:
+            if allowed is not None and produces.isdisjoint(allowed):
+                continue
             try:
                 hits = probe(db, tokens)
             except Exception:
@@ -1451,7 +1486,7 @@ def resolve_references(
         for tok in tokens:
             if per_token[tok]:
                 continue
-            candidates = _tier2_fuzzy_lookup(db, tok)
+            candidates = _tier2_fuzzy_lookup(db, tok, allowed_entity_types=allowed)
             if not candidates:
                 continue
             if len(candidates) == 1:
@@ -1466,7 +1501,7 @@ def resolve_references(
         for tok in tokens:
             if per_token[tok] or tok in ambiguous_tokens:
                 continue
-            hits = _tier3_embedding_lookup(db, tok)
+            hits = _tier3_embedding_lookup(db, tok, allowed_entity_types=allowed)
             if hits:
                 per_token[tok] = hits
 
@@ -1474,7 +1509,7 @@ def resolve_references(
     # Lets "Find DO for jayson Feb 2026" resolve "jayson" → entity_type=customer even
     # though no `customer:` marker is present. Single bulk query, cheap.
     freeword_resolutions: list[TokenResolution] = []
-    if raw_query:
+    if raw_query and (allowed is None or "customer" in allowed):
         existing_lower = {t.lower() for t in tokens}
         freeword_candidates = [
             w
@@ -1500,3 +1535,165 @@ def resolve_references(
     final_tokens = list(tokens) + [r.token for r in freeword_resolutions]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     return ResolutionResult(tokens=final_tokens, resolutions=resolutions, elapsed_ms=elapsed_ms)
+
+
+# --------------------------------------------------------------------------- #
+# Single-bag `entities` API for list tools
+# --------------------------------------------------------------------------- #
+@dataclass
+class EntityFilterBuckets:
+    """Per-type canonical values + structured echo for `entities: list[str]` callers.
+
+    A list tool collapses customer/product/transporter/order filters into a single
+    `entities` param. The resolver decides each input's entity_type; this helper
+    packages the result into ready-to-use SQL inputs plus an authoritative echo so
+    the agent can surface "what did you actually match" back to the user.
+    """
+
+    product_codes: list[str] = field(default_factory=list)
+    debtor_names: list[str] = field(default_factory=list)
+    customer_codes: list[str] = field(default_factory=list)
+    customer_names: list[str] = field(default_factory=list)
+    transporter_codes: list[str] = field(default_factory=list)
+    transporter_names: list[str] = field(default_factory=list)
+    order_numbers: list[str] = field(default_factory=list)
+    resolved: list[dict[str, Any]] = field(default_factory=list)
+    ambiguous: list[dict[str, Any]] = field(default_factory=list)
+    unresolved: list[str] = field(default_factory=list)
+    elapsed_ms: float = 0.0
+
+    @property
+    def has_resolved_filter(self) -> bool:
+        return bool(
+            self.product_codes
+            or self.debtor_names
+            or self.customer_codes
+            or self.customer_names
+            or self.transporter_codes
+            or self.transporter_names
+            or self.order_numbers
+        )
+
+    def as_echo(self) -> dict[str, Any]:
+        """Shape for `_resolved_entities` in tool responses."""
+        return {
+            "resolved": self.resolved,
+            "ambiguous": self.ambiguous,
+            "unresolved": self.unresolved,
+            "elapsed_ms": round(self.elapsed_ms, 2),
+        }
+
+
+def _dedupe_preserve_order(values: Iterable[Optional[str]]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in values:
+        if not v:
+            continue
+        s = str(v)
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
+
+
+def resolve_entities_to_filters(
+    db: Session,
+    entities: Optional[list[str]],
+    *,
+    allowed_entity_types: Iterable[str],
+    max_candidates: int = 8,
+) -> EntityFilterBuckets:
+    """Resolve a free-text `entities` bag into filter-ready buckets per entity type.
+
+    Each input string is sent through the standard 3-tier resolver. Confident matches
+    populate the relevant bucket; ambiguous and unresolved inputs are surfaced in the
+    echo so the agent can ask the user to pick or rephrase.
+
+    `allowed_entity_types` MUST match the filter types the caller can actually apply,
+    so the resolver doesn't waste cycles producing entities the caller can't use.
+    """
+    buckets = EntityFilterBuckets()
+    if not entities:
+        return buckets
+
+    allowed_set = frozenset(allowed_entity_types)
+    inputs = [s.strip() for s in entities if s and s.strip()]
+    if not inputs:
+        return buckets
+
+    result = resolve_references(
+        db,
+        inputs,
+        max_candidates=max_candidates,
+        allowed_entity_types=allowed_set,
+    )
+    buckets.elapsed_ms = result.elapsed_ms
+
+    for tr in result.resolutions:
+        if tr.ambiguous:
+            buckets.ambiguous.append(
+                {
+                    "input": tr.token,
+                    "candidates": [
+                        {
+                            "type": m.entity_type,
+                            "canonical_code": m.canonical_code,
+                            "match_field": m.match_field,
+                            "match_tier": m.match_tier,
+                            "display": m.display,
+                        }
+                        for m in tr.matches
+                    ],
+                }
+            )
+            continue
+        if not tr.matches:
+            buckets.unresolved.append(tr.token)
+            continue
+        for m in tr.matches:
+            if m.entity_type not in allowed_set:
+                # Resolver may emit related types we don't filter on; skip silently.
+                continue
+            if m.entity_type == "product":
+                buckets.product_codes.append(m.canonical_code)
+            elif m.entity_type == "customer_order":
+                buckets.order_numbers.append(m.canonical_code)
+            elif m.entity_type == "customer":
+                if m.match_field == "debtor_name":
+                    buckets.debtor_names.append(m.canonical_code)
+                elif m.match_field == "customer_code":
+                    buckets.customer_codes.append(m.canonical_code)
+                else:
+                    buckets.customer_names.append(m.canonical_code)
+            elif m.entity_type == "transporter":
+                if m.match_field == "transporter_code":
+                    buckets.transporter_codes.append(m.canonical_code)
+                else:
+                    buckets.transporter_names.append(
+                        m.display.get("name") or m.canonical_code
+                    )
+                    if m.canonical_code:
+                        buckets.transporter_codes.append(m.canonical_code)
+            buckets.resolved.append(
+                {
+                    "input": tr.token,
+                    "type": m.entity_type,
+                    "canonical_code": m.canonical_code,
+                    "match_field": m.match_field,
+                    "match_tier": m.match_tier,
+                    "similarity": m.similarity,
+                    "display": m.display,
+                }
+            )
+
+    buckets.product_codes = _dedupe_preserve_order(buckets.product_codes)
+    buckets.debtor_names = _dedupe_preserve_order(buckets.debtor_names)
+    buckets.customer_codes = _dedupe_preserve_order(buckets.customer_codes)
+    buckets.customer_names = _dedupe_preserve_order(buckets.customer_names)
+    buckets.transporter_codes = _dedupe_preserve_order(buckets.transporter_codes)
+    buckets.transporter_names = _dedupe_preserve_order(buckets.transporter_names)
+    buckets.order_numbers = _dedupe_preserve_order(buckets.order_numbers)
+    return buckets

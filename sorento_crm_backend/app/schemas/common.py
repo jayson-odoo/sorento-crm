@@ -1,6 +1,6 @@
 """Common Pydantic schemas."""
 from pydantic import BaseModel
-from typing import Optional, List, Generic, TypeVar
+from typing import Any, Dict, Optional, List, Generic, TypeVar
 
 T = TypeVar('T')
 
@@ -24,6 +24,10 @@ class ListResponse(BaseModel, Generic[T]):
     pagination: PaginationResponse
     empty: bool = False
     fallback_used: bool = False
+    # Populated by endpoints that accept an `entities` free-text bag (resolved via
+    # entity_resolver). Mirrors the resolver's matched/ambiguous/unresolved buckets
+    # so the agent can surface "what did we actually filter on" back to the user.
+    resolved_entities: Optional[Dict[str, Any]] = None
 
 
 class ErrorResponse(BaseModel):
