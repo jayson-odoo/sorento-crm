@@ -10,6 +10,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.product_service import ProductService
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
+from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.product import ProductCreate, ProductUpdate, ProductResponse, BulkImportProductsRequest, BulkDeleteProductsRequest
 from app.schemas.common import ListResponse, ErrorResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
@@ -64,10 +65,15 @@ def get_products(
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "Free-text entity bag. ONE ENTITY PER ARRAY ELEMENT. Server resolves "
-            "via hybrid (substring ILIKE → pg_trgm typo-tolerant → RAG semantic) "
-            "and applies PRODUCT matches to Product.product_code. Other resolved "
-            "types echo back but do not filter."
+            "DEPRECATED — free-text entity bag. Prefer `product_ids`. Free-text "
+            "resolution should go through `/api/v1/system/references/resolve` first."
+        ),
+    ),
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter by canonical product UUIDs. Accepts repeated values, comma-"
+            "separated string, or JSON array. Non-UUID input → HTTP 400."
         ),
     ),
     category_id: Optional[str] = Query(None),
@@ -114,6 +120,7 @@ def get_products(
             limit=limit,
             query=query,
             entities=_normalize_entities(entities),
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             category_id=category_id,
             brand_id=brand_id,
             status=status,

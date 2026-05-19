@@ -11,6 +11,7 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.order_service import OrderService
+from app.services.uuid_list_param import parse_uuid_list
 from app.config import settings as app_settings
 
 
@@ -259,15 +260,31 @@ async def get_orders(
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "Free-text entity bag — pass any combination of customer names/codes, "
-            "product codes/SKUs, transporter labels, or order numbers as strings. "
-            "Server resolves each input's entity type via the entity_resolver "
-            "(exact / prefix / embedding) and applies the matching filter internally. "
-            "Multiple values of the same type → IN; multiple types → AND across types. "
-            "Resolution is echoed under `resolved_entities` so the caller sees what "
-            "matched, which inputs were ambiguous, and which were unresolved. "
-            "Accepts repeated params (?entities=A&entities=B), a JSON array, or a "
-            "single comma-separated string."
+            "DEPRECATED — free-text entity bag. Prefer typed UUID params "
+            "(`order_ids` / `customer_ids` / `product_ids` / `transporter_ids`). "
+            "Resolve free-text refs via /api/v1/system/references/resolve first."
+        ),
+    ),
+    order_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter by order UUIDs (csv/JSON/repeated).",
+    ),
+    customer_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter by customer UUIDs. Matches Order.customer_id IN (...) and, "
+            "for legacy rows without FK, Order.debtor_name = customers.customer_name."
+        ),
+    ),
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter to orders containing any of these product UUIDs (via order lines).",
+    ),
+    transporter_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter by transporter UUIDs. Matches Order.transporter_id IN (...) and, "
+            "for legacy rows without FK, Order.transporter = transporters.name."
         ),
     ),
     customer_query: Optional[str] = Query(
@@ -341,6 +358,10 @@ async def get_orders(
             limit=limit,
             query=query,
             entities=_normalize_entities(entities),
+            order_ids=parse_uuid_list(order_ids, param_name="order_ids"),
+            customer_ids=parse_uuid_list(customer_ids, param_name="customer_ids"),
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            transporter_ids=parse_uuid_list(transporter_ids, param_name="transporter_ids"),
             customer_query=customer_query,
             product_query=product_query,
             transporter_query=transporter_query,

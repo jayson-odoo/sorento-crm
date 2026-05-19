@@ -9,7 +9,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func, exists
 from decimal import Decimal
-from app.models.order import Order, OrderStatus, Customer, OrderLine
+from app.models.order import Order, OrderStatus, Customer, OrderLine, Transporter
 from app.models.product import Product
 from app.models.inventory import Warehouse
 from app.schemas.order import (
@@ -60,6 +60,10 @@ class OrderService:
         sort_dir: str = "asc",
         advanced_filter_clause: Optional[Any] = None,
         entities: Optional[list[str]] = None,
+        order_ids: Optional[list[str]] = None,
+        customer_ids: Optional[list[str]] = None,
+        product_ids: Optional[list[str]] = None,
+        transporter_ids: Optional[list[str]] = None,
     ):
         """List orders with filtering and pagination.
 
@@ -71,6 +75,14 @@ class OrderService:
         was actually matched. Typed params (`customer_query`, `product_query`, ...)
         remain for direct callers and are AND'd with `entities`.
         """
+        # Capture typed UUID params into locals up-front so later code that
+        # reuses the names (e.g. `customer_ids = resolve_identifier(...)`)
+        # cannot shadow them.
+        _order_uuid_filter = list(order_ids) if order_ids else None
+        _customer_uuid_filter = list(customer_ids) if customer_ids else None
+        _product_uuid_filter = list(product_ids) if product_ids else None
+        _transporter_uuid_filter = list(transporter_ids) if transporter_ids else None
+
         q = self.db.query(Order).filter(Order.deleted_at.is_(None))
 
         entity_buckets: Optional[EntityFilterBuckets] = None
@@ -97,6 +109,49 @@ class OrderService:
                 }
 
         filters = []
+
+        if _order_uuid_filter:
+            filters.append(Order.id.in_(_order_uuid_filter))
+
+        if _customer_uuid_filter:
+            # Match Order.customer_id IN (...) OR legacy debtor_name match.
+            # Backfill 207 should make the OR branch redundant for new data, but
+            # historical rows with NULL customer_id stay reachable.
+            from sqlalchemy import func as _func
+            customer_names_subq = (
+                self.db.query(Customer.customer_name)
+                .filter(Customer.id.in_(_customer_uuid_filter))
+                .subquery()
+            )
+            filters.append(
+                or_(
+                    Order.customer_id.in_(_customer_uuid_filter),
+                    _func.lower(_func.btrim(Order.debtor_name)).in_(
+                        self.db.query(_func.lower(_func.btrim(customer_names_subq.c.customer_name)))
+                    ),
+                )
+            )
+
+        if _product_uuid_filter:
+            filters.append(
+                Order.lines.any(OrderLine.product_id.in_(_product_uuid_filter))
+            )
+
+        if _transporter_uuid_filter:
+            from sqlalchemy import func as _func
+            transporter_names_subq = (
+                self.db.query(Transporter.name)
+                .filter(Transporter.id.in_(_transporter_uuid_filter))
+                .subquery()
+            )
+            filters.append(
+                or_(
+                    Order.transporter_id.in_(_transporter_uuid_filter),
+                    _func.lower(_func.btrim(Order.transporter)).in_(
+                        self.db.query(_func.lower(_func.btrim(transporter_names_subq.c.name)))
+                    ),
+                )
+            )
 
         customer_ids = resolve_identifier(
             self.db,

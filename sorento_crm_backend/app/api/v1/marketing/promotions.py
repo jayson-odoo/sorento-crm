@@ -8,6 +8,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import PromotionService, PromotionProductService
 from app.services.query_normalizer import strip_domain_stopwords
+from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.marketing import (
     PromotionCreate,
     PromotionUpdate,
@@ -43,9 +44,16 @@ async def get_promotions(
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "Free-text entity bag. Hybrid resolver. Promotion / product / customer "
-            "matches feed the search. ONE ENTITY PER ARRAY ELEMENT."
+            "DEPRECATED — free-text entity bag. Prefer `promotion_ids` / `product_ids`."
         ),
+    ),
+    promotion_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter by canonical promotion UUIDs (csv/JSON/repeated).",
+    ),
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter to promotions whose products include any of these UUIDs.",
     ),
     user_type: Optional[str] = Query(None, description="Filter by a single access level (FE listing). Prefer contact_id+space_id for MCP/agent flows."),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id). Pair with space_id to filter by the contact's M2M access types."),
@@ -112,6 +120,8 @@ async def get_promotions(
             sort_field=sort,
             sort_dir=dir,
             entities=normalize_entities_query_param(entities),
+            promotion_ids=parse_uuid_list(promotion_ids, param_name="promotion_ids"),
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
         )
         return result
     except HTTPException:

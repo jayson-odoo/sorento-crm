@@ -251,6 +251,8 @@ class PromotionService:
         sort_dir: Optional[str] = "desc",
         advanced_filter_clause: Optional[Any] = None,
         entities: Optional[list[str]] = None,
+        promotion_ids: Optional[list[str]] = None,
+        product_ids: Optional[list[str]] = None,
     ):
         """List promotions with active-first fallback semantics.
 
@@ -361,6 +363,16 @@ class PromotionService:
                 q = q.filter(Promotion.start_date <= period_to)
             if entity_promotion_ids:
                 q = q.filter(Promotion.id.in_(entity_promotion_ids))
+            if promotion_ids:
+                q = q.filter(Promotion.id.in_(promotion_ids))
+            if product_ids:
+                q = q.filter(
+                    exists().where(
+                        PromotionProduct.promotion_id == Promotion.id
+                    ).where(
+                        PromotionProduct.product_id.in_(product_ids)
+                    )
+                )
             if advanced_filter_clause is not None:
                 q = q.filter(advanced_filter_clause)
             return q

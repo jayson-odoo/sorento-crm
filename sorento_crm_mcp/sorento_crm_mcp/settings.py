@@ -50,3 +50,22 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OUTLINE_COLLECTION_ID", "outline_collection_id"),
         description="UUID of the Sorento CRM user-guides collection.",
     )
+
+    mcp_response_envelope: str = Field(
+        "v1",
+        validation_alias=AliasChoices("MCP_RESPONSE_ENVELOPE", "mcp_response_envelope"),
+        description=(
+            "Response envelope version. 'v1' = raw backend JSON (legacy passthrough). "
+            "'v2' = wrapped {status, data, pagination, summary, warnings, provenance, "
+            "escalation, questions}. Roll forward per-agent."
+        ),
+    )
+    mcp_expose_internal: bool = Field(
+        False,
+        validation_alias=AliasChoices("MCP_EXPOSE_INTERNAL", "mcp_expose_internal"),
+        description=(
+            "When false (default), tools with ToolSpec.internal=True are skipped from "
+            "FastMCP registration so the agent never sees admin-only procurement / GRN tools. "
+            "Set to true for admin n8n flows that need raw receipt data."
+        ),
+    )

@@ -180,6 +180,57 @@ def _looks_like_uuid(value: str | None) -> bool:
     return UUID_REGEX.match(value) is not None
 
 
+# Names that should be UUID-validated when present as query/path params.
+# Skip respond.io identifiers (contact_id, space_id) — those are Respond's own
+# numeric / opaque IDs, not server-side UUIDs.
+_UUID_PARAM_SUFFIXES = ("_id", "_ids")
+_UUID_PARAM_EXEMPT: frozenset[str] = frozenset({"contact_id", "space_id"})
+
+
+def _is_uuid_param(name: str) -> bool:
+    if name in _UUID_PARAM_EXEMPT:
+        return False
+    return any(name.endswith(suffix) for suffix in _UUID_PARAM_SUFFIXES)
+
+
+def _validate_uuid_param(name: str, value: Any) -> Any:
+    """Validate a query/path param expected to carry canonical UUIDs.
+
+    Accepts: single UUID string, CSV string of UUIDs, list of UUID strings,
+    JSON array string of UUIDs. Returns the original value (unchanged) so the
+    HTTP serialization stays untouched. Raises ValueError with a structured
+    payload on invalid input — caught by the envelope wrapper as status=error.
+    """
+    if value is None or value == "":
+        return value
+    items: list[str] = []
+    if isinstance(value, list):
+        items = [str(v).strip() for v in value if v not in (None, "")]
+    elif isinstance(value, str):
+        s = value.strip()
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    items = [str(v).strip() for v in parsed if v not in (None, "")]
+            except json.JSONDecodeError:
+                pass
+        if not items:
+            items = [p.strip() for p in s.split(",") if p.strip()]
+    else:
+        items = [str(value).strip()]
+    for item in items:
+        if not _looks_like_uuid(item):
+            raise ValueError(
+                json.dumps({
+                    "code": "INVALID_UUID",
+                    "message": f"`{name}` contains a non-UUID value: {item!r}",
+                    "param": name,
+                })
+            )
+    return value
+
+
 def _list_spec_by_path(path: str) -> ToolSpec | None:
     for s in CATALOG:
         if s.path == path:
@@ -1064,6 +1115,12 @@ def _compile_tool(spec: ToolSpec):
         f"                    break\n"
         f"    for _k, _v in list(_qq.items()):\n"
         f"        _qq[_k] = _normalize_query_value(_v)\n"
+        f"    for _uk, _uv in list(_qq.items()):\n"
+        f"        if _is_uuid_param(_uk):\n"
+        f"            _validate_uuid_param(_uk, _uv)\n"
+        f"    for _pk, _pv in list(_pp.items()):\n"
+        f"        if _is_uuid_param(_pk):\n"
+        f"            _validate_uuid_param(_pk, _pv)\n"
         f"    q = {{k: v for k, v in _qq.items() if v is not None and v != []}}\n"
         f"    for _dk, _dv in _defaults.items():\n"
         f"        if q.get(_dk) in (None, ''):\n"
@@ -1101,6 +1158,8 @@ def _compile_tool(spec: ToolSpec):
     ns: dict[str, Any] = {
         "Context": Context,
         "_normalize_query_value": _normalize_query_value,
+        "_is_uuid_param": _is_uuid_param,
+        "_validate_uuid_param": _validate_uuid_param,
         "_execute_tool_request": _execute_tool_request,
         "_execute_tool_request_with_body": _execute_tool_request_with_body,
         "_check_access": check_access,
@@ -1137,7 +1196,11 @@ def create_mcp_app(settings: Settings) -> FastMCP:
         lifespan=lifespan,
     )
 
+    hidden_internal = 0
     for spec in merged_catalog(CATALOG):
+        if getattr(spec, "internal", False) and not settings.mcp_expose_internal:
+            hidden_internal += 1
+            continue
         if getattr(spec, "external", False):
             # External tools (e.g. Outline-backed user_guides_*) are registered
             # by their dedicated handler below — skip the HTTP-backed compile.
@@ -1145,8 +1208,14 @@ def create_mcp_app(settings: Settings) -> FastMCP:
         impl = _compile_tool(spec)
         mcp.add_tool(impl, name=spec.name, description=spec.description)
         logger.debug("Registered MCP tool %s", spec.name)
+    if hidden_internal:
+        logger.info("Hid %d internal MCP tools (MCP_EXPOSE_INTERNAL=0)", hidden_internal)
 
     register_user_guide_tools(mcp, settings)
     logger.debug("Registered user-guide tools")
+
+    from sorento_crm_mcp.discovery import register_discovery_tools
+    register_discovery_tools(mcp, settings, CATALOG)
+    logger.debug("Registered discovery tools")
 
     return mcp

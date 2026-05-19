@@ -149,6 +149,7 @@ class ProductService:
         sort_dir: str = "asc",
         advanced_filter_clause: Optional[Any] = None,
         entities: Optional[list[str]] = None,
+        product_ids: Optional[list[str]] = None,
     ):
         """List products with filtering and pagination.
 
@@ -185,6 +186,8 @@ class ProductService:
 
         # Apply filters
         filters = []
+        if product_ids:
+            filters.append(Product.id.in_(product_ids))
         if entity_buckets is not None and entity_buckets.product_codes:
             from sqlalchemy import func as _func
             lowered = [c.lower() for c in entity_buckets.product_codes]
