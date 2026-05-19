@@ -257,6 +257,8 @@ async def list_all_promotion_products(
     """Get promotion products with pagination. Scope to one promotion via promotion_id; use query for text search. Use contact_id+space_id to filter by the contact's access levels."""
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
+        from app.services.entity_filter_helpers import normalize_list_query_param
+        access_levels = normalize_list_query_param(access_levels)
         cats_svc = ContactAccessTypeService(db)
         if contact_id and space_id:
             access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)

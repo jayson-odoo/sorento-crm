@@ -83,6 +83,8 @@ async def get_promotions(
     """Get promotions with pagination. Search by query/period, filter by access level (legacy `user_type`) or by contact context (`contact_id`+`space_id`)."""
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
+        from app.services.entity_filter_helpers import normalize_list_query_param
+        access_levels = normalize_list_query_param(access_levels)
         cats_svc = ContactAccessTypeService(db)
         if contact_id and space_id:
             access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
@@ -138,6 +140,8 @@ async def get_promotion(
     """Get a single promotion by ID. Use contact_id+space_id to also filter inline attachments."""
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
+        from app.services.entity_filter_helpers import normalize_list_query_param
+        access_levels = normalize_list_query_param(access_levels)
         cats_svc = ContactAccessTypeService(db)
         if contact_id and space_id:
             access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
@@ -352,6 +356,8 @@ async def get_promotion_products_nested(
         logger.debug(f"Fetching products for promotion_id: {promotion_id}")
 
         from app.services.contact_access_type_service import ContactAccessTypeService
+        from app.services.entity_filter_helpers import normalize_list_query_param
+        access_levels = normalize_list_query_param(access_levels)
         cats_svc = ContactAccessTypeService(db)
         if contact_id and space_id:
             access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)

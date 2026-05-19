@@ -96,12 +96,13 @@ def attach_echo(payload: dict[str, Any], buckets: Optional[EntityFilterBuckets])
     return payload
 
 
-def normalize_entities_query_param(raw: Optional[list[str]]) -> Optional[list[str]]:
-    """Flatten an `entities` FastAPI Query param.
+def normalize_list_query_param(raw: Optional[list[str]]) -> Optional[list[str]]:
+    """Flatten any list-shaped FastAPI Query param.
 
     Accepts None / repeated strings / JSON-array string / comma-separated string.
-    Endpoint handlers call this on the raw `Query(None)` value before forwarding
-    to the service.
+    Use for any `Optional[list[str]] = Query(None)` param that LLM callers may
+    serialize as a single comma-separated string (e.g. "A,B,C") or a JSON literal
+    (e.g. '["A","B"]') instead of repeated `?k=A&k=B` query params.
     """
     if raw is None:
         return None
@@ -138,3 +139,7 @@ def normalize_entities_query_param(raw: Optional[list[str]]) -> Optional[list[st
             seen.add(key)
             out.append(piece)
     return out or None
+
+
+# Backwards-compatible alias for callers that imported the entities-specific name.
+normalize_entities_query_param = normalize_list_query_param

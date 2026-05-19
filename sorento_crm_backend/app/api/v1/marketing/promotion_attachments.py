@@ -53,6 +53,8 @@ async def get_promotion_attachments(
     """Get promotion attachments with pagination and filtering. Use contact_id+space_id to filter by the contact's access types."""
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
+        from app.services.entity_filter_helpers import normalize_list_query_param
+        access_levels = normalize_list_query_param(access_levels)
         cats_svc = ContactAccessTypeService(db)
         if contact_id and space_id:
             access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
@@ -168,6 +170,8 @@ async def get_promotion_attachments_by_promotion(
     """Get all attachments for a specific promotion. Use contact_id+space_id to filter by the contact's access types."""
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
+        from app.services.entity_filter_helpers import normalize_list_query_param
+        access_levels = normalize_list_query_param(access_levels)
         cats_svc = ContactAccessTypeService(db)
         if contact_id and space_id:
             access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
