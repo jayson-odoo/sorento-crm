@@ -47,6 +47,54 @@ logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
+# Entity-type aliases
+# --------------------------------------------------------------------------- #
+# Resolver uses canonical internal names (e.g. "customer_order"). External callers
+# sometimes pass UI-facing synonyms (e.g. "delivery_order"). Map them once here so
+# both `allowed_entity_types` filtering AND positional token<->type pairing stay
+# consistent regardless of which label the caller used.
+_ENTITY_TYPE_ALIASES: dict[str, str] = {
+    "delivery_order": "customer_order",
+    "do": "customer_order",
+    "order": "customer_order",
+    "sales_order": "customer_order",
+}
+
+
+def _canonical_entity_type(et: str) -> str:
+    key = (et or "").strip().lower()
+    return _ENTITY_TYPE_ALIASES.get(key, key)
+
+
+def _build_token_type_map(
+    tokens: list[str] | None,
+    allowed_entity_types: Iterable[str] | None,
+) -> Optional[dict[str, str]]:
+    """Return a positional token -> canonical_entity_type map when caller passed
+    parallel lists of equal length. Otherwise return None — caller should fall
+    back to the legacy global-set filter behaviour.
+
+    Positional pairing means: token[i] is ONLY resolved against
+    allowed_entity_types[i]. Used when the caller already knows which token names
+    which kind of entity (e.g. ["Fira Ventures", "DO"] paired with
+    ["customer", "delivery_order"] — "DO" must not be tried as a customer).
+    """
+    if not tokens or allowed_entity_types is None:
+        return None
+    allowed_list = list(allowed_entity_types)
+    if len(allowed_list) != len(tokens):
+        return None
+    pair_map: dict[str, str] = {}
+    for tok, et in zip(tokens, allowed_list):
+        tok_s = (tok or "").strip()
+        et_s = (et or "").strip()
+        if not tok_s or not et_s:
+            return None
+        pair_map[tok_s] = _canonical_entity_type(et_s)
+    return pair_map
+
+
+# --------------------------------------------------------------------------- #
 # Token extraction
 # --------------------------------------------------------------------------- #
 # Code-like token: contains at least one letter AND at least one digit, min length 3.
@@ -2077,9 +2125,54 @@ def _concat_ws(*cols):
     return func.concat_ws(" ", *cols)
 
 
+def _word_variants(word: str) -> list[str]:
+    """Return `word` plus a singular fallback when it looks like an alphabetic
+    plural. Lets a token like 'ventures' still match 'VENTURE ENTERPRISE' so
+    minor plural typos ('Fira ventures' vs DB 'FIRA VENTURE') don't drop the
+    match. Codes containing digits are NEVER stripped — `TT440s` must keep its
+    trailing s.
+    """
+    if not word:
+        return []
+    out = [word]
+    low = word.lower()
+    if (
+        len(word) >= 4
+        and low.endswith("s")
+        and not low.endswith("ss")
+        and word.isalpha()
+    ):
+        out.append(word[:-1])
+    return out
+
+
+def _and_build_conds(blob, tokens: list[str]):
+    """Build the AND condition list for a name-based AND probe.
+
+    Each token is split on whitespace; every resulting word becomes its own
+    ILIKE substring requirement so 'Fira ventures' demands BOTH 'fira' AND
+    'ventures' (in any order) in the blob — multi-word values whose order
+    differs in the DB still match. Each word OR's its plural fallback variants
+    so a stray plural in the token doesn't blow the match.
+    """
+    conds = []
+    for tok in tokens:
+        if not tok:
+            continue
+        words = [w for w in tok.split() if w]
+        if not words:
+            continue
+        for word in words:
+            variants = _word_variants(word)
+            if not variants:
+                continue
+            conds.append(or_(*[blob.ilike(f"%{v}%") for v in variants]))
+    return conds
+
+
 def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Product.product_code, Product.product_name, Product.description)
-    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    conds = _and_build_conds(blob, tokens)
     if not conds:
         return []
     rows = (
@@ -2102,7 +2195,7 @@ def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
 
 
 def _and_probe_promotion(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
-    conds = [Promotion.description.ilike(f"%{t}%") for t in tokens if t]
+    conds = _and_build_conds(Promotion.description, tokens)
     if not conds:
         return []
     rows = (
@@ -2126,7 +2219,7 @@ def _and_probe_promotion(db: Session, tokens: list[str]) -> list[ResolvedEntity]
 
 def _and_probe_attachment(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Attachment.original_filename, Attachment.description, AttachmentType.type_name)
-    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    conds = _and_build_conds(blob, tokens)
     if not conds:
         return []
     rows = (
@@ -2167,7 +2260,7 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     # (legacy fallback). Run both; orders.debtor_name JOINs Customer for UUID.
     out: list[ResolvedEntity] = []
     blob_c = _concat_ws(Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email)
-    conds_c = [blob_c.ilike(f"%{t}%") for t in tokens if t]
+    conds_c = _and_build_conds(blob_c, tokens)
     if conds_c:
         rows = (
             db.query(Customer.id, Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email, Customer.is_active)
@@ -2189,7 +2282,7 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     # Legacy debtor_name path — only if no customers master hit covers the same name.
     seen_names = {(m.display or {}).get("customer_name", "").lower() for m in out}
     blob_o = _concat_ws(Order.debtor_name, Order.debtor_code)
-    conds_o = [blob_o.ilike(f"%{t}%") for t in tokens if t]
+    conds_o = _and_build_conds(blob_o, tokens)
     if conds_o:
         rows = (
             db.query(Order.debtor_name, Order.debtor_code, Customer.id)
@@ -2217,7 +2310,7 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
 
 def _and_probe_form(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Form.code, Form.name, Form.purpose)
-    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    conds = _and_build_conds(blob, tokens)
     if not conds:
         return []
     rows = (
@@ -2241,7 +2334,7 @@ def _and_probe_form(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
 
 def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Transporter.code, Transporter.name, Transporter.normalized_name)
-    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    conds = _and_build_conds(blob, tokens)
     if not conds:
         return []
     rows = (
@@ -2265,7 +2358,7 @@ def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntit
 
 def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location)
-    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    conds = _and_build_conds(blob, tokens)
     if not conds:
         return []
     rows = (
@@ -2289,7 +2382,7 @@ def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]
 
 def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Supplier.supplier_code, Supplier.supplier_name, Supplier.contact_name)
-    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    conds = _and_build_conds(blob, tokens)
     if not conds:
         return []
     rows = (
@@ -2312,8 +2405,12 @@ def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
 
 
 def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
-    blob = _concat_ws(Order.order_number, Order.debtor_name, Order.debtor_code, Order.transporter)
-    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    # Code-only entity. Match exclusively on `order_number` so generic abbreviations
+    # like "DO" (delivery order) don't accidentally hit any debtor_name containing
+    # the substring (e.g. customer "MOCHA SDN BHD (DOCUMENT)" matched "DO"). Anyone
+    # filtering orders by customer name should resolve the customer separately and
+    # pass the customer entity, not bundle the name into a customer_order token.
+    conds = [Order.order_number.ilike(f"%{t}%") for t in tokens if t]
     if not conds:
         return []
     rows = (
@@ -2406,21 +2503,41 @@ def resolve_references_intersection(
 ) -> IntersectionResolutionResult:
     """AND-mode resolver. Returns rows matching EVERY token in the concatenated
     searchable columns of each entity type. Skips code-only types.
+
+    When `allowed_entity_types` has the SAME length as `tokens`, the two lists are
+    treated as positional pairs: token[i] is resolved ONLY against the entity type
+    at allowed_entity_types[i], and the AND-within-probe is restricted to the
+    tokens whose paired type matches that probe. Otherwise the legacy global-set
+    filter applies (probe skipped if its produces type is not in the set; every
+    surviving probe sees all tokens).
     """
+    raw_tokens = list(tokens or [])
+    pair_map = _build_token_type_map(raw_tokens, allowed_entity_types)
+
     t0 = time.perf_counter()
-    clean_tokens = [t.strip() for t in (tokens or []) if t and t.strip()]
+    clean_tokens = [t.strip() for t in raw_tokens if t and t.strip()]
     if not clean_tokens:
         return IntersectionResolutionResult(tokens=[], intersection=[], elapsed_ms=0.0)
 
-    allowed: Optional[frozenset[str]] = (
-        frozenset(allowed_entity_types) if allowed_entity_types is not None else None
-    )
+    if pair_map is not None:
+        allowed: Optional[frozenset[str]] = frozenset(pair_map.values())
+    elif allowed_entity_types is not None:
+        allowed = frozenset(_canonical_entity_type(e) for e in allowed_entity_types if e)
+    else:
+        allowed = None
+
     hits: list[ResolvedEntity] = []
     for probe, produces in _AND_PROBES:
         if allowed is not None and produces.isdisjoint(allowed):
             continue
+        if pair_map is not None:
+            probe_tokens = [t for t in clean_tokens if pair_map.get(t) in produces]
+            if not probe_tokens:
+                continue
+        else:
+            probe_tokens = clean_tokens
         try:
-            rows = probe(db, clean_tokens)
+            rows = probe(db, probe_tokens)
         except Exception:
             logger.exception("AND probe %s failed", probe.__name__)
             continue
@@ -2486,9 +2603,22 @@ def resolve_references(
         raw_query = query_or_tokens or ""
         tokens = extract_candidate_tokens(raw_query, max_candidates=max_candidates)
 
-    allowed: Optional[frozenset[str]] = (
-        frozenset(allowed_entity_types) if allowed_entity_types is not None else None
-    )
+    # Positional pairing: when caller passed parallel lists of tokens + entity types
+    # of equal length, each token resolves ONLY against its paired type. Otherwise
+    # `allowed` is treated as the legacy global type-set filter.
+    pair_map = _build_token_type_map(tokens, allowed_entity_types)
+    if pair_map is not None:
+        allowed: Optional[frozenset[str]] = frozenset(pair_map.values())
+    elif allowed_entity_types is not None:
+        allowed = frozenset(_canonical_entity_type(e) for e in allowed_entity_types if e)
+    else:
+        allowed = None
+
+    def _types_for(tok: str) -> Optional[frozenset[str]]:
+        if pair_map is not None:
+            paired = pair_map.get(tok)
+            return frozenset({paired}) if paired else frozenset()
+        return allowed
 
     # ----- Tier 1: exact -----
     per_token: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
@@ -2497,8 +2627,14 @@ def resolve_references(
         for probe, produces in _TIER1_PROBES:
             if allowed is not None and produces.isdisjoint(allowed):
                 continue
+            if pair_map is not None:
+                probe_tokens = [t for t in tokens if pair_map.get(t) in produces]
+                if not probe_tokens:
+                    continue
+            else:
+                probe_tokens = tokens
             try:
-                hits = probe(db, tokens)
+                hits = probe(db, probe_tokens)
             except Exception:
                 logger.exception("Tier-1 probe %s failed", probe.__name__)
                 continue
@@ -2510,7 +2646,10 @@ def resolve_references(
         for tok in tokens:
             if per_token[tok]:
                 continue
-            candidates = _tier2_fuzzy_lookup(db, tok, allowed_entity_types=allowed)
+            tok_allowed = _types_for(tok)
+            if tok_allowed is not None and not tok_allowed:
+                continue
+            candidates = _tier2_fuzzy_lookup(db, tok, allowed_entity_types=tok_allowed)
             if not candidates:
                 continue
             if len(candidates) == 1:
@@ -2525,7 +2664,10 @@ def resolve_references(
         for tok in tokens:
             if per_token[tok] or tok in ambiguous_tokens:
                 continue
-            hits = _tier3_embedding_lookup(db, tok, allowed_entity_types=allowed)
+            tok_allowed = _types_for(tok)
+            if tok_allowed is not None and not tok_allowed:
+                continue
+            hits = _tier3_embedding_lookup(db, tok, allowed_entity_types=tok_allowed)
             if hits:
                 per_token[tok] = hits
 
@@ -2534,8 +2676,10 @@ def resolve_references(
     # "transporter Svind gt delivery" resolve "gt delivery" → entity_type=transporter,
     # without explicit markers. Free-word candidates are bulk-queried so the cost
     # stays bounded regardless of how many surface from the phrase.
+    # Positional pairing already pins every token to a single type, so the free-word
+    # scan would only produce noise — skip it in that mode.
     freeword_resolutions: list[TokenResolution] = []
-    if raw_query and (allowed is None or {"customer", "transporter"} & allowed):
+    if raw_query and pair_map is None and (allowed is None or {"customer", "transporter"} & allowed):
         existing_lower = {t.lower() for t in tokens}
         freeword_candidates = [
             w

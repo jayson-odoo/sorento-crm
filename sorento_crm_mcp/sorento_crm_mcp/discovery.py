@@ -73,6 +73,13 @@ _DISCOVERY_FIND_SPEC = ToolSpec(
         "  • or:  'gt delivery' → transporter UUID\n"
         "  • and: ['cabana', 'filter tap'] → attachments named CABANA FILTER TAP PROMO\n"
         "  • and: ['sorento', 'kitchen sink'] → kitchen-sink promotions branded sorento\n\n"
+        "POSITIONAL PAIRING (token ↔ entity_type, same length):\n"
+        "  When `allowed_entity_types` has the same length as `tokens`, each token "
+        "is resolved ONLY against its paired type — different-type tokens never "
+        "cross-contaminate. Use this when the user's phrase mixes entity classes:\n"
+        "  • tokens=['Fira Ventures','DO'], allowed_entity_types=['customer','delivery_order']\n"
+        "    → 'Fira Ventures' searched only as customer; 'DO' only as delivery_order.\n"
+        "  Different lengths fall back to a global type-whitelist (legacy behaviour).\n\n"
         "Response shape (or mode):\n"
         "  candidates: [{type, id, code, label, match_field, display}]\n"
         "  ambiguous: true when ANY token has >1 candidate (ask user to pick)\n"
@@ -134,12 +141,20 @@ def register_discovery_tools(mcp, settings: Settings, catalog: tuple[ToolSpec, .
         hint_types: Optional[list[str]] = None,
         match_mode: str = "or",
         tokens: Optional[list[str]] = None,
+        allowed_entity_types: Optional[list[str]] = None,
     ) -> str:
         """Resolve free-text entity references to canonical UUIDs.
 
         See tool description for full semantics. `match_mode=and` requires explicit
         `tokens` — pass each attribute as a separate token; we fall back to
         splitting `query` on commas when no tokens are supplied.
+
+        Positional pairing: pass `allowed_entity_types` with the SAME length as
+        `tokens` to pin each token to a single entity type. Example:
+            tokens=["Fira Ventures", "DO"],
+            allowed_entity_types=["customer", "delivery_order"]
+        → "Fira Ventures" is searched ONLY as a customer; "DO" ONLY as a
+        delivery_order. Different lengths fall back to the legacy global filter.
         """
         mode = (match_mode or "or").strip().lower()
         if mode not in {"or", "and"}:
@@ -156,6 +171,12 @@ def register_discovery_tools(mcp, settings: Settings, catalog: tuple[ToolSpec, .
             # asked for AND. Multi-word phrases should ideally arrive as a list.
             prepared_tokens = [t.strip() for t in query.split(",") if t.strip()]
 
+        prepared_types: list[str] = (
+            [t.strip() for t in allowed_entity_types if t and t.strip()]
+            if allowed_entity_types
+            else []
+        )
+
         client = CRMClient(settings)
         try:
             req_query: dict[str, Any] = {"match_mode": mode}
@@ -163,6 +184,8 @@ def register_discovery_tools(mcp, settings: Settings, catalog: tuple[ToolSpec, .
                 req_query["tokens"] = prepared_tokens
             else:
                 req_query["query"] = query
+            if prepared_types:
+                req_query["allowed_entity_types"] = prepared_types
             body = await client.get(
                 "/api/v1/system/references/resolve",
                 query=req_query,

@@ -42,8 +42,14 @@ class ResolveReferenceRequest(BaseModel):
     allowed_entity_types: list[str] | None = Field(
         default=None,
         description=(
-            "Restrict resolution to these entity types. Useful when caller knows it can only "
-            "consume e.g. promotion + attachment hits."
+            "Restrict resolution to these entity types. Two modes:\n"
+            "  • Set filter (default) — len != len(tokens): the list is treated as a "
+            "whitelist; every surviving probe runs against every token.\n"
+            "  • Positional pairing — len == len(tokens): tokens[i] is resolved ONLY "
+            "against allowed_entity_types[i]. Use this when the caller already knows "
+            "which token names which entity (e.g. tokens=['Fira Ventures','DO'] "
+            "paired with ['customer','delivery_order'] — 'DO' is searched only as a "
+            "delivery_order and never as a customer)."
         ),
     )
 
@@ -120,7 +126,11 @@ def resolve_reference(
     ),
     allowed_entity_types: list[str] | None = Query(
         None,
-        description="Optional whitelist of entity types to consider.",
+        description=(
+            "Entity-type whitelist. If its length equals `tokens`, pairs are positional "
+            "(token[i] resolved only against allowed_entity_types[i]); otherwise it acts "
+            "as a global set filter applied to every token."
+        ),
     ),
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
