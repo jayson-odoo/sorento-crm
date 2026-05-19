@@ -17,6 +17,16 @@ class ToolSpec:
     external: bool = False  # When true, the tool is registered by a custom handler
     # (not via the HTTP-backed _compile_tool template). Still appears in the
     # persisted `mcp_tools` catalog so admins can assign it to an AI assistant.
+    internal: bool = False  # When true, skipped from FastMCP registration unless
+    # MCP_EXPOSE_INTERNAL=1. Use for admin / back-office tools that should not
+    # appear in the n8n agent's tool catalog.
+    domain: str = ""  # Logical domain ("products", "orders", "procurement", ...).
+    # Used by crm_list_domains and the n8n RAG layer to filter retrieval by domain.
+    related_tools: tuple[str, ...] = ()  # Hand-curated cross-references emitted by
+    # crm_describe_tool so the agent can pivot between related list/get/by-product tools.
+    escalation_team: str = ""  # When the response is non-ok (needs_clarification,
+    # not_found, error), the envelope advertises this team as escalation target.
+    # Allowed: "sales" | "support" | "warehouse" | "procurement" | "".
 
 
 # Paths match [sorento_crm_backend/app/api/v1/__init__.py](sorento_crm_backend/app/api/v1/__init__.py) prefixes.
@@ -30,12 +40,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "price / dimensions) with filters and pagination. NOT for document/PDF requests: if the "
             "user asks for the product CATALOGUE, CATALOG, MASTER CATALOGUE, COMPANY BROCHURE, or "
             "PRICE LIST PDF, route to crm_resource_attachments_list instead; for per-SKU brochure / "
-            "datasheet / spec sheet of a named product, use crm_master_product_attachments_list. "
-            "`entities` is the free-text bag for product references (code, name, partial SKU, "
-            "descriptive phrase). ONE ENTITY PER ARRAY ELEMENT. Hybrid resolver (substring → "
-            "pg_trgm → RAG semantic). DO NOT pass numeric/range expressions like 'price > 100' or "
-            "'dimensions > 300mm' as `entities`; use the dedicated numeric filter parameters below. "
-            "`category_id` accepts UUID or category_code/name. `brand_id` accepts UUID or brand_code/name. "
+            "datasheet / spec sheet of a named product, use crm_master_product_attachments_by_product. "
+            "FILTER BY UUID: pass `product_ids` as csv / JSON list of canonical product UUIDs. "
+            "Resolve free-text refs (codes, names, descriptions) FIRST via `crm_find_entity`, then "
+            "pass the returned UUIDs here. `category_id` and `brand_id` are canonical UUIDs. "
             "PRICE: price_min, price_max (MYR). "
             "DIMENSIONS (all in millimetres): per-axis length_min/length_max, width_min/width_max, "
             "height_min/height_max. For axis-agnostic 'any side > X' queries (e.g. 'products with dimensions "
@@ -54,14 +62,14 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`dimensions_length`) to an array of linked docs ({id, original_filename, file_path, "
             "mime_type, attachment_type}). When the user asks about a value that has linked docs, "
             "answer from the value AND surface the doc in one go instead of fetching "
-            "`crm_product_attachments_*` separately."
+            "`crm_master_product_attachments_*` separately."
         ),
         "/api/v1/master-data/products",
         (),
         (
             "page",
             "limit",
-            "entities",
+            "product_ids",
             "status",
             "price_min",
             "price_max",
@@ -77,20 +85,24 @@ CATALOG: tuple[ToolSpec, ...] = (
             "sort",
             "dir",
         ),
+        domain="products",
+        related_tools=("crm_master_products_get", "crm_master_product_attachments_by_product", "crm_find_entity"),
+        escalation_team="sales",
     ),
     ToolSpec(
         "crm_master_products_get",
         (
-            "Get one product (first match). Pass the product reference via `entities` — code, "
-            "name, partial SKU, or descriptive phrase. Resolver: hybrid (substring ILIKE → "
-            "pg_trgm typo-tolerant → RAG semantic). The endpoint is the products list with "
-            "limit=1; the first row is the answer. ONE ENTITY PER ARRAY ELEMENT. Response may "
+            "Get one product by canonical UUID. Pass the product's UUID as `product_id` path "
+            "param. Resolve free-text product refs FIRST via `crm_find_entity`. Response may "
             "include `field_attachments` — a map of product field name (e.g. `weight`, "
             "`dimensions_length`) to an array of linked docs."
         ),
-        "/api/v1/master-data/products",
+        "/api/v1/master-data/products/{product_id}",
+        ("product_id",),
         (),
-        ("entities", "limit"),
+        domain="products",
+        related_tools=("crm_master_products_list", "crm_find_entity"),
+        escalation_team="sales",
     ),
     ToolSpec(
         "crm_master_products_select",
@@ -271,12 +283,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "List promotions (summary fields + linked attachments inline; no product lines). "
             "Each row already carries its `attachments` array — no second tool call needed for "
             "promotion documents. Default returns ACTIVE promotions (is_active=true AND today "
-            "within start_date/end_date); when a narrowing filter (entities, period) "
-            "yields zero active matches, falls back to INACTIVE matches automatically and sets "
-            "fallback_used=true on the response. Pass active=false to fetch historical-only "
-            "(no fallback). Use period_from / period_to (YYYY-MM-DD) to scope by overlap with the "
-            "promotion's [start_date, end_date] window. For product lines use "
-            "crm_marketing_promotion_products_list.\n\n"
+            "within start_date/end_date); when a narrowing filter yields zero active matches, "
+            "falls back to INACTIVE matches automatically and sets fallback_used=true on the "
+            "response. Pass active=false to fetch historical-only (no fallback). Use period_from "
+            "/ period_to (YYYY-MM-DD) to scope by overlap with the promotion's [start_date, "
+            "end_date] window. For product lines use crm_marketing_promotion_products_list.\n\n"
+            "FILTER BY UUID: pass `promotion_ids` (canonical promotion UUIDs) to scope to specific "
+            "promotions, or `product_ids` to find promotions containing any of these products. "
+            "Resolve free-text refs FIRST via `crm_find_entity`.\n\n"
+            "VISIBILITY is gated server-side from the contact's M2M access types (`contact_id` + "
+            "`space_id`). Promotions outside the contact's access overlap are excluded.\n\n"
             "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active level "
             "— backend auto-defaults to it. REQUIRED when the contact has >1 active levels; calling "
             "without it returns 422 + `allowed:[{name}]`. Names are DYNAMIC per contact — do NOT "
@@ -284,37 +300,39 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`crm_user_management_contact_access_levels_active` first; if 1 entry skip passing "
             "access_levels, if >1 map the user's phrasing to one of the returned `name` values and "
             "pass that name. A value not in the live active set → 403 + refreshed `allowed`.\n\n"
-            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO `entities`. If the user mentions a phrase "
-            "that sounds like a customer-tier / org-role (`sorento dealer`, `dealer`, `mocha "
-            "office`, `end user`, `sorento office`, etc.), that phrase is the `access_levels` "
-            "filter — NEVER pass it as `entities`. `entities` is for product / promotion descriptive "
-            "text only (e.g. `kitchen sink`, `NL series`). When unsure, call the discovery tool first "
-            "and check whether the user's phrase fuzzy-matches any returned `name`."
+            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO ANY OTHER PARAM. Phrases like `sorento "
+            "dealer`, `mocha office`, `end user` are `access_levels` only."
         ),
         "/api/v1/marketing/promotions",
         (),
-        ("page", "limit", "entities", "active", "period_from", "period_to", "sort", "dir", "contact_id", "space_id", "access_levels"),
+        ("page", "limit", "promotion_ids", "product_ids", "active", "period_from", "period_to", "sort", "dir", "contact_id", "space_id", "access_levels"),
+        domain="promotions",
+        related_tools=("crm_marketing_promotions_get", "crm_marketing_promotion_products_list", "crm_find_entity"),
+        escalation_team="sales",
     ),
     ToolSpec(
         "crm_marketing_promotions_get",
         (
-            "Get one promotion: metadata, groups (FOC tiers), AND linked attachments inline. "
-            "No second tool call needed for attachments — they come back on the same response. "
-            "Does NOT include product lines by default; set include_products=true only if you need "
-            "nested SKU lines. Visibility is gated server-side from the contact's M2M access types "
-            "(`contact_id` + `space_id`); a 404 is returned when the promotion does not overlap the "
-            "contact's access types, and inline attachments are filtered the same way.\n\n"
+            "Get one promotion by canonical UUID: metadata, groups (FOC tiers), AND linked "
+            "attachments inline. No second tool call needed for attachments — they come back on "
+            "the same response. Does NOT include product lines by default; set include_products=true "
+            "only if you need nested SKU lines. Visibility is gated server-side from the contact's "
+            "M2M access types (`contact_id` + `space_id`); a 404 is returned when the promotion "
+            "does not overlap the contact's access types.\n\n"
+            "Pass the promotion's UUID as `promotion_id` path param. Resolve free-text refs FIRST "
+            "via `crm_find_entity`.\n\n"
             "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active "
             "level — backend auto-defaults to it. REQUIRED when the contact has >1; calling without "
             "it returns 422 + `allowed:[{name}]`. Call "
             "`crm_user_management_contact_access_levels_active` first; if 1 entry skip passing, "
-            "if >1 map user's phrasing to one of the returned `name` values and pass it.\n\n"
-            "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO ANY OTHER PARAM. Phrases like `sorento "
-            "dealer`, `dealer`, `mocha office`, `end user` are `access_levels`, never `entities`."
+            "if >1 map user's phrasing to one of the returned `name` values and pass it."
         ),
-        "/api/v1/marketing/promotions",
-        (),
-        ("entities", "limit", "contact_id", "space_id", "access_levels"),
+        "/api/v1/marketing/promotions/{promotion_id}",
+        ("promotion_id",),
+        ("contact_id", "space_id", "access_levels"),
+        domain="promotions",
+        related_tools=("crm_marketing_promotions_list", "crm_find_entity"),
+        escalation_team="sales",
     ),
     ToolSpec(
         "crm_marketing_promotion_products_nested",
@@ -732,21 +750,15 @@ CATALOG: tuple[ToolSpec, ...] = (
             "time-of-day; `estimated_delivery_date` is not returned; `order_status` is a plain "
             "human-readable string (e.g. \"New\", \"Delivered\"), not an object. "
             "External/AI-agent callers are HARD-CAPPED at limit=10 server-side regardless of the "
-            "value sent — narrow via `entities` and date filters instead of asking for more rows.\n\n"
-            "ENTITY FILTER (single bag): pass anything the user names — customer names/codes, "
-            "product codes/SKUs, transporter labels, order numbers — as STRINGS in `entities`. "
-            "*** ONE ENTITY PER ARRAY ELEMENT. *** Do NOT concatenate multiple entities into a "
-            "single string. Do NOT prefix with type labels like \"transporter\" / \"customer\". "
-            "CORRECT: entities=[\"Svind Enterprise\", \"GT Delivery\"]. "
-            "WRONG: entities=[\"transporter Svind Enterprise gt delivery\"] — the server treats "
-            "that as one phrase and will likely miss both. "
-            "Do NOT try to classify the type yourself; the server resolves each entry via the "
-            "entity_resolver (exact → prefix ILIKE → semantic embedding) and routes it to the "
-            "right filter. Multiple values of the same type are OR'd (IN); different types are "
-            "AND'd (intersection). The response includes "
-            "`resolved_entities` with `resolved` (what matched), `ambiguous` (multiple candidates "
-            "— ask the user to pick), and `unresolved` (no match — tell the user). ALWAYS surface "
-            "ambiguous/unresolved back to the user before declaring a result.\n\n"
+            "value sent — narrow via UUID filters and date filters instead of asking for more rows.\n\n"
+            "FILTER BY UUID — pass typed canonical UUIDs (csv / JSON list / repeated):\n"
+            "  • `order_ids` — specific orders.\n"
+            "  • `customer_ids` — customers (matches Order.customer_id, falls back to debtor_name "
+            "for legacy rows).\n"
+            "  • `product_ids` — orders containing any of these products (joins order lines).\n"
+            "  • `transporter_ids` — transporters (matches Order.transporter_id, falls back to "
+            "Order.transporter text for legacy rows).\n"
+            "Resolve free-text refs FIRST via `crm_find_entity`, then pass UUIDs here.\n\n"
             "DATE FILTER RULE — pick the param family from the user's verb, not the time window.\n"
             "DELIVERY verbs ('delivered', 'received', 'dropped off', 'for delivery', 'pending delivery', 'arrived', 'delivery date') "
             "=> use `actual_delivery_date_from` / `actual_delivery_date_to`.\n"
@@ -776,24 +788,33 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "page",
             "limit",
-            "entities",
+            "order_ids",
+            "customer_ids",
+            "product_ids",
+            "transporter_ids",
+            "order_date_from",
+            "order_date_to",
             "actual_delivery_date_from",
             "actual_delivery_date_to",
             "sort",
             "dir",
         ),
+        domain="orders",
+        related_tools=("crm_order_management_orders_get", "crm_order_management_orders_by_product_list", "crm_find_entity"),
+        escalation_team="sales",
     ),
     ToolSpec(
         "crm_order_management_orders_get",
         (
-            "Get one order (first match). Pass the order reference via `entities` — order "
-            "number, customer name, etc. Hybrid resolver (substring → pg_trgm → RAG). Returns "
-            "list with limit=1 from the same endpoint as orders_list; first row is the order. "
-            "ONE ENTITY PER ARRAY ELEMENT."
+            "Get one order by canonical UUID. Pass the order's UUID as `order_id` path param. "
+            "Resolve free-text order number / customer phrase to a UUID FIRST via `crm_find_entity`."
         ),
-        "/api/v1/order-management/orders",
+        "/api/v1/order-management/orders/{order_id}",
+        ("order_id",),
         (),
-        ("entities", "limit"),
+        domain="orders",
+        related_tools=("crm_order_management_orders_list", "crm_find_entity"),
+        escalation_team="sales",
     ),
     ToolSpec(
         "crm_order_management_orders_by_product_list",
@@ -917,21 +938,27 @@ CATALOG: tuple[ToolSpec, ...] = (
     # instead. Kept here for admin / back-office operations only.
     ToolSpec(
         "crm_procurement_packing_lists_list",
-        "INTERNAL / ADMIN only: raw inbound shipment headers including received quantities, SPO counts, and internal IDs. For user-facing 'any incoming?' questions use crm_incoming_stock_shipments. `supplier_id` accepts UUID or supplier_code/name.",
+        "INTERNAL / ADMIN only: raw inbound shipment headers including received quantities, SPO counts, and internal IDs. For user-facing 'any incoming?' questions use crm_incoming_stock_shipments. `supplier_id` is a canonical UUID.",
         "/api/v1/procurement/packing-lists",
         (),
         ("page", "limit", "query", "supplier_id", "shipment_status", "sort", "dir"),
+        internal=True,
+        domain="procurement",
+        escalation_team="procurement",
     ),
     ToolSpec(
         "crm_procurement_packing_lists_get",
-        "INTERNAL / ADMIN only: full raw inbound shipment detail including received/rejected quantities, SPO allocations, linked GRNs, and internal IDs. For user-facing 'products in this shipment' use crm_incoming_stock_shipment_products. `shipment_id` accepts UUID, shipment_number, BOL, container #, or invoice #.",
+        "INTERNAL / ADMIN only: full raw inbound shipment detail including received/rejected quantities, SPO allocations, linked GRNs, and internal IDs. For user-facing 'products in this shipment' use crm_incoming_stock_shipment_products. `shipment_id` must be a canonical UUID.",
         "/api/v1/procurement/packing-lists/{shipment_id}",
         ("shipment_id",),
         (),
+        internal=True,
+        domain="procurement",
+        escalation_team="procurement",
     ),
     ToolSpec(
         "crm_procurement_spo_allocations_grouped_by_shipment",
-        "INTERNAL / ADMIN only: raw SPO allocation aggregates per shipment (receipt_status, counts). For user-facing 'any incoming for product X' use crm_incoming_stock_by_product. `warehouse_id` accepts UUID or warehouse_code/name.",
+        "INTERNAL / ADMIN only: raw SPO allocation aggregates per shipment (receipt_status, counts). For user-facing 'any incoming for product X' use crm_incoming_stock_by_product. `warehouse_id` is a canonical UUID.",
         "/api/v1/procurement/spo-allocations/grouped-by-shipment",
         (),
         (
@@ -944,6 +971,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "sort",
             "dir",
         ),
+        internal=True,
+        domain="procurement",
+        escalation_team="procurement",
     ),
     ToolSpec(
         "crm_procurement_spo_allocations_grouped_by_spo",
@@ -960,10 +990,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "sort",
             "dir",
         ),
+        internal=True,
+        domain="procurement",
+        escalation_team="procurement",
     ),
     ToolSpec(
         "crm_procurement_spo_allocations_list",
-        "INTERNAL / ADMIN only: flat list of raw SPO allocations with receipt_status, quantity_received, quantity_rejected, SPO numbers. Do NOT use for user enquiries. `shipment_id` accepts UUID or shipment_number / BOL / container / invoice. `warehouse_id` accepts UUID or warehouse_code/name.",
+        "INTERNAL / ADMIN only: flat list of raw SPO allocations with receipt_status, quantity_received, quantity_rejected, SPO numbers. Do NOT use for user enquiries. `shipment_id` and `warehouse_id` are canonical UUIDs.",
         "/api/v1/procurement/spo-allocations",
         (),
         (
@@ -976,35 +1009,45 @@ CATALOG: tuple[ToolSpec, ...] = (
             "sort",
             "dir",
         ),
+        internal=True,
+        domain="procurement",
+        escalation_team="procurement",
     ),
     ToolSpec(
         "crm_procurement_spo_allocations_get",
-        "INTERNAL / ADMIN only: single SPO allocation with linked GRNs and raw receipt fields. `allocation_id` accepts UUID or spo_number.",
+        "INTERNAL / ADMIN only: single SPO allocation with linked GRNs and raw receipt fields. `allocation_id` is a canonical UUID.",
         "/api/v1/procurement/spo-allocations/{allocation_id}",
         ("allocation_id",),
         (),
+        internal=True,
+        domain="procurement",
+        escalation_team="procurement",
     ),
     ToolSpec(
         "crm_procurement_grn_list",
         (
             "INTERNAL / ADMIN only: raw GRN / picking headers list with statuses and totals. "
             "For user-facing 'has a GRN been created?' use crm_incoming_stock_grn. "
-            "FUZZY SEARCH: pass `product_query` for a partial product filter on linked "
-            "picking_lines (matches product_code/product_name/description, case-insensitive). "
-            "When product embeddings exist, shortform codes expand to canonical SKUs (e.g. "
-            "`product_query='WC101'` matches 'SRTWC101', 'SRTWC101-RL'). "
-            "Omitting `limit` defaults to 50; cap is 200."
+            "Pass `product_ids` (canonical UUIDs) to narrow to GRNs whose linked "
+            "picking_lines reference any of the given products. Omitting `limit` defaults "
+            "to 50; cap is 200."
         ),
         "/api/v1/procurement/grn",
         (),
-        ("page", "limit", "entities", "picking_status", "inspection_status", "sort", "dir"),
+        ("page", "limit", "product_ids", "picking_status", "inspection_status", "sort", "dir"),
+        internal=True,
+        domain="procurement",
+        escalation_team="procurement",
     ),
     ToolSpec(
         "crm_procurement_grn_get",
-        "INTERNAL / ADMIN only: full GRN / picking header including picking lines and quantities. `grn_id` accepts UUID or picking_number.",
+        "INTERNAL / ADMIN only: full GRN / picking header including picking lines and quantities. `grn_id` is a canonical UUID.",
         "/api/v1/procurement/grn/{grn_id}",
         ("grn_id",),
         (),
+        internal=True,
+        domain="procurement",
+        escalation_team="procurement",
     ),
     ToolSpec(
         "crm_procurement_picking_lines_list",
@@ -1012,6 +1055,9 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/procurement/picking-lines",
         (),
         ("page", "limit", "query", "sort", "dir"),
+        internal=True,
+        domain="procurement",
+        escalation_team="procurement",
     ),
     # --- forms ---
     ToolSpec(

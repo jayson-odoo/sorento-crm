@@ -40,6 +40,7 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.product import Product
+from app.models.resources import Attachment, AttachmentType
 
 
 logger = logging.getLogger(__name__)
@@ -334,8 +335,9 @@ def extract_freeword_candidates(query: str, *, max_candidates: int = 6) -> list[
 class ResolvedEntity:
     """One hit for a candidate token."""
 
-    entity_type: str  # product | customer_order | customer | inbound_shipment | spo_allocation | grn | warehouse | supplier | promotion
+    entity_type: str  # product | customer_order | customer | inbound_shipment | spo_allocation | grn | warehouse | supplier | promotion | transporter | form | attachment
     canonical_code: str  # the business code the user should pass to tools (e.g. order_number)
+    uuid: Optional[str] = None  # the row's primary key — required for tools that accept UUID-only inputs
     display: dict[str, Any] = field(default_factory=dict)
     match_field: str = ""  # which column matched (e.g. "product_code", "product_name")
     match_tier: str = "exact"  # "exact" | "prefix" | "substring" | "embedding"
@@ -462,6 +464,7 @@ class ResolutionResult:
                         {
                             "entity_type": m.entity_type,
                             "canonical_code": m.canonical_code,
+                            "uuid": m.uuid,
                             "match_field": m.match_field,
                             "match_tier": m.match_tier,
                             "similarity": m.similarity,
@@ -502,12 +505,12 @@ def _probe_product(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
         return result
     lowered = [t.lower() for t in tokens]
     rows = (
-        db.query(Product.product_code, Product.product_name, Product.is_active)
+        db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
         .filter(func.lower(Product.product_code).in_(lowered))
         .all()
     )
     code_to_token = {t.lower(): t for t in tokens}
-    for code, name, is_active in rows:
+    for pid, code, name, is_active in rows:
         token = code_to_token.get(str(code).lower())
         if not token:
             continue
@@ -515,6 +518,7 @@ def _probe_product(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
             ResolvedEntity(
                 entity_type="product",
                 canonical_code=code,
+                uuid=str(pid) if pid else None,
                 match_field="product_code",
                 display={"product_name": name, "is_active": bool(is_active)},
             )
@@ -530,6 +534,7 @@ def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[Reso
     lowered = [t.lower() for t in tokens]
     rows = (
         db.query(
+            Order.id,
             Order.order_number,
             Order.debtor_name,
             Order.order_date,
@@ -554,6 +559,7 @@ def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[Reso
             ResolvedEntity(
                 entity_type="customer_order",
                 canonical_code=row.order_number,
+                uuid=str(row.id) if row.id else None,
                 match_field="order_number",
                 display={
                     "customer_name": row.debtor_name,
@@ -579,6 +585,7 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
     # Exact by customer_code
     rows = (
         db.query(
+            Customer.id,
             Customer.customer_code,
             Customer.customer_name,
             Customer.phone_number,
@@ -589,7 +596,7 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
         .all()
     )
     code_to_token = {t.lower(): t for t in tokens}
-    for code, name, phone, email, is_active in rows:
+    for cid, code, name, phone, email, is_active in rows:
         token = code_to_token.get(str(code).lower())
         if not token:
             continue
@@ -597,6 +604,7 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
             ResolvedEntity(
                 entity_type="customer",
                 canonical_code=code,
+                uuid=str(cid) if cid else None,
                 match_field="customer_code",
                 display={
                     "customer_name": name,
@@ -612,6 +620,7 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
         term = f"%{token}%"
         rows = (
             db.query(
+                Customer.id,
                 Customer.customer_code,
                 Customer.customer_name,
                 Customer.phone_number,
@@ -626,11 +635,12 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
             .limit(3)
             .all()
         )
-        for code, name, phone, email in rows:
+        for cid, code, name, phone, email in rows:
             result[token].append(
                 ResolvedEntity(
                     entity_type="customer",
                     canonical_code=code or name,
+                    uuid=str(cid) if cid else None,
                     match_field="customer_name" if (name and token.lower() in (name or "").lower()) else "phone_number",
                     display={"customer_name": name, "phone_number": phone, "email": email},
                 )
@@ -653,7 +663,8 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
     # Tier 1 — exact case-insensitive match.
     lowered = [t.lower() for t in tokens if t]
     rows = (
-        db.query(Order.debtor_name, Order.debtor_code)
+        db.query(Order.debtor_name, Order.debtor_code, Customer.id)
+        .outerjoin(Customer, func.lower(func.btrim(Customer.customer_name)) == func.lower(func.btrim(Order.debtor_name)))
         .filter(
             Order.deleted_at.is_(None),
             Order.debtor_name.isnot(None),
@@ -663,7 +674,7 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
         .all()
     )
     name_to_token = {t.lower(): t for t in tokens if t}
-    for debtor_name, debtor_code in rows:
+    for debtor_name, debtor_code, customer_id in rows:
         token = name_to_token.get(str(debtor_name).lower())
         if not token:
             continue
@@ -673,6 +684,7 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
             ResolvedEntity(
                 entity_type="customer",
                 canonical_code=debtor_name,
+                uuid=str(customer_id) if customer_id else None,
                 match_field="debtor_name",
                 display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
             )
@@ -699,7 +711,8 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
         if not like_clauses:
             continue
         rows = (
-            db.query(Order.debtor_name, Order.debtor_code)
+            db.query(Order.debtor_name, Order.debtor_code, Customer.id)
+            .outerjoin(Customer, func.lower(func.btrim(Customer.customer_name)) == func.lower(func.btrim(Order.debtor_name)))
             .filter(
                 Order.deleted_at.is_(None),
                 Order.debtor_name.isnot(None),
@@ -709,13 +722,14 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
             .limit(5)
             .all()
         )
-        for debtor_name, debtor_code in rows:
+        for debtor_name, debtor_code, customer_id in rows:
             if any(m.canonical_code == debtor_name for m in result[token]):
                 continue
             result[token].append(
                 ResolvedEntity(
                     entity_type="customer",
                     canonical_code=debtor_name,
+                    uuid=str(customer_id) if customer_id else None,
                     match_field="debtor_name",
                     display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
                 )
@@ -739,7 +753,7 @@ def _probe_transporter_freeword(db: Session, tokens: list[str]) -> dict[str, lis
             continue
         term = f"%{token}%"
         rows = (
-            db.query(Transporter.code, Transporter.name, Transporter.normalized_name)
+            db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
             .filter(
                 or_(
                     Transporter.name.ilike(term),
@@ -750,13 +764,14 @@ def _probe_transporter_freeword(db: Session, tokens: list[str]) -> dict[str, lis
             .limit(5)
             .all()
         )
-        for code, name, _norm in rows:
+        for tid, code, name, _norm in rows:
             if any(m.canonical_code == code for m in result[token]):
                 continue
             result[token].append(
                 ResolvedEntity(
                     entity_type="transporter",
                     canonical_code=code,
+                    uuid=str(tid) if tid else None,
                     match_field="transporter_name",
                     match_tier="substring",
                     display={"code": code, "name": name},
@@ -773,7 +788,7 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
         return result
     lowered = [t.lower() for t in tokens if t]
     rows = (
-        db.query(Transporter.code, Transporter.name, Transporter.normalized_name)
+        db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
         .filter(
             or_(
                 func.lower(Transporter.code).in_(lowered),
@@ -783,7 +798,7 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
         )
         .all()
     )
-    for code, name, norm in rows:
+    for tid, code, name, norm in rows:
         for token in tokens:
             tl = token.lower()
             if tl not in {(code or "").lower(), (name or "").lower(), (norm or "").lower()}:
@@ -794,6 +809,7 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
                 ResolvedEntity(
                     entity_type="transporter",
                     canonical_code=code,
+                    uuid=str(tid) if tid else None,
                     match_field="transporter_code" if tl == (code or "").lower() else "transporter_name",
                     display={"code": code, "name": name},
                 )
@@ -805,7 +821,7 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
             continue
         term = f"%{token}%"
         rows = (
-            db.query(Transporter.code, Transporter.name, Transporter.normalized_name)
+            db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
             .filter(
                 or_(
                     Transporter.name.ilike(term),
@@ -815,13 +831,14 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
             .limit(5)
             .all()
         )
-        for code, name, _norm in rows:
+        for tid, code, name, _norm in rows:
             if any(m.canonical_code == code for m in result[token]):
                 continue
             result[token].append(
                 ResolvedEntity(
                     entity_type="transporter",
                     canonical_code=code,
+                    uuid=str(tid) if tid else None,
                     match_field="transporter_name",
                     display={"code": code, "name": name},
                 )
@@ -837,6 +854,7 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
     lowered = [t.lower() for t in tokens]
     rows = (
         db.query(
+            InboundShipment.id,
             InboundShipment.shipment_number,
             InboundShipment.shipping_container_number,
             InboundShipment.bill_of_lading_number,
@@ -873,6 +891,7 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
                 ResolvedEntity(
                     entity_type="inbound_shipment",
                     canonical_code=row.shipment_number,
+                    uuid=str(row.id) if row.id else None,
                     match_field=match_field,
                     display={
                         "shipment_number": row.shipment_number,
@@ -892,13 +911,13 @@ def _probe_spo(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]
         return result
     lowered = [t.lower() for t in tokens]
     rows = (
-        db.query(SPOAllocation.spo_number)
+        db.query(SPOAllocation.id, SPOAllocation.spo_number)
         .filter(func.lower(SPOAllocation.spo_number).in_(lowered))
         .distinct()
         .all()
     )
     code_to_token = {t.lower(): t for t in tokens}
-    for (spo_number,) in rows:
+    for sid, spo_number in rows:
         token = code_to_token.get(str(spo_number or "").lower())
         if not token:
             continue
@@ -906,6 +925,7 @@ def _probe_spo(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]
             ResolvedEntity(
                 entity_type="spo_allocation",
                 canonical_code=spo_number,
+                uuid=str(sid) if sid else None,
                 match_field="spo_number",
                 display={"spo_number": spo_number},
             )
@@ -920,6 +940,7 @@ def _probe_grn(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]
     lowered = [t.lower() for t in tokens]
     rows = (
         db.query(
+            PickingHeader.id,
             PickingHeader.picking_number,
             PickingHeader.picking_date,
             PickingHeader.picking_status,
@@ -940,6 +961,7 @@ def _probe_grn(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]
             ResolvedEntity(
                 entity_type="grn",
                 canonical_code=row.picking_number,
+                uuid=str(row.id) if row.id else None,
                 match_field="picking_number",
                 display={
                     "grn_number": row.picking_number,
@@ -957,12 +979,12 @@ def _probe_warehouse(db: Session, tokens: list[str]) -> dict[str, list[ResolvedE
         return result
     lowered = [t.lower() for t in tokens]
     rows = (
-        db.query(Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location, Warehouse.is_active)
+        db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location, Warehouse.is_active)
         .filter(func.lower(Warehouse.warehouse_code).in_(lowered))
         .all()
     )
     code_to_token = {t.lower(): t for t in tokens}
-    for code, name, location, is_active in rows:
+    for wid, code, name, location, is_active in rows:
         token = code_to_token.get(str(code).lower())
         if not token:
             continue
@@ -970,6 +992,7 @@ def _probe_warehouse(db: Session, tokens: list[str]) -> dict[str, list[ResolvedE
             ResolvedEntity(
                 entity_type="warehouse",
                 canonical_code=code,
+                uuid=str(wid) if wid else None,
                 match_field="warehouse_code",
                 display={
                     "warehouse_name": name,
@@ -988,6 +1011,7 @@ def _probe_supplier(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
     lowered = [t.lower() for t in tokens]
     rows = (
         db.query(
+            Supplier.id,
             Supplier.supplier_code,
             Supplier.supplier_name,
             Supplier.contact_name,
@@ -999,7 +1023,7 @@ def _probe_supplier(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
         .all()
     )
     code_to_token = {t.lower(): t for t in tokens}
-    for code, name, contact, email, phone, is_active in rows:
+    for sid, code, name, contact, email, phone, is_active in rows:
         token = code_to_token.get(str(code).lower())
         if not token:
             continue
@@ -1007,6 +1031,7 @@ def _probe_supplier(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
             ResolvedEntity(
                 entity_type="supplier",
                 canonical_code=code,
+                uuid=str(sid) if sid else None,
                 match_field="supplier_code",
                 display={
                     "supplier_name": name,
@@ -1024,6 +1049,55 @@ def _probe_promotion(db: Session, tokens: list[str]) -> dict[str, list[ResolvedE
     return {t: [] for t in tokens}
 
 
+def _probe_attachment(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Exact case-insensitive match on attachments.original_filename (without extension or with).
+
+    Attachments have no business code; the filename and user-editable description are the
+    only human handles. Tier-1 matches a token equal to the filename (e.g. "catalogue-2026.pdf").
+    """
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens]
+    rows = (
+        db.query(
+            Attachment.id,
+            Attachment.original_filename,
+            Attachment.description,
+            Attachment.mime_type,
+            Attachment.full_directory_path,
+            AttachmentType.type_name,
+        )
+        .outerjoin(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
+        .filter(
+            Attachment.is_deleted.is_(False),
+            func.lower(Attachment.original_filename).in_(lowered),
+        )
+        .all()
+    )
+    name_to_token = {t.lower(): t for t in tokens}
+    for aid, filename, description, mime, dir_path, type_name in rows:
+        token = name_to_token.get(str(filename).lower())
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="attachment",
+                canonical_code=filename,
+                uuid=str(aid) if aid else None,
+                match_field="original_filename",
+                display={
+                    "filename": filename,
+                    "description": description,
+                    "attachment_type": type_name,
+                    "mime_type": mime,
+                    "directory": dir_path,
+                },
+            )
+        )
+    return result
+
+
 # --------------------------------------------------------------------------- #
 # Tier 2 — prefix / substring probes (run only for tokens Tier 1 missed)
 # --------------------------------------------------------------------------- #
@@ -1038,7 +1112,7 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     prefix = f"{token}%"
     substr = f"%{token}%"
     rows = (
-        db.query(Product.product_code, Product.product_name, Product.is_active)
+        db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
         .filter(Product.product_code.ilike(prefix))
         .limit(PREFIX_LIMIT)
         .all()
@@ -1046,7 +1120,7 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     tier = "prefix"
     if not rows:
         rows = (
-            db.query(Product.product_code, Product.product_name, Product.is_active)
+            db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
             .filter(Product.product_code.ilike(substr))
             .limit(PREFIX_LIMIT)
             .all()
@@ -1056,11 +1130,12 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
         ResolvedEntity(
             entity_type="product",
             canonical_code=code,
+            uuid=str(pid) if pid else None,
             match_field="product_code",
             match_tier=tier,
             display={"product_name": name, "is_active": bool(is_active)},
         )
-        for code, name, is_active in rows
+        for pid, code, name, is_active in rows
     ]
 
 
@@ -1068,6 +1143,7 @@ def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity
     prefix = f"{token}%"
     rows = (
         db.query(
+            Order.id,
             Order.order_number,
             Order.debtor_name,
             Order.estimated_delivery_date,
@@ -1083,6 +1159,7 @@ def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity
         ResolvedEntity(
             entity_type="customer_order",
             canonical_code=row.order_number,
+            uuid=str(row.id) if row.id else None,
             match_field="order_number",
             match_tier="prefix",
             display={
@@ -1100,6 +1177,7 @@ def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEnti
     prefix = f"{token}%"
     rows = (
         db.query(
+            InboundShipment.id,
             InboundShipment.shipment_number,
             InboundShipment.shipping_container_number,
             InboundShipment.shipment_status,
@@ -1120,6 +1198,7 @@ def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEnti
         ResolvedEntity(
             entity_type="inbound_shipment",
             canonical_code=row.shipment_number,
+            uuid=str(row.id) if row.id else None,
             match_field="shipment_number",
             match_tier="prefix",
             display={
@@ -1136,7 +1215,7 @@ def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEnti
 def _prefix_probe_customer(db: Session, token: str) -> list[ResolvedEntity]:
     prefix = f"{token}%"
     rows = (
-        db.query(Customer.customer_code, Customer.customer_name, Customer.phone_number)
+        db.query(Customer.id, Customer.customer_code, Customer.customer_name, Customer.phone_number)
         .filter(Customer.customer_code.ilike(prefix))
         .limit(PREFIX_LIMIT)
         .all()
@@ -1145,11 +1224,12 @@ def _prefix_probe_customer(db: Session, token: str) -> list[ResolvedEntity]:
         ResolvedEntity(
             entity_type="customer",
             canonical_code=code,
+            uuid=str(cid) if cid else None,
             match_field="customer_code",
             match_tier="prefix",
             display={"customer_name": name, "phone_number": phone},
         )
-        for code, name, phone in rows
+        for cid, code, name, phone in rows
     ]
 
 
@@ -1164,7 +1244,8 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
     prefix = f"{token}%"
     substr = f"%{token}%"
     rows = (
-        db.query(Order.debtor_name, Order.debtor_code)
+        db.query(Order.debtor_name, Order.debtor_code, Customer.id)
+        .outerjoin(Customer, func.lower(func.btrim(Customer.customer_name)) == func.lower(func.btrim(Order.debtor_name)))
         .filter(
             Order.deleted_at.is_(None),
             Order.debtor_name.isnot(None),
@@ -1177,7 +1258,8 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
     tier = "prefix"
     if not rows:
         rows = (
-            db.query(Order.debtor_name, Order.debtor_code)
+            db.query(Order.debtor_name, Order.debtor_code, Customer.id)
+            .outerjoin(Customer, func.lower(func.btrim(Customer.customer_name)) == func.lower(func.btrim(Order.debtor_name)))
             .filter(
                 Order.deleted_at.is_(None),
                 Order.debtor_name.isnot(None),
@@ -1190,7 +1272,7 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
         tier = "substring"
     seen: set[str] = set()
     out: list[ResolvedEntity] = []
-    for debtor_name, debtor_code in rows:
+    for debtor_name, debtor_code, customer_id in rows:
         key = (debtor_name or "").lower()
         if not key or key in seen:
             continue
@@ -1199,6 +1281,7 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
             ResolvedEntity(
                 entity_type="customer",
                 canonical_code=debtor_name,
+                uuid=str(customer_id) if customer_id else None,
                 match_field="debtor_name",
                 match_tier=tier,
                 display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
@@ -1210,7 +1293,7 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
 def _prefix_probe_warehouse(db: Session, token: str) -> list[ResolvedEntity]:
     prefix = f"{token}%"
     rows = (
-        db.query(Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.is_active)
+        db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.is_active)
         .filter(Warehouse.warehouse_code.ilike(prefix))
         .limit(PREFIX_LIMIT)
         .all()
@@ -1219,18 +1302,19 @@ def _prefix_probe_warehouse(db: Session, token: str) -> list[ResolvedEntity]:
         ResolvedEntity(
             entity_type="warehouse",
             canonical_code=code,
+            uuid=str(wid) if wid else None,
             match_field="warehouse_code",
             match_tier="prefix",
             display={"warehouse_name": name, "is_active": bool(is_active)},
         )
-        for code, name, is_active in rows
+        for wid, code, name, is_active in rows
     ]
 
 
 def _prefix_probe_supplier(db: Session, token: str) -> list[ResolvedEntity]:
     prefix = f"{token}%"
     rows = (
-        db.query(Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active)
+        db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active)
         .filter(Supplier.supplier_code.ilike(prefix))
         .limit(PREFIX_LIMIT)
         .all()
@@ -1239,18 +1323,19 @@ def _prefix_probe_supplier(db: Session, token: str) -> list[ResolvedEntity]:
         ResolvedEntity(
             entity_type="supplier",
             canonical_code=code,
+            uuid=str(sid) if sid else None,
             match_field="supplier_code",
             match_tier="prefix",
             display={"supplier_name": name, "is_active": bool(is_active)},
         )
-        for code, name, is_active in rows
+        for sid, code, name, is_active in rows
     ]
 
 
 def _prefix_probe_spo(db: Session, token: str) -> list[ResolvedEntity]:
     prefix = f"{token}%"
     rows = (
-        db.query(SPOAllocation.spo_number)
+        db.query(SPOAllocation.id, SPOAllocation.spo_number)
         .filter(SPOAllocation.spo_number.ilike(prefix))
         .distinct()
         .limit(PREFIX_LIMIT)
@@ -1260,11 +1345,12 @@ def _prefix_probe_spo(db: Session, token: str) -> list[ResolvedEntity]:
         ResolvedEntity(
             entity_type="spo_allocation",
             canonical_code=spo,
+            uuid=str(sid) if sid else None,
             match_field="spo_number",
             match_tier="prefix",
             display={"spo_number": spo},
         )
-        for (spo,) in rows
+        for sid, spo in rows
     ]
 
 
@@ -1272,6 +1358,7 @@ def _prefix_probe_grn(db: Session, token: str) -> list[ResolvedEntity]:
     prefix = f"{token}%"
     rows = (
         db.query(
+            PickingHeader.id,
             PickingHeader.picking_number,
             PickingHeader.picking_date,
             PickingHeader.picking_status,
@@ -1287,6 +1374,7 @@ def _prefix_probe_grn(db: Session, token: str) -> list[ResolvedEntity]:
         ResolvedEntity(
             entity_type="grn",
             canonical_code=row.picking_number,
+            uuid=str(row.id) if row.id else None,
             match_field="picking_number",
             match_tier="prefix",
             display={
@@ -1311,7 +1399,7 @@ def _prefix_probe_transporter(db: Session, token: str) -> list[ResolvedEntity]:
     prefix = f"{token}%"
     substr = f"%{token}%"
     rows = (
-        db.query(Transporter.code, Transporter.name, Transporter.normalized_name)
+        db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
         .filter(
             or_(
                 Transporter.code.ilike(prefix),
@@ -1325,7 +1413,7 @@ def _prefix_probe_transporter(db: Session, token: str) -> list[ResolvedEntity]:
     tier = "prefix"
     if not rows:
         rows = (
-            db.query(Transporter.code, Transporter.name, Transporter.normalized_name)
+            db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
             .filter(
                 or_(
                     Transporter.code.ilike(substr),
@@ -1339,7 +1427,7 @@ def _prefix_probe_transporter(db: Session, token: str) -> list[ResolvedEntity]:
         tier = "substring"
     seen: set[str] = set()
     out: list[ResolvedEntity] = []
-    for code, name, _norm in rows:
+    for tid, code, name, _norm in rows:
         key = (code or name or "").lower()
         if not key or key in seen:
             continue
@@ -1348,6 +1436,7 @@ def _prefix_probe_transporter(db: Session, token: str) -> list[ResolvedEntity]:
             ResolvedEntity(
                 entity_type="transporter",
                 canonical_code=code,
+                uuid=str(tid) if tid else None,
                 match_field="transporter_name",
                 match_tier=tier,
                 display={"code": code, "name": name},
@@ -1404,6 +1493,7 @@ def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
             ResolvedEntity(
                 entity_type="promotion",
                 canonical_code=str(pid),
+                uuid=str(pid),
                 match_field="description",
                 match_tier="substring" if is_substring_match else "prefix",
                 display={"description": description, "is_active": bool(is_active)},
@@ -1445,6 +1535,7 @@ def _prefix_probe_form(db: Session, token: str) -> list[ResolvedEntity]:
             ResolvedEntity(
                 entity_type="form",
                 canonical_code=code,
+                uuid=str(fid) if fid else None,
                 match_field=label,
                 match_tier=tier,
                 display={
@@ -1502,6 +1593,84 @@ def _prefix_probe_form(db: Session, token: str) -> list[ResolvedEntity]:
     return out[: PREFIX_LIMIT * 2]
 
 
+def _prefix_probe_attachment(db: Session, token: str) -> list[ResolvedEntity]:
+    """Prefix → substring ILIKE on filename, description, attachment_type.type_name.
+
+    Free-text doc references like "catalogue", "price list 2026", "spec sheet kitchen"
+    resolve to attachment UUIDs. Excludes soft-deleted rows.
+    """
+    if not token or len(token) < 3:
+        return []
+    prefix = f"{token}%"
+    substr = f"%{token}%"
+    base = (
+        db.query(
+            Attachment.id,
+            Attachment.original_filename,
+            Attachment.description,
+            Attachment.mime_type,
+            Attachment.full_directory_path,
+            AttachmentType.type_name,
+        )
+        .outerjoin(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
+        .filter(Attachment.is_deleted.is_(False))
+    )
+    prefix_rows = (
+        base.filter(
+            or_(
+                Attachment.original_filename.ilike(prefix),
+                Attachment.description.ilike(prefix),
+                AttachmentType.type_name.ilike(prefix),
+            )
+        )
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    substring_rows = (
+        base.filter(
+            or_(
+                Attachment.original_filename.ilike(substr),
+                Attachment.description.ilike(substr),
+                AttachmentType.type_name.ilike(substr),
+            )
+        )
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    seen: set[str] = set()
+    out: list[ResolvedEntity] = []
+    for aid, filename, description, mime, dir_path, type_name in list(prefix_rows) + list(substring_rows):
+        key = str(aid)
+        if key in seen:
+            continue
+        seen.add(key)
+        name_l = (filename or "").lower()
+        desc_l = (description or "").lower()
+        type_l = (type_name or "").lower()
+        tier = (
+            "prefix"
+            if name_l.startswith(token.lower()) or desc_l.startswith(token.lower()) or type_l.startswith(token.lower())
+            else "substring"
+        )
+        out.append(
+            ResolvedEntity(
+                entity_type="attachment",
+                canonical_code=filename,
+                uuid=key,
+                match_field="original_filename",
+                match_tier=tier,
+                display={
+                    "filename": filename,
+                    "description": description,
+                    "attachment_type": type_name,
+                    "mime_type": mime,
+                    "directory": dir_path,
+                },
+            )
+        )
+    return out[: PREFIX_LIMIT * 2]
+
+
 # Tier-2 probes paired with the entity_type(s) they produce, so callers can opt
 # out of probes that can't return anything they accept.
 _TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], frozenset[str]], ...] = (
@@ -1517,6 +1686,7 @@ _TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], froze
     (_prefix_probe_grn, frozenset({"grn"})),
     (_prefix_probe_promotion, frozenset({"promotion"})),
     (_prefix_probe_form, frozenset({"form"})),
+    (_prefix_probe_attachment, frozenset({"attachment"})),
 )
 
 
@@ -1634,6 +1804,7 @@ def _tier3_embedding_lookup(
         ResolvedEntity(
             entity_type=entity_type,
             canonical_code=canonical_code,
+            uuid=str(top.source_id) if top.source_id else None,
             match_field=f"embedding:{top.source_type}",
             match_tier="embedding",
             similarity=top_sim,
@@ -1676,7 +1847,7 @@ def _trgm_lookup(
             rows = db.execute(
                 text(
                     """
-                    SELECT product_code, product_name,
+                    SELECT id, product_code, product_name,
                            GREATEST(
                                similarity(product_code, :p),
                                similarity(product_name, :p),
@@ -1698,6 +1869,7 @@ def _trgm_lookup(
                     ResolvedEntity(
                         entity_type="product",
                         canonical_code=r.product_code,
+                        uuid=str(r.id) if r.id else None,
                         match_field="product_code",
                         match_tier="trgm",
                         similarity=sim,
@@ -1712,16 +1884,18 @@ def _trgm_lookup(
             rows = db.execute(
                 text(
                     """
-                    SELECT debtor_name, debtor_code,
+                    SELECT o.debtor_name, o.debtor_code,
+                           c.id AS customer_id,
                            GREATEST(
-                               similarity(COALESCE(debtor_name, ''), :p),
-                               similarity(COALESCE(debtor_code, ''), :p)
+                               similarity(COALESCE(o.debtor_name, ''), :p),
+                               similarity(COALESCE(o.debtor_code, ''), :p)
                            ) AS sim
-                    FROM orders
-                    WHERE deleted_at IS NULL
-                      AND debtor_name IS NOT NULL
-                      AND (debtor_name % :p OR debtor_code % :p)
-                    GROUP BY debtor_name, debtor_code
+                    FROM orders o
+                    LEFT JOIN customers c ON lower(btrim(c.customer_name)) = lower(btrim(o.debtor_name))
+                    WHERE o.deleted_at IS NULL
+                      AND o.debtor_name IS NOT NULL
+                      AND (o.debtor_name % :p OR o.debtor_code % :p)
+                    GROUP BY o.debtor_name, o.debtor_code, c.id
                     ORDER BY sim DESC
                     LIMIT :n
                     """
@@ -1736,6 +1910,7 @@ def _trgm_lookup(
                     ResolvedEntity(
                         entity_type="customer",
                         canonical_code=r.debtor_name,
+                        uuid=str(r.customer_id) if r.customer_id else None,
                         match_field="debtor_name",
                         match_tier="trgm",
                         similarity=sim,
@@ -1745,7 +1920,7 @@ def _trgm_lookup(
             rows = db.execute(
                 text(
                     """
-                    SELECT customer_code, customer_name,
+                    SELECT id, customer_code, customer_name,
                            GREATEST(
                                similarity(customer_code, :p),
                                similarity(customer_name, :p)
@@ -1766,6 +1941,7 @@ def _trgm_lookup(
                     ResolvedEntity(
                         entity_type="customer",
                         canonical_code=r.customer_code,
+                        uuid=str(r.id) if r.id else None,
                         match_field="customer_code",
                         match_tier="trgm",
                         similarity=sim,
@@ -1780,7 +1956,7 @@ def _trgm_lookup(
             rows = db.execute(
                 text(
                     """
-                    SELECT order_number, similarity(order_number, :p) AS sim
+                    SELECT id, order_number, similarity(order_number, :p) AS sim
                     FROM orders
                     WHERE deleted_at IS NULL AND order_number % :p
                     ORDER BY sim DESC
@@ -1797,6 +1973,7 @@ def _trgm_lookup(
                     ResolvedEntity(
                         entity_type="customer_order",
                         canonical_code=r.order_number,
+                        uuid=str(r.id) if r.id else None,
                         match_field="order_number",
                         match_tier="trgm",
                         similarity=sim,
@@ -1829,6 +2006,7 @@ def _trgm_lookup(
                     ResolvedEntity(
                         entity_type="promotion",
                         canonical_code=str(r.id),
+                        uuid=str(r.id),
                         match_field="promotion_id",
                         match_tier="trgm",
                         similarity=sim,
@@ -1843,7 +2021,7 @@ def _trgm_lookup(
             rows = db.execute(
                 text(
                     """
-                    SELECT code, name, normalized_name,
+                    SELECT id, code, name, normalized_name,
                            GREATEST(
                                similarity(COALESCE(code, ''), :p),
                                similarity(COALESCE(name, ''), :p),
@@ -1865,6 +2043,7 @@ def _trgm_lookup(
                     ResolvedEntity(
                         entity_type="transporter",
                         canonical_code=r.code,
+                        uuid=str(r.id) if r.id else None,
                         match_field="transporter_code",
                         match_tier="trgm",
                         similarity=sim,
@@ -1876,6 +2055,383 @@ def _trgm_lookup(
 
     out.sort(key=lambda e: e.similarity or 0.0, reverse=True)
     return out[: TRGM_LIMIT * 2]
+
+
+# --------------------------------------------------------------------------- #
+# AND-mode (cross-token intersection) probes
+# --------------------------------------------------------------------------- #
+# When the caller asks for "cabana filter tap", a per-token OR resolver yields
+# two ambiguous lists that the agent must intersect manually — and the PREFIX
+# limit can evict legitimate cross-matches before that intersection runs.
+#
+# AND-mode runs a single SQL per entity type with all tokens ANDed across the
+# entity's concatenated searchable columns. Result: only rows whose combined
+# text contains EVERY token. Skips code-only entity types (SPO, GRN, inbound
+# shipment) where multi-token AND has no semantic meaning.
+
+AND_MODE_LIMIT = 20
+
+
+def _concat_ws(*cols):
+    """Sqlalchemy concat_ws helper used by AND-mode probes."""
+    return func.concat_ws(" ", *cols)
+
+
+def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
+    blob = _concat_ws(Product.product_code, Product.product_name, Product.description)
+    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    if not conds:
+        return []
+    rows = (
+        db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
+        .filter(*conds)
+        .limit(AND_MODE_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="product",
+            canonical_code=code,
+            uuid=str(pid) if pid else None,
+            match_field="product_code",
+            match_tier="and",
+            display={"product_name": name, "is_active": bool(is_active)},
+        )
+        for pid, code, name, is_active in rows
+    ]
+
+
+def _and_probe_promotion(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
+    conds = [Promotion.description.ilike(f"%{t}%") for t in tokens if t]
+    if not conds:
+        return []
+    rows = (
+        db.query(Promotion.id, Promotion.description, Promotion.is_active)
+        .filter(*conds)
+        .limit(AND_MODE_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="promotion",
+            canonical_code=str(pid),
+            uuid=str(pid),
+            match_field="description",
+            match_tier="and",
+            display={"description": description, "is_active": bool(is_active)},
+        )
+        for pid, description, is_active in rows
+    ]
+
+
+def _and_probe_attachment(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
+    blob = _concat_ws(Attachment.original_filename, Attachment.description, AttachmentType.type_name)
+    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    if not conds:
+        return []
+    rows = (
+        db.query(
+            Attachment.id,
+            Attachment.original_filename,
+            Attachment.description,
+            Attachment.mime_type,
+            Attachment.full_directory_path,
+            AttachmentType.type_name,
+        )
+        .outerjoin(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
+        .filter(Attachment.is_deleted.is_(False), *conds)
+        .limit(AND_MODE_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="attachment",
+            canonical_code=filename,
+            uuid=str(aid) if aid else None,
+            match_field="original_filename",
+            match_tier="and",
+            display={
+                "filename": filename,
+                "description": description,
+                "attachment_type": type_name,
+                "mime_type": mime,
+                "directory": dir_path,
+            },
+        )
+        for aid, filename, description, mime, dir_path, type_name in rows
+    ]
+
+
+def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
+    # Two sources: customers master (preferred — has UUID) and orders.debtor_name
+    # (legacy fallback). Run both; orders.debtor_name JOINs Customer for UUID.
+    out: list[ResolvedEntity] = []
+    blob_c = _concat_ws(Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email)
+    conds_c = [blob_c.ilike(f"%{t}%") for t in tokens if t]
+    if conds_c:
+        rows = (
+            db.query(Customer.id, Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email, Customer.is_active)
+            .filter(*conds_c)
+            .limit(AND_MODE_LIMIT)
+            .all()
+        )
+        for cid, code, name, phone, email, is_active in rows:
+            out.append(
+                ResolvedEntity(
+                    entity_type="customer",
+                    canonical_code=code,
+                    uuid=str(cid) if cid else None,
+                    match_field="customer_code",
+                    match_tier="and",
+                    display={"customer_name": name, "phone_number": phone, "email": email, "is_active": bool(is_active) if is_active is not None else True},
+                )
+            )
+    # Legacy debtor_name path — only if no customers master hit covers the same name.
+    seen_names = {(m.display or {}).get("customer_name", "").lower() for m in out}
+    blob_o = _concat_ws(Order.debtor_name, Order.debtor_code)
+    conds_o = [blob_o.ilike(f"%{t}%") for t in tokens if t]
+    if conds_o:
+        rows = (
+            db.query(Order.debtor_name, Order.debtor_code, Customer.id)
+            .outerjoin(Customer, func.lower(func.btrim(Customer.customer_name)) == func.lower(func.btrim(Order.debtor_name)))
+            .filter(Order.deleted_at.is_(None), Order.debtor_name.isnot(None), *conds_o)
+            .distinct()
+            .limit(AND_MODE_LIMIT)
+            .all()
+        )
+        for debtor_name, debtor_code, customer_id in rows:
+            if (debtor_name or "").lower() in seen_names:
+                continue
+            out.append(
+                ResolvedEntity(
+                    entity_type="customer",
+                    canonical_code=debtor_name,
+                    uuid=str(customer_id) if customer_id else None,
+                    match_field="debtor_name",
+                    match_tier="and",
+                    display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
+                )
+            )
+    return out
+
+
+def _and_probe_form(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
+    blob = _concat_ws(Form.code, Form.name, Form.purpose)
+    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    if not conds:
+        return []
+    rows = (
+        db.query(Form.id, Form.code, Form.name, Form.purpose, Form.is_active, Form.form_type)
+        .filter(*conds)
+        .limit(AND_MODE_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="form",
+            canonical_code=code,
+            uuid=str(fid) if fid else None,
+            match_field="form_name",
+            match_tier="and",
+            display={"form_code": code, "form_name": name, "form_type": form_type, "is_active": bool(is_active)},
+        )
+        for fid, code, name, purpose, is_active, form_type in rows
+    ]
+
+
+def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
+    blob = _concat_ws(Transporter.code, Transporter.name, Transporter.normalized_name)
+    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    if not conds:
+        return []
+    rows = (
+        db.query(Transporter.id, Transporter.code, Transporter.name)
+        .filter(*conds)
+        .limit(AND_MODE_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="transporter",
+            canonical_code=code,
+            uuid=str(tid) if tid else None,
+            match_field="transporter_name",
+            match_tier="and",
+            display={"code": code, "name": name},
+        )
+        for tid, code, name in rows
+    ]
+
+
+def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
+    blob = _concat_ws(Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location)
+    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    if not conds:
+        return []
+    rows = (
+        db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location, Warehouse.is_active)
+        .filter(*conds)
+        .limit(AND_MODE_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="warehouse",
+            canonical_code=code,
+            uuid=str(wid) if wid else None,
+            match_field="warehouse_code",
+            match_tier="and",
+            display={"warehouse_name": name, "location": location, "is_active": bool(is_active) if is_active is not None else True},
+        )
+        for wid, code, name, location, is_active in rows
+    ]
+
+
+def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
+    blob = _concat_ws(Supplier.supplier_code, Supplier.supplier_name, Supplier.contact_name)
+    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    if not conds:
+        return []
+    rows = (
+        db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active)
+        .filter(*conds)
+        .limit(AND_MODE_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="supplier",
+            canonical_code=code,
+            uuid=str(sid) if sid else None,
+            match_field="supplier_code",
+            match_tier="and",
+            display={"supplier_name": name, "is_active": bool(is_active) if is_active is not None else True},
+        )
+        for sid, code, name, is_active in rows
+    ]
+
+
+def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
+    blob = _concat_ws(Order.order_number, Order.debtor_name, Order.debtor_code, Order.transporter)
+    conds = [blob.ilike(f"%{t}%") for t in tokens if t]
+    if not conds:
+        return []
+    rows = (
+        db.query(Order.id, Order.order_number, Order.debtor_name, Order.actual_delivery_date, Order.estimated_delivery_date)
+        .filter(Order.deleted_at.is_(None), *conds)
+        .limit(AND_MODE_LIMIT)
+        .all()
+    )
+    return [
+        ResolvedEntity(
+            entity_type="customer_order",
+            canonical_code=row.order_number,
+            uuid=str(row.id) if row.id else None,
+            match_field="order_number",
+            match_tier="and",
+            display={
+                "customer_name": row.debtor_name,
+                "actual_delivery_date": _iso(row.actual_delivery_date),
+                "estimated_delivery_date": _iso(row.estimated_delivery_date),
+            },
+        )
+        for row in rows
+    ]
+
+
+_AND_PROBES: tuple[tuple[Callable[[Session, list[str]], list[ResolvedEntity]], frozenset[str]], ...] = (
+    (_and_probe_product, frozenset({"product"})),
+    (_and_probe_promotion, frozenset({"promotion"})),
+    (_and_probe_attachment, frozenset({"attachment"})),
+    (_and_probe_customer, frozenset({"customer"})),
+    (_and_probe_form, frozenset({"form"})),
+    (_and_probe_transporter, frozenset({"transporter"})),
+    (_and_probe_warehouse, frozenset({"warehouse"})),
+    (_and_probe_supplier, frozenset({"supplier"})),
+    (_and_probe_customer_order, frozenset({"customer_order"})),
+)
+
+
+@dataclass
+class IntersectionResolutionResult:
+    """Cross-token AND result. Returned when match_mode=and."""
+
+    tokens: list[str]
+    intersection: list[ResolvedEntity]
+    elapsed_ms: float
+    match_mode: str = "and"
+
+    @property
+    def empty(self) -> bool:
+        return not self.intersection
+
+    def as_dict(self) -> dict[str, Any]:
+        # Group hits by entity_type for stable agent-facing shape.
+        by_type: dict[str, list[dict[str, Any]]] = {}
+        for m in self.intersection:
+            by_type.setdefault(m.entity_type, []).append({
+                "entity_type": m.entity_type,
+                "canonical_code": m.canonical_code,
+                "uuid": m.uuid,
+                "match_field": m.match_field,
+                "match_tier": m.match_tier,
+                "display": m.display,
+            })
+        return {
+            "match_mode": self.match_mode,
+            "tokens": self.tokens,
+            "elapsed_ms": round(self.elapsed_ms, 2),
+            "intersection": [
+                {
+                    "entity_type": m.entity_type,
+                    "canonical_code": m.canonical_code,
+                    "uuid": m.uuid,
+                    "match_field": m.match_field,
+                    "match_tier": m.match_tier,
+                    "display": m.display,
+                }
+                for m in self.intersection
+            ],
+            "by_entity_type": by_type,
+            "empty": self.empty,
+            "unresolved_tokens": list(self.tokens) if self.empty else [],
+        }
+
+
+def resolve_references_intersection(
+    db: Session,
+    tokens: list[str],
+    *,
+    allowed_entity_types: Optional[Iterable[str]] = None,
+) -> IntersectionResolutionResult:
+    """AND-mode resolver. Returns rows matching EVERY token in the concatenated
+    searchable columns of each entity type. Skips code-only types.
+    """
+    t0 = time.perf_counter()
+    clean_tokens = [t.strip() for t in (tokens or []) if t and t.strip()]
+    if not clean_tokens:
+        return IntersectionResolutionResult(tokens=[], intersection=[], elapsed_ms=0.0)
+
+    allowed: Optional[frozenset[str]] = (
+        frozenset(allowed_entity_types) if allowed_entity_types is not None else None
+    )
+    hits: list[ResolvedEntity] = []
+    for probe, produces in _AND_PROBES:
+        if allowed is not None and produces.isdisjoint(allowed):
+            continue
+        try:
+            rows = probe(db, clean_tokens)
+        except Exception:
+            logger.exception("AND probe %s failed", probe.__name__)
+            continue
+        hits.extend(rows)
+
+    elapsed = (time.perf_counter() - t0) * 1000.0
+    return IntersectionResolutionResult(
+        tokens=clean_tokens,
+        intersection=hits,
+        elapsed_ms=elapsed,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1893,6 +2449,7 @@ _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[Resolve
     (_probe_transporter, frozenset({"transporter"})),
     (_probe_customer, frozenset({"customer"})),
     (_probe_customer_debtor_name, frozenset({"customer"})),
+    (_probe_attachment, frozenset({"attachment"})),
 )
 
 
