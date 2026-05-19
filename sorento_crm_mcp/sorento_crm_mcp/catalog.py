@@ -1025,7 +1025,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/forms-management/forms",
         (),
-        ("page", "limit", "entities", "language", "status", "contact_id", "space_id", "sort", "dir"),
+        ("page", "limit", "entities", "contact_id", "space_id", "sort", "dir"),
     ),
     ToolSpec(
         "crm_forms_management_forms_get",
