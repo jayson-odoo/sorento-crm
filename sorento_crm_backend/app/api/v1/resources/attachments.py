@@ -14,6 +14,7 @@ import mimetypes
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
+from app.services.uuid_list_param import parse_uuid_list
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.integration_service import IntegrationLogService
 from app.services.attachment_webhook_helper import build_signed_attachment_url_for_webhook
@@ -154,10 +155,11 @@ async def get_attachments(
     query: Optional[str] = Query(None),
     entities: Optional[List[str]] = Query(
         None,
-        description=(
-            "Free-text entity bag. Hybrid resolver. Attachment-filename matches "
-            "narrow original_filename. ONE ENTITY PER ARRAY ELEMENT."
-        ),
+        description="DEPRECATED — free-text entity bag. Prefer `attachment_ids`.",
+    ),
+    attachment_ids: Optional[List[str]] = Query(
+        None,
+        description="Canonical attachment UUIDs (csv/JSON/repeated). Resolve free-text doc refs FIRST via `crm_find_entity`.",
     ),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
@@ -196,6 +198,7 @@ async def get_attachments(
             access_levels=access_levels,
             access_levels_match=access_levels_match,
             entities=normalize_entities_query_param(entities),
+            attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
         )
         # Enrich each attachment with uploaded_by_user for display
         enriched = []

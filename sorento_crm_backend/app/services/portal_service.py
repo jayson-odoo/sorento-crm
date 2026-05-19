@@ -52,6 +52,19 @@ OTP_MAX_ATTEMPTS = 5
 SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorship_form")
 PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
 
+# Crockford base32 alphabet — excludes I, L, O, U to eliminate look-alike
+# transcription errors (I↔l↔1, O↔0, U↔V). Tokens are user-visible in URLs and
+# occasionally retyped from screenshots, so we trade ~14% entropy density vs
+# base64url for unambiguous chars. 48 chars × 5 bits = 240 bits — equivalent to
+# token_urlsafe(30).
+_CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_CROCKFORD_TOKEN_LEN = 48
+
+
+def _crockford_token(length: int = _CROCKFORD_TOKEN_LEN) -> str:
+    import secrets as _secrets
+    return "".join(_secrets.choice(_CROCKFORD_ALPHABET) for _ in range(length))
+
 
 def _utcnow() -> datetime:
     return datetime.utcnow()
@@ -99,7 +112,7 @@ class PortalService:
             raise handle_validation_error("contact_id and space_id are required.")
         contact = self._resolve_contact(contact_id)
         token = PortalToken(
-            token=secrets.token_urlsafe(48),
+            token=_crockford_token(),
             contact_id=contact.id,
             space_id=space_id,
             expires_at=_utcnow() + PORTAL_TOKEN_TTL,

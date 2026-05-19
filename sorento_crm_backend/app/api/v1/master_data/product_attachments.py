@@ -5,6 +5,7 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.product_service import ProductAttachmentService
+from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.product import ProductAttachmentCreate, ProductAttachmentUpdate, ProductAttachmentResponse
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -20,14 +21,18 @@ async def get_product_attachments(
     dir: Optional[str] = Query("asc"),
     entities: Optional[list[str]] = Query(
         None,
-        description=(
-            "Free-text entity bag. Server resolves via hybrid (substring ILIKE → "
-            "pg_trgm → RAG) and applies PRODUCT matches to the linked product. "
-            "ONE ENTITY PER ARRAY ELEMENT."
-        ),
+        description="DEPRECATED — free-text entity bag. Prefer `product_ids` / `attachment_ids`.",
     ),
-    product_id: Optional[str] = Query(None),
-    attachment_id: Optional[str] = Query(None),
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical product UUIDs (csv/JSON/repeated).",
+    ),
+    attachment_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical attachment UUIDs (csv/JSON/repeated).",
+    ),
+    product_id: Optional[str] = Query(None, description="Legacy: single product UUID."),
+    attachment_id: Optional[str] = Query(None, description="Legacy: single attachment UUID."),
     user_type: Optional[str] = Query(None, description="Legacy single access-level filter."),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id). Pair with space_id to filter by the contact's M2M access types."),
     space_id: Optional[str] = Query(None, description="Respond.io space id (respond_workspaces.space_id). Pair with contact_id."),
@@ -47,6 +52,8 @@ async def get_product_attachments(
             sort_dir=dir or "asc",
             product_id=product_id,
             attachment_id=attachment_id,
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
             user_type=user_type,
             contact_access_codes=contact_codes,
             entities=normalize_entities_query_param(entities),

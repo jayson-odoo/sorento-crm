@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.forms_service import FormService
+from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.forms import (
     FormCreate,
     FormUpdate,
@@ -31,12 +32,13 @@ async def get_forms(
     limit: int = Query(50, ge=1, le=100),
     entities: Optional[list[str]] = Query(
         None,
-        description=(
-            "Free-text entity bag. Hybrid resolver matches against Form.code, Form.name, and "
-            "Form.purpose. ONE ENTITY PER ARRAY ELEMENT."
-        ),
+        description="DEPRECATED — free-text entity bag. Prefer `form_ids`.",
     ),
-    query: Optional[str] = Query(None, description="Legacy free-text. Prefer `entities`."),
+    form_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical form UUIDs (csv/JSON/repeated).",
+    ),
+    query: Optional[str] = Query(None, description="Legacy free-text. Prefer `form_ids` or `crm_find_entity` first."),
     language: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     form_type: Optional[str] = Query(None, description="Filter by form type (e.g. marketing)"),
@@ -87,6 +89,7 @@ async def get_forms(
             sort_field=sort_field,
             sort_dir=sort_dir,
             entity_form_codes=entity_form_codes,
+            form_ids=parse_uuid_list(form_ids, param_name="form_ids"),
         )
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo

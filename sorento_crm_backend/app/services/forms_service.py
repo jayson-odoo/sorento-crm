@@ -30,6 +30,7 @@ class FormService:
         sort_field: str = "updated_at",
         sort_dir: str = "desc",
         entity_form_codes: Optional[list[str]] = None,
+        form_ids: Optional[list[str]] = None,
     ):
         """List forms."""
         from sqlalchemy import or_, and_, cast, String, text, func
@@ -53,6 +54,8 @@ class FormService:
         if entity_form_codes:
             lowered = [c.lower() for c in entity_form_codes if c]
             filters.append(func.lower(Form.code).in_(lowered))
+        if form_ids:
+            filters.append(Form.id.in_(form_ids))
         if query:
             ql = query.strip()
             q = q.outerjoin(Attachment, Form.attachment_id == Attachment.id)

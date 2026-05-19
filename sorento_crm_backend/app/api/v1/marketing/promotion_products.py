@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
 from app.services.marketing_service import PromotionProductService, _resolve_promotion_id_for_filter
+from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.marketing import PromotionProductCreate, PromotionProductUpdate, PromotionProductResponse
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -211,11 +212,15 @@ async def list_all_promotion_products(
     ),
     entities: Optional[list[str]] = Query(
         None,
-        description=(
-            "Free-text entity bag. Resolver picks the matching promotion(s) and "
-            "scopes the listing to those rows. Pass promotion description / name / "
-            "code / product reference. ONE ENTITY PER ARRAY ELEMENT."
-        ),
+        description="DEPRECATED — free-text entity bag. Prefer `promotion_ids` / `product_ids`.",
+    ),
+    promotion_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical promotion UUIDs (csv/JSON/repeated).",
+    ),
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical product UUIDs (csv/JSON/repeated). Narrows to lines containing any of these products.",
     ),
     promotion_id: Optional[str] = Query(
         None,
@@ -223,7 +228,7 @@ async def list_all_promotion_products(
     ),
     product_id: Optional[str] = Query(
         None,
-        description="Filter promotion lines to a single product (UUID).",
+        description="Legacy: filter promotion lines to a single product (UUID).",
     ),
     category_id: Optional[str] = Query(None, description="Product category UUID or category_code/name."),
     brand_id: Optional[str] = Query(None, description="Product brand UUID or brand_code/name."),
@@ -318,10 +323,19 @@ async def list_all_promotion_products(
         text_query = strip_domain_stopwords(text_query, "promotion")
 
         from app.services.entity_filter_helpers import normalize_entities_query_param
+        # Merge resolved_pids (legacy) with new promotion_ids kwarg.
+        new_promotion_ids = parse_uuid_list(promotion_ids, param_name="promotion_ids")
+        new_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
+        if new_promotion_ids:
+            merged_pids = list(resolved_pids or [])
+            merged_pids.extend(new_promotion_ids)
+            resolved_pids = list(dict.fromkeys(merged_pids))
+
         result = service.list_promotion_products(
             promotion_id=resolved_pid,
             promotion_ids=resolved_pids,
             product_id=product_id,
+            product_ids_filter=new_product_ids,
             page=page,
             limit=limit,
             sort_field=sort or "created_at",

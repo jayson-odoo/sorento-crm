@@ -27,6 +27,7 @@ from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
 from app.services.error_handler import handle_internal_error
 from app.services.incoming_stock_service import IncomingStockService
+from app.services.uuid_list_param import parse_uuid_list
 
 
 router = APIRouter()
@@ -36,10 +37,11 @@ router = APIRouter()
 def get_incoming_for_product(
     entities: Optional[list[str]] = Query(
         None,
-        description=(
-            "Free-text entity bag. Resolve via hybrid (substring → pg_trgm → RAG). "
-            "Product matches narrow the search. ONE ENTITY PER ARRAY ELEMENT."
-        ),
+        description="DEPRECATED — free-text entity bag. Prefer `product_ids`.",
+    ),
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical product UUIDs (csv/JSON/repeated). Preferred filter.",
     ),
     product_id: Optional[list[str]] = Query(
         None,
@@ -63,14 +65,19 @@ def get_incoming_for_product(
         resolve_or_empty,
     )
 
-    product_ids: list[str] = []
+    resolved_product_filter: list[str] = []
+    # Validated UUID list from the canonical param.
+    uuid_list = parse_uuid_list(product_ids, param_name="product_ids")
+    if uuid_list:
+        resolved_product_filter.extend(uuid_list)
+    # Legacy product_id (UUID-or-code, comma-separated allowed).
     for raw in product_id or []:
         if raw is None:
             continue
         for piece in str(raw).split(","):
             piece = piece.strip()
             if piece:
-                product_ids.append(piece)
+                resolved_product_filter.append(piece)
 
     # Resolve entities → product_codes → push through legacy product_ids path.
     entity_echo = None
@@ -85,10 +92,10 @@ def get_incoming_for_product(
                     "empty": True,
                     "resolved_entities": entity_echo,
                 }
-            product_ids.extend(buckets.product_codes)
+            resolved_product_filter.extend(buckets.product_codes)
     try:
         svc = IncomingStockService(db)
-        result = svc.incoming_for_product(product_ids=product_ids or None, query=query, limit=limit)
+        result = svc.incoming_for_product(product_ids=resolved_product_filter or None, query=query, limit=limit)
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
         return result
@@ -100,10 +107,15 @@ def get_incoming_for_product(
 def get_incoming_shipments(
     entities: Optional[list[str]] = Query(
         None,
-        description=(
-            "Free-text entity bag. Shipment-number matches narrow the search. "
-            "ONE ENTITY PER ARRAY ELEMENT."
-        ),
+        description="DEPRECATED — free-text entity bag. Prefer `shipment_ids` / `supplier_ids`.",
+    ),
+    shipment_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical inbound-shipment UUIDs (csv/JSON/repeated).",
+    ),
+    supplier_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical supplier UUIDs to narrow shipments to those suppliers.",
     ),
     query: Optional[str] = Query(
         None,
@@ -124,6 +136,8 @@ def get_incoming_shipments(
 
     entity_echo = None
     extra_query = query
+    shipment_uuid_list = parse_uuid_list(shipment_ids, param_name="shipment_ids")
+    supplier_uuid_list = parse_uuid_list(supplier_ids, param_name="supplier_ids")
     norm = normalize_entities_query_param(entities)
     if norm:
         buckets = resolve_or_empty(db, norm)
@@ -145,6 +159,8 @@ def get_incoming_shipments(
         svc = IncomingStockService(db)
         result = svc.incoming_shipments(
             query=extra_query,
+            shipment_ids=shipment_uuid_list,
+            supplier_ids=supplier_uuid_list,
             eta_from=eta_from,
             eta_to=eta_to,
             page=page,
@@ -200,14 +216,19 @@ def get_incoming_shipment_attachment(
 def get_incoming_stock_grn(
     entities: Optional[list[str]] = Query(
         None,
-        description=(
-            "Free-text entity bag. Server resolves product / shipment / picking refs. "
-            "ONE ENTITY PER ARRAY ELEMENT."
-        ),
+        description="DEPRECATED — free-text entity bag. Prefer `shipment_ids` / `product_ids`.",
+    ),
+    shipment_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical inbound-shipment UUIDs (csv/JSON/repeated).",
+    ),
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical product UUIDs to narrow GRNs to lines referencing these products.",
     ),
     shipment_id: Optional[str] = Query(
         None,
-        description="Legacy: shipment UUID or business reference. Direct callers can keep using.",
+        description="Legacy: shipment UUID or business reference.",
     ),
     product_id: Optional[str] = Query(
         None,
@@ -227,16 +248,17 @@ def get_incoming_stock_grn(
     from app.models.product import Product as _Product
 
     entity_echo = None
-    shipment_uuids: Optional[list[str]] = None
-    product_uuids: Optional[list[str]] = None
+    shipment_uuids: Optional[list[str]] = parse_uuid_list(shipment_ids, param_name="shipment_ids")
+    product_uuids: Optional[list[str]] = parse_uuid_list(product_ids, param_name="product_ids")
     norm = normalize_entities_query_param(entities)
     if norm:
         buckets = resolve_or_empty(db, norm)
         if buckets is not None:
             entity_echo = buckets.as_echo()
-            # Resolve ALL bucket entries to UUIDs (do not collapse to [0]).
+            # Resolve ALL bucket entries to UUIDs (do not collapse to [0]). Merge
+            # with explicit kwargs so callers can mix entities + typed UUIDs.
             if buckets.shipment_numbers:
-                acc: list[str] = []
+                acc: list[str] = list(shipment_uuids or [])
                 for code in buckets.shipment_numbers:
                     ids = resolve_identifier(
                         db,
@@ -253,7 +275,7 @@ def get_incoming_stock_grn(
                         acc.extend(ids)
                 shipment_uuids = list(dict.fromkeys(acc)) or None
             if buckets.product_codes:
-                acc = []
+                acc = list(product_uuids or [])
                 for code in buckets.product_codes:
                     ids = resolve_identifier(
                         db, code, _Product, code_fields=("product_code",)

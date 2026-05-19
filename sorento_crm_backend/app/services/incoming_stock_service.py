@@ -308,6 +308,8 @@ class IncomingStockService:
         self,
         *,
         query: Optional[str] = None,
+        shipment_ids: Optional[list[str]] = None,
+        supplier_ids: Optional[list[str]] = None,
         eta_from: Optional[date] = None,
         eta_to: Optional[date] = None,
         page: int = 1,
@@ -340,6 +342,10 @@ class IncomingStockService:
             .join(incoming_lines, incoming_lines.c.sid == InboundShipment.id)
         )
 
+        if shipment_ids:
+            q = q.filter(InboundShipment.id.in_(shipment_ids))
+        if supplier_ids:
+            q = q.filter(InboundShipment.supplier_id.in_(supplier_ids))
         if query:
             term = f"%{query.strip()}%"
             q = q.filter(

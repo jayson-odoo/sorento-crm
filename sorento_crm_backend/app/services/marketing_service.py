@@ -788,6 +788,7 @@ class PromotionProductService:
         promotion_id: Optional[str] = None,
         promotion_ids: Optional[list[str]] = None,
         product_id: Optional[str] = None,
+        product_ids_filter: Optional[list[str]] = None,
         page: int = 1,
         limit: int = 50,
         sort_field: str = "created_at",
@@ -843,6 +844,9 @@ class PromotionProductService:
             joinedload(PromotionProduct.product).joinedload(Product.brand),
             joinedload(PromotionProduct.promotion),
         )
+
+        if product_ids_filter:
+            q = q.filter(PromotionProduct.product_id.in_(product_ids_filter))
 
         if promotion_ids:
             resolved_bulk: list[str] = []
@@ -1374,6 +1378,8 @@ class PromotionAttachmentService:
         query: Optional[str] = None,
         contact_access_codes: Optional[list[str]] = None,
         entities: Optional[list[str]] = None,
+        promotion_ids: Optional[list[str]] = None,
+        attachment_ids: Optional[list[str]] = None,
     ):
         """List promotion attachments with pagination and filtering.
 
@@ -1429,6 +1435,10 @@ class PromotionAttachmentService:
                 q = q.filter(PromotionAttachment.promotion_id == resolved_pid)
         if attachment_id:
             q = q.filter(PromotionAttachment.attachment_id == attachment_id)
+        if promotion_ids:
+            q = q.filter(PromotionAttachment.promotion_id.in_(promotion_ids))
+        if attachment_ids:
+            q = q.filter(PromotionAttachment.attachment_id.in_(attachment_ids))
         if fallback_query:
             term = f"%{fallback_query.strip()}%"
             q = (

@@ -6,6 +6,7 @@ from typing import Any, Optional
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import PromotionAttachmentService
+from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.marketing import PromotionAttachmentCreate, PromotionAttachmentUpdate, PromotionAttachmentResponse
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
@@ -27,10 +28,15 @@ async def get_promotion_attachments(
     dir: Optional[str] = Query("asc"),
     entities: Optional[list[str]] = Query(
         None,
-        description=(
-            "Free-text entity bag. Hybrid resolver. Promotion / attachment matches "
-            "narrow the listing. ONE ENTITY PER ARRAY ELEMENT."
-        ),
+        description="DEPRECATED — free-text entity bag. Prefer `promotion_ids` / `attachment_ids`.",
+    ),
+    promotion_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical promotion UUIDs (csv/JSON/repeated).",
+    ),
+    attachment_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical attachment UUIDs (csv/JSON/repeated).",
     ),
     promotion_id: Optional[str] = Query(
         None,
@@ -70,6 +76,8 @@ async def get_promotion_attachments(
             sort_dir=dir or "asc",
             promotion_id=promotion_id,
             attachment_id=attachment_id,
+            promotion_ids=parse_uuid_list(promotion_ids, param_name="promotion_ids"),
+            attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
             query=query,
             contact_access_codes=contact_codes,
             entities=normalize_entities_query_param(entities),

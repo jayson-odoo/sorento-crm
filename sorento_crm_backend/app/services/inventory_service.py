@@ -545,6 +545,7 @@ class StockService:
         dir: Optional[str] = None,
         warehouse_id: Optional[str] = None,
         product_id: Optional[str] = None,
+        product_ids: Optional[list[str]] = None,
         quantity_operator: Optional[str] = None,
         quantity_value: Optional[str] = None,
         status: Optional[str] = None,
@@ -622,6 +623,9 @@ class StockService:
                     "empty": True,
                 }
             q = q.filter(Stock.product_id == resolved_pid)
+
+        if product_ids:
+            q = q.filter(Stock.product_id.in_(product_ids))
 
         if entity_buckets is not None and entity_buckets.product_codes:
             lowered = [c.lower() for c in entity_buckets.product_codes]
@@ -840,6 +844,7 @@ class StockService:
         self,
         warehouse_id: Optional[str] = None,
         product_id: Optional[str] = None,
+        product_ids: Optional[list[str]] = None,
         quantity_operator: Optional[str] = None,
         quantity_value: Optional[str] = None,
         entities: Optional[list[str]] = None,
@@ -900,12 +905,15 @@ class StockService:
                 return []
             q = q.filter(Stock.product_id == resolved_pid)
 
+        if product_ids:
+            q = q.filter(Stock.product_id.in_(product_ids))
+
         if entity_buckets is not None and entity_buckets.product_codes:
             lowered = [c.lower() for c in entity_buckets.product_codes]
             q = q.filter(
                 Stock.product.has(func.lower(Product.product_code).in_(lowered))
             )
-        
+
         # Filter by available quantity using the quantity_available column
         if quantity_operator and quantity_value:
             try:

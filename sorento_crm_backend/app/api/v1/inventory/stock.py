@@ -58,6 +58,7 @@ from app.dependencies import (
     require_permission_with_api_key,
 )
 from app.services.inventory_service import StockService
+from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.inventory import StockResponse, StockDashboardResponse, BulkImportStockRequest, BulkImportStockResponse, StockLedgerResponse
 from app.schemas.common import ListResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
@@ -78,13 +79,15 @@ def get_stock_balance(
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "Free-text entity bag. Pass product codes/SKUs (and any other entity the "
-            "user names) as strings. Server resolves each via the entity_resolver "
-            "(pgvector RAG) and applies product matches to Stock.product_id. Other "
-            "resolved entity types are echoed under `resolved_entities` but do not "
-            "narrow the listing — stock rows are keyed by product + warehouse only. "
-            "Accepts repeated params (?entities=A&entities=B), a JSON array, or a "
-            "comma-separated string."
+            "DEPRECATED — free-text entity bag. Prefer `product_ids` (canonical UUID csv/list). "
+            "Free-text resolution should go through `/api/v1/system/references/resolve` first."
+        ),
+    ),
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter by canonical product UUIDs. Accepts repeated values, comma-separated "
+            "string, or JSON array. Non-UUID input → HTTP 400."
         ),
     ),
     sort: Optional[str] = Query(None),
@@ -92,7 +95,7 @@ def get_stock_balance(
     warehouse_id: Optional[str] = Query(None),
     product_id: Optional[str] = Query(
         None,
-        description="Product UUID or product_code (e.g. SKU). Kept for direct callers; AI/MCP should use `entities`.",
+        description="Single product UUID or product_code (kept for direct callers).",
     ),
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
@@ -111,6 +114,7 @@ def get_stock_balance(
             dir=dir,
             warehouse_id=warehouse_id,
             product_id=product_id,
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             quantity_operator=quantity_operator,
             quantity_value=quantity_value,
             status=status,
@@ -162,13 +166,17 @@ def export_stock_balance(
     warehouse_id: Optional[str] = Query(None),
     product_id: Optional[str] = Query(
         None,
-        description="Product UUID or product_code (e.g. SKU). Kept for direct callers; AI/MCP should use `entities`.",
+        description="Single product UUID or product_code (kept for direct callers).",
+    ),
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter by canonical product UUIDs (csv/JSON/repeated). Preferred over `entities`.",
     ),
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "Free-text entity bag — resolved product matches narrow Stock.product_id. "
-            "Accepts repeated params, JSON array, or comma-separated."
+            "DEPRECATED — free-text entity bag. Prefer `product_ids`. Free-text resolution "
+            "should go through `/api/v1/system/references/resolve` first."
         ),
     ),
     quantity_operator: Optional[str] = Query(None),
@@ -190,6 +198,7 @@ def export_stock_balance(
         stock_items = service.get_all_stock_for_export(
             warehouse_id=warehouse_id,
             product_id=product_id,
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             quantity_operator=quantity_operator,
             quantity_value=quantity_value,
             entities=_normalize_entities(entities),

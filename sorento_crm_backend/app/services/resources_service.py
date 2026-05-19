@@ -433,6 +433,7 @@ class AttachmentService:
         access_levels: Optional[List[str]] = None,
         access_levels_match: Optional[str] = "any",
         entities: Optional[list[str]] = None,
+        attachment_ids: Optional[list[str]] = None,
     ):
         """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash.
 
@@ -459,6 +460,8 @@ class AttachmentService:
         q = self.db.query(Attachment).options(
             joinedload(Attachment.attachment_type)
         )
+        if attachment_ids:
+            q = q.filter(Attachment.id.in_(attachment_ids))
         if entity_buckets is not None and entity_buckets.attachment_filenames:
             from sqlalchemy import or_ as _or
             terms = [f"%{f}%" for f in entity_buckets.attachment_filenames]

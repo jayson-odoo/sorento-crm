@@ -504,6 +504,9 @@ class OrderService:
         sort_field: str = "order_date",
         sort_dir: str = "desc",
         entities: Optional[list[str]] = None,
+        product_ids: Optional[list[str]] = None,
+        customer_ids: Optional[list[str]] = None,
+        transporter_ids: Optional[list[str]] = None,
     ):
         """List distinct orders matched by product search.
 
@@ -512,6 +515,11 @@ class OrderService:
         back to empty otherwise. Customer / transporter / order_number entities are
         applied as additional AND filters.
         """
+        # Capture typed UUID kwargs before any local variable shadows them.
+        _product_uuid_filter = list(product_ids) if product_ids else None
+        _customer_uuid_filter = list(customer_ids) if customer_ids else None
+        _transporter_uuid_filter = list(transporter_ids) if transporter_ids else None
+
         q = (
             self.db.query(Order)
             .join(Order.lines)
@@ -519,6 +527,41 @@ class OrderService:
             .filter(Order.deleted_at.is_(None))
             .distinct()
         )
+
+        if _product_uuid_filter:
+            q = q.filter(OrderLine.product_id.in_(_product_uuid_filter))
+
+        if _customer_uuid_filter:
+            from sqlalchemy import func as _func
+            customer_names_subq = (
+                self.db.query(Customer.customer_name)
+                .filter(Customer.id.in_(_customer_uuid_filter))
+                .subquery()
+            )
+            q = q.filter(
+                or_(
+                    Order.customer_id.in_(_customer_uuid_filter),
+                    _func.lower(_func.btrim(Order.debtor_name)).in_(
+                        self.db.query(_func.lower(_func.btrim(customer_names_subq.c.customer_name)))
+                    ),
+                )
+            )
+
+        if _transporter_uuid_filter:
+            from sqlalchemy import func as _func
+            transporter_names_subq = (
+                self.db.query(Transporter.name)
+                .filter(Transporter.id.in_(_transporter_uuid_filter))
+                .subquery()
+            )
+            q = q.filter(
+                or_(
+                    Order.transporter_id.in_(_transporter_uuid_filter),
+                    _func.lower(_func.btrim(Order.transporter)).in_(
+                        self.db.query(_func.lower(_func.btrim(transporter_names_subq.c.name)))
+                    ),
+                )
+            )
 
         entity_buckets: Optional[EntityFilterBuckets] = None
         if entities:

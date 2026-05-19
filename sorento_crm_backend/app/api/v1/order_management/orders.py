@@ -470,13 +470,21 @@ async def get_orders_by_product(
     entities: Optional[list[str]] = Query(
         None,
         description=(
-            "Free-text entity bag. Pass customer names/codes, product codes/SKUs, "
-            "transporter labels, or order numbers as strings. At least one entity "
-            "MUST resolve to a product — endpoint is product-centric. Server "
-            "resolves each input's type via entity_resolver and applies the "
-            "matching filter internally. Resolution is echoed under "
-            "`resolved_entities` on the response."
+            "DEPRECATED — free-text entity bag. Prefer typed UUID params "
+            "(`product_ids` / `customer_ids` / `transporter_ids`)."
         ),
+    ),
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical product UUIDs (csv/JSON/repeated). At least one required for this endpoint.",
+    ),
+    customer_ids: Optional[list[str]] = Query(
+        None,
+        description="Optional customer UUIDs. OR-fallback to debtor_name for legacy rows without FK.",
+    ),
+    transporter_ids: Optional[list[str]] = Query(
+        None,
+        description="Optional transporter UUIDs. OR-fallback to Order.transporter text for legacy rows.",
     ),
     customer_query: Optional[str] = Query(
         None,
@@ -489,11 +497,7 @@ async def get_orders_by_product(
     product_id: Optional[list[str]] = Query(
         None,
         description=(
-            "One or more Product UUIDs / product_codes / SKUs. Accepts repeated query "
-            "params (?product_id=A&product_id=B), a JSON array, or a comma-separated "
-            "string (e.g. 'SRTWC8608-SC,SRTWC8608-SC-UF'). Tokens that don't match a "
-            "product_code exactly are passed through the embedding fuzzy resolver, so "
-            "partial SKUs / suffix variants still match."
+            "Legacy — one or more product_codes/SKUs (still resolves fuzzy). Prefer `product_ids`."
         ),
     ),
     has_actual_delivery_date: Optional[str] = Query(
@@ -541,6 +545,9 @@ async def get_orders_by_product(
             limit=limit,
             query=query,
             entities=_normalize_entities(entities),
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            customer_ids=parse_uuid_list(customer_ids, param_name="customer_ids"),
+            transporter_ids=parse_uuid_list(transporter_ids, param_name="transporter_ids"),
             customer_query=customer_query,
             product_query=product_query,
             product_id=product_id,
