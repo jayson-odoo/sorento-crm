@@ -94,28 +94,20 @@ def test_catalog_covers_all_prefix_domains():
     assert len(CATALOG) >= 70
 
 
-def test_orders_list_description_carries_date_decision_table():
-    """TCK-2026-000027: orders_list description must steer the agent to
-    `actual_delivery_date_*` for delivery-verb phrasings and `order_date_*` for
-    order-verb phrasings. Guard the decision-table phrasings so future edits
-    don't silently drop them."""
+def test_orders_list_uses_actual_delivery_date_only():
+    """orders_list exposes ONLY `actual_delivery_date_from` / `_to` for date
+    filtering. The decision-table / order_date split was removed because it
+    biased the agent toward today-only delivery filters and self-contradicted
+    on order verbs. Whatever timeframe the user gives is always translated to
+    actual_delivery_date — no order_date params.
+    """
     spec = next(s for s in CATALOG if s.name == "crm_order_management_orders_list")
     desc = spec.description
-    delivery_phrases = [
-        "orders delivered today",
-        "orders delivered last week",
-        "orders delivered yesterday",
-        "orders pending delivery this week",
-        "for delivery this week",
-    ]
-    order_phrases = [
-        "orders placed last week",
-        "orders created today",
-        "orders raised in February 2026",
-    ]
-    for phrase in delivery_phrases:
-        assert phrase in desc, f"missing delivery phrasing: {phrase!r}"
-    for phrase in order_phrases:
-        assert phrase in desc, f"missing order phrasing: {phrase!r}"
     assert "actual_delivery_date_from" in desc
-    assert "order_date_from" in desc
+    assert "actual_delivery_date_to" in desc
+    assert "order_date_from" not in desc
+    assert "order_date_to" not in desc
+    assert "order_date_from" not in spec.query_params
+    assert "order_date_to" not in spec.query_params
+    assert "actual_delivery_date_from" in spec.query_params
+    assert "actual_delivery_date_to" in spec.query_params

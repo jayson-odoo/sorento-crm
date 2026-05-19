@@ -4,6 +4,8 @@ sorento_crm_mcp/__init__.py
 sorento_crm_mcp/__main__.py
 sorento_crm_mcp/access_guard.py
 sorento_crm_mcp/catalog.py
+sorento_crm_mcp/discovery.py
+sorento_crm_mcp/escalation_hint.py
 sorento_crm_mcp/http_client.py
 sorento_crm_mcp/module_loader.py
 sorento_crm_mcp/server.py
@@ -15,6 +17,12 @@ sorento_crm_mcp.egg-info/dependency_links.txt
 sorento_crm_mcp.egg-info/entry_points.txt
 sorento_crm_mcp.egg-info/requires.txt
 sorento_crm_mcp.egg-info/top_level.txt
+tests/test_access_gated_promotion_tools.py
 tests/test_access_guard.py
 tests/test_catalog_compile.py
+tests/test_grn_sanitizer.py
+tests/test_internal_tool_filter.py
 tests/test_lookup_tools.py
+tests/test_sanitize_warehouse_relabel.py
+tests/test_stock_sanitizer.py
+tests/test_uuid_validation.py

@@ -732,30 +732,6 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • `product_ids` — orders containing any of these products (joins order lines).\n"
             "  • `transporter_ids` — transporters (matches Order.transporter_id, falls back to "
             "Order.transporter text for legacy rows).\n"
-            "Resolve free-text refs FIRST via `crm_find_entity`, then pass UUIDs here.\n\n"
-            "DATE FILTER RULE — pick the param family from the user's verb, not the time window.\n"
-            "DELIVERY verbs ('delivered', 'received', 'dropped off', 'for delivery', 'pending delivery', 'arrived', 'delivery date') "
-            "=> use `actual_delivery_date_from` / `actual_delivery_date_to`.\n"
-            "ORDER verbs ('ordered', 'placed', 'created', 'raised', 'opened', 'booked', 'order date') "
-            "DEFAULT to `actual_delivery_date_from` / `actual_delivery_date_to`.\n"
-            "Decision table (phrasing => param):\n"
-            "  'orders delivered today'              => actual_delivery_date_from = today, _to = today\n"
-            "  'orders delivered last week'          => actual_delivery_date_from / _to = last week\n"
-            "  'orders delivered yesterday'          => actual_delivery_date_from / _to = yesterday\n"
-            "  'what was delivered yesterday for X'  => actual_delivery_date_from / _to = yesterday\n"
-            "  'orders pending delivery this week'   => actual_delivery_date_from / _to = this week\n"
-            "  'for delivery this week'              => actual_delivery_date_from / _to = this week\n"
-            "  'check DO for today'                  => actual_delivery_date_from / _to = today\n"
-            "  'DO for product X today'              => actual_delivery_date_from / _to = today\n"
-            "  'orders in February' (no verb)        => actual_delivery_date_from / _to = Feb 2026\n"
-            "  'orders last week' (no verb)          => actual_delivery_date_from / _to = last week\n"
-            "  'orders placed last week'             => order_date_from / _to = last week\n"
-            "  'orders created today'                => order_date_from / _to = today\n"
-            "  'orders raised in February 2026'      => order_date_from / _to = Feb 2026\n"
-            "Do NOT pass both families in one call unless the user explicitly asks for an intersection. "
-            "Both date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, ISO datetime, "
-            "'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
-            "For complaint DO filtering, pass `customer_ids` + `product_ids` together plus an order date range."
         ),
         "/api/v1/order-management/orders",
         (),
@@ -766,8 +742,6 @@ CATALOG: tuple[ToolSpec, ...] = (
             "customer_ids",
             "product_ids",
             "transporter_ids",
-            "order_date_from",
-            "order_date_to",
             "actual_delivery_date_from",
             "actual_delivery_date_to",
             "sort",
@@ -800,12 +774,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • `customer_ids` — optional, matches Order.customer_id with debtor_name fallback.\n"
             "  • `transporter_ids` — optional, matches Order.transporter_id with text fallback.\n"
             "Resolve free-text refs FIRST via `crm_find_entity`.\n\n"
-            "DATE FILTER RULE: For Delivery-Order (DO) discovery and any bare 'orders in [today/"
-            "yesterday/this week/month/period/date range]' question, DEFAULT to "
-            "`actual_delivery_date_from`/`actual_delivery_date_to`. Delivery verbs ('delivered', "
-            "'received', 'for delivery', 'pending delivery', 'arrived') and bare time windows => "
-            "`actual_delivery_date_from/_to`. Both accept YYYY-MM-DD, DD/MM/YYYY, ISO datetime, "
-            "'YYYY-MM', 'MM/YYYY', or 'Month YYYY'.\n\n"
+            "Translate whatever time window the user gives (today, yesterday, last week, "
+            "'February 2026', explicit YYYY-MM-DD range, etc.) into the date range and pass it "
+            "on the actual-delivery-date params. Accepts YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, "
+            "YYYY/MM/DD, ISO datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY'.\n\n"
             "Use when asked 'which customers bought SKU X', 'pending customer orders for product X', "
             "or to find DO numbers via product+customer+date range. DO NOT use for 'any incoming "
             "for product X' — that's procurement, use crm_incoming_stock_by_product instead."
