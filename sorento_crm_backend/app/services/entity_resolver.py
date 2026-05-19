@@ -2125,6 +2125,29 @@ def _concat_ws(*cols):
     return func.concat_ws(" ", *cols)
 
 
+# Generic entity-type nouns the agent often appends for context ("cabana filter
+# tap PROMOTION") but which rarely appear verbatim in the DB row text (descriptions
+# use "PROMO" or omit the word entirely). Treating them as required AND tokens
+# blows otherwise-valid matches. Stripped per-word before building AND conditions.
+_AND_WORD_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "promotion", "promotions", "promo", "promos",
+        "product", "products", "sku", "skus",
+        "customer", "customers", "client", "clients", "debtor", "debtors",
+        "order", "orders", "delivery", "deliveries",
+        "shipment", "shipments", "inbound", "outbound",
+        "warehouse", "warehouses",
+        "supplier", "suppliers",
+        "transporter", "transporters",
+        "form", "forms",
+        "attachment", "attachments", "file", "files", "document", "documents",
+        "grn", "spo",
+        # generic verbs/prepositions slipping through whitespace splits
+        "the", "and", "for", "with", "from", "to", "of",
+    }
+)
+
+
 def _word_variants(word: str) -> list[str]:
     """Return `word` plus a singular fallback when it looks like an alphabetic
     plural. Lets a token like 'ventures' still match 'VENTURE ENTERPRISE' so
@@ -2159,9 +2182,15 @@ def _and_build_conds(blob, tokens: list[str]):
     for tok in tokens:
         if not tok:
             continue
-        words = [w for w in tok.split() if w]
-        if not words:
+        raw_words = [w for w in tok.split() if w]
+        if not raw_words:
             continue
+        # Drop generic entity-type nouns ("promotion", "order", "product"...).
+        # If stripping leaves NO words, fall back to the original token so we
+        # still produce a condition (better to match too broadly than not at all).
+        words = [w for w in raw_words if w.lower() not in _AND_WORD_STOPWORDS]
+        if not words:
+            words = raw_words
         for word in words:
             variants = _word_variants(word)
             if not variants:
