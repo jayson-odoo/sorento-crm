@@ -47,26 +47,18 @@ async def get_promotion_attachments(
         description="Free-text search across promotion header, product code/name, promotion group name, and attachment metadata.",
     ),
     attachment_id: Optional[str] = Query(None),
-    contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id). Pair with space_id to filter by the contact's M2M access types."),
-    space_id: Optional[str] = Query(None, description="Respond.io space id (respond_workspaces.space_id). Pair with contact_id."),
     access_levels: Optional[list[str]] = Query(
         None,
-        description="TCK-2026-000016: contact-scoped MCP calls must supply at least one currently-active code.",
+        description="Optional access-level codes filter (intersection with parent promotion.access_levels).",
     ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get promotion attachments with pagination and filtering. Use contact_id+space_id to filter by the contact's access types."""
+    """Get promotion attachments with pagination and filtering. Optional access_levels intersection filter."""
     try:
-        from app.services.contact_access_type_service import ContactAccessTypeService
         from app.services.entity_filter_helpers import normalize_list_query_param
         access_levels = normalize_list_query_param(access_levels)
-        cats_svc = ContactAccessTypeService(db)
-        if contact_id and space_id:
-            access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
-            contact_codes = list(access_levels)
-        else:
-            contact_codes = cats_svc.resolve_optional_contact_access_codes(contact_id, space_id)
+        contact_codes = list(access_levels) if access_levels else None
         service = PromotionAttachmentService(db)
         from app.services.entity_filter_helpers import normalize_entities_query_param
         result = service.list_promotion_attachments(
@@ -166,26 +158,18 @@ async def get_promotion_attachments_by_promotion(
         ...,
         description="Promotion UUID.",
     ),
-    contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id)."),
-    space_id: Optional[str] = Query(None, description="Respond.io space id."),
     access_levels: Optional[list[str]] = Query(
         None,
-        description="TCK-2026-000016: contact-scoped MCP calls must supply at least one currently-active code.",
+        description="Optional access-level codes filter (intersection with parent promotion.access_levels).",
     ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get all attachments for a specific promotion. Use contact_id+space_id to filter by the contact's access types."""
+    """Get all attachments for a specific promotion. Optional access_levels intersection filter."""
     try:
-        from app.services.contact_access_type_service import ContactAccessTypeService
         from app.services.entity_filter_helpers import normalize_list_query_param
         access_levels = normalize_list_query_param(access_levels)
-        cats_svc = ContactAccessTypeService(db)
-        if contact_id and space_id:
-            access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
-            contact_codes = list(access_levels)
-        else:
-            contact_codes = cats_svc.resolve_optional_contact_access_codes(contact_id, space_id)
+        contact_codes = list(access_levels) if access_levels else None
         service = PromotionAttachmentService(db)
         promotion_attachments = service.get_promotion_attachments_by_promotion(
             promotion_id,

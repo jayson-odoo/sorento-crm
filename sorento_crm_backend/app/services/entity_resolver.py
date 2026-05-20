@@ -26,7 +26,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Callable, Iterable, Optional
 
-from sqlalchemy import func, or_, text
+from functools import reduce
+from operator import add
+
+from sqlalchemy import and_, case, func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.forms import Form
@@ -2125,29 +2128,6 @@ def _concat_ws(*cols):
     return func.concat_ws(" ", *cols)
 
 
-# Generic entity-type nouns the agent often appends for context ("cabana filter
-# tap PROMOTION") but which rarely appear verbatim in the DB row text (descriptions
-# use "PROMO" or omit the word entirely). Treating them as required AND tokens
-# blows otherwise-valid matches. Stripped per-word before building AND conditions.
-_AND_WORD_STOPWORDS: frozenset[str] = frozenset(
-    {
-        "promotion", "promotions", "promo", "promos",
-        "product", "products", "sku", "skus",
-        "customer", "customers", "client", "clients", "debtor", "debtors",
-        "order", "orders", "delivery", "deliveries",
-        "shipment", "shipments", "inbound", "outbound",
-        "warehouse", "warehouses",
-        "supplier", "suppliers",
-        "transporter", "transporters",
-        "form", "forms",
-        "attachment", "attachments", "file", "files", "document", "documents",
-        "grn", "spo",
-        # generic verbs/prepositions slipping through whitespace splits
-        "the", "and", "for", "with", "from", "to", "of",
-    }
-)
-
-
 def _word_variants(word: str) -> list[str]:
     """Return `word` plus a singular fallback when it looks like an alphabetic
     plural. Lets a token like 'ventures' still match 'VENTURE ENTERPRISE' so
@@ -2169,47 +2149,61 @@ def _word_variants(word: str) -> list[str]:
     return out
 
 
-def _and_build_conds(blob, tokens: list[str]):
-    """Build the AND condition list for a name-based AND probe.
+def _and_token_match_counts(blob, tokens: list[str]):
+    """Return one match-count expression per token over `blob`.
 
-    Each token is split on whitespace; every resulting word becomes its own
-    ILIKE substring requirement so 'Fira ventures' demands BOTH 'fira' AND
-    'ventures' (in any order) in the blob — multi-word values whose order
-    differs in the DB still match. Each word OR's its plural fallback variants
-    so a stray plural in the token doesn't blow the match.
+    Each expression is `sum(0/1 indicators)` across the token's words, where
+    each word's indicator is `blob ILIKE %word%` OR a singular-fallback
+    variant. The probe uses these expressions to find the GLOBAL MAX match
+    count for each token across the table, then keeps only rows hitting that
+    max — so filler words ("promotion", "version") never poison results: any
+    row that hits the most semantic words wins, regardless of how many words
+    the token had.
     """
-    conds = []
-    for tok in tokens:
+    counts = []
+    for tok in tokens or []:
         if not tok:
             continue
-        raw_words = [w for w in tok.split() if w]
-        if not raw_words:
-            continue
-        # Drop generic entity-type nouns ("promotion", "order", "product"...).
-        # If stripping leaves NO words, fall back to the original token so we
-        # still produce a condition (better to match too broadly than not at all).
-        words = [w for w in raw_words if w.lower() not in _AND_WORD_STOPWORDS]
+        words = [w for w in tok.split() if w]
         if not words:
-            words = raw_words
+            continue
+        indicators = []
         for word in words:
             variants = _word_variants(word)
             if not variants:
                 continue
-            conds.append(or_(*[blob.ilike(f"%{v}%") for v in variants]))
-    return conds
+            ilike_any = or_(*[blob.ilike(f"%{v}%") for v in variants])
+            indicators.append(case((ilike_any, 1), else_=0))
+        if not indicators:
+            continue
+        counts.append(reduce(add, indicators))
+    return counts
+
+
+def _and_max_tier_filter(base_query, counts):
+    """Given a base query already filtered by non-token predicates and a list
+    of per-token match-count expressions, return the additional filter that
+    keeps only rows reaching the GLOBAL MAX match count for EVERY token.
+
+    Returns `None` when any token has no possible hits (max == 0) — caller
+    should short-circuit and return no rows.
+    """
+    if not counts:
+        return None
+    maxes = base_query.with_entities(*[func.max(c) for c in counts]).one()
+    if any((m is None or m == 0) for m in maxes):
+        return None
+    return and_(*[c == m for c, m in zip(counts, maxes)])
 
 
 def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Product.product_code, Product.product_name, Product.description)
-    conds = _and_build_conds(blob, tokens)
-    if not conds:
+    counts = _and_token_match_counts(blob, tokens)
+    base = db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
+    tier = _and_max_tier_filter(base, counts)
+    if tier is None:
         return []
-    rows = (
-        db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-        .filter(*conds)
-        .limit(AND_MODE_LIMIT)
-        .all()
-    )
+    rows = base.filter(tier).limit(AND_MODE_LIMIT).all()
     return [
         ResolvedEntity(
             entity_type="product",
@@ -2224,15 +2218,12 @@ def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
 
 
 def _and_probe_promotion(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
-    conds = _and_build_conds(Promotion.description, tokens)
-    if not conds:
+    counts = _and_token_match_counts(Promotion.description, tokens)
+    base = db.query(Promotion.id, Promotion.description, Promotion.is_active)
+    tier = _and_max_tier_filter(base, counts)
+    if tier is None:
         return []
-    rows = (
-        db.query(Promotion.id, Promotion.description, Promotion.is_active)
-        .filter(*conds)
-        .limit(AND_MODE_LIMIT)
-        .all()
-    )
+    rows = base.filter(tier).limit(AND_MODE_LIMIT).all()
     return [
         ResolvedEntity(
             entity_type="promotion",
@@ -2248,10 +2239,8 @@ def _and_probe_promotion(db: Session, tokens: list[str]) -> list[ResolvedEntity]
 
 def _and_probe_attachment(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Attachment.original_filename, Attachment.description, AttachmentType.type_name)
-    conds = _and_build_conds(blob, tokens)
-    if not conds:
-        return []
-    rows = (
+    counts = _and_token_match_counts(blob, tokens)
+    base = (
         db.query(
             Attachment.id,
             Attachment.original_filename,
@@ -2261,10 +2250,12 @@ def _and_probe_attachment(db: Session, tokens: list[str]) -> list[ResolvedEntity
             AttachmentType.type_name,
         )
         .outerjoin(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
-        .filter(Attachment.is_deleted.is_(False), *conds)
-        .limit(AND_MODE_LIMIT)
-        .all()
+        .filter(Attachment.is_deleted.is_(False))
     )
+    tier = _and_max_tier_filter(base, counts)
+    if tier is None:
+        return []
+    rows = base.filter(tier).limit(AND_MODE_LIMIT).all()
     return [
         ResolvedEntity(
             entity_type="attachment",
@@ -2289,14 +2280,11 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     # (legacy fallback). Run both; orders.debtor_name JOINs Customer for UUID.
     out: list[ResolvedEntity] = []
     blob_c = _concat_ws(Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email)
-    conds_c = _and_build_conds(blob_c, tokens)
-    if conds_c:
-        rows = (
-            db.query(Customer.id, Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email, Customer.is_active)
-            .filter(*conds_c)
-            .limit(AND_MODE_LIMIT)
-            .all()
-        )
+    counts_c = _and_token_match_counts(blob_c, tokens)
+    base_c = db.query(Customer.id, Customer.customer_code, Customer.customer_name, Customer.phone_number, Customer.email, Customer.is_active)
+    tier_c = _and_max_tier_filter(base_c, counts_c)
+    if tier_c is not None:
+        rows = base_c.filter(tier_c).limit(AND_MODE_LIMIT).all()
         for cid, code, name, phone, email, is_active in rows:
             out.append(
                 ResolvedEntity(
@@ -2311,16 +2299,15 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     # Legacy debtor_name path — only if no customers master hit covers the same name.
     seen_names = {(m.display or {}).get("customer_name", "").lower() for m in out}
     blob_o = _concat_ws(Order.debtor_name, Order.debtor_code)
-    conds_o = _and_build_conds(blob_o, tokens)
-    if conds_o:
-        rows = (
-            db.query(Order.debtor_name, Order.debtor_code, Customer.id)
-            .outerjoin(Customer, func.lower(func.btrim(Customer.customer_name)) == func.lower(func.btrim(Order.debtor_name)))
-            .filter(Order.deleted_at.is_(None), Order.debtor_name.isnot(None), *conds_o)
-            .distinct()
-            .limit(AND_MODE_LIMIT)
-            .all()
-        )
+    counts_o = _and_token_match_counts(blob_o, tokens)
+    base_o = (
+        db.query(Order.debtor_name, Order.debtor_code, Customer.id)
+        .outerjoin(Customer, func.lower(func.btrim(Customer.customer_name)) == func.lower(func.btrim(Order.debtor_name)))
+        .filter(Order.deleted_at.is_(None), Order.debtor_name.isnot(None))
+    )
+    tier_o = _and_max_tier_filter(base_o, counts_o)
+    if tier_o is not None:
+        rows = base_o.filter(tier_o).distinct().limit(AND_MODE_LIMIT).all()
         for debtor_name, debtor_code, customer_id in rows:
             if (debtor_name or "").lower() in seen_names:
                 continue
@@ -2339,15 +2326,12 @@ def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
 
 def _and_probe_form(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Form.code, Form.name, Form.purpose)
-    conds = _and_build_conds(blob, tokens)
-    if not conds:
+    counts = _and_token_match_counts(blob, tokens)
+    base = db.query(Form.id, Form.code, Form.name, Form.purpose, Form.is_active, Form.form_type)
+    tier = _and_max_tier_filter(base, counts)
+    if tier is None:
         return []
-    rows = (
-        db.query(Form.id, Form.code, Form.name, Form.purpose, Form.is_active, Form.form_type)
-        .filter(*conds)
-        .limit(AND_MODE_LIMIT)
-        .all()
-    )
+    rows = base.filter(tier).limit(AND_MODE_LIMIT).all()
     return [
         ResolvedEntity(
             entity_type="form",
@@ -2363,15 +2347,12 @@ def _and_probe_form(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
 
 def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Transporter.code, Transporter.name, Transporter.normalized_name)
-    conds = _and_build_conds(blob, tokens)
-    if not conds:
+    counts = _and_token_match_counts(blob, tokens)
+    base = db.query(Transporter.id, Transporter.code, Transporter.name)
+    tier = _and_max_tier_filter(base, counts)
+    if tier is None:
         return []
-    rows = (
-        db.query(Transporter.id, Transporter.code, Transporter.name)
-        .filter(*conds)
-        .limit(AND_MODE_LIMIT)
-        .all()
-    )
+    rows = base.filter(tier).limit(AND_MODE_LIMIT).all()
     return [
         ResolvedEntity(
             entity_type="transporter",
@@ -2387,15 +2368,12 @@ def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntit
 
 def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location)
-    conds = _and_build_conds(blob, tokens)
-    if not conds:
+    counts = _and_token_match_counts(blob, tokens)
+    base = db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location, Warehouse.is_active)
+    tier = _and_max_tier_filter(base, counts)
+    if tier is None:
         return []
-    rows = (
-        db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location, Warehouse.is_active)
-        .filter(*conds)
-        .limit(AND_MODE_LIMIT)
-        .all()
-    )
+    rows = base.filter(tier).limit(AND_MODE_LIMIT).all()
     return [
         ResolvedEntity(
             entity_type="warehouse",
@@ -2411,15 +2389,12 @@ def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]
 
 def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     blob = _concat_ws(Supplier.supplier_code, Supplier.supplier_name, Supplier.contact_name)
-    conds = _and_build_conds(blob, tokens)
-    if not conds:
+    counts = _and_token_match_counts(blob, tokens)
+    base = db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active)
+    tier = _and_max_tier_filter(base, counts)
+    if tier is None:
         return []
-    rows = (
-        db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name, Supplier.is_active)
-        .filter(*conds)
-        .limit(AND_MODE_LIMIT)
-        .all()
-    )
+    rows = base.filter(tier).limit(AND_MODE_LIMIT).all()
     return [
         ResolvedEntity(
             entity_type="supplier",

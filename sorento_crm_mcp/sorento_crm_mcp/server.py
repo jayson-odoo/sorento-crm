@@ -13,7 +13,6 @@ from typing import Any
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from sorento_crm_mcp.access_guard import check_access, deny_payload
 from sorento_crm_mcp.catalog import CATALOG, ToolSpec
 from sorento_crm_mcp.escalation_hint import attach_suggested_escalation
 from sorento_crm_mcp.http_client import CRMClient
@@ -28,33 +27,7 @@ TOOL_QUERY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
     "crm_workflow_forms_definitions_list": {"q": ("query",)},
 }
 
-TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
-    # Forms scope requirements for external API key flows.
-    "crm_forms_stock_inquiries_list": ("contact_id", "space_id"),
-    "crm_forms_stock_inquiries_get": ("contact_id", "space_id"),
-    "crm_forms_purchase_requests_list": ("contact_id", "space_id"),
-    "crm_forms_purchase_requests_get": ("contact_id", "space_id"),
-    "crm_forms_management_forms_get": ("contact_id", "space_id"),
-    "crm_forms_management_forms_list": ("contact_id", "space_id"),
-    # Promotion / attachment access-control: server resolves the contact's M2M
-    # access types from these and applies an overlap filter against the
-    # resource's access_levels JSONB array. n8n must always supply contact_id,
-    # space_id, AND access_levels (a single code picked from the discovery tool
-    # crm_user_management_contact_access_levels_active — see TCK-2026-000105).
-    # access_levels stays OPTIONAL on the MCP schema so the backend auto-default
-    # (1-active → use that code) actually fires when the LLM omits it. Required
-    # only when the contact has >1 active code; the backend 422 carries the
-    # allowed list so the agent can recover by calling
-    # crm_user_management_contact_access_levels_active and re-issuing.
-    "crm_marketing_promotions_list": ("contact_id", "space_id"),
-    "crm_marketing_promotions_get": ("contact_id", "space_id"),
-    "crm_marketing_promotion_products_nested": ("contact_id", "space_id"),
-    "crm_marketing_promotion_products_list": ("contact_id", "space_id"),
-    "crm_marketing_promotion_attachments_list": ("contact_id", "space_id"),
-    "crm_marketing_promotion_attachments_by_promotion": ("contact_id", "space_id"),
-    "crm_master_product_attachments_list": ("contact_id", "space_id"),
-    "crm_master_product_attachments_by_product": ("contact_id", "space_id"),
-}
+TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {}
 
 TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     # Promotion list must always return active promotions only.
@@ -1025,9 +998,6 @@ async def _execute_tool_request_with_body(
     return _sanitize_tool_response(spec.name, response, query=query)
 
 
-_GUARD_PARAM_NAMES = ("contact_id", "space_id")
-
-
 def _compile_tool(spec: ToolSpec):
     """Build async (ctx, ...) -> str for one catalog entry; Context carries CRMClient from lifespan."""
     pp_sig = ", ".join(f"{p}: str" for p in spec.path_params)
@@ -1037,25 +1007,16 @@ def _compile_tool(spec: ToolSpec):
         for alias_name in alias_names:
             if alias_name not in query_params_with_aliases:
                 query_params_with_aliases.append(alias_name)
-    # Strip guard param names from the generated signature — they're already
-    # required as guard inputs (contact_id, space_id). For tools whose backend
-    # endpoint accepts them as query filters, we re-inject the guard values
-    # into _qq below so the forwarded request still carries them.
-    qp_for_sig = [q for q in query_params_with_aliases if q not in _GUARD_PARAM_NAMES]
-    bp_for_sig = [b for b in spec.body_params if b not in _GUARD_PARAM_NAMES]
-    forward_contact_id_query = "contact_id" in query_params_with_aliases
-    forward_space_id_query = "space_id" in query_params_with_aliases
-    forward_contact_id_body = "contact_id" in spec.body_params
-    forward_space_id_body = "space_id" in spec.body_params
+    qp_for_sig = list(query_params_with_aliases)
+    bp_for_sig = list(spec.body_params)
     # Promote any query param declared in TOOL_REQUIRED_QUERY_HINTS to a
     # no-default `str` argument so the generated JSON schema marks it
     # `required:true`. Without this the LLM treats it as optional and skips it.
     # Sort required-first so the signature stays valid Python (no required after
-    # optional). Guard params (contact_id, space_id) are already required in
-    # `guard_sig`; we skip them here.
+    # optional).
     required_query_set = {
         q for q in TOOL_REQUIRED_QUERY_HINTS.get(spec.name, ())
-        if q in qp_for_sig and q not in _GUARD_PARAM_NAMES
+        if q in qp_for_sig
     }
     qp_required_sorted = [q for q in qp_for_sig if q in required_query_set]
     qp_optional_sorted = [q for q in qp_for_sig if q not in required_query_set]
@@ -1070,17 +1031,8 @@ def _compile_tool(spec: ToolSpec):
         for q in qp_for_sig
     )
     bp_sig = ", ".join(f"{b}: str" for b in bp_for_sig)
-    guard_sig = "contact_id: str, space_id: str"
-    if pp_sig and qp_sig:
-        sig = f"{guard_sig}, {pp_sig}, {qp_sig}"
-    elif pp_sig:
-        sig = f"{guard_sig}, {pp_sig}"
-    elif qp_sig:
-        sig = f"{guard_sig}, {qp_sig}"
-    else:
-        sig = guard_sig
-    if bp_sig:
-        sig = f"{sig}, {bp_sig}"
+    parts = [p for p in (pp_sig, qp_sig, bp_sig) if p]
+    sig = ", ".join(parts)
 
     pp_dict = "{" + ", ".join(f'"{p}": {p}' for p in spec.path_params) + "}"
     q_dict = "{" + ", ".join(f'"{q}": {q}' for q in qp_for_sig) + "}"
@@ -1090,20 +1042,14 @@ def _compile_tool(spec: ToolSpec):
     default_q = repr(TOOL_DEFAULT_QUERY_PARAMS.get(spec.name, {}))
 
     fname = f"_impl_{spec.name}"
+    sig_with_ctx = f"ctx: Context, {sig}" if sig else "ctx: Context"
     code = (
-        f"async def {fname}(ctx: Context, {sig}):\n"
+        f"async def {fname}({sig_with_ctx}):\n"
         f"    client = ctx.request_context.lifespan_context['client']\n"
         f"    _settings = ctx.request_context.lifespan_context['settings']\n"
-        f"    _decision = await _check_access(_spec.name, contact_id, space_id, api_url=_settings.crm_base_url, api_key=_settings.external_api_key)\n"
-        f"    if not _decision.allowed:\n"
-        f"        return _deny_payload(_decision)\n"
         f"    _pp = {pp_dict}\n"
         f"    _qq = {q_dict}\n"
-        f"    if {forward_contact_id_query!r}: _qq['contact_id'] = contact_id\n"
-        f"    if {forward_space_id_query!r}: _qq['space_id'] = space_id\n"
         f"    _bb = {b_dict}\n"
-        f"    if {forward_contact_id_body!r}: _bb['contact_id'] = contact_id\n"
-        f"    if {forward_space_id_body!r}: _bb['space_id'] = space_id\n"
         f"    _aliases = {aliases_repr}\n"
         f"    _required = {required_hints}\n"
         f"    _defaults = {default_q}\n"
@@ -1162,8 +1108,6 @@ def _compile_tool(spec: ToolSpec):
         "_validate_uuid_param": _validate_uuid_param,
         "_execute_tool_request": _execute_tool_request,
         "_execute_tool_request_with_body": _execute_tool_request_with_body,
-        "_check_access": check_access,
-        "_deny_payload": deny_payload,
         "_attach_suggested_escalation": attach_suggested_escalation,
         "json": json,
         "_spec": spec,

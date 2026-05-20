@@ -29,30 +29,6 @@ from app.modules.runtime.guards import require_public_view_links_enabled
 router = APIRouter()
 
 
-def _is_external_api_key_request(request: Optional[Request]) -> bool:
-    key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
-    valid = getattr(settings, "external_api_key", None)
-    if not key or not valid:
-        return False
-    return key.strip() == str(valid).strip()
-
-
-def _require_contact_scope_for_external(
-    *,
-    request: Request,
-    contact_id: Optional[str],
-    space_id: Optional[str],
-) -> tuple[Optional[str], Optional[str]]:
-    c = (contact_id or "").strip() or None
-    s = (space_id or "").strip() or None
-    if _is_external_api_key_request(request) and (not c or not s):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="contact_id and space_id are required for external purchase request list/get requests.",
-        )
-    return c, s
-
-
 def _respond_user_id_from_current_user(current_user: dict) -> str:
     """Get respond_user_id for update-and-reply; fallback to user id."""
     rid = (current_user or {}).get("respond_user_id") or (current_user or {}).get("respondUserId")
@@ -66,12 +42,9 @@ def _respond_user_id_from_current_user(current_user: dict) -> str:
 
 @router.get("/", response_model=ListResponse[PurchaseRequestHeaderListResponse])
 async def get_purchase_requests(
-    request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
-    contact_id: Optional[str] = Query(None),
-    space_id: Optional[str] = Query(None),
     request_type: Optional[str] = Query(None, description="purchase_request or sponsorship_form"),
     approval_status: Optional[str] = Query(None, description="draft, pending, approved, rejected"),
     sort: Optional[str] = Query("request_date"),
@@ -82,17 +55,12 @@ async def get_purchase_requests(
     """List purchase requests and sponsorship forms with pagination."""
     try:
         service = PurchaseRequestService(db)
-        filter_contact_id, filter_space_id = _require_contact_scope_for_external(
-            request=request,
-            contact_id=contact_id,
-            space_id=space_id,
-        )
         result = service.list_requests(
             page=page,
             limit=limit,
             query=query,
-            contact_id=filter_contact_id,
-            space_id=filter_space_id,
+            contact_id=None,
+            space_id=None,
             request_type=request_type,
             approval_status=approval_status,
             sort_field=sort or "request_date",
@@ -106,9 +74,6 @@ async def get_purchase_requests(
 @router.get("/{request_id}", response_model=PurchaseRequestHeaderResponse)
 async def get_purchase_request(
     request_id: str,
-    request: Request,
-    contact_id: Optional[str] = Query(None),
-    space_id: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -117,15 +82,10 @@ async def get_purchase_request(
         from app.models.user import User
 
         service = PurchaseRequestService(db)
-        filter_contact_id, filter_space_id = _require_contact_scope_for_external(
-            request=request,
-            contact_id=contact_id,
-            space_id=space_id,
-        )
         header = service.get_request(
             request_id,
-            contact_id=filter_contact_id,
-            space_id=filter_space_id,
+            contact_id=None,
+            space_id=None,
         )
         if getattr(header, "approver_user_id", None):
             user = db.query(User).filter(User.id == header.approver_user_id).first()

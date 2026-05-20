@@ -186,15 +186,14 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "List per-SKU product↔attachment links. Use for documents tied to a SPECIFIC product "
             "(named SKU + document): BROCHURE, SPEC SHEET, DATASHEET, PRODUCT MANUAL, "
-            "INSTALLATION GUIDE, CERTIFICATE. Visibility is gated server-side by the contact's "
-            "access types via `contact_id` + `space_id`.\n\n"
+            "INSTALLATION GUIDE, CERTIFICATE.\n\n"
             "FILTER BY UUID: pass `product_ids` (canonical product UUIDs) and / or "
             "`attachment_ids` (canonical attachment UUIDs). Resolve free-text refs FIRST via "
             "`crm_find_entity`."
         ),
         "/api/v1/master-data/product-attachments",
         (),
-        ("page", "limit", "sort", "dir", "product_ids", "attachment_ids", "contact_id", "space_id"),
+        ("page", "limit", "sort", "dir", "product_ids", "attachment_ids"),
         domain="products",
         related_tools=("crm_master_product_attachments_by_product", "crm_master_products_list", "crm_find_entity"),
         escalation_team="sales",
@@ -212,12 +211,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "All attachment links for ONE product by canonical UUID. Use for BROCHURE / SPEC "
             "SHEET / DATASHEET / PRODUCT MANUAL / INSTALLATION GUIDE / CERTIFICATE questions "
             "about a named SKU. Resolve the product reference FIRST via `crm_find_entity`, then "
-            "pass its UUID as `product_id` path param. Server filters attachments by the "
-            "contact's M2M access types (auto-resolved from `contact_id` + `space_id`)."
+            "pass its UUID as `product_id` path param."
         ),
         "/api/v1/master-data/product-attachments/product/{product_id}",
         ("product_id",),
-        ("contact_id", "space_id"),
+        (),
         domain="products",
         related_tools=("crm_master_product_attachments_list", "crm_find_entity"),
         escalation_team="sales",
@@ -244,39 +242,6 @@ CATALOG: tuple[ToolSpec, ...] = (
         body_params=("set_key", "raw", "locale"),
         module="master_data",
     ),
-    # --- user management / access discovery ---
-    ToolSpec(
-        "crm_user_management_contact_access_levels_active",
-        (
-            "Return the contact's CURRENTLY-ACTIVE access levels — `[{name}]`. Call BEFORE any "
-            "promotion / promotion-attachment / product-attachment tool when the request is "
-            "contact-scoped AND you have not yet established which access_levels apply. Names are "
-            "DYNAMIC per contact (never guess from a static enum).\n\n"
-            "DECISION TREE for the gated tool:\n"
-            "  • Response has 1 entry → skip passing access_levels (backend auto-defaults).\n"
-            "  • Response has >1 entries → pass any reasonable variant of one returned `name`. The "
-            "backend matcher is forgiving: case-insensitive, name OR underscore-code (`Sorento "
-            "Dealer` ≡ `sorento_dealer`), plurals (`Sorento Dealers`), no-space form (`enduser` ≡ "
-            "`End User`), single-token subsets (`dealer` resolves uniquely when only one active "
-            "name contains it), noisy-phrase matches (`end user as customer` still resolves), AND "
-            "admin-curated synonyms stored on the level itself (`customer`, `homeowner`, `b2c` → "
-            "`End User`; `reseller`, `retailer` → `Dealer`). When any of these matches >1 active "
-            "level, backend returns 403 ACCESS_LEVELS_AMBIGUOUS with a `candidates` map — re-issue "
-            "with a more specific name.\n"
-            "  • Response is empty → contact has no entitlements; gated tools will return no rows.\n\n"
-            "CRITICAL — A user phrase that matches (or partially matches) one of the returned "
-            "`name` values is the `access_levels` filter, NEVER a `*_ids` or filter param on the "
-            "gated tool. Product / promotion descriptive text (e.g. `kitchen sink`, `NL series`) "
-            "must be resolved to canonical UUIDs via `crm_find_entity` first, then passed as "
-            "`product_ids` / `promotion_ids` etc.\n\n"
-            "404 → unknown contact_id / space_id pair."
-        ),
-        "/api/v1/external/contact-access-types/active",
-        (),
-        ("contact_id", "space_id"),
-        module="user_management",
-    ),
-
     # --- marketing ---
     ToolSpec(
         "crm_marketing_promotions_list",
@@ -292,21 +257,15 @@ CATALOG: tuple[ToolSpec, ...] = (
             "FILTER BY UUID: pass `promotion_ids` (canonical promotion UUIDs) to scope to specific "
             "promotions, or `product_ids` to find promotions containing any of these products. "
             "Resolve free-text refs FIRST via `crm_find_entity`.\n\n"
-            "VISIBILITY is gated server-side from the contact's M2M access types (`contact_id` + "
-            "`space_id`). Promotions outside the contact's access overlap are excluded.\n\n"
-            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active level "
-            "— backend auto-defaults to it. REQUIRED when the contact has >1 active levels; calling "
-            "without it returns 422 + `allowed:[{name}]`. Names are DYNAMIC per contact — do NOT "
-            "guess from a static enum. To pick safely, call "
-            "`crm_user_management_contact_access_levels_active` first; if 1 entry skip passing "
-            "access_levels, if >1 map the user's phrasing to one of the returned `name` values and "
-            "pass that name. A value not in the live active set → 403 + refreshed `allowed`.\n\n"
+            "ACCESS LEVELS: `access_levels` filters promotions to those whose `access_levels` "
+            "JSONB overlaps the supplied names. Names match the active contact-access-type catalog "
+            "(case-insensitive). Omit to skip the filter.\n\n"
             "CRITICAL — DO NOT ROUTE ACCESS LEVEL NAMES TO ANY OTHER PARAM. Phrases like `sorento "
             "dealer`, `mocha office`, `end user` are `access_levels` only."
         ),
         "/api/v1/marketing/promotions",
         (),
-        ("page", "limit", "promotion_ids", "product_ids", "active", "period_from", "period_to", "sort", "dir", "contact_id", "space_id", "access_levels"),
+        ("page", "limit", "promotion_ids", "product_ids", "active", "period_from", "period_to", "sort", "dir", "access_levels"),
         domain="promotions",
         related_tools=("crm_marketing_promotions_get", "crm_marketing_promotion_products_list", "crm_find_entity"),
         escalation_team="sales",
@@ -317,20 +276,15 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Get one promotion by canonical UUID: metadata, groups (FOC tiers), AND linked "
             "attachments inline. No second tool call needed for attachments — they come back on "
             "the same response. Does NOT include product lines by default; set include_products=true "
-            "only if you need nested SKU lines. Visibility is gated server-side from the contact's "
-            "M2M access types (`contact_id` + `space_id`); a 404 is returned when the promotion "
-            "does not overlap the contact's access types.\n\n"
+            "only if you need nested SKU lines.\n\n"
             "Pass the promotion's UUID as `promotion_id` path param. Resolve free-text refs FIRST "
             "via `crm_find_entity`.\n\n"
-            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active "
-            "level — backend auto-defaults to it. REQUIRED when the contact has >1; calling without "
-            "it returns 422 + `allowed:[{name}]`. Call "
-            "`crm_user_management_contact_access_levels_active` first; if 1 entry skip passing, "
-            "if >1 map user's phrasing to one of the returned `name` values and pass it."
+            "ACCESS LEVELS: `access_levels` filters to a promotion whose `access_levels` JSONB "
+            "overlaps the supplied names. Omit to skip the filter."
         ),
         "/api/v1/marketing/promotions/{promotion_id}",
         ("promotion_id",),
-        ("contact_id", "space_id", "access_levels"),
+        ("access_levels",),
         domain="promotions",
         related_tools=("crm_marketing_promotions_list", "crm_find_entity"),
         escalation_team="sales",
@@ -343,16 +297,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "promotion document.\n\n"
             "FILTER BY UUID: pass `promotion_ids` and / or `product_ids` (canonical UUIDs csv/"
             "JSON/repeated). Resolve free-text refs FIRST via `crm_find_entity`.\n\n"
-            "VISIBILITY is gated server-side from the contact's M2M access types (`contact_id` + "
-            "`space_id`).\n\n"
-            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active level — "
-            "backend auto-defaults to it. REQUIRED when the contact has >1 active levels; calling "
-            "without it returns 422 + `allowed:[{name}]`. Call "
-            "`crm_user_management_contact_access_levels_active` first if unsure."
+            "ACCESS LEVELS: `access_levels` filters promotions to those whose `access_levels` "
+            "JSONB overlaps the supplied names. Omit to skip the filter."
         ),
         "/api/v1/marketing/promotion-products",
         (),
-        ("promotion_ids", "product_ids", "page", "limit", "contact_id", "space_id", "access_levels"),
+        ("promotion_ids", "product_ids", "page", "limit", "access_levels"),
         domain="promotions",
         related_tools=("crm_marketing_promotion_products_list", "crm_marketing_promotions_get", "crm_find_entity"),
         escalation_team="sales",
@@ -372,12 +322,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • item_type, status=active|inactive|all\n\n"
             "EXACT vs FUZZY: bare number ('365', 'L600', '460×330×140') is EXACT — set "
             "min == max == value. Hedge words ('around', 'about', 'approx') apply ±5 mm tolerance.\n\n"
-            "VISIBILITY is gated server-side from the contact's M2M access types (`contact_id` + "
-            "`space_id`).\n\n"
-            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active level — "
-            "backend auto-defaults to it. REQUIRED when the contact has >1 active levels; calling "
-            "without it returns 422 + `allowed:[{name}]`. Call "
-            "`crm_user_management_contact_access_levels_active` first if unsure."
+            "ACCESS LEVELS: `access_levels` filters to product lines under promotions whose "
+            "`access_levels` JSONB overlaps the supplied names. Omit to skip the filter."
         ),
         "/api/v1/marketing/promotion-products",
         (),
@@ -390,7 +336,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "width_min", "width_max",
             "height_min", "height_max",
             "any_dimension_min", "any_dimension_max",
-            "contact_id", "space_id", "access_levels",
+            "access_levels",
         ),
         domain="promotions",
         related_tools=("crm_marketing_promotion_products_nested", "crm_marketing_promotions_list", "crm_find_entity"),
@@ -405,20 +351,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • `attachment_ids` — narrows to these specific files.\n"
             "Resolve free-text refs (promotion name, attachment filename, product reference) "
             "FIRST via `crm_find_entity`, then pass returned UUIDs here.\n\n"
-            "Server filters results to links whose parent promotion AND attachment access_levels "
-            "both overlap the contact's M2M access types (resolved from `contact_id` + `space_id`). "
-            "Internal storage fields are stripped from the response.\n\n"
-            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active level "
-            "— backend auto-defaults. REQUIRED when the contact has >1; calling without it returns "
-            "422 + `allowed:[{name}]`. Call `crm_user_management_contact_access_levels_active` "
-            "first if unsure. Pass `access_levels` as a single name (e.g. `\"Sorento Dealer\"`) or "
-            "JSON array of names (e.g. `[\"Sorento Dealer\",\"Mocha Office\"]`).\n\n"
+            "ACCESS LEVELS: `access_levels` filters to links under promotions whose "
+            "`access_levels` JSONB overlaps the supplied names. Omit to skip the filter. Pass as a "
+            "single name (e.g. `\"Sorento Dealer\"`) or JSON array of names (e.g. `[\"Sorento "
+            "Dealer\",\"Mocha Office\"]`).\n\n"
             "CRITICAL — phrases like `sorento dealer`, `mocha office`, `end user` are "
             "`access_levels` only. They are NEVER `*_ids` filter values."
         ),
         "/api/v1/marketing/promotion-attachments",
         (),
-        ("page", "limit", "sort", "dir", "promotion_ids", "attachment_ids", "contact_id", "space_id", "access_levels"),
+        ("page", "limit", "sort", "dir", "promotion_ids", "attachment_ids", "access_levels"),
         domain="promotions",
         related_tools=("crm_marketing_promotion_attachments_by_promotion", "crm_marketing_promotions_list", "crm_find_entity"),
         escalation_team="sales",
@@ -436,20 +378,15 @@ CATALOG: tuple[ToolSpec, ...] = (
             "All promotion attachments for ONE promotion by canonical UUID. Use for BROCHURE / "
             "FLYER tied to a specific promotion. Resolve the promotion reference FIRST via "
             "`crm_find_entity`, then pass its UUID as `promotion_id` path param.\n\n"
-            "Server filters to attachments whose parent promotion AND attachment access_levels "
-            "both overlap the contact's M2M access types (resolved from `contact_id` + "
-            "`space_id`). Internal storage fields are stripped.\n\n"
-            "ACCESS LEVELS: `access_levels` is OPTIONAL when the contact has exactly 1 active level "
-            "— backend auto-defaults. REQUIRED when the contact has >1; calling without it returns "
-            "422 + `allowed:[{name}]`. Call `crm_user_management_contact_access_levels_active` "
-            "first if unsure. Pass `access_levels` as a single name (e.g. `\"Sorento Dealer\"`) or "
-            "JSON array of names.\n\n"
+            "ACCESS LEVELS: `access_levels` filters to attachments under a promotion whose "
+            "`access_levels` JSONB overlaps the supplied names. Omit to skip the filter. Pass as a "
+            "single name (e.g. `\"Sorento Dealer\"`) or JSON array of names.\n\n"
             "CRITICAL — phrases like `sorento dealer`, `mocha office`, `end user` are "
             "`access_levels` only. They are NEVER any other filter value."
         ),
         "/api/v1/marketing/promotion-attachments/promotion/{promotion_id}",
         ("promotion_id",),
-        ("contact_id", "space_id", "access_levels"),
+        ("access_levels",),
         domain="promotions",
         related_tools=("crm_marketing_promotion_attachments_list", "crm_marketing_promotions_get", "crm_find_entity"),
         escalation_team="sales",
@@ -1015,13 +952,12 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_forms_management_forms_list",
         (
-            "List forms visible to a Respond contact. FILTER BY UUID: pass `form_ids` "
-            "(canonical form UUIDs csv/JSON/repeated). Resolve free-text form refs (code, "
-            "name, purpose phrase) FIRST via `crm_find_entity`."
+            "List forms. FILTER BY UUID: pass `form_ids` (canonical form UUIDs csv/JSON/repeated). "
+            "Resolve free-text form refs (code, name, purpose phrase) FIRST via `crm_find_entity`."
         ),
         "/api/v1/forms-management/forms",
         (),
-        ("page", "limit", "form_ids", "contact_id", "space_id", "sort", "dir"),
+        ("page", "limit", "form_ids", "sort", "dir"),
         domain="forms",
         related_tools=("crm_forms_management_forms_get", "crm_find_entity"),
         escalation_team="support",
@@ -1034,7 +970,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/forms/{form_id}",
         ("form_id",),
-        ("contact_id", "space_id"),
+        (),
         domain="forms",
         related_tools=("crm_forms_management_forms_list", "crm_find_entity"),
         escalation_team="support",
@@ -1207,10 +1143,10 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_forms_stock_inquiries_list",
-        "List stock inquiries for current authenticated scope. Supports pagination and query.",
+        "List stock inquiries. Supports pagination and query.",
         "/api/v1/procurement/stock-inquiries",
         (),
-        ("page", "limit", "query", "contact_id", "space_id", "sort", "dir"),
+        ("page", "limit", "query", "sort", "dir"),
         method="GET",
     ),
     ToolSpec(
@@ -1218,7 +1154,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "Get one stock inquiry by inquiry_id for view/update preparation.",
         "/api/v1/procurement/stock-inquiries/{inquiry_id}",
         ("inquiry_id",),
-        ("contact_id", "space_id"),
+        (),
         method="GET",
     ),
     ToolSpec(
@@ -1226,7 +1162,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "List purchase requests and sponsorship forms. Supports request_type, approval_status, query, and pagination.",
         "/api/v1/procurement/purchase-requests",
         (),
-        ("page", "limit", "query", "contact_id", "space_id", "request_type", "approval_status", "sort", "dir"),
+        ("page", "limit", "query", "request_type", "approval_status", "sort", "dir"),
         method="GET",
     ),
     ToolSpec(
@@ -1234,35 +1170,27 @@ CATALOG: tuple[ToolSpec, ...] = (
         "Get one purchase request or sponsorship form by request_id.",
         "/api/v1/procurement/purchase-requests/{request_id}",
         ("request_id",),
-        ("contact_id", "space_id"),
+        (),
         method="GET",
     ),
     ToolSpec(
         "crm_forms_complaints_list",
         (
-            "List complaints scoped to the current Respond.io contact_id and space_id.\n"
-            "REQUIRED PARAMETERS: `contact_id` AND `space_id`. ALWAYS pass BOTH from the active session/context "
-            "— never omit. Calling without them returns 400 'contact_id and space_id are required for external "
-            "complaint list/get requests.' Do NOT try to substitute them with `query`; they are separate parameters.\n"
+            "List complaints.\n"
             "Optional: page (default 1), limit (default 50), query (free-text over delivery_order_number, "
             "customer_name, product_code, defect_description, project_title), status, assigned_to, sort, dir."
         ),
         "/api/v1/complaints-management/complaints/",
         (),
-        ("contact_id", "space_id", "page", "limit", "query", "status", "assigned_to", "sort", "dir"),
+        ("page", "limit", "query", "status", "assigned_to", "sort", "dir"),
         method="GET",
     ),
     ToolSpec(
         "crm_forms_complaints_get",
-        (
-            "Get one complaint by complaint_id for view/update preparation.\n"
-            "REQUIRED PARAMETERS: `complaint_id` (path) AND `contact_id` AND `space_id` (query). ALWAYS pass "
-            "both contact_id and space_id from the active session/context — never omit. Calling without them "
-            "returns 400; the lookup also 404s when the complaint exists but is not in the supplied scope."
-        ),
+        "Get one complaint by complaint_id for view/update preparation.",
         "/api/v1/complaints-management/complaints/{complaint_id}",
         ("complaint_id",),
-        ("contact_id", "space_id"),
+        (),
         method="GET",
     ),
     ToolSpec(
@@ -1382,16 +1310,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "{title, priority (low|medium|high|urgent), category "
             "(bug|feature|question|other), description}. Server creates a "
             "DRAFT ticket and returns a draft_url. "
-            "ALSO pass `contact_id` (Respond.io contact id — this IS the "
-            "conversation reference; Respond.io has one inbox per contact, "
-            "so do NOT pass a separate conversation_id), `space_id` "
-            "(Respond.io workspace id), and `message_id` (Respond.io message "
-            "id of the inbound WhatsApp message that triggered this ticket) "
-            "at the TOP LEVEL of the tool arguments — NOT inside payload_json. "
-            "These three are forwarded as extra body fields and let the CRM "
-            "render an `Open Respond.io conversation` link plus a reference "
-            "to the source message on the ticket detail page. Omit any you "
-            "genuinely don't have; do not fabricate. "
+            "Optionally pass `message_id` (Respond.io message id of the "
+            "inbound WhatsApp message that triggered this ticket) at the TOP "
+            "LEVEL of the tool arguments — NOT inside payload_json. Omit if "
+            "you don't have it; do not fabricate. "
             "3. Reply to the user with ONE short message containing the "
             "draft_url verbatim, e.g. 'I prepared a draft ticket — open "
             "<draft_url> to review and click Submit.' Do NOT echo the "
@@ -1410,7 +1332,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (),
         method="POST",
-        body_params=("payload_json", "contact_id", "space_id", "message_id"),
+        body_params=("payload_json", "message_id"),
         module="tickets",
     ),
 )

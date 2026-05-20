@@ -1,9 +1,7 @@
 """
 Unit tests for the respond_contacts ↔ contact_access_types many-to-many access control.
 
-Pure-Python coverage of:
-- ``ContactAccessTypeService.resolve_optional_contact_access_codes`` argument-pair semantics.
-- ``PromotionService._filter_attachments_by_codes`` overlap helper.
+Pure-Python coverage of ``PromotionService._filter_attachments_by_codes`` overlap helper.
 
 The pivot CRUD (``set_contact_access_codes`` / ``get_contact_access_codes`` / ``resolve_contact_access_codes``)
 and the SQL-level JSONB ``?|`` overlap filter are covered by the live integration test against the
@@ -15,43 +13,8 @@ Run with: pytest tests/test_respond_contact_access_types_m2m.py -v
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
-import pytest
-
-from app.services.contact_access_type_service import ContactAccessTypeService
-from app.services.error_handler import AppException
 from app.services.marketing_service import PromotionService
-
-
-def test_resolve_optional_contact_access_codes_both_none_returns_none():
-    svc = ContactAccessTypeService(MagicMock())
-    assert svc.resolve_optional_contact_access_codes(None, None) is None
-    assert svc.resolve_optional_contact_access_codes("", "") is None
-    # Whitespace-only also counts as empty.
-    assert svc.resolve_optional_contact_access_codes("   ", "   ") is None
-
-
-def test_resolve_optional_contact_access_codes_only_contact_id_raises_400():
-    svc = ContactAccessTypeService(MagicMock())
-    with pytest.raises(AppException) as exc_info:
-        svc.resolve_optional_contact_access_codes("respond-abc", None)
-    assert exc_info.value.status_code == 400
-
-
-def test_resolve_optional_contact_access_codes_only_space_id_raises_400():
-    svc = ContactAccessTypeService(MagicMock())
-    with pytest.raises(AppException) as exc_info:
-        svc.resolve_optional_contact_access_codes(None, "space-123")
-    assert exc_info.value.status_code == 400
-
-
-def test_resolve_optional_contact_access_codes_one_blank_raises_400():
-    svc = ContactAccessTypeService(MagicMock())
-    with pytest.raises(AppException):
-        svc.resolve_optional_contact_access_codes("respond-abc", "   ")
-    with pytest.raises(AppException):
-        svc.resolve_optional_contact_access_codes("   ", "space-123")
 
 
 # ----------------------------- inline-attachment helper -----------------------------

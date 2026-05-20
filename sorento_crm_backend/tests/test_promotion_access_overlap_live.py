@@ -169,19 +169,6 @@ def test_resolve_contact_access_codes_unknown_pair_404(db: Session, fixtures):
     assert exc_info.value.status_code == 404
 
 
-def test_resolve_optional_blank_pair_returns_none(db: Session):
-    svc = ContactAccessTypeService(db)
-    assert svc.resolve_optional_contact_access_codes(None, None) is None
-    assert svc.resolve_optional_contact_access_codes("", "") is None
-
-
-def test_resolve_optional_partial_pair_400(db: Session, fixtures):
-    svc = ContactAccessTypeService(db)
-    with pytest.raises(AppException) as exc_info:
-        svc.resolve_optional_contact_access_codes(fixtures["contact"].respond_io_id, None)
-    assert exc_info.value.status_code == 400
-
-
 def test_promotion_list_filtered_by_overlap_dealer(db: Session, fixtures):
     """contact_access_codes=['dealer'] keeps dealer-only + dealer+end_user;
     drops end_user-only. This is the SQL path that previously failed with

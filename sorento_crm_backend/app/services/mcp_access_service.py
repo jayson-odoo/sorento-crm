@@ -32,6 +32,7 @@ Decision = Literal[
     "deny_tool_unlinked",
     "deny_unknown_tool",
     "deny_unknown_contact",
+    "deny_unknown_agent",
 ]
 
 
@@ -216,3 +217,111 @@ def evaluate(
         matched_agent_id=matched_agent_id,
     )
     return AccessDecision(allowed=True, decision="allow", agent_name=matched_name)
+
+
+def evaluate_agent(
+    db: Session, *, agent_code: str, contact_id: str, space_id: str
+) -> AccessDecision:
+    """Decide whether `(contact_id, space_id)` is allowed to invoke `agent_code`.
+
+    `agent_code` matches ``access_agents.code``; the agent must be active.
+    Lookup mirrors :func:`evaluate`: resolve workspace by ``space_id`` (external
+    Respond.io id), resolve contact by ``(respond_io_id, workspace_uuid)``, then
+    check ``contact_agent_access`` for an allowed row in the current time window.
+
+    Logs one ``mcp_access_log`` row per call (every branch) with
+    ``tool_name=f"access-agent:{agent_code}"`` so existing dashboards aggregate
+    preflight calls alongside tool calls.
+    """
+    log_tool_name = f"access-agent:{agent_code}"
+
+    agent = (
+        db.query(AccessAgent)
+        .filter(AccessAgent.code == agent_code, AccessAgent.is_active.is_(True))
+        .one_or_none()
+    )
+    if agent is None:
+        _record_log(
+            db,
+            tool_name=log_tool_name,
+            contact_external_id=contact_id,
+            respond_contact_id=None,
+            respond_workspace_id=None,
+            decision="deny_unknown_agent",
+            matched_agent_id=None,
+        )
+        return AccessDecision(allowed=False, decision="deny_unknown_agent", agent_name=None)
+
+    workspace = (
+        db.query(RespondWorkspace)
+        .filter(RespondWorkspace.space_id == space_id)
+        .one_or_none()
+    )
+    workspace_uuid = workspace.id if workspace is not None else None
+
+    if workspace_uuid is None:
+        _record_log(
+            db,
+            tool_name=log_tool_name,
+            contact_external_id=contact_id,
+            respond_contact_id=None,
+            respond_workspace_id=None,
+            decision="deny_unknown_contact",
+            matched_agent_id=None,
+        )
+        return AccessDecision(allowed=False, decision="deny_unknown_contact", agent_name=agent.name)
+
+    contact = (
+        db.query(RespondContact)
+        .filter(
+            RespondContact.respond_io_id == contact_id,
+            RespondContact.workspace_id == workspace_uuid,
+        )
+        .one_or_none()
+    )
+    if contact is None:
+        _record_log(
+            db,
+            tool_name=log_tool_name,
+            contact_external_id=contact_id,
+            respond_contact_id=None,
+            respond_workspace_id=workspace_uuid,
+            decision="deny_unknown_contact",
+            matched_agent_id=None,
+        )
+        return AccessDecision(allowed=False, decision="deny_unknown_contact", agent_name=agent.name)
+
+    now = datetime.utcnow()
+    granted = (
+        db.query(ContactAgentAccess.agent_id)
+        .filter(
+            ContactAgentAccess.respond_contact_id == contact.id,
+            ContactAgentAccess.agent_id == agent.id,
+            ContactAgentAccess.is_allowed.is_(True),
+            or_(ContactAgentAccess.valid_to.is_(None), ContactAgentAccess.valid_to > now),
+            or_(ContactAgentAccess.valid_from.is_(None), ContactAgentAccess.valid_from <= now),
+        )
+        .first()
+    )
+    if granted is None:
+        _record_log(
+            db,
+            tool_name=log_tool_name,
+            contact_external_id=contact_id,
+            respond_contact_id=contact.id,
+            respond_workspace_id=workspace_uuid,
+            decision="deny_no_access",
+            matched_agent_id=None,
+        )
+        return AccessDecision(allowed=False, decision="deny_no_access", agent_name=agent.name)
+
+    _record_log(
+        db,
+        tool_name=log_tool_name,
+        contact_external_id=contact_id,
+        respond_contact_id=contact.id,
+        respond_workspace_id=workspace_uuid,
+        decision="allow",
+        matched_agent_id=agent.id,
+    )
+    return AccessDecision(allowed=True, decision="allow", agent_name=agent.name)

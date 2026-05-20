@@ -126,21 +126,3 @@ def test_list_types_for_api_returns_active_only():
     assert result[1]["keywords"] == []
 
 
-def test_resolve_optional_contact_access_codes_both_missing_returns_none():
-    """resolve_optional_contact_access_codes(None, None) → None: skip the contact-context filter."""
-    mock_db = MagicMock()
-    service = ContactAccessTypeService(mock_db)
-    assert service.resolve_optional_contact_access_codes(None, None) is None
-    assert service.resolve_optional_contact_access_codes("", "") is None
-
-
-def test_resolve_optional_contact_access_codes_only_one_raises():
-    """Exactly one of contact_id/space_id supplied → 400 (incomplete contact context)."""
-    mock_db = MagicMock()
-    service = ContactAccessTypeService(mock_db)
-    with pytest.raises(AppException) as exc_info:
-        service.resolve_optional_contact_access_codes("rid-only", None)
-    assert exc_info.value.status_code == 400
-    with pytest.raises(AppException) as exc_info:
-        service.resolve_optional_contact_access_codes(None, "space-only")
-    assert exc_info.value.status_code == 400

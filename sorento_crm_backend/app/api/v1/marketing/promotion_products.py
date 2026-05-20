@@ -250,26 +250,18 @@ async def list_all_promotion_products(
         None,
         description="Maximum value (mm) for ANY of length/width/height.",
     ),
-    contact_id: Optional[str] = Query(None, description="Respond.io contact id (respond_io_id). Pair with space_id to filter promotions by the contact's M2M access types."),
-    space_id: Optional[str] = Query(None, description="Respond.io space id (respond_workspaces.space_id). Pair with contact_id."),
     access_levels: Optional[list[str]] = Query(
         None,
-        description="TCK-2026-000016: contact-scoped MCP calls must supply at least one currently-active code.",
+        description="Optional access-level codes filter (intersection with promotion.access_levels).",
     ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get promotion products with pagination. Scope to one promotion via promotion_id; use query for text search. Use contact_id+space_id to filter by the contact's access levels."""
+    """Get promotion products with pagination. Scope to one promotion via promotion_id; use query for text search. Optional access_levels intersection filter."""
     try:
-        from app.services.contact_access_type_service import ContactAccessTypeService
         from app.services.entity_filter_helpers import normalize_list_query_param
         access_levels = normalize_list_query_param(access_levels)
-        cats_svc = ContactAccessTypeService(db)
-        if contact_id and space_id:
-            access_levels = cats_svc.enforce_access_levels_for_contact(contact_id, space_id, access_levels)
-            contact_codes = list(access_levels)
-        else:
-            contact_codes = cats_svc.resolve_optional_contact_access_codes(contact_id, space_id)
+        contact_codes = list(access_levels) if access_levels else None
         service = PromotionProductService(db)
         resolved_pid: Optional[str] = None
         resolved_pids: Optional[List[str]] = None
