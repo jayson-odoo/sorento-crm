@@ -19,11 +19,31 @@ from app.services.entity_resolver import (
     resolve_references,
     resolve_references_intersection,
 )
+from app.services.query_normalizer import DOMAIN_STOPWORDS
 
 router = APIRouter(prefix="/references")
 
 
 _ALLOWED_MATCH_MODES = {"or", "and"}
+
+# Union of every domain's noise words. Tokens like "order 202605-2651" come in
+# from chatbot phrasing — the user means the order_number, not a literal
+# substring. Cleaning leaves "202605-2651" so the exact-match probe succeeds.
+_ENTITY_STOPWORDS: frozenset[str] = frozenset().union(*DOMAIN_STOPWORDS.values())
+_TOKEN_PUNCT_STRIP = ".,!?;:\"'()[]{}"
+
+
+def _strip_entity_stopwords(token: str) -> str:
+    """Drop entity-type noise words from a multi-word token; preserve original on empty result."""
+    if not token:
+        return token
+    raw = token.strip()
+    if " " not in raw:
+        return token
+    parts = [p for p in raw.split() if p]
+    kept = [p for p in parts if p.lower().strip(_TOKEN_PUNCT_STRIP) not in _ENTITY_STOPWORDS]
+    cleaned = " ".join(kept).strip()
+    return cleaned or token
 
 
 def _apply_promotion_access_levels_filter(
@@ -166,6 +186,10 @@ def _resolve_input(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="tokens provided but empty after filtering",
             )
+        # Strip entity-type noise words ("order 202605-2651" → "202605-2651")
+        # so callers can pass conversational phrasing verbatim. Alignment with
+        # positional `allowed_entity_types` is preserved (in-place clean).
+        filtered = [_strip_entity_stopwords(t) for t in filtered]
         prepared_tokens: list[str] = filtered
         input_for_or: list[str] | str = filtered
     else:
