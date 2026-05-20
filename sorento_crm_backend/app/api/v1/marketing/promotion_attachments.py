@@ -49,16 +49,20 @@ async def get_promotion_attachments(
     attachment_id: Optional[str] = Query(None),
     access_levels: Optional[list[str]] = Query(
         None,
-        description="Optional access-level codes filter (intersection with parent promotion.access_levels).",
+        description=(
+            "Optional access-level NAMES filter (translated to codes via "
+            "contact_access_types.name; intersection with parent promotion.access_levels)."
+        ),
     ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get promotion attachments with pagination and filtering. Optional access_levels intersection filter."""
+    """Get promotion attachments with pagination and filtering. Optional access_levels (names) intersection filter."""
     try:
+        from app.services.contact_access_type_service import ContactAccessTypeService
         from app.services.entity_filter_helpers import normalize_list_query_param
         access_levels = normalize_list_query_param(access_levels)
-        contact_codes = list(access_levels) if access_levels else None
+        contact_codes = ContactAccessTypeService(db).translate_names_to_codes(access_levels)
         service = PromotionAttachmentService(db)
         from app.services.entity_filter_helpers import normalize_entities_query_param
         result = service.list_promotion_attachments(
@@ -160,16 +164,20 @@ async def get_promotion_attachments_by_promotion(
     ),
     access_levels: Optional[list[str]] = Query(
         None,
-        description="Optional access-level codes filter (intersection with parent promotion.access_levels).",
+        description=(
+            "Optional access-level NAMES filter (translated to codes via "
+            "contact_access_types.name; intersection with parent promotion.access_levels)."
+        ),
     ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get all attachments for a specific promotion. Optional access_levels intersection filter."""
+    """Get all attachments for a specific promotion. Optional access_levels (names) intersection filter."""
     try:
+        from app.services.contact_access_type_service import ContactAccessTypeService
         from app.services.entity_filter_helpers import normalize_list_query_param
         access_levels = normalize_list_query_param(access_levels)
-        contact_codes = list(access_levels) if access_levels else None
+        contact_codes = ContactAccessTypeService(db).translate_names_to_codes(access_levels)
         service = PromotionAttachmentService(db)
         promotion_attachments = service.get_promotion_attachments_by_promotion(
             promotion_id,

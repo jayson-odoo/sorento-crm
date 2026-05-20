@@ -94,6 +94,37 @@ class ContactAccessTypeService:
         codes = self.list_active_codes()
         return codes if codes else _FALLBACK_DEFAULT_CODES.copy()
 
+    def translate_names_to_codes(self, names: Optional[list[str]]) -> Optional[list[str]]:
+        """Map access-level NAMES → canonical codes via contact_access_types.name.
+
+        Case-insensitive name match against the full catalog (active or not — admins may
+        rename codes; promotion JSONB still references the legacy code). Returns
+        ``None`` when ``names`` is falsy / empty so the caller can short-circuit the
+        filter. Empty translated list (no name matched anything) is preserved as
+        ``[]`` so the JSONB overlap filter rejects every row — matches user intent
+        ("filter by these names" + zero recognized names = zero results).
+        """
+        if not names:
+            return None
+        cleaned = [(n or "").strip() for n in names]
+        cleaned = [n for n in cleaned if n]
+        if not cleaned:
+            return None
+        lookup = {n.lower() for n in cleaned}
+        from sqlalchemy import func
+        rows = (
+            self.db.query(ContactAccessType.code)
+            .filter(func.lower(ContactAccessType.name).in_(lookup))
+            .all()
+        )
+        codes: list[str] = []
+        seen: set[str] = set()
+        for (code,) in rows:
+            if code and code not in seen:
+                seen.add(code)
+                codes.append(code)
+        return codes
+
     def validate_access_levels(self, access_levels: list[str], field_name: str = "access_levels") -> list[str]:
         """Validate codes against the active catalog. Returns normalized (stripped, deduplicated) list."""
         if not access_levels:
