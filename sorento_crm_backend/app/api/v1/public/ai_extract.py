@@ -38,8 +38,19 @@ router = APIRouter()
 # extract endpoint is self-contained (and so we can include PDFs which the
 # normal portal attachment table also accepts).
 _MAX_FILES = 12
-_MAX_TOTAL_BYTES = 25 * 1024 * 1024  # 25 MB
-_ALLOWED_EXTS = {"png", "jpg", "jpeg", "webp", "pdf"}
+_MAX_TOTAL_BYTES = 150 * 1024 * 1024  # 150 MB (phone video clips)
+_ALLOWED_EXTS = {
+    "png",
+    "jpg",
+    "jpeg",
+    "webp",
+    "pdf",
+    "mp4",
+    "mov",
+    "webm",
+    "m4v",
+    "3gp",
+}
 
 
 def _ext(filename: str | None, mime: str | None) -> str:
@@ -89,7 +100,7 @@ async def ai_extract(
         total += len(data)
         if total > _MAX_TOTAL_BYTES:
             raise handle_validation_error(
-                "Combined file size exceeds 25 MB. Remove a file and try again."
+                "Combined file size exceeds 150 MB. Remove a file and try again."
             )
         payload.append(
             ExtractFile(

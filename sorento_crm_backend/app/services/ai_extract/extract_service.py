@@ -21,6 +21,8 @@ import base64
 import io
 import json
 import logging
+import os
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -60,6 +62,16 @@ PDF_RENDER_DPI = 144
 PRODUCT_HINT_LIMIT = 30
 ALLOWED_IMAGE_MIMES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 ALLOWED_PDF_MIMES = {"application/pdf"}
+ALLOWED_VIDEO_MIMES = {
+    "video/mp4",
+    "video/quicktime",
+    "video/webm",
+    "video/x-m4v",
+    "video/3gpp",
+}
+_VIDEO_EXTS = (".mp4", ".mov", ".webm", ".m4v", ".3gp")
+VIDEO_MAX_FRAMES = 8
+VIDEO_FRAME_MAX_DIM = 1280  # downscale frames before base64 to stay within token budget
 
 # Forms that ship a separate items-list section. Other forms (complaint,
 # stock_inquiry, master.*) must NOT receive a `products` array — distinct
@@ -371,12 +383,22 @@ class AIExtractService:
         pages_emitted = 0
         for f in files:
             mime = (f.mime or "").lower()
-            if mime in ALLOWED_PDF_MIMES or f.filename.lower().endswith(".pdf"):
+            name_lower = f.filename.lower()
+            if mime in ALLOWED_PDF_MIMES or name_lower.endswith(".pdf"):
                 pages = self._render_pdf(f.data, remaining=PDF_MAX_PAGES - pages_emitted)
                 out.extend(pages)
                 pages_emitted += len(pages)
+            elif mime in ALLOWED_VIDEO_MIMES or name_lower.endswith(_VIDEO_EXTS):
+                remaining = PDF_MAX_PAGES - pages_emitted
+                frames = self._render_video(
+                    f.data,
+                    filename=f.filename,
+                    remaining=min(VIDEO_MAX_FRAMES, remaining),
+                )
+                out.extend(frames)
+                pages_emitted += len(frames)
             elif mime in ALLOWED_IMAGE_MIMES or any(
-                f.filename.lower().endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp")
+                name_lower.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp")
             ):
                 normalized_mime = "image/jpeg" if mime == "image/jpg" else (mime or "image/png")
                 out.append(
@@ -391,6 +413,104 @@ class AIExtractService:
             if pages_emitted >= PDF_MAX_PAGES:
                 break
         return out
+
+    def _render_video(
+        self,
+        data: bytes,
+        *,
+        filename: str,
+        remaining: int,
+    ) -> list[ImagePart]:
+        if remaining <= 0:
+            return []
+        try:
+            import cv2  # type: ignore[import-not-found]
+        except ImportError as exc:  # pragma: no cover - install guard
+            raise AppException(
+                status_code=500,
+                message=(
+                    "opencv-python-headless is not installed. Run "
+                    "pip install -r requirements.txt."
+                ),
+                code="ai_extract_opencv_missing",
+            ) from exc
+
+        suffix = ""
+        if "." in filename:
+            suffix = "." + filename.rsplit(".", 1)[-1].lower()
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        try:
+            tmp.write(data)
+            tmp.flush()
+            tmp.close()
+            cap = cv2.VideoCapture(tmp.name)
+            if not cap.isOpened():
+                logger.warning("ai_extract failed to open video name=%s", filename)
+                return []
+            try:
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                if total_frames <= 0:
+                    return self._scan_video_sequentially(cap, remaining)
+                # Sample frames evenly across the clip, skipping the first/last
+                # few percent (often black / fade) by biasing toward the middle.
+                count = min(remaining, VIDEO_MAX_FRAMES, total_frames)
+                if count <= 0:
+                    return []
+                step = total_frames / (count + 1)
+                out: list[ImagePart] = []
+                for i in range(1, count + 1):
+                    idx = int(step * i)
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                    ok, frame = cap.read()
+                    if not ok or frame is None:
+                        continue
+                    part = self._encode_video_frame(cv2, frame)
+                    if part is not None:
+                        out.append(part)
+                return out
+            finally:
+                cap.release()
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+    def _scan_video_sequentially(self, cap, remaining: int) -> list[ImagePart]:
+        import cv2  # type: ignore[import-not-found]
+
+        out: list[ImagePart] = []
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        # Pick a frame every ~2 seconds when the container hides frame count.
+        stride = max(1, int(fps * 2))
+        read = 0
+        while len(out) < min(remaining, VIDEO_MAX_FRAMES):
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                break
+            if read % stride == 0:
+                part = self._encode_video_frame(cv2, frame)
+                if part is not None:
+                    out.append(part)
+            read += 1
+        return out
+
+    def _encode_video_frame(self, cv2, frame) -> ImagePart | None:
+        h, w = frame.shape[:2]
+        scale = min(1.0, VIDEO_FRAME_MAX_DIM / float(max(h, w)))
+        if scale < 1.0:
+            frame = cv2.resize(
+                frame,
+                (int(w * scale), int(h * scale)),
+                interpolation=cv2.INTER_AREA,
+            )
+        ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not ok:
+            return None
+        return ImagePart(
+            mime="image/jpeg",
+            data_b64=base64.b64encode(buf.tobytes()).decode("ascii"),
+        )
 
     def _render_pdf(self, data: bytes, *, remaining: int) -> list[ImagePart]:
         if remaining <= 0:

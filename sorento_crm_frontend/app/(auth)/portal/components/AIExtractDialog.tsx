@@ -309,7 +309,7 @@ export function AIExtractDialog({
                 <input
                   ref={inputRef}
                   type="file"
-                  accept="image/*,.pdf"
+                  accept="image/*,video/*,.pdf"
                   className="hidden"
                   multiple
                   data-testid="ai-extract-file-input"

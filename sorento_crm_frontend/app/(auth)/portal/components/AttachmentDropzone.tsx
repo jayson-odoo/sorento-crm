@@ -208,7 +208,7 @@ export function AttachmentDropzone({
         <input
           ref={inputRef}
           type="file"
-          accept="image/*,.pdf"
+          accept="image/*,video/*,.pdf"
           className="hidden"
           multiple
           onChange={handleSelect}
