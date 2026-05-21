@@ -346,9 +346,11 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_marketing_promotion_attachments_list",
         (
             "List / search promotion-attachment links. Use for any BROCHURE / FLYER document.\n\n"
-            "FILTER BY UUID — pass canonical UUIDs (csv / JSON list / repeated):\n"
-            "  • `promotion_ids` — narrows to attachments under these promotions.\n"
-            "  • `attachment_ids` — narrows to these specific files.\n"
+            "REQUIRED — at least ONE of these narrowing filters must be supplied or the tool "
+            "returns an empty page:\n"
+            "  • `promotion_ids` (canonical promotion UUIDs, csv / JSON list / repeated)\n"
+            "  • `attachment_ids` (canonical attachment UUIDs)\n"
+            "  • `query` (free-text across promotion / attachment metadata)\n"
             "Resolve free-text refs (promotion name, attachment filename, product reference) "
             "FIRST via `crm_find_entity`, then pass returned UUIDs here.\n\n"
             "ACCESS LEVELS: `access_levels` filters to links under promotions whose "
@@ -531,11 +533,14 @@ CATALOG: tuple[ToolSpec, ...] = (
             "updated_at only; does not reveal available/reserved/damaged/status. Response uses "
             "Sage-aligned warehouse vocabulary: `system_location` (was warehouse_code), "
             "`system_location_description` (was warehouse_name), `warehouse` (was location).\n\n"
-            "FILTER BY UUID: pass `product_ids` (canonical product UUIDs, csv / JSON list / "
-            "repeated). Stock rows are keyed by product + warehouse — only `product_ids` and "
-            "`warehouse_id` narrow the listing. Resolve free-text product refs FIRST via "
-            "`crm_find_entity`.\n\n"
-            "`warehouse_id` is the canonical warehouse UUID. Use to scope to a single warehouse."
+            "ALL PARAMS ARE OPTIONAL. Call with NO arguments to list balances across every "
+            "active warehouse. Default behaviour returns paginated rows for all products + all "
+            "warehouses — do NOT block the call waiting for a warehouse.\n\n"
+            "OPTIONAL NARROWING FILTERS:\n"
+            "  • `product_ids` — canonical product UUIDs (csv / JSON list / repeated). Resolve "
+            "free-text product refs FIRST via `crm_find_entity`.\n"
+            "  • `warehouse_id` — canonical warehouse UUID. Scopes to a single warehouse. "
+            "OPTIONAL: omit to span every active warehouse (one row per product+warehouse pair).\n"
         ),
         "/api/v1/inventory/stock/balance",
         (),

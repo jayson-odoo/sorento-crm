@@ -57,12 +57,35 @@ async def get_promotion_attachments(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get promotion attachments with pagination and filtering. Optional access_levels (names) intersection filter."""
+    """Get promotion attachments with pagination and filtering. Optional access_levels (names) intersection filter.
+
+    Requires at least one narrowing filter (`promotion_ids`, `attachment_ids`,
+    legacy `promotion_id` / `attachment_id`, or free-text `query`). Without any,
+    returns an empty page so callers cannot accidentally enumerate the whole
+    catalog.
+    """
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
         from app.services.entity_filter_helpers import normalize_list_query_param
         access_levels = normalize_list_query_param(access_levels)
         contact_codes = ContactAccessTypeService(db).translate_names_to_codes(access_levels)
+
+        parsed_promotion_ids = parse_uuid_list(promotion_ids, param_name="promotion_ids")
+        parsed_attachment_ids = parse_uuid_list(attachment_ids, param_name="attachment_ids")
+        has_narrowing_filter = bool(
+            parsed_promotion_ids
+            or parsed_attachment_ids
+            or (promotion_id and promotion_id.strip())
+            or (attachment_id and attachment_id.strip())
+            or (query and query.strip())
+        )
+        if not has_narrowing_filter:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+
         service = PromotionAttachmentService(db)
         from app.services.entity_filter_helpers import normalize_entities_query_param
         result = service.list_promotion_attachments(
@@ -72,8 +95,8 @@ async def get_promotion_attachments(
             sort_dir=dir or "asc",
             promotion_id=promotion_id,
             attachment_id=attachment_id,
-            promotion_ids=parse_uuid_list(promotion_ids, param_name="promotion_ids"),
-            attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
+            promotion_ids=parsed_promotion_ids,
+            attachment_ids=parsed_attachment_ids,
             query=query,
             contact_access_codes=contact_codes,
             entities=normalize_entities_query_param(entities),
