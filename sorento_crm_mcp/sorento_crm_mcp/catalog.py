@@ -302,10 +302,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Products linked to a promotion (nested under promotion). Each row also carries the "
             "parent promotion's `promotion_attachments` inline — no second call needed to fetch the "
             "promotion document.\n\n"
-            "FILTER BY UUID: pass `promotion_ids` and / or `product_ids` (canonical UUIDs csv/"
-            "JSON/repeated). Resolve free-text refs FIRST via `crm_find_entity`.\n\n"
+            "REQUIRED — at least ONE of these narrowing filters must be supplied or the tool "
+            "returns an empty page:\n"
+            "  • `promotion_ids` (canonical promotion UUIDs, csv / JSON list / repeated)\n"
+            "  • `product_ids` (canonical product UUIDs)\n"
+            "Resolve free-text refs FIRST via `crm_find_entity`, then pass returned UUIDs here. "
+            "If `crm_find_entity` returns no promotion / product candidates, do NOT call with "
+            "empty `*_ids` — report 'no matching promotion product' instead.\n\n"
             "ACCESS LEVELS: `access_levels` filters promotions to those whose `access_levels` "
-            "JSONB overlaps the supplied names. Omit to skip the filter."
+            "JSONB overlaps the supplied names. `access_levels` is NOT a narrowing filter on its "
+            "own — it must accompany a `*_ids` filter."
         ),
         "/api/v1/marketing/promotion-products",
         (),
@@ -319,9 +325,14 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "Promotion product lines (paginated). Each row carries the parent promotion's "
             "`promotion_attachments` inline — no second call needed for the promotion document.\n\n"
-            "FILTER BY UUID: pass `promotion_ids` and / or `product_ids` (canonical UUIDs csv/"
-            "JSON/repeated). Resolve free-text refs FIRST via `crm_find_entity`.\n\n"
-            "STRUCTURED FILTERS for product attributes:\n"
+            "REQUIRED — at least ONE of these narrowing filters must be supplied or the tool "
+            "returns an empty page:\n"
+            "  • `promotion_ids` (canonical promotion UUIDs, csv / JSON list / repeated)\n"
+            "  • `product_ids` (canonical product UUIDs)\n"
+            "Resolve free-text refs FIRST via `crm_find_entity`, then pass returned UUIDs here. "
+            "If `crm_find_entity` returns no promotion / product candidates, do NOT call with "
+            "empty `*_ids` — report 'no matching promotion product' instead.\n\n"
+            "STRUCTURED FILTERS for product attributes (combine with `*_ids` above):\n"
             "  • PRICE: price_min, price_max (MYR)\n"
             "  • DIMENSIONS (mm): per-axis length_min/max, width_min/max, height_min/max\n"
             "  • AXIS-AGNOSTIC: any_dimension_min / any_dimension_max — matches when ANY of L/W/H "
@@ -798,7 +809,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "Use ONLY when the user asks 'what products are on shipment X?' with a SHIPMENT NUMBER (not a product). "
             "Do NOT use this for 'any incoming for product X' \u2014 use crm_incoming_stock_by_product. "
-            "Returns still-incoming products on the shipment with product_code, product_name, batch_number, remaining_incoming_quantity, warehouse allocation per product, and shipment header. "
+            "Returns still-incoming products on the shipment with product_code, product_name, remaining_incoming_quantity, warehouse allocation per product, and shipment header. "
             "`shipment_id` accepts UUID, shipment_number, container number, BOL, or invoice number."
         ),
         "/api/v1/incoming-stock/shipments/{shipment_id}/products",

@@ -82,10 +82,26 @@ def render_text(source: str, context: dict[str, Any]) -> str:
     return _render(_text_env, source, context)
 
 
+_MARKDOWN_INLINE_LINK_RE = None
+
+
 def html_to_text(html: str) -> str:
-    """Best-effort plain-text fallback. Uses html2text if installed; otherwise strips tags."""
+    """Best-effort plain-text fallback. Uses html2text if installed; otherwise strips tags.
+
+    Post-processes html2text output to flatten markdown inline links
+    `[label](url)` into `label: url`. Naive auto-linkers in plain-text viewers
+    (e.g. Respond.io inbox) capture the trailing `)` as part of the URL,
+    producing dead links — the bracketed form is safer and renders cleanly in
+    every viewer.
+    """
     if not html:
         return ""
+    import re
+
+    global _MARKDOWN_INLINE_LINK_RE
+    if _MARKDOWN_INLINE_LINK_RE is None:
+        _MARKDOWN_INLINE_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+
     try:
         import html2text  # type: ignore
 
@@ -93,8 +109,8 @@ def html_to_text(html: str) -> str:
         h.body_width = 0
         h.ignore_images = True
         h.ignore_emphasis = False
-        return h.handle(html).strip()
+        text = h.handle(html).strip()
     except Exception:
-        import re
+        text = re.sub(r"<[^>]+>", "", html).strip()
 
-        return re.sub(r"<[^>]+>", "", html).strip()
+    return _MARKDOWN_INLINE_LINK_RE.sub(r"\1: \2", text)

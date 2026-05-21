@@ -881,8 +881,7 @@ async def bulk_import_attachments(
     db: Session = Depends(get_db),
 ):
     """Queue a ZIP import job. Import runs in the background with batch processing. Poll GET /api/v1/system/jobs/{job_id}/status for progress."""
-    import tempfile
-    import os
+    import uuid as _uuid
 
     if not file or not file.filename or not file.filename.lower().endswith(".zip"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A ZIP file is required")
@@ -907,12 +906,22 @@ async def bulk_import_attachments(
     except zipfile.BadZipFile:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or corrupted ZIP file")
 
-    # Save ZIP to temp file instead of passing bytes to Redis (avoids BrokenPipe on large files)
-    fd, zip_path = tempfile.mkstemp(suffix=".zip")
+    # Upload to object storage so the RQ worker (separate pod, separate /tmp)
+    # can fetch it. Transient key under a non-attachment prefix — NOT written to
+    # the attachments table; worker deletes the object on completion.
+    from app.services.storage_router import default_provider, get_backend
+
+    storage_provider = default_provider()
+    storage_backend = get_backend(storage_provider)
+    storage_key = f"bulk-imports/{_uuid.uuid4().hex}.zip"
     try:
-        os.write(fd, zip_content)
-    finally:
-        os.close(fd)
+        storage_backend.upload_file(zip_content, storage_key, content_type="application/zip")
+    except Exception as exc:
+        logger.exception("bulk-import zip upload to storage failed")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to stage import zip in storage: {exc}",
+        )
 
     from app.services.job_service import JobService
     from app.services.queue_service import enqueue_job
@@ -926,6 +935,8 @@ async def bulk_import_attachments(
         metadata={
             "attachment_type_id": attachment_type_id,
             "parent_directory_id": parent_directory_id,
+            "storage_provider": storage_provider,
+            "storage_key": storage_key,
         },
     )
     db.commit()
@@ -933,12 +944,13 @@ async def bulk_import_attachments(
     rq_job = enqueue_job(
         process_attachment_bulk_import,
         str(job.id),
-        zip_path,
+        storage_key,
         attachment_type_id,
         access_levels or "[]",
         parent_directory_id,
         current_user["id"],
         on_conflict_clean,
+        storage_provider,
         queue_name="imports",
         job_timeout=7200,
     )

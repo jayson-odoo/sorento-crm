@@ -92,7 +92,8 @@ export default function PromotionProductsList() {
         header: ({ column }) => <DataGridColumnHeader title="Discount Amount" column={column} />,
         size: 130,
         cell: ({ row }) => {
-          const discount = row.original.discount_amount || 0;
+          // Backend serializes Decimal as JSON string; coerce before numeric ops.
+          const discount = Number(row.original.discount_amount ?? 0);
           return discount > 0 ? (
             <Badge variant="success">{new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(discount)}</Badge>
           ) : (
@@ -105,7 +106,7 @@ export default function PromotionProductsList() {
         header: ({ column }) => <DataGridColumnHeader title="Discount %" column={column} />,
         size: 100,
         cell: ({ row }) => {
-          const percent = row.original.discount_percent || 0;
+          const percent = Number(row.original.discount_percent ?? 0);
           return percent > 0 ? <Badge variant="info">{percent.toFixed(1)}%</Badge> : '-';
         },
       },

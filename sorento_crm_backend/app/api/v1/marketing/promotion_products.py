@@ -327,6 +327,27 @@ async def list_all_promotion_products(
             merged_pids.extend(new_promotion_ids)
             resolved_pids = list(dict.fromkeys(merged_pids))
 
+        norm_entities = normalize_entities_query_param(entities)
+        # Require at least one narrowing filter so callers cannot enumerate the
+        # full catalog. `text_query` covers the free-text path (already stripped
+        # of domain stopwords); `resolved_pid` / `resolved_pids` / explicit
+        # `product_id` / `product_ids` cover canonical-UUID paths; `entities`
+        # covers the deprecated free-text entity bag.
+        has_narrowing_filter = bool(
+            resolved_pid
+            or resolved_pids
+            or new_product_ids
+            or (product_id and product_id.strip())
+            or (text_query and text_query.strip())
+            or norm_entities
+        )
+        if not has_narrowing_filter:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+
         result = service.list_promotion_products(
             promotion_id=resolved_pid,
             promotion_ids=resolved_pids,
@@ -337,7 +358,7 @@ async def list_all_promotion_products(
             sort_field=sort or "created_at",
             sort_dir=dir or "asc",
             query=text_query,
-            entities=normalize_entities_query_param(entities),
+            entities=norm_entities,
             category_id=category_id,
             brand_id=brand_id,
             item_type=item_type,

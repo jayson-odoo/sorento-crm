@@ -1238,7 +1238,21 @@ class PickingHeaderService:
             filters.append(PickingHeader.inspection_status == inspection_status)
 
         if query:
-            filters.append(PickingHeader.picking_number.ilike(f"%{query}%"))
+            like = f"%{query}%"
+            norm_q = query.replace("/", ".").replace("\\", ".")
+            spo_like = f"%{norm_q}%"
+            filters.append(or_(
+                PickingHeader.picking_number.ilike(like),
+                func.replace(func.replace(func.coalesce(PickingHeader.spo_number, ""), "/", "."), "\\", ".").ilike(spo_like),
+                PickingHeader.picking_lines.any(
+                    PickingLine.product.has(
+                        or_(
+                            Product.product_code.ilike(like),
+                            Product.product_name.ilike(like),
+                        )
+                    )
+                ),
+            ))
 
         if product_query and product_query.strip():
             product_clause, _ = resolve_via_embedding_then_ilike(

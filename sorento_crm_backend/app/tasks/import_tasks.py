@@ -347,12 +347,13 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
 
 def process_attachment_bulk_import(
     db_job_id: str,
-    zip_path: str,
+    storage_key: str,
     attachment_type_id: str,
     access_levels_json: str,
     parent_directory_id: Optional[str],
     user_id: str,
     on_conflict: str = "skip",
+    storage_provider: Optional[str] = None,
 ):
     """Process attachment bulk import (ZIP) in background with batch processing.
 
@@ -385,14 +386,28 @@ def process_attachment_bulk_import(
     if not job and rq_job_id:
         job = job_service.get_job(rq_job_id)
 
+    # Storage routing for the staged ZIP. `storage_provider` arg is the value
+    # captured at enqueue time; falls back to current default for older queued
+    # jobs that pre-date the cross-pod fix.
+    from app.services.storage_router import (
+        cdn_base_url,
+        default_provider,
+        get_backend,
+    )
+
+    zip_storage_provider = storage_provider or default_provider()
+    zip_storage_backend = get_backend(zip_storage_provider)
+
+    def _cleanup_staged_zip() -> None:
+        try:
+            zip_storage_backend.delete_file(storage_key)
+        except Exception:
+            logger.warning("bulk-import zip cleanup failed for key=%s", storage_key)
+
     if not job:
         logger.error("Attachment bulk import job not found: db_job_id=%s, rq_job_id=%s", db_job_id, rq_job_id)
         db.close()
-        if os.path.isfile(zip_path):
-            try:
-                os.remove(zip_path)
-            except OSError:
-                pass
+        _cleanup_staged_zip()
         return
 
     job_id_str: str = str(job.job_id)
@@ -400,13 +415,23 @@ def process_attachment_bulk_import(
         dir_service = AttachmentDirectoryService(db)
         attachment_service = AttachmentService(db)
         type_service = AttachmentTypeService(db)
-        from app.services.storage_router import (
-            cdn_base_url,
-            default_provider,
-            get_backend,
-        )
+        # Attachment-write provider — separate variable from the staged-zip
+        # provider so a future split (e.g. zips on R2, writes on S3) is just a
+        # config change.
         storage_provider = default_provider()
         storage_backend = get_backend(storage_provider)
+
+        # Pull the staged zip into memory ONCE. zipfile.ZipFile is re-opened
+        # multiple times below (namelist + per-file read); BytesIO is cheap to
+        # rewind, avoids re-downloading on every batch entry.
+        try:
+            zip_bytes = zip_storage_backend.download_file(storage_key)
+        except Exception as exc:
+            job_service.fail_job(job_id_str, f"Failed to fetch staged zip from storage: {exc}")
+            db.close()
+            _cleanup_staged_zip()
+            return
+        zip_buffer = BytesIO(zip_bytes)
 
         access_levels_payload = None
         try:
@@ -444,7 +469,8 @@ def process_attachment_bulk_import(
         _mb = attachment_type.max_file_size_mb
         max_bytes = (int(cast(int, _mb)) if _mb is not None else 10) * 1024 * 1024
 
-        with zipfile.ZipFile(zip_path, "r") as zf:
+        zip_buffer.seek(0)
+        with zipfile.ZipFile(zip_buffer, "r") as zf:
             all_names = [_normalize_zip_path(n) for n in zf.namelist()]
 
         dir_paths = set()
@@ -502,14 +528,16 @@ def process_attachment_bulk_import(
             batch = file_paths[i : i + ATTACHMENT_BULK_IMPORT_BATCH_SIZE]
             for file_path in batch:
                 try:
-                    with zipfile.ZipFile(zip_path, "r") as zf:
+                    zip_buffer.seek(0)
+                    with zipfile.ZipFile(zip_buffer, "r") as zf:
                         raw_name = next((n for n in zf.namelist() if _normalize_zip_path(n) == file_path), None)
                     if not raw_name:
                         errors.append(f"Not found in zip: {file_path}")
                         failed += 1
                         processed += 1
                         continue
-                    with zipfile.ZipFile(zip_path, "r") as zf:
+                    zip_buffer.seek(0)
+                    with zipfile.ZipFile(zip_buffer, "r") as zf:
                         with zf.open(raw_name, "r") as entry:
                             file_content = entry.read()
 
@@ -702,11 +730,7 @@ def process_attachment_bulk_import(
         job_service.fail_job(job_id_str, str(e))
     finally:
         db.close()
-        if zip_path and os.path.isfile(zip_path):
-            try:
-                os.remove(zip_path)
-            except OSError as e:
-                logger.warning("Could not remove temp zip %s: %s", zip_path, e)
+        _cleanup_staged_zip()
 
 
 def _spo_import_normalize_header(value: Any) -> str:

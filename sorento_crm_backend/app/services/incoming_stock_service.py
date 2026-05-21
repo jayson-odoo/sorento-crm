@@ -420,7 +420,6 @@ class IncomingStockService:
         line_rows = (
             self.db.query(
                 InboundShipmentLine.product_id,
-                InboundShipmentLine.batch_number,
                 remaining,
                 Product.product_code,
                 Product.product_name,
@@ -461,7 +460,6 @@ class IncomingStockService:
             {
                 "product_code": r.product_code,
                 "product_name": r.product_name,
-                "batch_number": r.batch_number,
                 "remaining_incoming_quantity": int(r.remaining_incoming or 0),
                 "warehouse_allocations": warehouse_map.get((str(shipment_uuid), str(r.product_id)), []),
             }
