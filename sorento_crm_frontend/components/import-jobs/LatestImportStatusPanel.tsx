@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { formatDateTime } from '@/lib/helpers';
-import { ExternalLink, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
+import { ExternalLink, Loader2, ChevronDown, ChevronRight, X, FileClock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -97,6 +97,31 @@ function JobPanelContent({ job }: { job: ImportJob }) {
 
 const TERMINAL_STATUSES = new Set(['finished', 'failed', 'cancelled']);
 
+// Per-jobType key holding the most-recently-dismissed job id. A new job
+// (different id) clears the dismissal so users still see fresh imports — the
+// dismiss only suppresses the specific banner they closed.
+const DISMISSED_STORAGE_PREFIX = 'latest-import-panel:dismissed:';
+
+function readDismissedJobId(jobType: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(DISMISSED_STORAGE_PREFIX + jobType);
+  } catch {
+    return null;
+  }
+}
+
+function writeDismissedJobId(jobType: string, jobId: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = DISMISSED_STORAGE_PREFIX + jobType;
+    if (jobId) window.localStorage.setItem(key, jobId);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Storage may be unavailable (private mode, quota); silently no-op.
+  }
+}
+
 export function LatestImportStatusPanel({
   jobType,
   title,
@@ -107,6 +132,7 @@ export function LatestImportStatusPanel({
   onJobFinished,
 }: LatestImportStatusPanelProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [dismissedJobId, setDismissedJobId] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useImportJobs({
     pageIndex: 0,
@@ -116,6 +142,10 @@ export function LatestImportStatusPanel({
 
   const job: ImportJob | undefined = data?.data?.[0];
   const lastStatusRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setDismissedJobId(readDismissedJobId(jobType));
+  }, [jobType]);
 
   useEffect(() => {
     if (!job) {
@@ -133,6 +163,21 @@ export function LatestImportStatusPanel({
     }
   }, [job, invalidateQueryKeys, onJobFinished, queryClient]);
 
+  // Auto-dismiss terminal-status banners after a short grace period so a finished
+  // import doesn't sit on screen forever. The user can still re-show it via the
+  // chip if the timer hasn't fired and they dismissed manually.
+  const AUTO_HIDE_TERMINAL_MS = 10_000;
+  useEffect(() => {
+    if (!job) return;
+    if (!TERMINAL_STATUSES.has(job.status)) return;
+    if (dismissedJobId === job.id) return;
+    const handle = window.setTimeout(() => {
+      setDismissedJobId(job.id);
+      writeDismissedJobId(jobType, job.id);
+    }, AUTO_HIDE_TERMINAL_MS);
+    return () => window.clearTimeout(handle);
+  }, [job, dismissedJobId, jobType]);
+
   if (isLoading && !job) {
     return (
       <Card className={className}>
@@ -148,6 +193,26 @@ export function LatestImportStatusPanel({
 
   if (!showWhenEmpty && (isError || !job)) {
     return null;
+  }
+
+  if (job && dismissedJobId && dismissedJobId === job.id) {
+    // Fully dismissed — no leftover chip stealing layout space. Auto-reappears
+    // when a new job_id surfaces; user can also recall it from the floating
+    // bottom-right icon below.
+    return (
+      <button
+        type="button"
+        className="fixed bottom-4 right-4 z-40 inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground shadow-md hover:text-foreground hover:bg-muted"
+        onClick={() => {
+          setDismissedJobId(null);
+          writeDismissedJobId(jobType, null);
+        }}
+        aria-label={`Show ${title ?? 'latest import'} status`}
+        title={`Show ${title ?? 'latest import'} status`}
+      >
+        <FileClock className="size-4" />
+      </button>
+    );
   }
 
   if (showWhenEmpty && !job && !isLoading) {
@@ -171,23 +236,40 @@ export function LatestImportStatusPanel({
   return (
     <Card className={className}>
       <CardHeader className="py-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-auto w-full justify-start gap-2 p-0 font-medium hover:bg-transparent"
-          onClick={() => setExpanded((e) => !e)}
-          aria-expanded={expanded}
-        >
-          {expanded ? (
-            <ChevronDown className="size-4 shrink-0" />
-          ) : (
-            <ChevronRight className="size-4 shrink-0" />
-          )}
-          <span className="text-sm">{title ?? 'Latest import'}</span>
-          <Badge variant={statusVariant(job.status)} className="ml-auto capitalize">
-            {job.status}
-          </Badge>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-auto flex-1 justify-start gap-2 p-0 font-medium hover:bg-transparent"
+            onClick={() => setExpanded((e) => !e)}
+            aria-expanded={expanded}
+          >
+            {expanded ? (
+              <ChevronDown className="size-4 shrink-0" />
+            ) : (
+              <ChevronRight className="size-4 shrink-0" />
+            )}
+            <span className="text-sm">{title ?? 'Latest import'}</span>
+            <Badge variant={statusVariant(job.status)} className="ml-auto capitalize">
+              {job.status}
+            </Badge>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            mode="icon"
+            className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDismissedJobId(job.id);
+              writeDismissedJobId(jobType, job.id);
+            }}
+            aria-label="Hide import status"
+            title="Hide"
+          >
+            <X className="size-3.5" />
+          </Button>
+        </div>
       </CardHeader>
       {expanded && <JobPanelContent job={job} />}
     </Card>
