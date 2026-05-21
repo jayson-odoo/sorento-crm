@@ -539,13 +539,32 @@ async def get_orders_by_product(
 ):
     """Get distinct orders matched by product search."""
     try:
+        norm_entities = _normalize_entities(entities)
+        parsed_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
+        # Endpoint is product-centric: require a product narrower to prevent
+        # full-catalog enumeration. Accepts canonical UUIDs, legacy
+        # product_code/SKU list, partial product text, free-text query, or
+        # the deprecated entity bag.
+        has_product_narrower = bool(
+            parsed_product_ids
+            or product_id
+            or (product_query and product_query.strip())
+            or (query and query.strip())
+            or norm_entities
+        )
+        if not has_product_narrower:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
         service = OrderService(db)
         return service.list_orders_by_product(
             page=page,
             limit=limit,
             query=query,
-            entities=_normalize_entities(entities),
-            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            entities=norm_entities,
+            product_ids=parsed_product_ids,
             customer_ids=parse_uuid_list(customer_ids, param_name="customer_ids"),
             transporter_ids=parse_uuid_list(transporter_ids, param_name="transporter_ids"),
             customer_query=customer_query,
