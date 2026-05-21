@@ -142,14 +142,13 @@ class ResolveReferenceRequest(BaseModel):
     allowed_entity_types: list[str] | None = Field(
         default=None,
         description=(
-            "Restrict resolution to these entity types. Two modes:\n"
-            "  • Set filter (default) — len != len(tokens): the list is treated as a "
-            "whitelist; every surviving probe runs against every token.\n"
-            "  • Positional pairing — len == len(tokens): tokens[i] is resolved ONLY "
-            "against allowed_entity_types[i]. Use this when the caller already knows "
-            "which token names which entity (e.g. tokens=['Fira Ventures','DO'] "
-            "paired with ['customer','delivery_order'] — 'DO' is searched only as a "
-            "delivery_order and never as a customer)."
+            "Restrict resolution to these entity types. Always treated as a set "
+            "filter / whitelist: every token is probed against EVERY supplied type "
+            "(cross product). Example — tokens=['Sorento water closet','latest "
+            "promo'] with allowed_entity_types=['product','promotion'] resolves "
+            "both tokens against both product and promotion probes. Callers that "
+            "need 1:1 positional pairing (token[i] resolved only against "
+            "allowed_entity_types[i]) must issue one resolve call per pair."
         ),
     )
     access_levels: list[str] | None = Field(
@@ -244,9 +243,10 @@ def resolve_reference(
     allowed_entity_types: list[str] | None = Query(
         None,
         description=(
-            "Entity-type whitelist. If its length equals `tokens`, pairs are positional "
-            "(token[i] resolved only against allowed_entity_types[i]); otherwise it acts "
-            "as a global set filter applied to every token."
+            "Entity-type whitelist. Always a global set filter — every token is "
+            "resolved against EVERY supplied type (cross product). Positional 1:1 "
+            "pairing is not auto-triggered on equal-length lists; issue one resolve "
+            "call per (token, type) pair if you need it."
         ),
     ),
     access_levels: list[str] | None = Query(

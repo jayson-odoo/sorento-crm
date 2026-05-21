@@ -73,28 +73,22 @@ def _build_token_type_map(
     tokens: list[str] | None,
     allowed_entity_types: Iterable[str] | None,
 ) -> Optional[dict[str, str]]:
-    """Return a positional token -> canonical_entity_type map when caller passed
-    parallel lists of equal length. Otherwise return None — caller should fall
-    back to the legacy global-set filter behaviour.
+    """Deprecated — positional pairing is disabled.
 
-    Positional pairing means: token[i] is ONLY resolved against
-    allowed_entity_types[i]. Used when the caller already knows which token names
-    which kind of entity (e.g. ["Fira Ventures", "DO"] paired with
-    ["customer", "delivery_order"] — "DO" must not be tried as a customer).
+    Historically returned a positional token -> canonical_entity_type map when
+    caller passed parallel lists of equal length, so token[i] would be resolved
+    ONLY against allowed_entity_types[i]. This behaviour surprised callers who
+    wanted each token resolved against EVERY allowed type (set-filter mode),
+    e.g. tokens=["Sorento water closet", "latest promo"] with
+    allowed_entity_types=["product", "promotion"] — they expect both tokens
+    probed against both types.
+
+    Always returns None now, so every code path falls through to the set-filter
+    branch: `allowed` becomes the canonical set of all supplied types, and each
+    surviving probe sees every token. Callers that need 1:1 pairing must make
+    multiple resolve calls, one per (token, type).
     """
-    if not tokens or allowed_entity_types is None:
-        return None
-    allowed_list = list(allowed_entity_types)
-    if len(allowed_list) != len(tokens):
-        return None
-    pair_map: dict[str, str] = {}
-    for tok, et in zip(tokens, allowed_list):
-        tok_s = (tok or "").strip()
-        et_s = (et or "").strip()
-        if not tok_s or not et_s:
-            return None
-        pair_map[tok_s] = _canonical_entity_type(et_s)
-    return pair_map
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -2508,12 +2502,10 @@ def resolve_references_intersection(
     """AND-mode resolver. Returns rows matching EVERY token in the concatenated
     searchable columns of each entity type. Skips code-only types.
 
-    When `allowed_entity_types` has the SAME length as `tokens`, the two lists are
-    treated as positional pairs: token[i] is resolved ONLY against the entity type
-    at allowed_entity_types[i], and the AND-within-probe is restricted to the
-    tokens whose paired type matches that probe. Otherwise the legacy global-set
-    filter applies (probe skipped if its produces type is not in the set; every
-    surviving probe sees all tokens).
+    `allowed_entity_types` (when set) is always a global set filter — every
+    surviving probe sees every token. Positional pairing (token[i] vs
+    allowed_entity_types[i]) is no longer auto-triggered on equal-length lists;
+    callers that need 1:1 pairing must issue one resolve call per pair.
     """
     raw_tokens = list(tokens or [])
     pair_map = _build_token_type_map(raw_tokens, allowed_entity_types)

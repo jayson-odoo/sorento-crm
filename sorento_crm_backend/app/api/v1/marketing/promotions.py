@@ -86,7 +86,12 @@ async def get_promotions(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get promotions with pagination. Search by query/period; optional access_levels filter (by name)."""
+    """Get promotions with pagination. Search by query/period; optional access_levels filter (by name).
+
+    Requires at least one narrowing filter (`promotion_ids`, `product_ids`,
+    free-text `query`, or `entities`). Without any, returns an empty page so
+    callers cannot accidentally enumerate the whole catalog.
+    """
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
         from app.services.entity_filter_helpers import normalize_list_query_param
@@ -100,6 +105,23 @@ async def get_promotions(
         # `services.query_normalizer.DOMAIN_STOPWORDS`.
         query = strip_domain_stopwords(query, "promotion")
         from app.services.entity_filter_helpers import normalize_entities_query_param
+
+        parsed_promotion_ids = parse_uuid_list(promotion_ids, param_name="promotion_ids")
+        parsed_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
+        norm_entities = normalize_entities_query_param(entities)
+        has_narrowing_filter = bool(
+            parsed_promotion_ids
+            or parsed_product_ids
+            or (query and query.strip())
+            or norm_entities
+        )
+        if not has_narrowing_filter:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+
         result = service.list_promotions(
             page=page,
             limit=limit,
@@ -112,9 +134,9 @@ async def get_promotions(
             period_to=period_to,
             sort_field=sort,
             sort_dir=dir,
-            entities=normalize_entities_query_param(entities),
-            promotion_ids=parse_uuid_list(promotion_ids, param_name="promotion_ids"),
-            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            entities=norm_entities,
+            promotion_ids=parsed_promotion_ids,
+            product_ids=parsed_product_ids,
         )
         return result
     except HTTPException:
