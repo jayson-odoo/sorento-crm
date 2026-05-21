@@ -47,7 +47,12 @@ async def get_forms(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get forms with pagination and filtering."""
+    """Get forms with pagination and filtering.
+
+    Requires at least one narrowing filter (`form_ids`, free-text `query`, or
+    `entities`). Without any, returns an empty page so callers cannot
+    accidentally enumerate the whole catalog.
+    """
     try:
         from app.services.entity_filter_helpers import (
             normalize_entities_query_param,
@@ -57,9 +62,22 @@ async def get_forms(
         sort_field = (sort and sort.strip()) or "updated_at"
         sort_dir = (dir and dir.strip()) or "desc"
 
+        parsed_form_ids = parse_uuid_list(form_ids, param_name="form_ids")
+        norm = normalize_entities_query_param(entities)
+        has_narrowing_filter = bool(
+            parsed_form_ids
+            or (query and query.strip())
+            or norm
+        )
+        if not has_narrowing_filter:
+            return {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+
         entity_form_codes: Optional[list[str]] = None
         entity_echo = None
-        norm = normalize_entities_query_param(entities)
         if norm:
             buckets = resolve_or_empty(db, norm)
             if buckets is not None:
@@ -85,7 +103,7 @@ async def get_forms(
             sort_field=sort_field,
             sort_dir=sort_dir,
             entity_form_codes=entity_form_codes,
-            form_ids=parse_uuid_list(form_ids, param_name="form_ids"),
+            form_ids=parsed_form_ids,
         )
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo

@@ -957,8 +957,15 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_forms_management_forms_list",
         (
-            "List forms. FILTER BY UUID: pass `form_ids` (canonical form UUIDs csv/JSON/repeated). "
-            "Resolve free-text form refs (code, name, purpose phrase) FIRST via `crm_find_entity`."
+            "List forms.\n\n"
+            "REQUIRED — `form_ids` (canonical form UUIDs csv/JSON/repeated) must be "
+            "supplied or the tool returns an empty page. Resolve free-text form refs "
+            "(code, name, or any phrase that describes the form's purpose — purpose "
+            "text can be very long, so semantic matching against meaning is supported) "
+            "FIRST via `crm_find_entity`, then pass returned form UUIDs here.\n\n"
+            "If `crm_find_entity` returns NO form candidates for the user's reference, "
+            "do NOT call this tool with empty `form_ids` — report 'no matching form' "
+            "to the user instead."
         ),
         "/api/v1/forms-management/forms",
         (),
