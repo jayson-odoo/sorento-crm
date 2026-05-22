@@ -576,6 +576,7 @@ def get_current_user_or_api_key(
             )
 
         user = _user_dict_from_api_key_act_as(db, request)
+        user["auth_method"] = "api_key"
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)
         return user
@@ -598,6 +599,7 @@ def get_current_user_or_api_key(
         ip = request.client.host if request.client else None
         set_audit_context(real_user["id"], ip)
         effective_user = _maybe_apply_impersonation(request, db, real_user)
+        effective_user["auth_method"] = "jwt"
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)
         return effective_user

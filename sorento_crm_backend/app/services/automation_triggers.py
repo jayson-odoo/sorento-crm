@@ -81,6 +81,12 @@ def _build_complaint_link(complaint_id: str) -> str:
     return f"{base}/complaint-management/complaints/{complaint_id}"
 
 
+def _build_purchase_request_link(request_id: str) -> str:
+    base = (settings.frontend_base_url or "").rstrip("/")
+    path = f"/procurement-management/purchase-requests/{request_id}"
+    return f"{base}{path}" if base else path
+
+
 def _trigger_days_before_promotion_end(
     db: Session,
     config: dict[str, Any],
@@ -167,4 +173,60 @@ register(
         },
     ),
     _trigger_complaint_approved,
+)
+
+
+def _trigger_purchase_request_approved(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via :meth:`AutomationService.dispatch_event` from the
+    purchase request approval code path.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="purchase_request_approved",
+        label="Purchase request approved",
+        description="Fires when a purchase request is approved (event-driven, dispatched from the approval flow).",
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_purchase_request_approved,
+)
+
+
+def _trigger_sponsorship_form_approved(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via :meth:`AutomationService.dispatch_event` from the
+    sponsorship form approval code path (shares the purchase_requests table).
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="sponsorship_form_approved",
+        label="Sponsorship form approved",
+        description="Fires when a sponsorship form is approved (event-driven, dispatched from the approval flow).",
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_sponsorship_form_approved,
 )

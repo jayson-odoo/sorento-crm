@@ -4530,6 +4530,69 @@ class PurchaseRequestService:
             event_type="rejected",
         )
 
+    def _dispatch_approval_automation(self, header: PurchaseRequestHeader) -> None:
+        """Fire the configurable automation for an approved PR / sponsorship form.
+
+        Mirrors the complaint-approved pattern in ``ComplaintsService``: build a
+        Jinja-ready context dict and call ``AutomationService.dispatch_event``
+        with the trigger_type that matches ``header.request_type``. Admins
+        configure recipients + email template in System Management → Automation.
+        """
+        from datetime import date as _date
+
+        from app.services.automation_service import AutomationService
+        from app.services.automation_triggers import _build_purchase_request_link
+
+        request_type = (getattr(header, "request_type", None) or "purchase_request").strip()
+        if request_type == "sponsorship_form":
+            trigger_type = "sponsorship_form_approved"
+            type_label = "Sponsorship Form"
+        else:
+            trigger_type = "purchase_request_approved"
+            type_label = "Purchase Request"
+
+        header_id = str(header.id)
+        total_value = getattr(header, "total_project_value", None)
+        approved_at = getattr(header, "approved_at", None)
+        request_date = getattr(header, "request_date", None)
+        expected_delivery_date = getattr(header, "expected_delivery_date", None)
+        expected_po_date = getattr(header, "expected_po_date", None)
+
+        ctx = {
+            "purchase_request": {
+                "id": header_id,
+                "type": request_type,
+                "type_label": type_label,
+                "request_number": getattr(header, "request_number", None),
+                "request_date": request_date.isoformat() if request_date else None,
+                "customer_name": getattr(header, "customer_name", None),
+                "project_title": getattr(header, "project_title", None),
+                "purpose": getattr(header, "purpose", None),
+                "requested_by": getattr(header, "requested_by", None),
+                "approved_by": getattr(header, "approved_by", None),
+                "approved_at": approved_at.isoformat() if approved_at else None,
+                "approval_comments": getattr(header, "approval_comments", None),
+                "total_project_value": str(total_value) if total_value is not None else None,
+                "total_project_value_text": getattr(header, "total_project_value_text", None),
+                "expected_delivery_date": (
+                    expected_delivery_date.isoformat() if expected_delivery_date else None
+                ),
+                "expected_po_date": (
+                    expected_po_date.isoformat() if expected_po_date else None
+                ),
+                "expected_po_date_text": getattr(header, "expected_po_date_text", None),
+                "status": "approved",
+                "link": _build_purchase_request_link(header_id),
+            },
+            "today": _date.today().isoformat(),
+        }
+        AutomationService(self.db).dispatch_event(
+            trigger_type,
+            context=ctx,
+            source_kind="purchase_request",
+            source_id=header_id,
+        )
+
     def list_requests(
         self,
         page: int = 1,
@@ -5377,6 +5440,13 @@ class PurchaseRequestService:
                     "Failed to send Respond.io approval message for purchase request %s: %s",
                     header.id,
                     e,
+                )
+            try:
+                self._dispatch_approval_automation(header)
+            except Exception:
+                logger.exception(
+                    "Automation dispatch on approved purchase request %s failed",
+                    header.id,
                 )
         elif action == "rejected":
             requested_by_uid = getattr(header, "requested_approval_by_user_id", None)

@@ -431,9 +431,6 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     const promoPrice = Number(pp.promotion_price) || listPrice;
     const discount = listPrice - promoPrice;
     const discountPercent = listPrice > 0 ? (discount / listPrice) * 100 : 0;
-    const dd = pp.dealer_discount_percent != null ? Number(pp.dealer_discount_percent) : null;
-    const dealerCost = pp.dealer_cost != null ? Number(pp.dealer_cost) : null;
-    const margin = pp.list_to_dealer_margin_amount != null ? Number(pp.list_to_dealer_margin_amount) : null;
 
     const productHref = pp.product_id ? `/master-data-management/products/${pp.product_id}` : null;
 
@@ -465,10 +462,6 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
         <td className="p-2 text-sm text-right">
           {discountPercent > 0 ? <Badge variant="info">{discountPercent.toFixed(1)}%</Badge> : '-'}
         </td>
-        <td className="p-2 text-sm text-right">
-          {dd != null && !Number.isNaN(dd) ? <span className="text-muted-foreground">{(dd * 100).toFixed(0)}%</span> : '-'}
-        </td>
-        <td className="p-2 text-sm text-right">{dealerCost != null ? fmtMoney(dealerCost) : '-'}</td>
         <td className="p-2 text-right">
           <div className="flex justify-end gap-2">
             {productHref && (
@@ -518,11 +511,9 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
         <th className="text-left p-2 font-medium text-sm">Product Code</th>
         <th className="text-left p-2 font-medium text-sm">Product Name</th>
         <th className="text-right p-2 font-medium text-sm">List Price</th>
-        <th className="text-right p-2 font-medium text-sm">Promo Price</th>
+        <th className="text-right p-2 font-medium text-sm">Selling Price</th>
         <th className="text-right p-2 font-medium text-sm">Discount</th>
         <th className="text-right p-2 font-medium text-sm">Discount %</th>
-        <th className="text-right p-2 font-medium text-sm">Dealer Discount %</th>
-        <th className="text-right p-2 font-medium text-sm">Dealer cost</th>
         <th className="text-right p-2 font-medium text-sm">Actions</th>
       </tr>
     </thead>

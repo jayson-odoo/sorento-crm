@@ -303,7 +303,14 @@ export default function PurchaseRequestDetail({
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h1 className="text-2xl font-bold">
-            {typeLabel} - {request.customer_name || request.project_title || request.id}
+            {typeLabel}
+            {request.request_number
+              ? ` - ${request.request_number}`
+              : request.customer_name
+                ? ` - ${request.customer_name}`
+                : request.project_title
+                  ? ` - ${request.project_title}`
+                  : ''}
           </h1>
           <p className="text-sm text-muted-foreground">
             {request.request_date
