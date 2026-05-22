@@ -341,7 +341,11 @@ async def list_all_promotion_products(
             or (text_query and text_query.strip())
             or norm_entities
         )
-        if not has_narrowing_filter:
+        # Gate "no filter = empty page" guard to API-key / MCP callers only.
+        # FE DataGrid lands on this endpoint with no filters and expects the
+        # full catalog; only chatbot/MCP needs whole-catalog enumeration guard.
+        is_api_key_caller = (current_user or {}).get("auth_method") == "api_key"
+        if is_api_key_caller and not has_narrowing_filter:
             return {
                 "data": [],
                 "pagination": {"total": 0, "page": page, "limit": limit},

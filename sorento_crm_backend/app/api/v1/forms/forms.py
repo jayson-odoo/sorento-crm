@@ -69,7 +69,12 @@ async def get_forms(
             or (query and query.strip())
             or norm
         )
-        if not has_narrowing_filter:
+        # Gate the "no filter = empty page" guard to API-key / MCP callers only.
+        # Interactive JWT users (FE DataGrid) land on /forms with no filters
+        # and expect the full catalog; only the chatbot/MCP path needs the guard
+        # against accidental whole-catalog enumeration.
+        is_api_key_caller = (current_user or {}).get("auth_method") == "api_key"
+        if is_api_key_caller and not has_narrowing_filter:
             return {
                 "data": [],
                 "pagination": {"total": 0, "page": page, "limit": limit},
