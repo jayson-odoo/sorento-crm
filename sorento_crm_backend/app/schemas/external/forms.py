@@ -21,6 +21,7 @@ class FormHeaderInput(BaseModel):
     description: Optional[str] = None
     language: Optional[str] = None
     attachment_id: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 class FormSectionInput(BaseModel):

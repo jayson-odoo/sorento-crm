@@ -44,12 +44,17 @@ def create_form(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Attachment not found: {attachment_id}",
             )
+    # Default external-created forms to active so they show up in the FE list
+    # and MCP surfaces without a separate activation step. Caller can pass
+    # ``is_active: false`` explicitly to opt out.
+    is_active = f.is_active if f.is_active is not None else True
     form_data = FormCreate(
         code=f.code,
         name=f.name,
         purpose=f.description,
         language=(f.language or "en").strip() or "en",
         attachment_id=attachment_id,
+        is_active=is_active,
     )
 
     existing = db.query(Form).filter(Form.code == form_data.code).first()
