@@ -392,6 +392,45 @@ def test_render_files_caps_at_pdf_max_pages():
     assert 0 < len(parts) <= 12  # PDF_MAX_PAGES
 
 
+# ---- Pasted text path -----------------------------------------------------
+
+
+def test_collect_text_decodes_txt_uploads():
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    files = [
+        ExtractFile("pasted-1.txt", "text/plain", b"  hello from paste  "),
+        ExtractFile("note.TXT", "", "second\nblock".encode("utf-8")),
+        ExtractFile("photo.png", "image/png", b"\x89PNG"),  # not text — ignored
+    ]
+    out = svc._collect_text(files)
+    assert "hello from paste" in out
+    assert "second\nblock" in out
+    assert "PNG" not in out
+
+
+def test_collect_text_empty_when_no_text_files():
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    assert svc._collect_text([ExtractFile("x.png", "image/png", b"\x89PNG")]) == ""
+
+
+def test_build_messages_appends_pasted_text():
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+    messages = svc._build_messages(
+        "portal.complaint", schema, {}, has_line_items=False, pasted_text="ACME Corp order 42"
+    )
+    user = next(m for m in messages if m["role"] == "user")
+    assert "ACME Corp order 42" in user["content"]
+
+
+def test_build_messages_omits_text_section_when_blank():
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+    messages = svc._build_messages("portal.complaint", schema, {}, has_line_items=False)
+    user = next(m for m in messages if m["role"] == "user")
+    assert "pasted the following text" not in user["content"]
+
+
 # ---- JSON parsing ---------------------------------------------------------
 
 

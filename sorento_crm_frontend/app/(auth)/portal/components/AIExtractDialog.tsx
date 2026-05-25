@@ -110,6 +110,15 @@ export function AIExtractDialog({
           if (f) incoming.push(f);
         }
       }
+      // No file on the clipboard but there is text → save the paste as a .txt
+      // file so it flows through the same upload/extract path.
+      if (!incoming.length) {
+        const text = e.clipboardData.getData('text/plain');
+        if (text && text.trim()) {
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          incoming.push(new File([text], `pasted-${ts}.txt`, { type: 'text/plain' }));
+        }
+      }
       if (incoming.length) {
         e.preventDefault();
         setFiles((prev) => [...prev, ...incoming]);
@@ -162,20 +171,30 @@ export function AIExtractDialog({
       }>;
       const incoming: File[] = [];
       for (const item of items) {
-        const imageType = item.types.find((t) => t.startsWith('image/'));
-        if (!imageType) continue;
-        const blob = await item.getType(imageType);
-        const ext = imageType.split('/')[1] ?? 'png';
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        incoming.push(new File([blob], `clipboard-${ts}.${ext}`, { type: imageType }));
+        const imageType = item.types.find((t) => t.startsWith('image/'));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const ext = imageType.split('/')[1] ?? 'png';
+          incoming.push(new File([blob], `clipboard-${ts}.${ext}`, { type: imageType }));
+          continue;
+        }
+        // No image — fall back to pasted text saved as a .txt file.
+        if (item.types.includes('text/plain')) {
+          const blob = await item.getType('text/plain');
+          const text = (await blob.text()).trim();
+          if (text) {
+            incoming.push(new File([text], `pasted-${ts}.txt`, { type: 'text/plain' }));
+          }
+        }
       }
       if (incoming.length === 0) {
-        toast.message('Clipboard has no image to paste.');
+        toast.message('Clipboard has no image or text to paste.');
         return;
       }
       addFiles(incoming);
       toast.success(
-        `Pasted ${incoming.length} image${incoming.length === 1 ? '' : 's'} from clipboard.`,
+        `Pasted ${incoming.length} item${incoming.length === 1 ? '' : 's'} from clipboard.`,
       );
     } catch (e) {
       toast.error(
@@ -309,7 +328,7 @@ export function AIExtractDialog({
                 <input
                   ref={inputRef}
                   type="file"
-                  accept="image/*,video/*,.pdf"
+                  accept="image/*,video/*,.pdf,.txt"
                   className="hidden"
                   multiple
                   data-testid="ai-extract-file-input"

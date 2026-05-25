@@ -72,6 +72,11 @@ ALLOWED_VIDEO_MIMES = {
 _VIDEO_EXTS = (".mp4", ".mov", ".webm", ".m4v", ".3gp")
 VIDEO_MAX_FRAMES = 8
 VIDEO_FRAME_MAX_DIM = 1280  # downscale frames before base64 to stay within token budget
+# Pasted text arrives as a text/plain ".txt" upload (the portal converts a paste
+# into a file so it flows through the same upload path).
+ALLOWED_TEXT_MIMES = {"text/plain"}
+_TEXT_EXTS = (".txt",)
+TEXT_MAX_CHARS = 200_000
 
 # Forms that ship a separate items-list section. Other forms (complaint,
 # stock_inquiry, master.*) must NOT receive a `products` array — distinct
@@ -276,16 +281,21 @@ class AIExtractService:
                 )
         guidance = self._build_field_guidance(schema)
         image_parts = self._render_files(files)
-        if not image_parts:
+        pasted_text = self._collect_text(files)
+        if not image_parts and not pasted_text:
             raise AppException(
                 status_code=400,
-                message="No readable image or PDF page in the uploaded files.",
-                code="ai_extract_no_images",
+                message="No readable image, PDF page, or text in the uploaded files.",
+                code="ai_extract_no_content",
             )
 
         provider, provider_name, model_name = self._resolve_provider()
         messages = self._build_messages(
-            form_key, schema, guidance, has_line_items=_form_has_line_items(form_key)
+            form_key,
+            schema,
+            guidance,
+            has_line_items=_form_has_line_items(form_key),
+            pasted_text=pasted_text,
         )
         started = time.perf_counter()
         try:
@@ -375,6 +385,20 @@ class AIExtractService:
                 code="ai_extract_unknown_provider",
             ) from exc
         return provider, provider_name, model_name
+
+    # ----- Text collection --------------------------------------------------
+
+    def _collect_text(self, files: Iterable[ExtractFile]) -> str:
+        """Concatenate the decoded contents of pasted text/plain (.txt) uploads."""
+        chunks: list[str] = []
+        for f in files:
+            mime = (f.mime or "").lower()
+            name_lower = (f.filename or "").lower()
+            if mime in ALLOWED_TEXT_MIMES or name_lower.endswith(_TEXT_EXTS):
+                decoded = f.data.decode("utf-8", errors="replace").strip()
+                if decoded:
+                    chunks.append(decoded)
+        return "\n\n".join(chunks)[:TEXT_MAX_CHARS]
 
     # ----- File rendering ---------------------------------------------------
 
@@ -636,6 +660,7 @@ class AIExtractService:
         schema: list[ExtractFieldSpec],
         guidance: dict[str, dict[str, Any]],
         has_line_items: bool = True,
+        pasted_text: str = "",
     ) -> list[dict]:
         field_specs = []
         for f in schema:
@@ -699,6 +724,13 @@ class AIExtractService:
             "Return ONLY a single JSON object keyed by field name."
             + line_items_clause
         )
+        if pasted_text:
+            user_text += (
+                "\n\nThe user pasted the following text; treat it as an additional "
+                "source document and extract from it too:\n---\n"
+                + pasted_text
+                + "\n---"
+            )
         return [
             {"role": "system", "content": system},
             {"role": "user", "content": user_text},
