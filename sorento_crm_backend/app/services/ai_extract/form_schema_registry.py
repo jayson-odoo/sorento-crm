@@ -96,6 +96,12 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
         ),
     ),
     ExtractFieldSpec(
+        name="quantity",
+        label="Quantity",
+        kind="number",
+        note="Numeric quantity of affected/defective items. Strip units and commas.",
+    ),
+    ExtractFieldSpec(
         name="product_type",
         label="Product type",
         kind="text",

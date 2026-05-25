@@ -67,6 +67,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       complaint_type: null,
       defect_description: null,
       product_code: null,
+      quantity: null,
       salesperson: null,
       customer_name: null,
       contact_person: null,
@@ -125,6 +126,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         complaint_type: complaint.complaint_type || null,
         defect_description: complaint.defect_description || null,
         product_code: complaint.product_code || null,
+        quantity: complaint.quantity || null,
         salesperson: complaint.salesperson || null,
         customer_name: complaint.customer_name || null,
         contact_person: complaint.contact_person || null,
@@ -250,6 +252,7 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       complaint_type: data.complaint_type || undefined,
       defect_description: data.defect_description || undefined,
       product_code: data.product_code || undefined,
+      quantity: data.quantity || undefined,
       salesperson: data.salesperson || undefined,
       customer_name: data.customer_name || undefined,
       contact_person: data.contact_person || undefined,
@@ -505,6 +508,24 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                   <FormControl>
                     <Input
                       placeholder="Enter product code"
+                      {...field}
+                      value={field.value || ''}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="quantity"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Quantity</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="Enter quantity"
                       {...field}
                       value={field.value || ''}
                     />

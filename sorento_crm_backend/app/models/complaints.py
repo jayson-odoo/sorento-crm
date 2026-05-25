@@ -29,6 +29,7 @@ class Complaint(Base):
     complaint_type = Column(Text, nullable=True)
     defect_description = Column(Text, nullable=True)
     product_code = Column(Text, nullable=True)
+    quantity = Column(Text, nullable=True)
     salesperson = Column(Text, nullable=True)
     customer_name = Column(Text, nullable=True)
     contact_person = Column(Text, nullable=True)

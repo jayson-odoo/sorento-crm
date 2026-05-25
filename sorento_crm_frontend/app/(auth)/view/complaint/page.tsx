@@ -30,6 +30,7 @@ interface ComplaintViewSummary {
   complaint_type?: string | null;
   defect_description?: string | null;
   product_code?: string | null;
+  quantity?: string | null;
   salesperson?: string | null;
   customer_name?: string | null;
   contact_person?: string | null;
@@ -186,6 +187,7 @@ function ViewComplaintContent() {
           <DetailRow label="Complaint type" value={summary?.complaint_type ?? undefined} />
           <DetailRow label="Defect description" value={summary?.defect_description ?? undefined} />
           <DetailRow label="Product code" value={summary?.product_code ?? undefined} />
+          <DetailRow label="Quantity" value={summary?.quantity ?? undefined} />
           <DetailRow label="Salesperson" value={summary?.salesperson ?? undefined} />
           <DetailRow label="Customer name" value={summary?.customer_name ?? undefined} />
           <DetailRow label="Contact person" value={summary?.contact_person ?? undefined} />

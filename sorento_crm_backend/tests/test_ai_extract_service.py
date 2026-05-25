@@ -126,6 +126,7 @@ def test_portal_complaint_schema_has_expected_fields():
         "defect_description",
         "salesperson",
         "project_title",
+        "quantity",
     }
     assert expected.issubset(set(names))
 
