@@ -669,6 +669,40 @@ class ConversationSLATrackingService:
             .first()
         )
 
+    def list_my_pending(self, user_id: str, limit: int = 50) -> list[dict]:
+        """Unresolved SLA trackers assigned to ``user_id``, soonest-due first.
+
+        Unlike ``list_tracking`` (the conversation list, which excludes form SLA
+        types), this powers a per-user to-do widget and INCLUDES form trackers
+        (stock_inquiry / complaint / purchase_request) since those are the items
+        the assignee must action.
+        """
+        from sqlalchemy.orm import joinedload
+
+        rows = (
+            self.db.query(ConversationSLATracking)
+            .options(joinedload(ConversationSLATracking.policy))
+            .filter(
+                ConversationSLATracking.assigned_to_id == user_id,
+                ConversationSLATracking.is_resolved.is_(False),
+            )
+            .order_by(ConversationSLATracking.due_at.asc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "id": str(r.id),
+                "source_entity_type": r.source_entity_type,
+                "source_entity_id": r.source_entity_id,
+                "due_at": r.due_at.isoformat() if r.due_at else None,
+                "is_responded": bool(r.is_responded),
+                "current_tier": r.current_tier,
+                "policy_name": r.policy.name if r.policy else None,
+            }
+            for r in rows
+        ]
+
     def get_preferred_tracking_for_contact(
         self, contact: RespondContact
     ) -> Optional[ConversationSLATracking]:

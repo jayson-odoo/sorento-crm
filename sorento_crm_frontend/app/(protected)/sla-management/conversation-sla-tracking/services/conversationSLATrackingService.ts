@@ -68,6 +68,25 @@ export async function getSLATrackingDashboardMetrics(): Promise<SLATrackingDashb
   return response.json();
 }
 
+export interface MyPendingSLAItem {
+  id: string;
+  source_entity_type: string | null;
+  source_entity_id: string | null;
+  due_at: string | null;
+  is_responded: boolean;
+  current_tier: number;
+  policy_name: string | null;
+}
+
+export async function getMyPendingSLA(limit = 50): Promise<MyPendingSLAItem[]> {
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/my-pending?limit=${limit}`,
+  );
+  if (!response.ok) throw new Error('Failed to fetch my pending SLAs');
+  const body = await response.json();
+  return Array.isArray(body?.data) ? (body.data as MyPendingSLAItem[]) : [];
+}
+
 export async function deleteConversationSLATracking(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking/${id}`, {
     method: 'DELETE',
