@@ -60,15 +60,16 @@ def strip_domain_stopwords(query: Optional[str], domain_key: str) -> Optional[st
     """
     if not query or not query.strip():
         return query
+    trimmed = query.strip()
     stop = DOMAIN_STOPWORDS.get(domain_key)
     if not stop:
-        return query
+        return trimmed
 
-    tokens = [t for t in _TOKEN_SPLIT_RE.split(query.strip()) if t]
+    tokens = [t for t in _TOKEN_SPLIT_RE.split(trimmed) if t]
     kept = [t for t in tokens if t.lower().strip(_PUNCT_STRIP) not in stop]
     stripped = " ".join(kept).strip()
 
     # Don't reduce the query to empty — that turns a search into list-all.
     if not stripped:
-        return query
+        return trimmed
     return stripped
