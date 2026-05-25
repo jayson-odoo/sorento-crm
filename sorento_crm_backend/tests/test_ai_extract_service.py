@@ -174,6 +174,28 @@ def test_portal_sponsorship_schema_keeps_total_project_value_as_text():
     assert fields["total_project_value"].kind == "text"
 
 
+@pytest.mark.parametrize(
+    "form_key,customer_field,project_field",
+    [
+        ("portal.complaint", "customer_name", "project_title"),
+        ("portal.stock_inquiry", "project_customer", "project_name"),
+        ("portal.purchase_request", "customer_name", "project_title"),
+        ("portal.sponsorship_form", "customer_name", "project_title"),
+    ],
+)
+def test_customer_and_project_fields_have_disambiguating_guidance(
+    form_key, customer_field, project_field
+):
+    fields = {f.name: f for f in get_form_schema(form_key)}
+    cust = fields[customer_field]
+    proj = fields[project_field]
+    # Customer field disambiguates buyer vs supplier/project and carries examples.
+    assert cust.examples, f"{form_key}.{customer_field} should provide examples"
+    assert cust.note and "NOT" in cust.note
+    # Project field tells the model it is not the customer company.
+    assert proj.note and "NOT the customer" in proj.note
+
+
 # ---- Image attachers ------------------------------------------------------
 
 
