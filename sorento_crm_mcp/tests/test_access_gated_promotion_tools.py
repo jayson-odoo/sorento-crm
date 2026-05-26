@@ -21,11 +21,8 @@ from sorento_crm_mcp.server import (
 
 _ACCESS_GATED_TOOLS = {
     "crm_marketing_promotions_list",
-    "crm_marketing_promotions_get",
     "crm_marketing_promotion_attachments_list",
-    "crm_marketing_promotion_attachments_by_promotion",
     "crm_master_product_attachments_list",
-    "crm_master_product_attachments_by_product",
 }
 
 

@@ -22,10 +22,7 @@ from sorento_crm_mcp.user_guides import register_user_guide_tools
 
 logger = logging.getLogger(__name__)
 
-TOOL_QUERY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
-    # Normalize frequent caller habit: sending `query` instead of `q`.
-    "crm_workflow_forms_definitions_list": {"q": ("query",)},
-}
+TOOL_QUERY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {}
 
 TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {}
 
@@ -1157,9 +1154,5 @@ def create_mcp_app(settings: Settings) -> FastMCP:
 
     register_user_guide_tools(mcp, settings)
     logger.debug("Registered user-guide tools")
-
-    from sorento_crm_mcp.discovery import register_discovery_tools
-    register_discovery_tools(mcp, settings, CATALOG)
-    logger.debug("Registered discovery tools")
 
     return mcp

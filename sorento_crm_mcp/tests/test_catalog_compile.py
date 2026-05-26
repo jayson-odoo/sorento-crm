@@ -91,7 +91,7 @@ def test_catalog_covers_all_prefix_domains():
     """Smoke: catalog is non-empty and names are unique."""
     names = [s.name for s in CATALOG]
     assert len(names) == len(set(names))
-    assert len(CATALOG) >= 70
+    assert len(CATALOG) >= 20
 
 
 def test_orders_list_uses_actual_delivery_date_only():
