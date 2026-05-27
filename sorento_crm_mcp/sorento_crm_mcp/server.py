@@ -29,6 +29,58 @@ TOOL_QUERY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
 
 TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {}
 
+# Tools that MUST receive at least one narrowing filter (id / date-range) or
+# they short-circuit to an empty page. Prevents the AI assistant from doing a
+# "list everything" sweep when entity resolution failed upstream.
+TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
+    "crm_incoming_stock_shipments": (
+        "shipment_ids",
+        "supplier_ids",
+        "eta_from",
+        "eta_to",
+    ),
+    "crm_inventory_stock_balance_list": (
+        "product_ids",
+        "warehouse_id",
+    ),
+    "crm_order_management_orders_list": (
+        "order_ids",
+        "customer_ids",
+        "product_ids",
+        "transporter_ids",
+        "actual_delivery_date_from",
+        "actual_delivery_date_to",
+    ),
+}
+
+
+def _missing_narrowing_filters(tool_name: str, query: dict[str, Any] | None) -> tuple[str, ...] | None:
+    needed = TOOL_REQUIRED_NARROWING_FILTERS.get(tool_name)
+    if not needed:
+        return None
+    for key in needed:
+        value = (query or {}).get(key)
+        if value not in (None, "", []):
+            return None
+    return needed
+
+
+def _empty_narrowing_response(tool_name: str, query: dict[str, Any] | None, needed: tuple[str, ...]) -> str:
+    return json.dumps(
+        {
+            "data": [],
+            "total": 0,
+            "page": 1,
+            "limit": (query or {}).get("limit"),
+            "message": (
+                f"No narrowing filter supplied to {tool_name}. "
+                f"Resolve entities first (e.g. via crm_find_entity) and pass at least one of: "
+                f"{list(needed)}."
+            ),
+            "code": "NARROWING_FILTER_REQUIRED",
+        }
+    )
+
 TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     # Promotion list must always return active promotions only.
     "crm_marketing_promotions_list": {"status": "active"},
@@ -967,6 +1019,11 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
     if spec.name == _GRN_LIST_TOOL:
         query = dict(query or {})
         query["limit"] = _coerce_grn_limit(query.get("limit"))
+
+    missing_narrowing = _missing_narrowing_filters(spec.name, query)
+    if missing_narrowing is not None:
+        return _empty_narrowing_response(spec.name, query, missing_narrowing)
+
     response = await client.request(
         spec.method,
         spec.path,

@@ -6,7 +6,7 @@ import pytest
 from sorento_crm_mcp import access_guard, server as server_mod
 from sorento_crm_mcp.access_guard import AccessDecision
 from sorento_crm_mcp.catalog import CATALOG
-from sorento_crm_mcp.server import _compile_tool
+from sorento_crm_mcp.server import TOOL_REQUIRED_NARROWING_FILTERS, _compile_tool
 
 
 class _FakeSettings:
@@ -82,6 +82,13 @@ async def test_tool_runs_with_fake_context(spec, monkeypatch):
     # Tools that declare contact_id/space_id as REQUIRED query hints additionally
     # need them in the forwarded query — which the compiled tool re-injects from
     # the guard params, so kwargs above are sufficient.
+    narrowing = TOOL_REQUIRED_NARROWING_FILTERS.get(spec.name)
+    if narrowing:
+        first = narrowing[0]
+        if first.endswith("_ids") or first.endswith("_id"):
+            kwargs[first] = _PP_UUID
+        else:
+            kwargs[first] = "2026-01-01"
     out = await fn(_FakeCtx(_FakeClient()), **kwargs)  # type: ignore[arg-type]
     assert spec.path in out
     assert "ok" in out
