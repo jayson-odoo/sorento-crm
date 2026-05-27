@@ -421,6 +421,7 @@ class ConversationSLATrackingService:
         sort_field: str = "created_at",
         sort_dir: str = "desc",
         assigned_to: Optional[str] = None,
+        tracking_ids: Optional[list[str]] = None,
     ):
         """List SLA tracking records. query filters by contact phone or contact name."""
         from sqlalchemy.orm import joinedload
@@ -452,6 +453,9 @@ class ConversationSLATrackingService:
 
         if policy_id:
             q = q.filter(ConversationSLATracking.policy_id == policy_id)
+
+        if tracking_ids is not None:
+            q = q.filter(ConversationSLATracking.id.in_(tracking_ids))
 
         if query and query.strip():
             term = f"%{query.strip()}%"

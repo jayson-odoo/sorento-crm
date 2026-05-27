@@ -8,6 +8,7 @@ from app.services.product_service import UnitOfMeasureService
 from app.schemas.product import UnitOfMeasureCreate, UnitOfMeasureUpdate, UnitOfMeasureResponse
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
+from app.services.uuid_list_param import parse_uuid_list
 
 router = APIRouter()
 
@@ -17,13 +18,27 @@ async def get_units_of_measure(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
+    uom_ids: Optional[List[str]] = Query(
+        None,
+        description="Filter by canonical unit-of-measure UUIDs (repeated / csv / JSON array).",
+    ),
+    product_ids: Optional[List[str]] = Query(
+        None,
+        description="Filter to the base UOMs of these product UUIDs (repeated / csv / JSON array).",
+    ),
     current_user: dict = Depends(require_permission_with_api_key("master_data.units_of_measure.view")),
     db: Session = Depends(get_db)
 ):
     """Get units of measure with pagination and search."""
     try:
         service = UnitOfMeasureService(db)
-        result = service.list_uoms(page=page, limit=limit, query=query)
+        result = service.list_uoms(
+            page=page,
+            limit=limit,
+            query=query,
+            uom_ids=parse_uuid_list(uom_ids, param_name="uom_ids"),
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+        )
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
