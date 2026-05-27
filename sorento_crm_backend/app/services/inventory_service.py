@@ -52,6 +52,7 @@ class WarehouseService:
         is_active: Optional[bool] = None,
         sort_field: Optional[str] = None,
         sort_dir: Optional[str] = None,
+        warehouse_ids: Optional[list[str]] = None,
     ):
         """List warehouses. Supports sort by warehouse_code, warehouse_name, location, is_active, created_at, updated_at, zones_count, stock_count."""
         from sqlalchemy import select
@@ -78,6 +79,9 @@ class WarehouseService:
 
         if is_active is not None:
             q = q.filter(Warehouse.is_active == is_active)
+
+        if warehouse_ids is not None:
+            q = q.filter(Warehouse.id.in_(warehouse_ids))
 
         if query:
             q = q.filter(
@@ -544,6 +548,7 @@ class StockService:
         sort: Optional[str] = None,
         dir: Optional[str] = None,
         warehouse_id: Optional[str] = None,
+        warehouse_ids: Optional[list[str]] = None,
         product_id: Optional[str] = None,
         product_ids: Optional[list[str]] = None,
         quantity_operator: Optional[str] = None,
@@ -599,20 +604,23 @@ class StockService:
             selectinload(Stock.warehouse),
         ).filter(Stock.warehouse.has(Warehouse.is_active.is_(True)))
 
-        warehouse_ids = resolve_identifier(
+        if warehouse_ids:
+            q = q.filter(Stock.warehouse_id.in_(warehouse_ids))
+
+        resolved_wh_ids = resolve_identifier(
             self.db,
             warehouse_id,
             Warehouse,
             code_fields=("warehouse_code", "warehouse_name"),
         )
-        if warehouse_ids is not None:
-            if not warehouse_ids:
+        if resolved_wh_ids is not None:
+            if not resolved_wh_ids:
                 return {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
-            q = q.filter(Stock.warehouse_id.in_(warehouse_ids))
+            q = q.filter(Stock.warehouse_id.in_(resolved_wh_ids))
 
         if product_id:
             resolved_pid = _resolve_stock_product_id(self.db, product_id)

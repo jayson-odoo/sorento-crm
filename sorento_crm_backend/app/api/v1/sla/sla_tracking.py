@@ -16,6 +16,7 @@ from app.services.sla_service import (
     event_log_assignee_fields,
 )
 from app.services.integration_service import IntegrationLogService
+from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.sla import (
     ConversationSLATrackingCreate,
     ConversationSLATrackingUpdate,
@@ -283,6 +284,10 @@ async def get_sla_tracking(
     limit: int = Query(50, ge=1, le=100),
     policy_id: Optional[str] = Query(None),
     query: Optional[str] = Query(None),
+    tracking_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter by canonical SLA tracking UUIDs (repeated / csv / JSON array).",
+    ),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
@@ -297,6 +302,7 @@ async def get_sla_tracking(
             limit=limit,
             policy_id=policy_id,
             query=query,
+            tracking_ids=parse_uuid_list(tracking_ids, param_name="tracking_ids"),
             sort_field=sort or "created_at",
             sort_dir=dir or "desc",
             assigned_to=assigned_to,

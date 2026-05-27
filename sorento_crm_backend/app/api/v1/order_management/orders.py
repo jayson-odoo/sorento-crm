@@ -392,6 +392,10 @@ async def list_distinct_debtors(
         None,
         description="Free-text partial match on debtor_name or debtor_code (case-insensitive).",
     ),
+    customer_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter source orders by canonical customer UUIDs (Order.customer_id) before aggregation. Repeated / csv / JSON array.",
+    ),
     sort: str = Query("debtor_name", description="One of: debtor_name, debtor_code, order_count."),
     dir: str = Query("asc", description="asc | desc."),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -425,6 +429,10 @@ async def list_distinct_debtors(
         .filter(func.trim(_Order.debtor_name) != "")
         .group_by(name_key)
     )
+
+    parsed_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+    if parsed_customer_ids is not None:
+        base = base.filter(_Order.customer_id.in_(parsed_customer_ids))
 
     q = (query or "").strip()
     if q:

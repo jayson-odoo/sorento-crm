@@ -8,6 +8,7 @@ from app.services.product_service import BrandService
 from app.schemas.product import BrandCreate, BrandUpdate, BrandResponse
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
+from app.services.uuid_list_param import parse_uuid_list
 
 router = APIRouter()
 
@@ -17,13 +18,27 @@ async def get_brands(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
+    brand_ids: Optional[List[str]] = Query(
+        None,
+        description="Filter by canonical brand UUIDs (repeated / csv / JSON array).",
+    ),
+    product_ids: Optional[List[str]] = Query(
+        None,
+        description="Filter to the brands of these product UUIDs (repeated / csv / JSON array).",
+    ),
     current_user: dict = Depends(require_permission_with_api_key("master_data.brands.view")),
     db: Session = Depends(get_db)
 ):
     """Get brands with pagination and search."""
     try:
         service = BrandService(db)
-        result = service.list_brands(page=page, limit=limit, query=query)
+        result = service.list_brands(
+            page=page,
+            limit=limit,
+            query=query,
+            brand_ids=parse_uuid_list(brand_ids, param_name="brand_ids"),
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+        )
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
