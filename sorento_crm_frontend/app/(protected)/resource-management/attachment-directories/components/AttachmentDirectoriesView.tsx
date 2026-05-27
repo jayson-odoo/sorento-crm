@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState, useMemo } from 'react';
+import { useId, useState, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   DndContext,
@@ -13,7 +13,9 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { toast } from 'sonner';
-import { FileText, Folder } from 'lucide-react';
+import { FileText, Folder, PanelLeftOpen } from 'lucide-react';
+import type { ImperativePanelHandle } from 'react-resizable-panels';
+import { Button } from '@/components/ui/button';
 import {
   useBulkMoveAttachments,
   useDirectoryTree,
@@ -96,6 +98,8 @@ function AttachmentDirectoriesContent({
     name: string;
     type: 'attachment' | 'folder';
   } | null>(null);
+  const sidebarPanelRef = useRef<ImperativePanelHandle>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useDndMonitor({
     onDragStart: ({ active }) => {
@@ -113,15 +117,39 @@ function AttachmentDirectoriesContent({
 
   return (
     <>
-      <ResizablePanelGroup
+      <div className="relative flex-1 min-h-0">
+        {sidebarCollapsed && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="absolute left-2 top-2 z-20 gap-1 shadow-sm"
+            onClick={() => sidebarPanelRef.current?.expand()}
+            title="Show folders panel"
+          >
+            <PanelLeftOpen className="size-4" />
+            Folders
+          </Button>
+        )}
+        <ResizablePanelGroup
         direction="horizontal"
-        className="flex-1 min-h-0 rounded-lg border bg-card"
+        className="h-full rounded-lg border bg-card"
       >
-        <ResizablePanel defaultSize={20} minSize={15} maxSize={45} className="min-w-0">
+        <ResizablePanel
+          ref={sidebarPanelRef}
+          collapsible
+          collapsedSize={0}
+          defaultSize={20}
+          minSize={15}
+          maxSize={45}
+          className="min-w-0"
+          onCollapse={() => setSidebarCollapsed(true)}
+          onExpand={() => setSidebarCollapsed(false)}
+        >
           <DirectoryTreeSidebar
             selectedId={selectedId}
             onSelect={setSelectedId}
             onAdjustFolderAccessLevels={(id) => onOpenAccessLevels({ directoryId: id })}
+            onCollapsePanel={() => sidebarPanelRef.current?.collapse()}
           />
         </ResizablePanel>
         <ResizableHandle withHandle className="bg-border" />
@@ -135,7 +163,8 @@ function AttachmentDirectoriesContent({
             />
           </div>
         </ResizablePanel>
-      </ResizablePanelGroup>
+        </ResizablePanelGroup>
+      </div>
       <DragOverlay dropAnimation={null}>
         {activeDrag ? (
           <div className="flex items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-md">

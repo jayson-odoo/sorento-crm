@@ -126,6 +126,7 @@ def test_portal_complaint_schema_has_expected_fields():
         "defect_description",
         "salesperson",
         "project_title",
+        "quantity",
     }
     assert expected.issubset(set(names))
 
@@ -172,6 +173,28 @@ def test_portal_sponsorship_schema_keeps_total_project_value_as_text():
     assert "delivery_address" in fields
     assert "sponsor_subject" in fields
     assert fields["total_project_value"].kind == "text"
+
+
+@pytest.mark.parametrize(
+    "form_key,customer_field,project_field",
+    [
+        ("portal.complaint", "customer_name", "project_title"),
+        ("portal.stock_inquiry", "project_customer", "project_name"),
+        ("portal.purchase_request", "customer_name", "project_title"),
+        ("portal.sponsorship_form", "customer_name", "project_title"),
+    ],
+)
+def test_customer_and_project_fields_have_disambiguating_guidance(
+    form_key, customer_field, project_field
+):
+    fields = {f.name: f for f in get_form_schema(form_key)}
+    cust = fields[customer_field]
+    proj = fields[project_field]
+    # Customer field disambiguates buyer vs supplier/project and carries examples.
+    assert cust.examples, f"{form_key}.{customer_field} should provide examples"
+    assert cust.note and "NOT" in cust.note
+    # Project field tells the model it is not the customer company.
+    assert proj.note and "NOT the customer" in proj.note
 
 
 # ---- Image attachers ------------------------------------------------------
@@ -390,6 +413,45 @@ def test_render_files_caps_at_pdf_max_pages():
     files = [ExtractFile("big.pdf", "application/pdf", pdf_bytes)]
     parts = svc._render_files(files)
     assert 0 < len(parts) <= 12  # PDF_MAX_PAGES
+
+
+# ---- Pasted text path -----------------------------------------------------
+
+
+def test_collect_text_decodes_txt_uploads():
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    files = [
+        ExtractFile("pasted-1.txt", "text/plain", b"  hello from paste  "),
+        ExtractFile("note.TXT", "", "second\nblock".encode("utf-8")),
+        ExtractFile("photo.png", "image/png", b"\x89PNG"),  # not text — ignored
+    ]
+    out = svc._collect_text(files)
+    assert "hello from paste" in out
+    assert "second\nblock" in out
+    assert "PNG" not in out
+
+
+def test_collect_text_empty_when_no_text_files():
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    assert svc._collect_text([ExtractFile("x.png", "image/png", b"\x89PNG")]) == ""
+
+
+def test_build_messages_appends_pasted_text():
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+    messages = svc._build_messages(
+        "portal.complaint", schema, {}, has_line_items=False, pasted_text="ACME Corp order 42"
+    )
+    user = next(m for m in messages if m["role"] == "user")
+    assert "ACME Corp order 42" in user["content"]
+
+
+def test_build_messages_omits_text_section_when_blank():
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+    messages = svc._build_messages("portal.complaint", schema, {}, has_line_items=False)
+    user = next(m for m in messages if m["role"] == "user")
+    assert "pasted the following text" not in user["content"]
 
 
 # ---- JSON parsing ---------------------------------------------------------

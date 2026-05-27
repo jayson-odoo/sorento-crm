@@ -570,10 +570,6 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               <p className="font-medium">{complaint.within_warranty || '-'}</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">Product Type</p>
-              <p className="font-medium">{complaint.product_type || '-'}</p>
-            </div>
-            <div>
               <p className="text-sm text-muted-foreground">Defects Discovered</p>
               <p className="font-medium">{complaint.defects_discovered || '-'}</p>
             </div>
@@ -585,9 +581,47 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 <p className="font-medium">-</p>
               )}
             </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Product Code</p>
-              <p className="font-medium">{complaint.product_code || '-'}</p>
+            <div className="md:col-span-2">
+              <p className="text-sm text-muted-foreground mb-1">Products</p>
+              {(() => {
+                const lines =
+                  complaint.product_lines && complaint.product_lines.length > 0
+                    ? complaint.product_lines
+                    : (complaint.product_code || '')
+                        .split(',')
+                        .map((c) => c.trim())
+                        .filter(Boolean)
+                        .map((code, i) => ({
+                          product_code: code,
+                          product_type: (complaint.product_type || '').split(',')[i]?.trim() || null,
+                          quantity: (complaint.quantity || '').split(',')[i]?.trim() || null,
+                        }));
+                if (lines.length === 0) {
+                  return <p className="font-medium">-</p>;
+                }
+                return (
+                  <div className="overflow-x-auto rounded-md border">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Product code</th>
+                          <th className="px-3 py-2 text-left">Product type</th>
+                          <th className="w-24 px-3 py-2 text-left">Qty</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lines.map((line, i) => (
+                          <tr key={i} className="border-t">
+                            <td className="px-3 py-2 font-medium">{line.product_code}</td>
+                            <td className="px-3 py-2">{line.product_type || '-'}</td>
+                            <td className="px-3 py-2">{line.quantity || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Salesperson</p>

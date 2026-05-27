@@ -7,4 +7,5 @@ export interface AttachmentTypeFormData {
   description?: string;
   allowed_extensions: string;
   max_file_size_mb: number;
+  supports_field_linkage?: boolean;
 }

@@ -5043,6 +5043,7 @@ class PurchaseRequestService:
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         header.approval_status = "rejected"
+        header.status = "rejected"
         header.approval_comments = reason
         header.approved_at = now_utc
         header.approved_by = actor_user_id or ""
@@ -5418,6 +5419,9 @@ class PurchaseRequestService:
         header = self.get_request(approval_token.entity_id)
         approval_token.used_at = datetime.utcnow()
         header.approval_status = action
+        # Advance the lifecycle status off "submitted" so every view reflects the
+        # decision, not just approval_status.
+        header.status = action
         header.approved_at = now
         header.approved_by = approved_by or header.approver_email or ""
         header.approval_signature_ref = approval_signature_ref

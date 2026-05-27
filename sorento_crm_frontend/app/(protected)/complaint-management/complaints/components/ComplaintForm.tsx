@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
+import { useForm, useFieldArray } from 'react-hook-form';
+import { Plus, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { LoaderCircleIcon, Save, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -45,6 +46,49 @@ interface ComplaintFormProps {
   onSuccess?: () => void;
 }
 
+type ProductLineForm = {
+  product_code: string;
+  product_type?: string | null;
+  quantity?: string | null;
+};
+
+/** Prefer structured product_lines; fall back to splitting the legacy
+ * product_code CSV (pairing type/quantity by position) for older rows. */
+function deriveProductLines(complaint: {
+  product_lines?: { product_code: string; product_type?: string | null; quantity?: string | null }[] | null;
+  product_code?: string | null;
+  product_type?: string | null;
+  quantity?: string | null;
+}): ProductLineForm[] {
+  if (complaint.product_lines && complaint.product_lines.length > 0) {
+    return complaint.product_lines.map((l) => ({
+      product_code: l.product_code,
+      product_type: l.product_type ?? '',
+      quantity: l.quantity ?? '',
+    }));
+  }
+  const codes = (complaint.product_code || '').split(',').map((s) => s.trim());
+  const types = (complaint.product_type || '').split(',').map((s) => s.trim());
+  const qtys = (complaint.quantity || '').split(',').map((s) => s.trim());
+  return codes
+    .map((code, i) => ({ product_code: code, product_type: types[i] ?? '', quantity: qtys[i] ?? '' }))
+    .filter((l) => l.product_code);
+}
+
+/** Drop blank rows; trim. Returns undefined when no valid rows. */
+function cleanProductLines(
+  lines: ProductLineForm[] | undefined,
+): { product_code: string; product_type?: string; quantity?: string }[] | undefined {
+  const cleaned = (lines || [])
+    .map((l) => ({
+      product_code: (l.product_code || '').trim(),
+      product_type: (l.product_type ?? '').trim() || undefined,
+      quantity: (l.quantity ?? '').trim() || undefined,
+    }))
+    .filter((l) => l.product_code);
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
 export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormProps) {
   const router = useRouter();
   const isEditMode = !!complaintId;
@@ -67,6 +111,8 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       complaint_type: null,
       defect_description: null,
       product_code: null,
+      quantity: null,
+      product_lines: [],
       salesperson: null,
       customer_name: null,
       contact_person: null,
@@ -83,6 +129,8 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
     },
     mode: 'onSubmit',
   });
+
+  const productLines = useFieldArray({ control: form.control, name: 'product_lines' });
 
   const [formInitialized, setFormInitialized] = useState(false);
   const updateAndReplyMutation = useUpdateComplaintAndReply();
@@ -125,6 +173,8 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         complaint_type: complaint.complaint_type || null,
         defect_description: complaint.defect_description || null,
         product_code: complaint.product_code || null,
+        quantity: complaint.quantity || null,
+        product_lines: deriveProductLines(complaint),
         salesperson: complaint.salesperson || null,
         customer_name: complaint.customer_name || null,
         contact_person: complaint.contact_person || null,
@@ -171,11 +221,10 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
         customer_type: data.customer_type || undefined,
         customer_type_others: data.customer_type_others || undefined,
         within_warranty: data.within_warranty || undefined,
-        product_type: data.product_type || undefined,
         defects_discovered: data.defects_discovered || undefined,
         complaint_type: data.complaint_type || undefined,
         defect_description: data.defect_description || undefined,
-        product_code: data.product_code || undefined,
+        product_lines: cleanProductLines(data.product_lines),
         salesperson: data.salesperson || undefined,
         customer_name: data.customer_name || undefined,
         contact_person: data.contact_person || undefined,
@@ -245,11 +294,10 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
       customer_type: data.customer_type || undefined,
       customer_type_others: data.customer_type_others || undefined,
       within_warranty: data.within_warranty || undefined,
-      product_type: data.product_type || undefined,
       defects_discovered: data.defects_discovered || undefined,
       complaint_type: data.complaint_type || undefined,
       defect_description: data.defect_description || undefined,
-      product_code: data.product_code || undefined,
+      product_lines: cleanProductLines(data.product_lines),
       salesperson: data.salesperson || undefined,
       customer_name: data.customer_name || undefined,
       contact_person: data.contact_person || undefined,
@@ -496,50 +544,99 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="product_code"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Product Code</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="Enter product code"
-                      {...field}
-                      value={field.value || ''}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="product_type"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Product Type</FormLabel>
-                  <FormControl>
-                    <LookupBoundField
-                      table="complaints"
-                      column="product_type"
-                      value={field.value}
-                      onChange={field.onChange}
-                      placeholder="Select product type"
-                      renderFallback={() => (
-                        <Input
-                          placeholder="Enter product type"
-                          {...field}
-                          value={field.value || ''}
-                        />
-                      )}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <FormItem className="md:col-span-2">
+              <FormLabel>Products</FormLabel>
+              <div className="overflow-x-auto rounded-md border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                    <tr>
+                      <th className="w-10 px-2 py-2 text-left">#</th>
+                      <th className="min-w-[200px] px-2 py-2 text-left">Product code</th>
+                      <th className="min-w-[160px] px-2 py-2 text-left">Product type</th>
+                      <th className="w-24 px-2 py-2 text-left">Qty</th>
+                      <th className="w-10 px-2 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productLines.fields.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
+                          No products yet. Click “Add product”.
+                        </td>
+                      </tr>
+                    )}
+                    {productLines.fields.map((row, index) => (
+                      <tr key={row.id} className="border-t align-top">
+                        <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
+                        <td className="px-2 py-2">
+                          <FormField
+                            control={form.control}
+                            name={`product_lines.${index}.product_code`}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormControl>
+                                  <Input placeholder="Product code" {...field} value={field.value || ''} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <FormField
+                            control={form.control}
+                            name={`product_lines.${index}.product_type`}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormControl>
+                                  <Input placeholder="Type" {...field} value={field.value || ''} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <FormField
+                            control={form.control}
+                            name={`product_lines.${index}.quantity`}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormControl>
+                                  <Input type="number" inputMode="numeric" min="0" placeholder="Qty" {...field} value={field.value || ''} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => productLines.remove(index)}
+                            aria-label="Remove product"
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                onClick={() => productLines.append({ product_code: '', product_type: '', quantity: '' })}
+              >
+                <Plus className="size-4 mr-1" />
+                Add product
+              </Button>
+            </FormItem>
 
             <FormField
               control={form.control}

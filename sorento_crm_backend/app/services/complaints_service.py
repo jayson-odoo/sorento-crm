@@ -677,6 +677,15 @@ class ComplaintService:
             "complaint_type": getattr(complaint, "complaint_type", None),
             "defect_description": getattr(complaint, "defect_description", None),
             "product_code": getattr(complaint, "product_code", None),
+            "quantity": getattr(complaint, "quantity", None),
+            "product_lines": [
+                {
+                    "product_code": ln.product_code,
+                    "quantity": ln.quantity,
+                    "product_type": ln.product_type,
+                }
+                for ln in (getattr(complaint, "product_lines", None) or [])
+            ],
             "salesperson": getattr(complaint, "salesperson", None),
             "customer_name": getattr(complaint, "customer_name", None),
             "contact_person": getattr(complaint, "contact_person", None),
@@ -690,10 +699,81 @@ class ComplaintService:
             "attachments": link_attachments,
         }
 
+    @staticmethod
+    def _split_csv(value: Optional[str]) -> list[str]:
+        return [p.strip() for p in (value or "").split(",") if p.strip()]
+
+    def _apply_explicit_product_lines(self, complaint, lines) -> None:
+        """Rebuild the product_lines relationship from explicit payload lines and
+        re-derive the legacy product_code / product_type / quantity CSV columns
+        (index-aligned) for backward compat (n8n payload, public view)."""
+        from app.models.complaints import ComplaintProductLine
+
+        complaint.product_lines = []  # delete-orphan removes prior rows
+        self.db.flush()
+
+        def _field(line, name):
+            return line.get(name) if isinstance(line, dict) else getattr(line, name, None)
+
+        codes: list[str] = []
+        types: list[str] = []
+        qtys: list[str] = []
+        for idx, line in enumerate(lines or []):
+            code = (str(_field(line, "product_code") or "")).strip()
+            if not code:
+                continue
+            qty = _field(line, "quantity")
+            qty = (str(qty).strip() or None) if qty is not None else None
+            ptype = _field(line, "product_type")
+            ptype = (str(ptype).strip() or None) if ptype is not None else None
+            complaint.product_lines.append(
+                ComplaintProductLine(
+                    product_code=code,
+                    quantity=qty,
+                    product_type=ptype,
+                    sort_order=idx,
+                )
+            )
+            codes.append(code)
+            types.append(ptype or "")
+            qtys.append(qty or "")
+
+        complaint.product_code = ", ".join(codes) if codes else None
+        complaint.product_type = ", ".join(types) if any(types) else None
+        complaint.quantity = ", ".join(qtys) if any(qtys) else None
+
+    def _populate_lines_from_legacy_csv(self, complaint) -> None:
+        """When a caller sets product_code (CSV) without explicit product_lines,
+        keep the line-item table in sync. quantity / product_type are paired by
+        comma POSITION (empties preserved), so "A, B, C" + qty "5, , 2" maps
+        A=5, B=None, C=2."""
+        from app.models.complaints import ComplaintProductLine
+
+        # Split by position (do NOT drop empties) so index alignment holds.
+        code_parts = [p.strip() for p in (getattr(complaint, "product_code", None) or "").split(",")]
+        type_parts = [p.strip() for p in (getattr(complaint, "product_type", None) or "").split(",")]
+        qty_parts = [p.strip() for p in (getattr(complaint, "quantity", None) or "").split(",")]
+
+        complaint.product_lines = []
+        self.db.flush()
+        order = 0
+        for idx, code in enumerate(code_parts):
+            if not code:
+                continue
+            complaint.product_lines.append(
+                ComplaintProductLine(
+                    product_code=code,
+                    quantity=(qty_parts[idx] or None) if idx < len(qty_parts) else None,
+                    product_type=(type_parts[idx] or None) if idx < len(type_parts) else None,
+                    sort_order=order,
+                )
+            )
+            order += 1
+
     def create_complaint(self, complaint_data: ComplaintCreate):
         """Create a new complaint with attachments (generic entity_attachment_links)."""
         complaint_dict = complaint_data.model_dump(
-            exclude={"attachments", "assigned_to_name", "last_responded_by_name"}
+            exclude={"attachments", "product_lines", "assigned_to_name", "last_responded_by_name"}
         )
         if complaint_dict.get("technical_team_response"):
             complaint_dict["technical_team_response"] = self._normalize_complaint_reply_body_for_storage(
@@ -706,6 +786,15 @@ class ComplaintService:
             complaint_dict["respond_inbox_url"] = respond_inbox_url
         complaint = Complaint(**complaint_dict)
         self.db.add(complaint)
+        self.db.flush()
+
+        # Per-product line items (source of truth). If the caller sent explicit
+        # lines use them; otherwise derive from the product_code CSV so the table
+        # stays populated for legacy/AI-extract callers.
+        if complaint_data.product_lines is not None:
+            self._apply_explicit_product_lines(complaint, complaint_data.product_lines)
+        elif getattr(complaint, "product_code", None):
+            self._populate_lines_from_legacy_csv(complaint)
         self.db.flush()
 
         if complaint_data.attachments:
@@ -744,6 +833,7 @@ class ComplaintService:
         complaint = self.get_complaint(complaint_id)
 
         update_data = complaint_data.model_dump(exclude_unset=True)
+        explicit_lines = update_data.pop("product_lines", None)
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else complaint.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else complaint.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -762,6 +852,13 @@ class ComplaintService:
 
         for key, value in update_data.items():
             setattr(complaint, key, value)
+
+        # Per-product lines: explicit payload wins; else if product_code CSV was
+        # changed, re-derive the lines so the table tracks it.
+        if explicit_lines is not None:
+            self._apply_explicit_product_lines(complaint, explicit_lines)
+        elif "product_code" in update_data:
+            self._populate_lines_from_legacy_csv(complaint)
 
         self.db.commit()
         self.db.refresh(complaint)

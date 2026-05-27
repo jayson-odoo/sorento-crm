@@ -1,9 +1,20 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Paperclip, Upload, X, Clipboard, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
+
+function isTextFile(name?: string | null, type?: string | null): boolean {
+  if (type?.startsWith('text/')) return true;
+  return /\.txt$/i.test(name ?? '');
+}
 import {
   PortalAttachment,
   PortalSubmissionKind,
@@ -15,6 +26,12 @@ function isImageAttachment(a: PortalAttachment): boolean {
   if (a.content_type?.startsWith('image/')) return true;
   const name = (a.filename ?? '').toLowerCase();
   return /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(name);
+}
+
+function isVideoAttachment(a: PortalAttachment): boolean {
+  if (a.content_type?.startsWith('video/')) return true;
+  const name = (a.filename ?? '').toLowerCase();
+  return /\.(mp4|mov|webm|m4v|3gp)$/.test(name);
 }
 
 interface Props {
@@ -109,6 +126,15 @@ export function AttachmentDropzone({
           if (file) files.push(file);
         }
       }
+      // No file on the clipboard but there is text → save the paste as a .txt
+      // file so it flows through the same upload path.
+      if (!files.length) {
+        const text = e.clipboardData.getData('text/plain');
+        if (text && text.trim()) {
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          files.push(new File([text], `pasted-${ts}.txt`, { type: 'text/plain' }));
+        }
+      }
       if (files.length) {
         e.preventDefault();
         void addFiles(files);
@@ -138,14 +164,25 @@ export function AttachmentDropzone({
       }>;
       const files: File[] = [];
       for (const item of items) {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
         const imageType = item.types.find((t: string) => t.startsWith('image/'));
-        if (!imageType) continue;
-        const blob = await item.getType(imageType);
-        const ext = imageType.split('/')[1] || 'png';
-        files.push(new File([blob], `pasted-${Date.now()}.${ext}`, { type: imageType }));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const ext = imageType.split('/')[1] || 'png';
+          files.push(new File([blob], `pasted-${ts}.${ext}`, { type: imageType }));
+          continue;
+        }
+        // No image — fall back to pasted text saved as a .txt file.
+        if (item.types.includes('text/plain')) {
+          const blob = await item.getType('text/plain');
+          const text = (await blob.text()).trim();
+          if (text) {
+            files.push(new File([text], `pasted-${ts}.txt`, { type: 'text/plain' }));
+          }
+        }
       }
       if (!files.length) {
-        toast.error('No image found in clipboard.');
+        toast.error('No image or text found in clipboard.');
         return;
       }
       await addFiles(files);
@@ -181,7 +218,7 @@ export function AttachmentDropzone({
       >
         <Upload className="h-6 w-6 text-muted-foreground" />
         <p className="text-sm text-muted-foreground">
-          Drop a file here, paste a screenshot, or
+          Drop a file here, paste a screenshot or text, or
         </p>
         <div className="flex flex-wrap items-center justify-center gap-2">
           <Button
@@ -208,7 +245,7 @@ export function AttachmentDropzone({
         <input
           ref={inputRef}
           type="file"
-          accept="image/*,video/*,.pdf"
+          accept="image/*,video/*,.pdf,.txt"
           className="hidden"
           multiple
           onChange={handleSelect}
@@ -261,6 +298,7 @@ function UploadedRow({
   onRemove: () => void;
 }) {
   const isImage = isImageAttachment(attachment);
+  const isVideo = isVideoAttachment(attachment);
   const url = attachment.url ?? null;
   return (
     <li className="flex items-center gap-3 rounded-md border border-border px-3 py-2">
@@ -273,10 +311,18 @@ function UploadedRow({
               className="h-12 w-12 rounded object-cover border border-border"
             />
           </a>
+        ) : isVideo && url ? (
+          <a href={url} target="_blank" rel="noopener noreferrer">
+            <video
+              src={url}
+              muted
+              playsInline
+              preload="metadata"
+              className="h-12 w-12 rounded object-cover border border-border"
+            />
+          </a>
         ) : (
-          <div className="h-12 w-12 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground">
-            FILE
-          </div>
+          <FileThumb />
         )}
       </div>
       <div className="min-w-0 flex-1">
@@ -322,7 +368,7 @@ function PendingRow({
   onRemove: () => void;
 }) {
   const previewUrl = useMemo(() => {
-    if (!file.type.startsWith('image/')) return null;
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) return null;
     return URL.createObjectURL(file);
   }, [file]);
   useEffect(() => {
@@ -334,7 +380,7 @@ function PendingRow({
   return (
     <li className="flex items-center gap-3 rounded-md border border-dashed border-border px-3 py-2 bg-muted/30">
       <div className="shrink-0">
-        {previewUrl ? (
+        {previewUrl && file.type.startsWith('image/') ? (
           <a href={previewUrl} target="_blank" rel="noopener noreferrer">
             <img
               src={previewUrl}
@@ -342,10 +388,22 @@ function PendingRow({
               className="h-12 w-12 rounded object-cover border border-border"
             />
           </a>
+        ) : previewUrl && file.type.startsWith('video/') ? (
+          <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+            <video
+              src={previewUrl}
+              muted
+              playsInline
+              preload="metadata"
+              className="h-12 w-12 rounded object-cover border border-border"
+            />
+          </a>
+        ) : isTextFile(file.name, file.type) ? (
+          <TextPreview name={file.name} loadText={() => file.text()}>
+            <FileThumb interactive />
+          </TextPreview>
         ) : (
-          <div className="h-12 w-12 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground">
-            FILE
-          </div>
+          <FileThumb />
         )}
       </div>
       <div className="min-w-0 flex-1">
@@ -367,5 +425,74 @@ function PendingRow({
         <X className="h-4 w-4" />
       </Button>
     </li>
+  );
+}
+
+function FileThumb({ interactive }: { interactive?: boolean }) {
+  return (
+    <div
+      className={`h-12 w-12 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground border border-border ${
+        interactive ? 'cursor-pointer hover:bg-muted/70 transition' : ''
+      }`}
+    >
+      FILE
+    </div>
+  );
+}
+
+function TextPreview({
+  name,
+  loadText,
+  children,
+}: {
+  name: string;
+  loadText: () => Promise<string>;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [content, setContent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleOpen = useCallback(
+    async (next: boolean) => {
+      setOpen(next);
+      if (next && content === null && error === null) {
+        try {
+          setContent(await loadText());
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Could not read file.');
+        }
+      }
+    },
+    [content, error, loadText],
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <button
+        type="button"
+        onClick={() => handleOpen(true)}
+        aria-label={`Preview ${name}`}
+        className="block"
+      >
+        {children}
+      </button>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="truncate" title={name}>
+            {name}
+          </DialogTitle>
+        </DialogHeader>
+        {error ? (
+          <p className="text-sm text-destructive">{error}</p>
+        ) : content === null ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 text-sm">
+            {content || '(empty file)'}
+          </pre>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

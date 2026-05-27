@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Plus, Sparkles, Trash2 } from 'lucide-react';
@@ -61,6 +61,12 @@ type ProductLine = {
   remark?: string;
 };
 
+type ComplaintLine = {
+  product_code: string;
+  product_type: string;
+  quantity: string;
+};
+
 type WidgetKind =
   | 'text'
   | 'textarea'
@@ -71,7 +77,8 @@ type WidgetKind =
   | 'debtor-async'
   | 'do-multi-filter'
   | 'pill-product'
-  | 'pill-text';
+  | 'pill-text'
+  | 'product-quantities';
 
 interface FieldDef {
   name: string;
@@ -124,18 +131,6 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       label: 'Complaint date',
       widget: 'date',
       defaultToday: true,
-      required: true,
-    },
-    {
-      name: 'product_code',
-      label: 'Product code',
-      widget: 'pill-product',
-      required: true,
-    },
-    {
-      name: 'product_type',
-      label: 'Product type',
-      widget: 'pill-text',
       required: true,
     },
     {
@@ -207,7 +202,11 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
 const HAS_LINES: PortalSubmissionKind[] = ['purchase_request', 'sponsorship_form'];
 
 function fieldSpansFullWidth(f: FieldDef): boolean {
-  return f.widget === 'textarea' || f.widget === 'do-multi-filter';
+  return (
+    f.widget === 'textarea' ||
+    f.widget === 'do-multi-filter' ||
+    f.widget === 'product-quantities'
+  );
 }
 
 interface Props {
@@ -227,6 +226,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
   const [detail, setDetail] = useState<PortalSubmissionDetail | null>(null);
   const [fields, setFields] = useState<Record<string, string | string[]>>({});
   const [products, setProducts] = useState<ProductLine[]>([]);
+  const [complaintLines, setComplaintLines] = useState<ComplaintLine[]>([]);
   const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -280,6 +280,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
         }
       }
       setFields(next);
+      setComplaintLines([]);
       setLoading(false);
       return;
     }
@@ -312,6 +313,21 @@ export function SubmissionForm({ kind, submissionId }: Props) {
           const lines = (data as { products?: ProductLine[] }).products ?? [];
           setProducts(lines.map((l) => ({ ...l })));
         }
+        if (kind === 'complaint') {
+          const pls =
+            (data as {
+              product_lines?: { product_code?: string | null; product_type?: string | null; quantity?: string | null }[];
+            }).product_lines ?? [];
+          setComplaintLines(
+            pls
+              .filter((l) => (l.product_code ?? '').trim())
+              .map((l) => ({
+                product_code: (l.product_code ?? '').trim(),
+                product_type: (l.product_type ?? '').trim(),
+                quantity: (l.quantity ?? '').trim(),
+              })),
+          );
+        }
         setAttachments((data.attachments as PortalAttachment[]) ?? []);
       } catch (e) {
         if (e instanceof PortalUnauthorizedError) {
@@ -343,8 +359,20 @@ export function SubmissionForm({ kind, submissionId }: Props) {
         if (value) out[f.name] = value;
       }
     }
+    // Complaint: structured per-product lines are the source of truth. Backend
+    // re-derives the legacy product_code / product_type / quantity CSV columns.
+    if (kind === 'complaint') {
+      const lines = complaintLines
+        .map((l) => ({
+          product_code: (l.product_code || '').trim(),
+          product_type: (l.product_type || '').trim() || undefined,
+          quantity: (l.quantity || '').trim() || undefined,
+        }))
+        .filter((l) => l.product_code);
+      if (lines.length > 0) out['product_lines'] = lines;
+    }
     return out;
-  }, [fieldDefs, fields]);
+  }, [fieldDefs, fields, kind, complaintLines]);
 
   const cleanedProducts = useMemo(() => {
     if (!showLines) return undefined;
@@ -410,6 +438,12 @@ export function SubmissionForm({ kind, submissionId }: Props) {
         ? v.length === 0
         : !(typeof v === 'string' && v.trim().length > 0);
       if (empty) missing.push({ name: f.name, label: f.label });
+    }
+    if (
+      kind === 'complaint' &&
+      complaintLines.filter((l) => (l.product_code || '').trim()).length === 0
+    ) {
+      missing.push({ name: 'product_lines', label: 'At least one product' });
     }
     if (missing.length > 0) {
       setInvalidFields(new Set(missing.map((m) => m.name)));
@@ -542,6 +576,30 @@ export function SubmissionForm({ kind, submissionId }: Props) {
     }
 
     if (kind !== 'complaint') return;
+
+    // Complaint AI product lines → complaintLines. Map code+qty, then enrich
+    // product_type from the master category (preserving qty).
+    let aiSuppliedLines = false;
+    if (payload.productLines && payload.productLines.length > 0) {
+      const aiLines: ComplaintLine[] = payload.productLines
+        .map((p) => ({
+          product_code: (p.product_code ?? '').trim(),
+          product_type: '',
+          quantity: p.quantity === null || p.quantity === undefined ? '' : String(p.quantity),
+        }))
+        .filter((l) => l.product_code);
+      if (aiLines.length > 0) {
+        aiSuppliedLines = true;
+        setComplaintLines(aiLines);
+        buildComplaintLinesFromCodes(
+          aiLines.map((l) => l.product_code),
+          aiLines,
+        )
+          .then(setComplaintLines)
+          .catch(() => {});
+      }
+    }
+
     const aiDOsRaw = aiValues.delivery_order_number;
     if (!aiDOsRaw) return;
     const doNumbers = (
@@ -574,10 +632,6 @@ export function SubmissionForm({ kind, submissionId }: Props) {
       typeof aiValues.customer_name === 'string'
         ? aiValues.customer_name.trim()
         : '';
-    const aiProductCode =
-      typeof aiValues.product_code === 'string'
-        ? aiValues.product_code.trim()
-        : '';
     const customerNames = Array.from(
       new Set(
         items
@@ -593,53 +647,46 @@ export function SubmissionForm({ kind, submissionId }: Props) {
           .filter(Boolean),
       ),
     );
-    setFields((prev) => {
-      const next = { ...prev };
-      // AI customer wins; only fill from DO debtor when AI did not provide.
-      if (!aiCustomer && customerNames.length > 0) {
-        next.customer_name = customerNames.join(', ');
-      }
-      if (!aiProductCode && productCodes.length > 0) {
-        next.product_code = productCodes.join(', ');
-      }
-      return next;
-    });
-    if (productCodes.length > 0 && !aiProductCode) {
-      try {
-        const cats = new Set<string>();
-        for (const code of productCodes) {
-          const matches = await lookupProducts(code, 5);
-          const exact = matches.find((m) => m.product_code === code);
-          const c = (exact?.category_code ?? exact?.category_name ?? '').trim();
-          if (c) cats.add(c);
-        }
-        if (cats.size > 0) {
-          setFields((prev) => ({ ...prev, product_type: Array.from(cats).join(', ') }));
-        }
-      } catch {
-        // best-effort
-      }
+    // AI customer wins; only fill from DO debtor when AI did not provide.
+    if (!aiCustomer && customerNames.length > 0) {
+      setFields((prev) => ({ ...prev, customer_name: customerNames.join(', ') }));
+    }
+    // Only derive product lines from the DO when AI didn't already supply them.
+    if (!aiSuppliedLines && productCodes.length > 0) {
+      const built = await buildComplaintLinesFromCodes(productCodes, complaintLines);
+      setComplaintLines(built);
     }
   };
 
-  // For complaint kind: when product is picked from search results, derive
-  // product_type from the product's category (code preferred, name fallback).
-  const handleProductItemSelected = (fieldName: string, item: ProductLookupItem) => {
-    if (kind !== 'complaint') return;
-    if (fieldName !== 'product_code') return;
-    const derived = (item.category_code ?? item.category_name ?? '').trim();
-    if (!derived) return;
-    setFields((prev) => {
-      const current = typeof prev.product_type === 'string' ? prev.product_type : '';
-      const existing = current
-        .split(/[,\n]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (existing.includes(derived)) return prev;
-      const next = [...existing, derived].join(', ');
-      return { ...prev, product_type: next };
-    });
+  // Build complaint line rows from a set of product codes, deriving each row's
+  // product_type from the product master category. Preserves quantities already
+  // entered for a code; new codes start with empty quantity.
+  const buildComplaintLinesFromCodes = async (
+    productCodes: string[],
+    prevLines: ComplaintLine[],
+  ): Promise<ComplaintLine[]> => {
+    const prevByCode = new Map(prevLines.map((l) => [l.product_code, l]));
+    const out: ComplaintLine[] = [];
+    for (const code of productCodes) {
+      const existing = prevByCode.get(code);
+      let productType = existing?.product_type ?? '';
+      if (!productType) {
+        try {
+          const matches = await lookupProducts(code, 5);
+          const exact = matches.find((m) => m.product_code === code);
+          productType = (exact?.category_code ?? exact?.category_name ?? '').trim();
+        } catch {
+          // best-effort — leave blank, user can fill
+        }
+      }
+      out.push({ product_code: code, product_type: productType, quantity: existing?.quantity ?? '' });
+    }
+    return out;
   };
+
+  // Complaint product selection is handled per-row inside the lines table; the
+  // section prop is kept for signature compatibility with the other sections.
+  const handleProductItemSelected = () => {};
 
   // For complaint kind: when DO multi-select changes, auto-populate customer
   // name / product code / product type from the chosen DOs. Multiple distinct
@@ -662,26 +709,10 @@ export function SubmissionForm({ kind, submissionId }: Props) {
           .filter(Boolean),
       ),
     );
-    setFields((prev) => ({
-      ...prev,
-      customer_name: customerNames.join(', '),
-      product_code: productCodes.join(', '),
-    }));
+    setFields((prev) => ({ ...prev, customer_name: customerNames.join(', ') }));
     if (productCodes.length > 0) {
-      try {
-        const cats = new Set<string>();
-        for (const code of productCodes) {
-          const matches = await lookupProducts(code, 5);
-          const exact = matches.find((m) => m.product_code === code);
-          const c = (exact?.category_code ?? exact?.category_name ?? '').trim();
-          if (c) cats.add(c);
-        }
-        if (cats.size > 0) {
-          setFields((prev) => ({ ...prev, product_type: Array.from(cats).join(', ') }));
-        }
-      } catch {
-        // Best-effort — leave product_type as-is on lookup failure.
-      }
+      const built = await buildComplaintLinesFromCodes(productCodes, complaintLines);
+      setComplaintLines(built);
     }
   };
 
@@ -700,26 +731,10 @@ export function SubmissionForm({ kind, submissionId }: Props) {
           .filter(Boolean),
       ),
     );
-    setFields((prev) => ({
-      ...prev,
-      customer_name: customerNames.join(', '),
-      product_code: productCodes.join(', '),
-    }));
+    setFields((prev) => ({ ...prev, customer_name: customerNames.join(', ') }));
     if (productCodes.length > 0) {
-      try {
-        const cats = new Set<string>();
-        for (const code of productCodes) {
-          const matches = await lookupProducts(code, 5);
-          const exact = matches.find((m) => m.product_code === code);
-          const c = (exact?.category_code ?? exact?.category_name ?? '').trim();
-          if (c) cats.add(c);
-        }
-        if (cats.size > 0) {
-          setFields((prev) => ({ ...prev, product_type: Array.from(cats).join(', ') }));
-        }
-      } catch {
-        // Best-effort — leave product_type as-is on lookup failure.
-      }
+      const built = await buildComplaintLinesFromCodes(productCodes, complaintLines);
+      setComplaintLines(built);
     }
   };
 
@@ -805,6 +820,8 @@ export function SubmissionForm({ kind, submissionId }: Props) {
           onDOItemsChanged={handleDOItemsChanged}
           onDOProductsConfirmed={handleDOProductsConfirmed}
           invalidFields={invalidFields}
+          complaintLines={complaintLines}
+          setComplaintLines={setComplaintLines}
         />
       ) : (
         <PurchaseRequestFormSection
@@ -1122,6 +1139,8 @@ interface SectionProps {
     productCodes: string[];
   }) => void;
   invalidFields?: Set<string>;
+  complaintLines?: ComplaintLine[];
+  setComplaintLines?: Dispatch<SetStateAction<ComplaintLine[]>>;
 }
 
 function StockInquiryFormSection({
@@ -1241,6 +1260,121 @@ function StockInquiryFormSection({
   );
 }
 
+/** Per-product lines table for complaints: searchable product code (auto-derives
+ * product type from the master category), quantity, add/remove — mirrors the
+ * purchase-request / sponsorship Items table. */
+function ComplaintLinesTable({
+  lines,
+  setLines,
+  disabled,
+  invalid,
+}: {
+  lines: ComplaintLine[];
+  setLines: Dispatch<SetStateAction<ComplaintLine[]>>;
+  disabled?: boolean;
+  invalid?: boolean;
+}) {
+  const updateRow = (index: number, patch: Partial<ComplaintLine>) =>
+    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  const addRow = () =>
+    setLines((prev) => [...prev, { product_code: '', product_type: '', quantity: '' }]);
+  const removeRow = (index: number) =>
+    setLines((prev) => prev.filter((_, i) => i !== index));
+
+  return (
+    <div className="space-y-2" data-field-name="product_lines">
+      <Label className="min-w-0">
+        Products<span className="ml-0.5 text-destructive">*</span>
+      </Label>
+      <div
+        className={`overflow-x-auto rounded-md border ${invalid ? 'border-destructive' : 'border-border'}`}
+      >
+        <table className="w-full text-sm">
+          <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="w-10 px-2 py-2 text-left">#</th>
+              <th className="min-w-[200px] px-2 py-2 text-left">Product code</th>
+              <th className="min-w-[140px] px-2 py-2 text-left">Product type</th>
+              <th className="w-24 px-2 py-2 text-left">Qty</th>
+              <th className="w-10 px-2 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-3 py-4 text-center text-muted-foreground">
+                  No products yet. Click “Add product”.
+                </td>
+              </tr>
+            )}
+            {lines.map((line, index) => (
+              <tr key={index} className="border-t border-border align-top">
+                <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
+                <td className="px-2 py-2">
+                  <AsyncCombobox<ProductLookupItem>
+                    value={line.product_code}
+                    onChange={(v, item) => {
+                      const derived = item
+                        ? (item.category_code ?? item.category_name ?? '').trim()
+                        : '';
+                      updateRow(index, {
+                        product_code: v,
+                        ...(derived ? { product_type: derived } : {}),
+                      });
+                    }}
+                    fetchOptions={(q) => lookupProducts(q)}
+                    optionValue={(o) => o.product_code}
+                    optionLabel={(o) => o.product_code}
+                    optionMeta={(o) => o.product_name ?? ''}
+                    disabled={disabled}
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <Input
+                    value={line.product_type}
+                    onChange={(e) => updateRow(index, { product_type: e.target.value })}
+                    placeholder="Type"
+                    disabled={disabled}
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    value={line.quantity}
+                    onChange={(e) => updateRow(index, { quantity: e.target.value })}
+                    placeholder="Qty"
+                    disabled={disabled}
+                  />
+                </td>
+                <td className="px-2 py-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeRow(index)}
+                    disabled={disabled}
+                    aria-label="Remove product"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {!disabled && (
+        <Button type="button" variant="outline" size="sm" onClick={addRow}>
+          <Plus className="h-4 w-4 mr-1" />
+          Add product
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function ComplaintFormSection({
   fieldDefs,
   fields,
@@ -1251,6 +1385,8 @@ function ComplaintFormSection({
   onDOItemsChanged,
   onDOProductsConfirmed,
   invalidFields,
+  complaintLines,
+  setComplaintLines,
 }: SectionProps) {
   return (
     <Card>
@@ -1277,6 +1413,16 @@ function ComplaintFormSection({
               />
             </div>
           ))}
+          {complaintLines && setComplaintLines && (
+            <div className="md:col-span-2">
+              <ComplaintLinesTable
+                lines={complaintLines}
+                setLines={setComplaintLines}
+                disabled={!isEditable}
+                invalid={invalidFields?.has('product_lines')}
+              />
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

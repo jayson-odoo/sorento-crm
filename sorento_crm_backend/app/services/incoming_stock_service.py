@@ -189,7 +189,7 @@ class IncomingStockService:
         if query and query.strip():
             fuzzy_clause, canonical_values = resolve_via_embedding_then_ilike(
                 self.db,
-                query,
+                query.strip(),
                 source_type="product",
                 ilike_columns=[Product.product_code, Product.product_name],
                 canonical_model=Product,

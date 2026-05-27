@@ -99,6 +99,13 @@ class ConversationSLATracking(Base):
         Index("ix_conversation_sla_tracking_assigned_to_id", "assigned_to_id"),
         Index("ix_conversation_sla_tracking_respond_contact_id", "respond_contact_id"),
         Index("ix_conversation_sla_tracking_agent_id", "agent_id"),
+        # Hot path: get_tracking_by_source_entity filters on this pair for every
+        # stock-inquiry / complaint reply.
+        Index(
+            "ix_conversation_sla_tracking_source_entity",
+            "source_entity_type",
+            "source_entity_id",
+        ),
     )
 
 

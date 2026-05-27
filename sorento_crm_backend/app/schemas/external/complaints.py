@@ -200,6 +200,7 @@ class ComplaintIntegrationCreate(BaseModel):
             within_warranty=self.within_warranty,
             product_type=self.product_type,
             product_code=self.product_code,
+            quantity=self.quantity,
             complaint_type=self.complaint_type,
             defect_description=self.defect_description,
             customer_name=self.customer_name,

@@ -50,6 +50,7 @@ _ALLOWED_EXTS = {
     "webm",
     "m4v",
     "3gp",
+    "txt",
 }
 
 

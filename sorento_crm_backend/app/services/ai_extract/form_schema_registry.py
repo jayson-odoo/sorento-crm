@@ -53,7 +53,15 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
         name="customer_name",
         label="Customer name",
         kind="fk_customer",
-        note="Free text; prefer the registered debtor name as printed on the DO header.",
+        note=(
+            "The BUYER / end-customer company being billed — the debtor name as "
+            "printed on the DO 'Bill To' / 'Sold To' / 'Customer' line. This is NOT "
+            "the supplier/seller issuing the document (e.g. Sorento or our own "
+            "company letterhead), NOT the salesperson, and NOT the project/site "
+            "name. If a project or site name also appears, put that in "
+            "project_title, not here. Return the company name only."
+        ),
+        examples=["ACME Sdn Bhd", "Tan Construction Sdn Bhd"],
     ),
     ExtractFieldSpec(name="contact_person", label="Contact person", kind="text"),
     ExtractFieldSpec(name="contact_number", label="Contact number", kind="text"),
@@ -82,9 +90,19 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
         label="Product code",
         kind="fk_product",
         note=(
-            "SKU as it appears in the product master. Examples will be supplied; "
-            "follow that pattern. If the document only shows a product name, return "
-            "the closest matching code from the examples."
+            "SKU as it appears in the product master (examples supplied; follow that "
+            "pattern). List EACH affected product as a separate entry in the top-level "
+            "`products` array with its own quantity — do not pack multiple codes here. "
+            "You may leave this top-level field blank when you populate `products`."
+        ),
+    ),
+    ExtractFieldSpec(
+        name="quantity",
+        label="Quantity",
+        kind="number",
+        note=(
+            "Per-product quantity belongs on each entry of the `products` array, not "
+            "here. Leave this top-level field blank."
         ),
     ),
     ExtractFieldSpec(
@@ -127,7 +145,17 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
         note="One- or two-sentence summary of the defect.",
     ),
     ExtractFieldSpec(name="salesperson", label="Salesperson", kind="text"),
-    ExtractFieldSpec(name="project_title", label="Project title", kind="text"),
+    ExtractFieldSpec(
+        name="project_title",
+        label="Project title",
+        kind="text",
+        note=(
+            "The PROJECT or site/development name (e.g. a building, township, or "
+            "job title) — NOT the customer company and NOT the salesperson. Leave "
+            "blank if only a customer company is shown with no distinct project."
+        ),
+        examples=["Pavilion Damansara Heights", "Lot 12 Bungalow"],
+    ),
 ]
 
 
@@ -164,9 +192,24 @@ _PORTAL_STOCK_INQUIRY: list[ExtractFieldSpec] = [
         name="project_customer",
         label="Project customer",
         kind="fk_customer",
-        note="End customer / debtor name as printed on the inquiry header.",
+        note=(
+            "The BUYER / end-customer company (debtor) the inquiry is for — NOT the "
+            "supplier/seller issuing the document, NOT the salesperson, and NOT the "
+            "project/site name. The project or site name goes in project_name. "
+            "Return the company name only."
+        ),
+        examples=["ACME Sdn Bhd", "Tan Construction Sdn Bhd"],
     ),
-    ExtractFieldSpec(name="project_name", label="Project name", kind="text"),
+    ExtractFieldSpec(
+        name="project_name",
+        label="Project name",
+        kind="text",
+        note=(
+            "The PROJECT or site/development name — NOT the customer company. Leave "
+            "blank if no distinct project name appears."
+        ),
+        examples=["Pavilion Damansara Heights", "Lot 12 Bungalow"],
+    ),
     ExtractFieldSpec(name="salesperson", label="Salesperson", kind="text"),
     ExtractFieldSpec(name="remark", label="Remark", kind="textarea"),
     ExtractFieldSpec(name="additional_remark", label="Additional remark", kind="textarea"),
@@ -178,9 +221,23 @@ _PORTAL_PURCHASE_REQUEST: list[ExtractFieldSpec] = [
         name="customer_name",
         label="Customer name",
         kind="fk_customer",
-        note="End customer / debtor name printed on the request header.",
+        note=(
+            "The BUYER / end-customer company (debtor) on the request header — NOT "
+            "the supplier/seller issuing the document, NOT the salesperson, and NOT "
+            "the project/site name (that goes in project_title). Company name only."
+        ),
+        examples=["ACME Sdn Bhd", "Tan Construction Sdn Bhd"],
     ),
-    ExtractFieldSpec(name="project_title", label="Project title", kind="text"),
+    ExtractFieldSpec(
+        name="project_title",
+        label="Project title",
+        kind="text",
+        note=(
+            "The PROJECT or site/development name — NOT the customer company. Leave "
+            "blank if no distinct project name appears."
+        ),
+        examples=["Pavilion Damansara Heights", "Lot 12 Bungalow"],
+    ),
     ExtractFieldSpec(
         name="purpose",
         label="Purpose",
@@ -220,9 +277,24 @@ _PORTAL_SPONSORSHIP_FORM: list[ExtractFieldSpec] = [
         name="customer_name",
         label="Customer name",
         kind="fk_customer",
-        note="End customer / debtor name printed on the sponsorship request header.",
+        note=(
+            "The BUYER / end-customer company (debtor) on the sponsorship request "
+            "header — NOT the supplier/seller issuing the document, NOT the "
+            "salesperson, and NOT the project/site name (that goes in "
+            "project_title). Company name only."
+        ),
+        examples=["ACME Sdn Bhd", "Tan Construction Sdn Bhd"],
     ),
-    ExtractFieldSpec(name="project_title", label="Project title", kind="text"),
+    ExtractFieldSpec(
+        name="project_title",
+        label="Project title",
+        kind="text",
+        note=(
+            "The PROJECT or site/development name — NOT the customer company. Leave "
+            "blank if no distinct project name appears."
+        ),
+        examples=["Pavilion Damansara Heights", "Lot 12 Bungalow"],
+    ),
     ExtractFieldSpec(
         name="sponsor_subject",
         label="Sponsor subject",
