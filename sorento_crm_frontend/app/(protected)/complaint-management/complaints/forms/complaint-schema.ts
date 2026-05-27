@@ -18,6 +18,15 @@ export const ComplaintSchema = z.object({
   defect_description: z.string().max(5000).optional().nullable(),
   product_code: z.string().max(255).optional().nullable(),
   quantity: z.string().max(255).optional().nullable(),
+  product_lines: z
+    .array(
+      z.object({
+        product_code: z.string().min(1, { message: 'Product code is required.' }),
+        quantity: z.string().max(255).optional().nullable(),
+        product_type: z.string().max(255).optional().nullable(),
+      }),
+    )
+    .optional(),
   salesperson: z.string().max(255).optional().nullable(),
   customer_name: z.string().max(255).optional().nullable(),
   contact_person: z.string().max(255).optional().nullable(),

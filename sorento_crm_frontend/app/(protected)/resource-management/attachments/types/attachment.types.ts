@@ -58,6 +58,7 @@ export interface AttachmentType {
   description?: string | null;
   allowed_extensions: string;
   max_file_size_mb: number;
+  supports_field_linkage?: boolean;
   created_at: Date;
 }
 

@@ -58,7 +58,16 @@ class Complaint(Base):
     attachments = relationship("ComplaintAttachment", back_populates="complaint")
     root_cause = relationship("ComplaintRootCause", foreign_keys=[root_cause_id])
     resolution = relationship("ComplaintResolution", foreign_keys=[resolution_id])
-    
+    # Per-product line items (source of truth). The legacy product_code /
+    # product_type / quantity Text columns above are kept denormalized (CSV,
+    # index-aligned) from these lines for backward compat (n8n, public view).
+    product_lines = relationship(
+        "ComplaintProductLine",
+        back_populates="complaint",
+        cascade="all, delete-orphan",
+        order_by="ComplaintProductLine.sort_order",
+    )
+
     __table_args__ = (
         Index("ix_complaints_delivery_order_number", "delivery_order_number"),
         Index("ix_complaints_complaint_date", "complaint_date"),
@@ -66,6 +75,25 @@ class Complaint(Base):
         Index("ix_complaints_complaint_number", "complaint_number"),
         Index("ix_complaints_root_cause_id", "root_cause_id"),
         Index("ix_complaints_resolution_id", "resolution_id"),
+    )
+
+
+class ComplaintProductLine(Base):
+    """One affected product per complaint: code + quantity (+ derived type)."""
+    __tablename__ = "complaint_product_lines"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    complaint_id = Column(UUID(as_uuid=False), ForeignKey("complaints.id", ondelete="CASCADE"), nullable=False)
+    product_code = Column(Text, nullable=False)
+    quantity = Column(Text, nullable=True)  # free text to mirror complaints.quantity ("5" or "5 boxes")
+    product_type = Column(Text, nullable=True)  # auto-derived from product master category
+    sort_order = Column(Integer, nullable=False, server_default="0")
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    complaint = relationship("Complaint", back_populates="product_lines")
+
+    __table_args__ = (
+        Index("ix_complaint_product_lines_complaint_id", "complaint_id"),
     )
 
 

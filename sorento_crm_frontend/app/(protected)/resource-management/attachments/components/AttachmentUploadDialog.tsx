@@ -73,9 +73,9 @@ export default function AttachmentUploadDialog({
   const { runUpload, ConflictDialog } = useUploadConflict();
 
   const selectedType = attachmentTypes.find((type: AttachmentType) => type.id === selectedTypeId);
-  const isProductPhotoType = (type?: AttachmentType): boolean =>
-    !!type && /product\s*(photo|image|picture)/i.test(type.type_name);
-  const showFieldLinkageSection = !propEntityType && isProductPhotoType(selectedType);
+  // Field linkage is now opt-in per attachment type (admin toggle), not a
+  // hardcoded product-photo name check.
+  const showFieldLinkageSection = !propEntityType && !!selectedType?.supports_field_linkage;
 
   const { data: fieldLinkageSchema } = useFieldLinkageSchema(
     showFieldLinkageSection && targetEntityType ? targetEntityType : null,

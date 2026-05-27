@@ -76,7 +76,7 @@ def create_spo_allocations(
                             item_index=i + 1,
                             spo_number=(item.spo_number or "").strip() or None,
                             product_code=item.product_code,
-                            reason="Inbound shipment not found for shipping_container_number",
+                            reason="Packing list not found for shipping_container_number",
                         )
                     )
         else:

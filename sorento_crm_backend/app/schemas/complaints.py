@@ -92,6 +92,20 @@ class ComplaintRejectRequest(BaseModel):
     rejection_reason: str
 
 
+class ComplaintProductLineBase(BaseModel):
+    product_code: str
+    quantity: Optional[str] = None
+    product_type: Optional[str] = None
+
+
+class ComplaintProductLineResponse(ComplaintProductLineBase):
+    id: Optional[str] = None
+    sort_order: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
 class ComplaintBase(BaseModel):
     complaint_number: Optional[str] = None
     delivery_order_number: Optional[str] = None
@@ -142,6 +156,7 @@ class ComplaintBase(BaseModel):
 
 class ComplaintCreate(ComplaintBase):
     attachments: Optional[list[ComplaintAttachmentCreate]] = None
+    product_lines: Optional[list[ComplaintProductLineBase]] = None
 
 
 class ComplaintUpdate(BaseModel):
@@ -187,6 +202,7 @@ class ComplaintUpdate(BaseModel):
     root_cause_id: Optional[str] = None
     resolution_id: Optional[str] = None
     required_on_site_support: Optional[bool] = None
+    product_lines: Optional[list[ComplaintProductLineBase]] = None
 
 
 class ComplaintResponse(ComplaintBase):
@@ -210,6 +226,7 @@ class ComplaintResponse(ComplaintBase):
     root_cause_notified_at: Optional[datetime] = None
     resolution_notified_at: Optional[datetime] = None
     attachments: Optional[list[ComplaintAttachmentResponse]] = []
+    product_lines: Optional[list[ComplaintProductLineResponse]] = []
 
     class Config:
         from_attributes = True

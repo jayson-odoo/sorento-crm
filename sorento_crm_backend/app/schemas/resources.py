@@ -48,6 +48,7 @@ class AttachmentTypeBase(BaseModel):
     description: Optional[str] = None
     allowed_extensions: str
     max_file_size_mb: int = 10
+    supports_field_linkage: bool = False
 
 
 class AttachmentTypeCreate(AttachmentTypeBase):
@@ -59,6 +60,7 @@ class AttachmentTypeUpdate(BaseModel):
     description: Optional[str] = None
     allowed_extensions: Optional[str] = None
     max_file_size_mb: Optional[int] = None
+    supports_field_linkage: Optional[bool] = None
 
 
 class AttachmentTypeResponse(AttachmentTypeBase):

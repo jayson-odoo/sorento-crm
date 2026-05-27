@@ -1,3 +1,9 @@
+export interface ComplaintProductLine {
+  product_code: string;
+  quantity?: string | null;
+  product_type?: string | null;
+}
+
 export interface ComplaintAttachment {
   id: string;
   complaint_id: string;
@@ -51,6 +57,7 @@ export interface Complaint {
   root_cause_notified_at?: string | null;
   resolution_notified_at?: string | null;
   required_on_site_support?: boolean | null;
+  product_lines?: ComplaintProductLine[];
   attachments: ComplaintAttachment[];
 }
 
@@ -66,6 +73,7 @@ export interface ComplaintFormData {
   defect_description?: string;
   product_code?: string;
   quantity?: string;
+  product_lines?: ComplaintProductLine[];
   salesperson?: string;
   customer_name?: string;
   contact_person?: string;

@@ -690,11 +690,13 @@ class ConversationSLATrackingService:
             .limit(limit)
             .all()
         )
+        reference_by_row = self._resolve_my_pending_references(rows)
         return [
             {
                 "id": str(r.id),
                 "source_entity_type": r.source_entity_type,
                 "source_entity_id": r.source_entity_id,
+                "reference": reference_by_row.get(str(r.id)),
                 "due_at": r.due_at.isoformat() if r.due_at else None,
                 "is_responded": bool(r.is_responded),
                 "current_tier": r.current_tier,
@@ -702,6 +704,82 @@ class ConversationSLATrackingService:
             }
             for r in rows
         ]
+
+    def _resolve_my_pending_references(
+        self, rows: list[ConversationSLATracking]
+    ) -> dict[str, Optional[str]]:
+        """Map each tracker id -> a human-readable reference number.
+
+        complaint -> complaint_number, stock_inquiry -> inquiry_number,
+        purchase_request/sponsorship_form -> request_number, ticket -> ticket_number,
+        and conversation SLAs with no source entity -> contact phone/name.
+        Batched per type to avoid per-row queries.
+        """
+        from app.models.complaints import Complaint
+        from app.models.procurement import StockInquiry, PurchaseRequestHeader
+        from app.models.tickets import Ticket
+
+        # Collect source ids per type and contact ids for fallback.
+        ids_by_type: dict[str, set[str]] = {}
+        contact_ids: set[str] = set()
+        for r in rows:
+            et = (r.source_entity_type or "").strip()
+            if et and r.source_entity_id:
+                ids_by_type.setdefault(et, set()).add(str(r.source_entity_id))
+            elif r.respond_contact_id:
+                contact_ids.add(str(r.respond_contact_id))
+
+        def _num_map(id_col, num_col, ids: set[str]) -> dict[str, str]:
+            """Batched id->number lookup. Fail-safe: any DB error (e.g. table not
+            present in a minimal test schema) yields no references rather than
+            breaking the widget."""
+            if not ids:
+                return {}
+            try:
+                out: dict[str, str] = {}
+                for rec_id, num in self.db.query(id_col, num_col).filter(id_col.in_(ids)).all():
+                    if num:
+                        out[str(rec_id)] = str(num)
+                return out
+            except Exception:  # noqa: BLE001
+                self.db.rollback()
+                return {}
+
+        complaint_map = _num_map(Complaint.id, Complaint.complaint_number, ids_by_type.get("complaint") or set())
+        inquiry_map = _num_map(StockInquiry.id, StockInquiry.inquiry_number, ids_by_type.get("stock_inquiry") or set())
+        pr_ids = (ids_by_type.get("purchase_request") or set()) | (ids_by_type.get("sponsorship_form") or set())
+        pr_map = _num_map(PurchaseRequestHeader.id, PurchaseRequestHeader.request_number, pr_ids)
+        ticket_map = _num_map(Ticket.id, Ticket.ticket_number, ids_by_type.get("ticket") or set())
+
+        contact_map: dict[str, Optional[str]] = {}
+        if contact_ids:
+            try:
+                for cid, name, phone in (
+                    self.db.query(RespondContact.id, RespondContact.name, RespondContact.phone_number)
+                    .filter(RespondContact.id.in_(contact_ids))
+                    .all()
+                ):
+                    contact_map[str(cid)] = (name or phone or "").strip() or None
+            except Exception:  # noqa: BLE001
+                self.db.rollback()
+
+        result: dict[str, Optional[str]] = {}
+        for r in rows:
+            et = (r.source_entity_type or "").strip()
+            sid = str(r.source_entity_id) if r.source_entity_id else None
+            ref: Optional[str] = None
+            if et == "complaint" and sid:
+                ref = complaint_map.get(sid)
+            elif et == "stock_inquiry" and sid:
+                ref = inquiry_map.get(sid)
+            elif et in ("purchase_request", "sponsorship_form") and sid:
+                ref = pr_map.get(sid)
+            elif et == "ticket" and sid:
+                ref = ticket_map.get(sid)
+            elif r.respond_contact_id:
+                ref = contact_map.get(str(r.respond_contact_id))
+            result[str(r.id)] = ref
+        return result
 
     def get_preferred_tracking_for_contact(
         self, contact: RespondContact

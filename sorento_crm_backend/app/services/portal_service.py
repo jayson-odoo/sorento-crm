@@ -831,6 +831,9 @@ class PortalService:
                 setattr(row, field, value)
 
     def _replace_request_lines_if_needed(self, kind: str, row: Any, payload: dict) -> None:
+        if kind == "complaint":
+            self._replace_complaint_lines_if_needed(row, payload)
+            return
         if kind not in ("purchase_request", "sponsorship_form"):
             return
         if "products" not in payload:
@@ -854,6 +857,50 @@ class PortalService:
                     sort_order=index,
                 )
             )
+
+    def _replace_complaint_lines_if_needed(self, row: Any, payload: dict) -> None:
+        """Rebuild complaint product lines from payload['product_lines'] (the new
+        per-product widget) and re-derive the legacy product_code / product_type /
+        quantity CSV columns index-aligned. No-op if the key is absent (older
+        portal clients still send flat product_code/quantity via _apply_payload)."""
+        if "product_lines" not in payload:
+            return
+        from app.models.complaints import ComplaintProductLine
+
+        lines = payload.get("product_lines") or []
+        self.db.query(ComplaintProductLine).filter(
+            ComplaintProductLine.complaint_id == row.id
+        ).delete(synchronize_session=False)
+
+        codes: list[str] = []
+        types: list[str] = []
+        qtys: list[str] = []
+        for index, line in enumerate(lines):
+            if not isinstance(line, dict):
+                continue
+            code = (str(line.get("product_code") or "")).strip()
+            if not code:
+                continue
+            qty = line.get("quantity")
+            qty = (str(qty).strip() or None) if qty is not None else None
+            ptype = line.get("product_type")
+            ptype = (str(ptype).strip() or None) if ptype is not None else None
+            self.db.add(
+                ComplaintProductLine(
+                    complaint_id=row.id,
+                    product_code=code,
+                    quantity=qty,
+                    product_type=ptype,
+                    sort_order=index,
+                )
+            )
+            codes.append(code)
+            types.append(ptype or "")
+            qtys.append(qty or "")
+
+        row.product_code = ", ".join(codes) if codes else None
+        row.product_type = ", ".join(types) if any(types) else None
+        row.quantity = ", ".join(qtys) if any(qtys) else None
 
     def _editable_fields(self, kind: str) -> tuple[str, ...]:
         if kind == "complaint":
@@ -1057,6 +1104,14 @@ class PortalService:
                 "defect_description": row.defect_description,
                 "product_code": row.product_code,
                 "quantity": row.quantity,
+                "product_lines": [
+                    {
+                        "product_code": ln.product_code,
+                        "quantity": ln.quantity,
+                        "product_type": ln.product_type,
+                    }
+                    for ln in (row.product_lines or [])
+                ],
                 "salesperson": row.salesperson,
                 "customer_name": row.customer_name,
                 "contact_person": row.contact_person,

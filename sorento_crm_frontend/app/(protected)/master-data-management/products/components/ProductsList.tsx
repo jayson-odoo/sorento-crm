@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
@@ -94,6 +94,19 @@ const PRODUCT_IMPORT_COLUMNS: ColumnOption[] = [
 const ProductsList = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pathname = usePathname();
+  // Hard refresh = clean slate: don't restore persisted search/filters from the URL
+  // (those params only exist to restore state when navigating BACK from a detail page).
+  const isReloadRef = useRef<boolean | null>(null);
+  if (isReloadRef.current === null) {
+    const nav =
+      typeof performance !== 'undefined'
+        ? (performance.getEntriesByType('navigation')[0] as
+            | PerformanceNavigationTiming
+            | undefined)
+        : undefined;
+    isReloadRef.current = nav?.type === 'reload';
+  }
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -119,6 +132,14 @@ const ProductsList = () => {
 
   // Initialize filters and pagination from URL (e.g. when navigating back from detail)
   useEffect(() => {
+    // On a hard refresh, strip the persisted params so the list opens clean.
+    if (isReloadRef.current) {
+      isReloadRef.current = false;
+      if (searchParams.toString()) {
+        router.replace(pathname);
+      }
+      return;
+    }
     const search = searchParams.get('search') ?? '';
     const category = searchParams.get('category') ?? null;
     const brand = searchParams.get('brand') ?? null;
@@ -154,7 +175,7 @@ const ProductsList = () => {
         pageSize: Number.isNaN(pageSize) || pageSize < 1 ? 50 : Math.min(pageSize, 500),
       });
     }
-  }, [searchParams, setSearch, setCategoryId, setBrandId, setStatus]);
+  }, [searchParams, setSearch, setCategoryId, setBrandId, setStatus, router, pathname]);
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [productToDelete, setProductToDelete] = useState<ProductListItem | null>(null);

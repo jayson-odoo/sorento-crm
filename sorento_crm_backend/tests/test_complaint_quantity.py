@@ -28,3 +28,25 @@ def test_external_complaint_payload_maps_quantity():
     )
     created = payload.to_complaint_create()
     assert created.quantity == "7"
+
+
+def test_complaint_create_accepts_product_lines():
+    c = ComplaintCreate(
+        customer_name="ACME",
+        product_lines=[
+            {"product_code": "A", "quantity": "5", "product_type": "T1"},
+            {"product_code": "B", "quantity": "3"},
+        ],
+    )
+    assert c.product_lines is not None
+    assert [l.product_code for l in c.product_lines] == ["A", "B"]
+    assert c.product_lines[0].quantity == "5"
+    assert c.product_lines[1].product_type is None
+
+
+def test_complaint_update_accepts_product_lines():
+    u = ComplaintUpdate(product_lines=[{"product_code": "X", "quantity": "2"}])
+    dumped = u.model_dump(exclude_unset=True)
+    assert "product_lines" in dumped
+    assert dumped["product_lines"][0]["product_code"] == "X"
+    assert dumped["product_lines"][0]["quantity"] == "2"

@@ -90,16 +90,20 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
         label="Product code",
         kind="fk_product",
         note=(
-            "SKU as it appears in the product master. Examples will be supplied; "
-            "follow that pattern. If the document only shows a product name, return "
-            "the closest matching code from the examples."
+            "SKU as it appears in the product master (examples supplied; follow that "
+            "pattern). List EACH affected product as a separate entry in the top-level "
+            "`products` array with its own quantity — do not pack multiple codes here. "
+            "You may leave this top-level field blank when you populate `products`."
         ),
     ),
     ExtractFieldSpec(
         name="quantity",
         label="Quantity",
         kind="number",
-        note="Numeric quantity of affected/defective items. Strip units and commas.",
+        note=(
+            "Per-product quantity belongs on each entry of the `products` array, not "
+            "here. Leave this top-level field blank."
+        ),
     ),
     ExtractFieldSpec(
         name="product_type",

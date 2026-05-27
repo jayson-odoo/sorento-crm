@@ -132,6 +132,7 @@ export default function PurchaseRequestDetail({
   const [settingPending, setSettingPending] = useState(false);
   const [exportingExcel, setExportingExcel] = useState(false);
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
+  const [approvalLinkCopying, setApprovalLinkCopying] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [replyComposePrefill, setReplyComposePrefill] = useState<{
     key: number;
@@ -407,6 +408,46 @@ export default function PurchaseRequestDetail({
             </Button>
           )}
           <DetailActionsMenu ariaLabel="Request actions">
+            {showPrimarySendForApproval && (
+              <DropdownMenuItem
+                disabled={approvalLinkCopying}
+                onClick={async (e) => {
+                  e.preventDefault();
+                  if (!requestId) return;
+                  const approverUserId =
+                    request.approver_user_id ?? configuredDefaultApproverUserId ?? undefined;
+                  const approverEmail =
+                    request.approver_email ?? configuredDefaultApproverEmail ?? undefined;
+                  setApprovalLinkCopying(true);
+                  try {
+                    const baseUrl =
+                      typeof window !== 'undefined' ? window.location.origin : undefined;
+                    const res = await sendApprovalLink(requestId, {
+                      approver_email: approverEmail,
+                      approver_user_id: approverUserId,
+                      expires_hours: 24,
+                      send_email: false,
+                      base_url: baseUrl,
+                    });
+                    if (res.approval_url) {
+                      await navigator.clipboard.writeText(res.approval_url);
+                      toast.success('Approval link copied to clipboard');
+                    } else {
+                      toast.error('Could not generate approval link');
+                    }
+                  } catch (err) {
+                    toast.error(
+                      err instanceof Error ? err.message : 'Could not generate approval link',
+                    );
+                  } finally {
+                    setApprovalLinkCopying(false);
+                  }
+                }}
+              >
+                <Link2 className="size-4" />
+                {approvalLinkCopying ? 'Generating…' : 'Copy approval link'}
+              </DropdownMenuItem>
+            )}
             {publicViewLinksEnabled && (
               <DropdownMenuItem
                 disabled={viewLinkCopying}

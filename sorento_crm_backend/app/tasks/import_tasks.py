@@ -739,7 +739,7 @@ def _spo_import_normalize_header(value: Any) -> str:
     return str(value).strip()
 
 
-_SPO_NO_PACKING_LIST_REASON = "Inbound shipment not found for container"
+_SPO_NO_PACKING_LIST_REASON = "Packing list not found for container"
 
 
 def partition_spo_skip_reasons(
@@ -948,7 +948,7 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
                 skipped_rows_detail.append({"row": row_idx, "reason": f"Warehouse not found: {location}"})
                 continue
             if not shipment:
-                skipped_rows_detail.append({"row": row_idx, "reason": f"Inbound shipment not found for container: {container}"})
+                skipped_rows_detail.append({"row": row_idx, "reason": f"Packing list not found for container: {container}"})
                 continue
             resolved_rows.append((str(product.id), str(warehouse.id), str(shipment.id), qty, row_idx))
 
@@ -1125,7 +1125,7 @@ def validate_spo_import(file_data: bytes, filename: str) -> Dict[str, Any]:
             skipped_rows_detail.append({"row": row_idx, "reason": f"Warehouse not found: {location}"})
             continue
         if not shipment:
-            skipped_rows_detail.append({"row": row_idx, "reason": f"Inbound shipment not found for container: {container}"})
+            skipped_rows_detail.append({"row": row_idx, "reason": f"Packing list not found for container: {container}"})
             continue
         would_succeed += 1
 

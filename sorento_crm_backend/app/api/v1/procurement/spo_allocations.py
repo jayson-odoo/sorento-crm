@@ -90,11 +90,11 @@ async def get_spo_allocations_grouped_by_spo_number(
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
 async def import_spo_allocations(
     files: List[UploadFile] = File(..., description="One or more Excel files (.xlsx). Filename = SPO number."),
-    validate_only: bool = Query(False, description="If true, validate the first file only and return errors/warnings (no import)."),
+    validate_only: bool = Query(False, description="If true, validate all uploaded files and return aggregated errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("procurement.spo_allocations.import")),
     db: Session = Depends(get_db),
 ):
-    """Queue SPO allocation import jobs. Use validate_only=true to test the first file without importing."""
+    """Queue SPO allocation import jobs. Use validate_only=true to test all files without importing."""
     from fastapi.responses import JSONResponse
     from app.services.job_service import JobService
     from app.services.queue_service import enqueue_job
@@ -116,17 +116,28 @@ async def import_spo_allocations(
             )
 
     if validate_only:
-        upload = files[0]
-        file_data = await upload.read()
-        file_data, cleaned_name = maybe_strip(file_data, upload.filename or "unknown.xlsx")
-        result = validate_spo_import(file_data, cleaned_name)
+        all_errors: list[str] = []
+        all_warnings: list[str] = []
+        all_valid = True
+        multi = len(files) > 1
+        for upload in files:
+            file_data = await upload.read()
+            file_data, cleaned_name = maybe_strip(file_data, upload.filename or "unknown.xlsx")
+            result = validate_spo_import(file_data, cleaned_name)
+            # Prefix messages with the filename when validating more than one file
+            # so the user can tell which file each error/warning came from.
+            prefix = f"{cleaned_name}: " if multi else ""
+            all_errors.extend(f"{prefix}{e}" for e in result["errors"])
+            all_warnings.extend(f"{prefix}{w}" for w in result.get("warnings", []))
+            if not result["valid"]:
+                all_valid = False
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
-                "valid": result["valid"],
-                "errors": result["errors"],
-                "warnings": result.get("warnings", []),
-                "summary": result.get("summary"),
+                "valid": all_valid,
+                "errors": all_errors,
+                "warnings": all_warnings,
+                "summary": None,
             },
         )
 

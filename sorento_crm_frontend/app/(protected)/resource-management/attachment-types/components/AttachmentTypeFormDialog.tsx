@@ -22,6 +22,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   useCreateAttachmentType,
   useUpdateAttachmentType,
@@ -56,6 +57,7 @@ export default function AttachmentTypeFormDialog({
       description: '',
       allowed_extensions: '',
       max_file_size_mb: 10,
+      supports_field_linkage: false,
     },
     mode: 'onSubmit',
   });
@@ -69,6 +71,7 @@ export default function AttachmentTypeFormDialog({
           description: attachmentType.description || '',
           allowed_extensions: attachmentType.allowed_extensions,
           max_file_size_mb: attachmentType.max_file_size_mb,
+          supports_field_linkage: attachmentType.supports_field_linkage ?? false,
         });
       } else {
         form.reset({
@@ -76,6 +79,7 @@ export default function AttachmentTypeFormDialog({
           description: '',
           allowed_extensions: '',
           max_file_size_mb: 10,
+          supports_field_linkage: false,
         });
       }
     }
@@ -91,6 +95,7 @@ export default function AttachmentTypeFormDialog({
             description: data.description || undefined,
             allowed_extensions: data.allowed_extensions,
             max_file_size_mb: data.max_file_size_mb,
+            supports_field_linkage: data.supports_field_linkage ?? false,
           },
         });
       } else {
@@ -99,6 +104,7 @@ export default function AttachmentTypeFormDialog({
           description: data.description || undefined,
           allowed_extensions: data.allowed_extensions,
           max_file_size_mb: data.max_file_size_mb,
+          supports_field_linkage: data.supports_field_linkage ?? false,
         });
       }
       onOpenChange(false);
@@ -183,6 +189,28 @@ export default function AttachmentTypeFormDialog({
                     />
                   </FormControl>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="supports_field_linkage"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start gap-2 rounded-md border p-3">
+                  <FormControl>
+                    <Checkbox
+                      checked={!!field.value}
+                      onCheckedChange={(v) => field.onChange(v === true)}
+                    />
+                  </FormControl>
+                  <div className="space-y-0.5">
+                    <FormLabel className="cursor-pointer">Allow linking to entity fields</FormLabel>
+                    <p className="text-xs text-muted-foreground">
+                      When on, uploads of this type show the “Linked to / Linked fields” section
+                      (e.g. product photos) so files can be tied to a record field.
+                    </p>
+                  </div>
                 </FormItem>
               )}
             />

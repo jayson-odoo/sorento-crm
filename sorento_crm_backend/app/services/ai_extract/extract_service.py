@@ -78,11 +78,11 @@ ALLOWED_TEXT_MIMES = {"text/plain"}
 _TEXT_EXTS = (".txt",)
 TEXT_MAX_CHARS = 200_000
 
-# Forms that ship a separate items-list section. Other forms (complaint,
-# stock_inquiry, master.*) must NOT receive a `products` array — distinct
-# product codes belong inline in `product_code`.
+# Forms that ship a separate items-list section. Complaints now capture one
+# line per affected product (code + quantity), so they receive a `products`
+# array too. stock_inquiry / master.* still keep product codes inline.
 FORMS_WITH_LINE_ITEMS: frozenset[str] = frozenset(
-    {"portal.purchase_request", "portal.sponsorship_form"}
+    {"portal.purchase_request", "portal.sponsorship_form", "portal.complaint"}
 )
 
 

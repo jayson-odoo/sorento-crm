@@ -11,11 +11,11 @@ from app.tasks.import_tasks import partition_spo_skip_reasons
 
 def test_missing_packing_list_is_a_warning():
     skipped = [
-        {"row": 3, "reason": "Inbound shipment not found for container: MSKU123"},
+        {"row": 3, "reason": "Packing list not found for container: MSKU123"},
     ]
     errors, warnings = partition_spo_skip_reasons(skipped)
     assert errors == []
-    assert warnings == ["Row 3: Inbound shipment not found for container: MSKU123"]
+    assert warnings == ["Row 3: Packing list not found for container: MSKU123"]
 
 
 def test_data_problems_stay_errors():
@@ -31,9 +31,9 @@ def test_data_problems_stay_errors():
 
 def test_mixed_skips_split_correctly():
     skipped = [
-        {"row": 1, "reason": "Inbound shipment not found for container: A1"},
+        {"row": 1, "reason": "Packing list not found for container: A1"},
         {"row": 2, "reason": "Product not found: XYZ"},
-        {"row": 3, "reason": "Inbound shipment not found for container: B2"},
+        {"row": 3, "reason": "Packing list not found for container: B2"},
     ]
     errors, warnings = partition_spo_skip_reasons(skipped)
     assert len(warnings) == 2

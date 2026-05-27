@@ -72,6 +72,8 @@ export interface MyPendingSLAItem {
   id: string;
   source_entity_type: string | null;
   source_entity_id: string | null;
+  /** Human-readable reference: complaint/inquiry/request/ticket number, or contact name. */
+  reference: string | null;
   due_at: string | null;
   is_responded: boolean;
   current_tier: number;
