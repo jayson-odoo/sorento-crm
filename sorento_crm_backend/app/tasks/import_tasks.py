@@ -739,6 +739,32 @@ def _spo_import_normalize_header(value: Any) -> str:
     return str(value).strip()
 
 
+_SPO_NO_PACKING_LIST_REASON = "Packing list not found for container"
+
+
+def partition_spo_skip_reasons(
+    skipped_rows_detail: List[Dict[str, Any]],
+) -> tuple[List[str], List[str]]:
+    """Split SPO import skips into blocking errors vs. "no packing list" warnings.
+
+    A row whose only problem is a missing inbound shipment (packing list) is a
+    warning, not an error: that line is skipped but the rest of the file still
+    imports, so the uploader is warned rather than blocked. Every other reason
+    (bad qty, unknown product/warehouse, missing container) stays an error.
+    Used by BOTH validate_spo_import (test) and process_spo_import so the two
+    surface identical messages.
+    """
+    errors: List[str] = []
+    warnings: List[str] = []
+    for s in skipped_rows_detail:
+        msg = f"Row {s['row']}: {s['reason']}"
+        if str(s.get("reason", "")).startswith(_SPO_NO_PACKING_LIST_REASON):
+            warnings.append(msg)
+        else:
+            errors.append(msg)
+    return errors, warnings
+
+
 def _spo_import_find_column(row_data: dict, *candidates: str) -> Any:
     """Return first matching column value (case-insensitive key match)."""
     keys_lower = {k.lower(): k for k in row_data if k}
@@ -922,7 +948,7 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
                 skipped_rows_detail.append({"row": row_idx, "reason": f"Warehouse not found: {location}"})
                 continue
             if not shipment:
-                skipped_rows_detail.append({"row": row_idx, "reason": f"Inbound shipment not found for container: {container}"})
+                skipped_rows_detail.append({"row": row_idx, "reason": f"Packing list not found for container: {container}"})
                 continue
             resolved_rows.append((str(product.id), str(warehouse.id), str(shipment.id), qty, row_idx))
 
@@ -980,6 +1006,7 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
             )
 
         total_skipped = row_level_skipped + skipped_groups
+        _skip_errors, skip_warnings = partition_spo_skip_reasons(skipped_rows_detail)
         job_service.complete_job(
             job_id=job_id_str,
             result={
@@ -988,6 +1015,7 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
                 "allocations_created": successful,
                 "skipped_rows_detail": _json_safe(skipped_rows_detail[-200:]),
                 "skipped_rows_count": total_skipped,
+                "warnings": _json_safe(skip_warnings[-100:]),
                 "errors": _json_safe(errors[-100:]),
             },
             successful_rows=successful,
@@ -1097,16 +1125,16 @@ def validate_spo_import(file_data: bytes, filename: str) -> Dict[str, Any]:
             skipped_rows_detail.append({"row": row_idx, "reason": f"Warehouse not found: {location}"})
             continue
         if not shipment:
-            skipped_rows_detail.append({"row": row_idx, "reason": f"Inbound shipment not found for container: {container}"})
+            skipped_rows_detail.append({"row": row_idx, "reason": f"Packing list not found for container: {container}"})
             continue
         would_succeed += 1
 
-    errors = [f"Row {s['row']}: {s['reason']}" for s in skipped_rows_detail]
+    errors, warnings = partition_spo_skip_reasons(skipped_rows_detail)
     db.close()
     return {
         "valid": len(errors) == 0,
         "errors": errors,
-        "warnings": [],
+        "warnings": warnings,
         "summary": {
             "spo_number": spo_number,
             "total_data_rows": len(data_rows),

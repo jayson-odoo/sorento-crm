@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -50,8 +51,30 @@ export function AsyncCombobox<T>({
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef<string>('');
+  // Dropdown is portaled to <body> so it escapes ancestor overflow clipping
+  // (e.g. the products table's overflow-x-auto). Position tracks the input rect.
+  const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  const updateRect = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setRect({ top: r.bottom, left: r.left, width: r.width });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updateRect();
+    window.addEventListener('scroll', updateRect, true);
+    window.addEventListener('resize', updateRect);
+    return () => {
+      window.removeEventListener('scroll', updateRect, true);
+      window.removeEventListener('resize', updateRect);
+    };
+  }, [open, updateRect]);
 
   // Keep input in sync if parent changes value externally
   useEffect(() => {
@@ -95,10 +118,10 @@ export function AsyncCombobox<T>({
   useEffect(() => {
     if (!open) return;
     const onDocClick = (e: MouseEvent) => {
-      if (!containerRef.current) return;
-      if (!containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return; // portaled menu
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
@@ -219,9 +242,16 @@ export function AsyncCombobox<T>({
           autoComplete="off"
         />
       )}
-      {open && !disabled && (
+      {open && !disabled && rect && typeof document !== 'undefined' && createPortal(
         <div
-          className="absolute z-50 mt-1 left-0 right-0 max-h-[200px] overflow-auto border rounded-md bg-background shadow"
+          ref={dropdownRef}
+          style={{
+            position: 'fixed',
+            top: rect.top + 4,
+            left: rect.left,
+            width: rect.width,
+          }}
+          className="z-[100] max-h-[200px] overflow-auto border rounded-md bg-background shadow"
           role="listbox"
         >
           {loading && (
@@ -260,7 +290,8 @@ export function AsyncCombobox<T>({
                 </button>
               );
             })}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

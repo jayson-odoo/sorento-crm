@@ -15,6 +15,7 @@ import {
   Shield,
   Search,
   X,
+  PanelLeftClose,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -49,6 +50,8 @@ interface DirectoryTreeSidebarProps {
   onSelect: (id: string | null) => void;
   /** When set, folder menu includes adjusting access levels for all attachments in the folder subtree. */
   onAdjustFolderAccessLevels?: (directoryId: string) => void;
+  /** When provided, the header shows a button to collapse the whole Folders panel. */
+  onCollapsePanel?: () => void;
 }
 
 const FOLDER_DROP_PREFIX = 'folder-';
@@ -371,6 +374,7 @@ export default function DirectoryTreeSidebar({
   selectedId,
   onSelect,
   onAdjustFolderAccessLevels,
+  onCollapsePanel,
 }: DirectoryTreeSidebarProps) {
   const { data: tree = [], isLoading } = useDirectoryTree();
   const createMutation = useCreateDirectory();
@@ -552,6 +556,18 @@ export default function DirectoryTreeSidebar({
               <Plus className="size-4 mr-1" />
               Add
             </Button>
+            {onCollapsePanel && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="size-8 p-0"
+                title="Collapse folders panel"
+                aria-label="Collapse folders panel"
+                onClick={onCollapsePanel}
+              >
+                <PanelLeftClose className="size-4" />
+              </Button>
+            )}
           </div>
         </div>
         <div className="p-2 border-b">

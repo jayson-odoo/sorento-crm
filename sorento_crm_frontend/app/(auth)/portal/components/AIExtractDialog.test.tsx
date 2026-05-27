@@ -130,6 +130,29 @@ describe('AIExtractDialog', () => {
     expect(payload.alsoAttach).toBe(false);
   });
 
+  it('converts a pasted text block into a .txt file for extraction', async () => {
+    (aiExtractFromFiles as ReturnType<typeof vi.fn>).mockResolvedValue(mockExtractResult);
+    renderDialog(vi.fn());
+
+    const pasteEvent = new Event('paste', { bubbles: true, cancelable: true }) as Event & {
+      clipboardData: unknown;
+    };
+    pasteEvent.clipboardData = {
+      items: [],
+      getData: (t: string) => (t === 'text/plain' ? 'Customer: ACME, product AB-1234' : ''),
+    };
+    fireEvent(window, pasteEvent);
+
+    fireEvent.click(screen.getByTestId('ai-extract-run'));
+    await waitFor(() => screen.getByTestId('ai-extract-review'));
+
+    const call = (aiExtractFromFiles as ReturnType<typeof vi.fn>).mock.calls[0];
+    const files = call[1] as File[];
+    expect(files).toHaveLength(1);
+    expect(files[0].name).toMatch(/\.txt$/);
+    expect(files[0].type).toBe('text/plain');
+  });
+
   it('surfaces extract errors on the upload stage', async () => {
     (aiExtractFromFiles as ReturnType<typeof vi.fn>).mockRejectedValue(
       new Error('AI provider call failed: 502'),

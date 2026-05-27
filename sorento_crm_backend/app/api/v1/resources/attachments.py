@@ -18,6 +18,7 @@ from app.services.uuid_list_param import parse_uuid_list
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.integration_service import IntegrationLogService
 from app.services.attachment_webhook_helper import build_signed_attachment_url_for_webhook
+from app.services.n8n_webhook_settings import get_n8n_attachment_webhook_url
 from app.schemas.resources import (
     AttachmentCreate,
     AttachmentUpdate,
@@ -1294,6 +1295,13 @@ async def resubmit_attachment_webhook(
             payload_dict["attachment_type"] = attachment.attachment_type.type_name
 
         setattr(raw_log, "request_payload", json.dumps(payload_dict))
+
+        # Re-resolve the CURRENT attachment webhook URL from settings so resubmit
+        # honours the live "Attachment webhook URL" value, not the endpoint stored
+        # on the log at upload time (which may be a stale env fallback).
+        current_webhook_url = get_n8n_attachment_webhook_url(db)
+        if current_webhook_url:
+            setattr(raw_log, "endpoint", current_webhook_url)
         db.commit()
 
         # force_resend: actually POST again (even if status was sent/success) and do not hit max-retry guard

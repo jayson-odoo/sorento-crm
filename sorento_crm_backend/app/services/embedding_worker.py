@@ -211,7 +211,7 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
     if source_type == "inbound_shipment":
         shipment = db.query(InboundShipment).filter(InboundShipment.id == source_id).first()
         if not shipment:
-            raise ValueError(f"Inbound shipment not found: {source_id}")
+            raise ValueError(f"Packing list not found: {source_id}")
         body = "\n".join(
             [
                 "Source Type: Inbound Shipment",

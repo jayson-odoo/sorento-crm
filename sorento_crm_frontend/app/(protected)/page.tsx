@@ -9,9 +9,17 @@ const SLATrackingDashboard = dynamic(
   { ssr: false }
 );
 
+const MyPendingSLAWidget = dynamic(
+  () => import('./sla-management/conversation-sla-tracking/components/MyPendingSLAWidget'),
+  { ssr: false }
+);
+
 export default function Page() {
   return (
     <Container>
+      <div className="mb-5">
+        <MyPendingSLAWidget />
+      </div>
       <SLATrackingDashboard />
     </Container>
   );

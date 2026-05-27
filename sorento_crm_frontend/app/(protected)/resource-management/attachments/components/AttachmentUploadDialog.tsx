@@ -60,13 +60,11 @@ export default function AttachmentUploadDialog({
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [isUploading, setIsUploading] = useState(false);
   // Field-linkage template (shown only when there's no entity_type forced
-  // by the parent; e.g. opened from Resource Management → Files).
+  // by the parent — e.g. opened from Resource Management → Files — AND the
+  // selected attachment type is a product photo, since that's the only type
+  // whose row link is meaningful here).
   const [targetEntityType, setTargetEntityType] = useState<FieldLinkageEntityType | ''>('');
   const [targetFieldKeys, setTargetFieldKeys] = useState<string[]>([]);
-  const showFieldLinkageSection = !propEntityType;
-  const { data: fieldLinkageSchema } = useFieldLinkageSchema(
-    showFieldLinkageSection && targetEntityType ? targetEntityType : null,
-  );
 
   const { data: attachmentTypes = [], isLoading: isLoadingTypes } = useAttachmentTypesList();
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
@@ -75,6 +73,13 @@ export default function AttachmentUploadDialog({
   const { runUpload, ConflictDialog } = useUploadConflict();
 
   const selectedType = attachmentTypes.find((type: AttachmentType) => type.id === selectedTypeId);
+  // Field linkage is now opt-in per attachment type (admin toggle), not a
+  // hardcoded product-photo name check.
+  const showFieldLinkageSection = !propEntityType && !!selectedType?.supports_field_linkage;
+
+  const { data: fieldLinkageSchema } = useFieldLinkageSchema(
+    showFieldLinkageSection && targetEntityType ? targetEntityType : null,
+  );
 
   // Reset form when dialog closes
   useEffect(() => {
@@ -342,7 +347,7 @@ export default function AttachmentUploadDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create Attachment</DialogTitle>
         </DialogHeader>
@@ -359,6 +364,10 @@ export default function AttachmentUploadDialog({
                 setSelectedTypeId(value);
                 setSelectedFiles([]);
                 setValidationError('');
+                // Linked-fields section only applies to product photos; reset it
+                // whenever the type changes so a stale selection can't leak.
+                setTargetEntityType('');
+                setTargetFieldKeys([]);
               }}
               disabled={isLoadingTypes}
             >

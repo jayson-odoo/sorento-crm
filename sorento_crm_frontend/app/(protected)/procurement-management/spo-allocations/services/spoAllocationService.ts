@@ -220,11 +220,18 @@ export interface ValidateImportResult {
 }
 
 /**
- * Validate the first SPO file without importing (same validation as import).
+ * Validate one or more SPO files without importing (same validation as import).
+ * Errors/warnings are aggregated across all files; multi-file messages are
+ * prefixed with the filename so the source is clear.
  */
-export async function validateSPOAllocations(file: File): Promise<ValidateImportResult> {
+export async function validateSPOAllocations(
+  files: File | File[],
+): Promise<ValidateImportResult> {
+  const list = Array.isArray(files) ? files : [files];
   const formData = new FormData();
-  formData.append('files', file);
+  for (const file of list) {
+    formData.append('files', file);
+  }
   const response = await apiFetch(
     '/api/v1/procurement/spo-allocations/import?validate_only=true',
     { method: 'POST', body: formData },

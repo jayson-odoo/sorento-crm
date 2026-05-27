@@ -13,7 +13,7 @@
  *      and (optionally) queues files for upload via the existing pendingFiles
  *      flow.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Clipboard, Loader2, Paperclip, Sparkles, Upload, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -21,7 +21,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -59,11 +58,12 @@ interface Props {
 
 type Stage = 'upload' | 'review';
 
-const PREVIEWABLE = /^image\//;
+const PREVIEWABLE = /^(image|video)\//;
 
 const KINDS_WITH_LINE_ITEMS: PortalSubmissionKind[] = [
   'purchase_request',
   'sponsorship_form',
+  'complaint',
 ];
 
 export function AIExtractDialog({
@@ -108,6 +108,15 @@ export function AIExtractDialog({
         if (item.kind === 'file') {
           const f = item.getAsFile();
           if (f) incoming.push(f);
+        }
+      }
+      // No file on the clipboard but there is text → save the paste as a .txt
+      // file so it flows through the same upload/extract path.
+      if (!incoming.length) {
+        const text = e.clipboardData.getData('text/plain');
+        if (text && text.trim()) {
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          incoming.push(new File([text], `pasted-${ts}.txt`, { type: 'text/plain' }));
         }
       }
       if (incoming.length) {
@@ -162,20 +171,30 @@ export function AIExtractDialog({
       }>;
       const incoming: File[] = [];
       for (const item of items) {
-        const imageType = item.types.find((t) => t.startsWith('image/'));
-        if (!imageType) continue;
-        const blob = await item.getType(imageType);
-        const ext = imageType.split('/')[1] ?? 'png';
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        incoming.push(new File([blob], `clipboard-${ts}.${ext}`, { type: imageType }));
+        const imageType = item.types.find((t) => t.startsWith('image/'));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const ext = imageType.split('/')[1] ?? 'png';
+          incoming.push(new File([blob], `clipboard-${ts}.${ext}`, { type: imageType }));
+          continue;
+        }
+        // No image — fall back to pasted text saved as a .txt file.
+        if (item.types.includes('text/plain')) {
+          const blob = await item.getType('text/plain');
+          const text = (await blob.text()).trim();
+          if (text) {
+            incoming.push(new File([text], `pasted-${ts}.txt`, { type: 'text/plain' }));
+          }
+        }
       }
       if (incoming.length === 0) {
-        toast.message('Clipboard has no image to paste.');
+        toast.message('Clipboard has no image or text to paste.');
         return;
       }
       addFiles(incoming);
       toast.success(
-        `Pasted ${incoming.length} image${incoming.length === 1 ? '' : 's'} from clipboard.`,
+        `Pasted ${incoming.length} item${incoming.length === 1 ? '' : 's'} from clipboard.`,
       );
     } catch (e) {
       toast.error(
@@ -309,7 +328,7 @@ export function AIExtractDialog({
                 <input
                   ref={inputRef}
                   type="file"
-                  accept="image/*,video/*,.pdf"
+                  accept="image/*,video/*,.pdf,.txt"
                   className="hidden"
                   multiple
                   data-testid="ai-extract-file-input"
@@ -433,11 +452,15 @@ export function AIExtractDialog({
                   >
                     <thead className="text-xs text-muted-foreground">
                       <tr className="border-b border-border">
-                        <th className="px-3 py-1.5 text-left font-normal">Item code</th>
+                        <th className="px-3 py-1.5 text-left font-normal">Product code</th>
                         <th className="px-3 py-1.5 text-right font-normal">Qty</th>
-                        <th className="px-3 py-1.5 text-right font-normal">Unit price</th>
-                        <th className="px-3 py-1.5 text-right font-normal">Total</th>
-                        <th className="px-3 py-1.5 text-left font-normal">Notes</th>
+                        {kind !== 'complaint' && (
+                          <>
+                            <th className="px-3 py-1.5 text-right font-normal">Unit price</th>
+                            <th className="px-3 py-1.5 text-right font-normal">Total</th>
+                            <th className="px-3 py-1.5 text-left font-normal">Notes</th>
+                          </>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -449,9 +472,13 @@ export function AIExtractDialog({
                         >
                           <td className="px-3 py-2 align-top break-words">{p.product_code ?? '—'}</td>
                           <td className="px-3 py-2 align-top text-right">{p.quantity ?? '—'}</td>
-                          <td className="px-3 py-2 align-top text-right">{p.unit_price ?? '—'}</td>
-                          <td className="px-3 py-2 align-top text-right">{p.total ?? '—'}</td>
-                          <td className="px-3 py-2 align-top break-words">{p.notes ?? ''}</td>
+                          {kind !== 'complaint' && (
+                            <>
+                              <td className="px-3 py-2 align-top text-right">{p.unit_price ?? '—'}</td>
+                              <td className="px-3 py-2 align-top text-right">{p.total ?? '—'}</td>
+                              <td className="px-3 py-2 align-top break-words">{p.notes ?? ''}</td>
+                            </>
+                          )}
                         </tr>
                       ))}
                     </tbody>
@@ -517,16 +544,30 @@ function PendingPreview({
   return (
     <li className="flex items-center gap-3 rounded-md border border-border px-3 py-2">
       <div className="shrink-0">
-        {previewUrl ? (
-          <img
-            src={previewUrl}
-            alt={file.name}
-            className="h-12 w-12 rounded object-cover border border-border"
-          />
+        {previewUrl && file.type.startsWith('image/') ? (
+          <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+            <img
+              src={previewUrl}
+              alt={file.name}
+              className="h-12 w-12 rounded object-cover border border-border"
+            />
+          </a>
+        ) : previewUrl && file.type.startsWith('video/') ? (
+          <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+            <video
+              src={previewUrl}
+              muted
+              playsInline
+              preload="metadata"
+              className="h-12 w-12 rounded object-cover border border-border"
+            />
+          </a>
+        ) : isTextFile(file.name, file.type) ? (
+          <TextPreview name={file.name} loadText={() => file.text()}>
+            <FileThumb label="TXT" interactive />
+          </TextPreview>
         ) : (
-          <div className="h-12 w-12 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground">
-            PDF
-          </div>
+          <FileThumb label="PDF" />
         )}
       </div>
       <div className="min-w-0 flex-1">
@@ -547,5 +588,79 @@ function PendingPreview({
         <X className="h-4 w-4" />
       </Button>
     </li>
+  );
+}
+
+function isTextFile(name?: string | null, type?: string | null): boolean {
+  if (type?.startsWith('text/')) return true;
+  return /\.txt$/i.test(name ?? '');
+}
+
+function FileThumb({ label, interactive }: { label: string; interactive?: boolean }) {
+  return (
+    <div
+      className={`h-12 w-12 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground border border-border ${
+        interactive ? 'cursor-pointer hover:bg-muted/70 transition' : ''
+      }`}
+    >
+      {label}
+    </div>
+  );
+}
+
+function TextPreview({
+  name,
+  loadText,
+  children,
+}: {
+  name: string;
+  loadText: () => Promise<string>;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [content, setContent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleOpen = useCallback(
+    async (next: boolean) => {
+      setOpen(next);
+      if (next && content === null && error === null) {
+        try {
+          setContent(await loadText());
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Could not read file.');
+        }
+      }
+    },
+    [content, error, loadText],
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpen}>
+      <button
+        type="button"
+        onClick={() => handleOpen(true)}
+        aria-label={`Preview ${name}`}
+        className="block"
+      >
+        {children}
+      </button>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="truncate" title={name}>
+            {name}
+          </DialogTitle>
+        </DialogHeader>
+        {error ? (
+          <p className="text-sm text-destructive">{error}</p>
+        ) : content === null ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : (
+          <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 text-sm">
+            {content || '(empty file)'}
+          </pre>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -18,6 +18,7 @@ export const AttachmentTypeSchema = z.object({
     .number()
     .min(1, { message: 'Max file size must be at least 1 MB.' })
     .max(10000, { message: 'Max file size must not exceed 10000 MB.' }),
+  supports_field_linkage: z.boolean().optional(),
 });
 
 export type AttachmentTypeSchemaType = z.infer<typeof AttachmentTypeSchema>;
