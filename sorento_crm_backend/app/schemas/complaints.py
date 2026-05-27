@@ -119,6 +119,7 @@ class ComplaintBase(BaseModel):
     complaint_type: Optional[str] = None
     defect_description: Optional[str] = None
     product_code: Optional[str] = None
+    quantity: Optional[str] = None
     salesperson: Optional[str] = None
     customer_name: Optional[str] = None
     contact_person: Optional[str] = None
@@ -170,6 +171,7 @@ class ComplaintUpdate(BaseModel):
     complaint_type: Optional[str] = None
     defect_description: Optional[str] = None
     product_code: Optional[str] = None
+    quantity: Optional[str] = None
     salesperson: Optional[str] = None
     customer_name: Optional[str] = None
     contact_person: Optional[str] = None

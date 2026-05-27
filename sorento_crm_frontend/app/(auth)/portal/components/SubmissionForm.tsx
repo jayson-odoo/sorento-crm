@@ -138,6 +138,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       widget: 'pill-text',
       required: true,
     },
+    { name: 'quantity', label: 'Quantity', widget: 'number' },
     {
       name: 'within_warranty',
       label: 'Within warranty',

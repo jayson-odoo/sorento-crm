@@ -26,6 +26,7 @@ export interface Complaint {
   complaint_type?: string | null;
   defect_description?: string | null;
   product_code?: string | null;
+  quantity?: string | null;
   salesperson?: string | null;
   customer_name?: string | null;
   contact_person?: string | null;
@@ -64,6 +65,7 @@ export interface ComplaintFormData {
   complaint_type?: string;
   defect_description?: string;
   product_code?: string;
+  quantity?: string;
   salesperson?: string;
   customer_name?: string;
   contact_person?: string;

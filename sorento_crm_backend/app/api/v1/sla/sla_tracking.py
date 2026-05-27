@@ -262,6 +262,21 @@ async def get_sla_tracking_dashboard(
         )
 
 
+@router.get("/my-pending")
+async def get_my_pending_sla_tracking(
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Unresolved SLA trackers assigned to the current user (to-do widget)."""
+    try:
+        service = ConversationSLATrackingService(db)
+        data = service.list_my_pending(current_user["id"], limit=limit)
+        return {"data": data, "empty": len(data) == 0}
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/", response_model=ListResponse[ConversationSLATrackingResponse])
 async def get_sla_tracking(
     page: int = Query(1, ge=1),

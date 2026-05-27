@@ -428,6 +428,18 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                     </ul>
                   </div>
                 )}
+                {Array.isArray(job.result.warnings) && job.result.warnings.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium text-amber-600 dark:text-amber-500 mb-2">
+                      Warnings ({job.result.warnings.length})
+                    </p>
+                    <ul className="text-sm space-y-1 max-h-60 overflow-y-auto bg-muted/50 p-3 rounded list-disc pl-6 text-amber-600 dark:text-amber-500">
+                      {(job.result.warnings as string[]).map((w: string, i: number) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {Array.isArray(job.result.skipped_rows_detail) && job.result.skipped_rows_detail.length > 0 && (
                   <div>
                     <p className="text-sm font-medium text-muted-foreground mb-2">

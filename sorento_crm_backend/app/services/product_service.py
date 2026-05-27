@@ -812,11 +812,10 @@ class ProductService:
                         list_price = Decimal("0")
                     else:
                         list_price = Decimal(str(raw_price))
+                    # A negative list price (e.g. the -1 "no price" sentinel from the
+                    # source system) is coerced to 0 rather than rejecting the row.
                     if list_price < 0:
-                        errors.append(
-                            f"Row {idx} ({product_code}): List price cannot be negative, got '{raw_price}'"
-                        )
-                        continue
+                        list_price = Decimal("0")
                 except Exception:
                     errors.append(
                         f"Row {idx} ({product_code}): Price must be a valid number, got '{raw_price}'"
@@ -952,11 +951,10 @@ class ProductService:
                         list_price = Decimal("0")
                     else:
                         list_price = Decimal(str(raw_price))
+                    # A negative list price (e.g. the -1 "no price" sentinel from the
+                    # source system) is coerced to 0 rather than rejecting the row.
                     if list_price < 0:
-                        errors.append(
-                            f"Row {idx} ({product_code}): List price cannot be negative, got '{raw_price}'"
-                        )
-                        continue
+                        list_price = Decimal("0")
                 except Exception:
                     errors.append(
                         f"Row {idx} ({product_code}): Price must be a valid number, got '{raw_price}'"

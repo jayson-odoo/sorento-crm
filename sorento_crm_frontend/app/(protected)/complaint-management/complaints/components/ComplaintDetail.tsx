@@ -590,6 +590,10 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               <p className="font-medium">{complaint.product_code || '-'}</p>
             </div>
             <div>
+              <p className="text-sm text-muted-foreground">Quantity</p>
+              <p className="font-medium">{complaint.quantity || '-'}</p>
+            </div>
+            <div>
               <p className="text-sm text-muted-foreground">Salesperson</p>
               <p className="font-medium">{complaint.salesperson || '-'}</p>
             </div>

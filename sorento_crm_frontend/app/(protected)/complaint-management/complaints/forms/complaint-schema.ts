@@ -17,6 +17,7 @@ export const ComplaintSchema = z.object({
   complaint_type: z.string().max(255).optional().nullable(),
   defect_description: z.string().max(5000).optional().nullable(),
   product_code: z.string().max(255).optional().nullable(),
+  quantity: z.string().max(255).optional().nullable(),
   salesperson: z.string().max(255).optional().nullable(),
   customer_name: z.string().max(255).optional().nullable(),
   contact_person: z.string().max(255).optional().nullable(),
