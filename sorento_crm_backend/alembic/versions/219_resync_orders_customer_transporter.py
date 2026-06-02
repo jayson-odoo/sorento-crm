@@ -25,6 +25,18 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # 0. Drop the legacy column-level UNIQUE(customer_code) up front. The
+    #    customer seed below (step 3) intentionally inserts multiple rows that
+    #    share one Sage debtor code under different trading names — that only
+    #    works once the column-unique is gone. Migration 220 also drops it (and
+    #    adds the composite functional unique), but 220 runs *after* this one;
+    #    on production DBs that already hold a row for a given code, step 3
+    #    would hit `customers_customer_code_key` before 220 ever executes. Drop
+    #    here too — IF EXISTS makes it a no-op on fresh DBs and on the 220 pass.
+    op.execute(
+        "ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_customer_code_key;"
+    )
+
     # 1. Seed missing transporters from distinct orders.transporter.
     op.execute(
         """
