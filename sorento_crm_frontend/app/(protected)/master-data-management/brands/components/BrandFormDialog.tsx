@@ -21,8 +21,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
+import { FormDescription } from '@/components/ui/form';
 import { useCreateBrand, useUpdateBrand, useBrand } from '../hooks/useBrands';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import type { BrandFormData, Brand } from '../types/brand.types';
 
 const BrandFormSchema = z.object({
@@ -30,6 +33,7 @@ const BrandFormSchema = z.object({
   brand_name: z.string().min(1, 'Brand name is required').max(150),
   description: z.string().max(2000).optional().nullable(),
   is_active: z.boolean(),
+  access_levels: z.array(z.string()),
 });
 
 interface BrandFormDialogProps {
@@ -47,6 +51,7 @@ export default function BrandFormDialog({
   copyFromBrand,
 }: BrandFormDialogProps) {
   const { data: brand } = useBrand(brandId || null);
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const createMutation = useCreateBrand();
   const updateMutation = useUpdateBrand();
 
@@ -57,6 +62,7 @@ export default function BrandFormDialog({
       brand_name: '',
       description: '',
       is_active: true,
+      access_levels: [],
     },
   });
 
@@ -68,6 +74,7 @@ export default function BrandFormDialog({
           brand_name: brand.brand_name,
           description: brand.description || '',
           is_active: brand.is_active,
+          access_levels: brand.access_levels ?? [],
         });
       } else if (copyFromBrand) {
         form.reset({
@@ -75,6 +82,7 @@ export default function BrandFormDialog({
           brand_name: `${copyFromBrand.brand_name} (copy)`,
           description: copyFromBrand.description || '',
           is_active: copyFromBrand.is_active,
+          access_levels: copyFromBrand.access_levels ?? [],
         });
       } else {
         form.reset({
@@ -82,6 +90,7 @@ export default function BrandFormDialog({
           brand_name: '',
           description: '',
           is_active: true,
+          access_levels: [],
         });
       }
     }
@@ -94,6 +103,7 @@ export default function BrandFormDialog({
         brand_name: data.brand_name,
         description: data.description ?? undefined,
         is_active: data.is_active,
+        access_levels: data.access_levels ?? [],
       };
 
       if (brandId) {
@@ -160,6 +170,43 @@ export default function BrandFormDialog({
                       rows={3}
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="access_levels"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Access Levels</FormLabel>
+                  <FormDescription>
+                    Who can see products in this brand. Used by the AI promotion
+                    fallback. Leave empty for no restriction.
+                  </FormDescription>
+                  <div className="mt-2 flex flex-wrap gap-3">
+                    {accessTypeOptions.map((opt) => {
+                      const checked = field.value?.includes(opt.code);
+                      return (
+                        <label key={opt.code} className="flex items-center gap-2 text-sm">
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(value) => {
+                              const next = new Set(field.value || []);
+                              if (value) {
+                                next.add(opt.code);
+                              } else {
+                                next.delete(opt.code);
+                              }
+                              field.onChange(Array.from(next));
+                            }}
+                          />
+                          {opt.name || opt.code}
+                        </label>
+                      );
+                    })}
+                  </div>
                   <FormMessage />
                 </FormItem>
               )}

@@ -1005,10 +1005,17 @@ class ProductCategoryService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_categories(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
+    def list_categories(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        category_ids: Optional[list[str]] = None,
+        product_ids: Optional[list[str]] = None,
+    ):
         """List product categories. Ordered by display_order asc, then category_name asc."""
         q = self.db.query(ProductCategory)
-        
+
         if query:
             q = q.filter(
                 or_(
@@ -1016,7 +1023,19 @@ class ProductCategoryService:
                     ProductCategory.category_name.ilike(f"%{query}%")
                 )
             )
-        
+
+        if category_ids is not None or product_ids is not None:
+            allowed: set = set(category_ids or [])
+            if product_ids:
+                rows = (
+                    self.db.query(Product.category_id)
+                    .filter(Product.id.in_(product_ids), Product.category_id.isnot(None))
+                    .distinct()
+                    .all()
+                )
+                allowed.update(str(r[0]) for r in rows)
+            q = q.filter(ProductCategory.id.in_(allowed))
+
         q = q.order_by(ProductCategory.display_order.asc(), ProductCategory.category_name.asc())
         total = q.count()
         offset = (page - 1) * limit
@@ -1158,10 +1177,17 @@ class BrandService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_brands(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
+    def list_brands(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        brand_ids: Optional[list[str]] = None,
+        product_ids: Optional[list[str]] = None,
+    ):
         """List brands. Ordered by brand_name asc."""
         q = self.db.query(Brand)
-        
+
         if query:
             q = q.filter(
                 or_(
@@ -1169,7 +1195,19 @@ class BrandService:
                     Brand.brand_name.ilike(f"%{query}%")
                 )
             )
-        
+
+        if brand_ids is not None or product_ids is not None:
+            allowed: set = set(brand_ids or [])
+            if product_ids:
+                rows = (
+                    self.db.query(Product.brand_id)
+                    .filter(Product.id.in_(product_ids), Product.brand_id.isnot(None))
+                    .distinct()
+                    .all()
+                )
+                allowed.update(str(r[0]) for r in rows)
+            q = q.filter(Brand.id.in_(allowed))
+
         q = q.order_by(Brand.brand_name.asc())
         total = q.count()
         offset = (page - 1) * limit
@@ -1272,10 +1310,17 @@ class UnitOfMeasureService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_uoms(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
+    def list_uoms(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        uom_ids: Optional[list[str]] = None,
+        product_ids: Optional[list[str]] = None,
+    ):
         """List units of measure with product_count per UOM."""
         q = self.db.query(UnitOfMeasure)
-        
+
         if query:
             q = q.filter(
                 or_(
@@ -1283,7 +1328,19 @@ class UnitOfMeasureService:
                     UnitOfMeasure.uom_name.ilike(f"%{query}%")
                 )
             )
-        
+
+        if uom_ids is not None or product_ids is not None:
+            allowed: set = set(uom_ids or [])
+            if product_ids:
+                rows = (
+                    self.db.query(Product.base_uom_id)
+                    .filter(Product.id.in_(product_ids), Product.base_uom_id.isnot(None))
+                    .distinct()
+                    .all()
+                )
+                allowed.update(str(r[0]) for r in rows)
+            q = q.filter(UnitOfMeasure.id.in_(allowed))
+
         total = q.count()
         offset = (page - 1) * limit
         uoms = q.offset(offset).limit(limit).all()
@@ -1449,6 +1506,7 @@ class ProductAttachmentService:
         entities: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
+        attachment_type_ids: Optional[list[str]] = None,
     ):
         """List product attachments with filtering and pagination.
 
@@ -1497,6 +1555,15 @@ class ProductAttachmentService:
             q = q.filter(ProductAttachment.product_id.in_(product_ids))
         if attachment_ids:
             q = q.filter(ProductAttachment.attachment_id.in_(attachment_ids))
+        if attachment_type_ids:
+            # Narrow to product-attachment rows whose underlying Attachment
+            # carries one of the supplied AttachmentType UUIDs (brochure / spec
+            # sheet / installation guide / etc.). Empty list → no filter.
+            q = q.filter(
+                ProductAttachment.attachment.has(
+                    Attachment.attachment_type_id.in_(attachment_type_ids)
+                )
+            )
 
         if user_type:
             q = q.filter(ProductAttachment.attachment.has(Attachment.access_levels.contains([user_type])))

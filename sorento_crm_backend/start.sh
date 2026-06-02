@@ -24,12 +24,25 @@ until pg_isready -h "${DB_HOST}" -p "${DB_PORT:-5432}" -U ${POSTGRES_USER:-postg
 done
 
 echo "${DB_HOST}:${DB_PORT:-5432} - accepting connections"
-echo "Running database migrations..."
-# alembic upgrade head
 
+# Worker entrypoint reuses this script via the `python worker.py` override; skip
+# migrations there so blue/green orchestration alone owns schema upgrades and we
+# don't double-run from the worker container.
 if [ $# -gt 0 ]; then
   echo "Running override command: $@"
   exec "$@"
+fi
+
+# Run migrations before serving. Alembic uses `alembic_version` + an advisory
+# lock, so concurrent blue/green starts are safe (the loser no-ops). Failure
+# here aborts the container start → healthcheck fails → blue/green swap aborts
+# → old color keeps serving. Set SKIP_MIGRATIONS=1 to bypass when manually
+# managing migrations (e.g. expand-contract two-phase rollouts).
+if [ "${SKIP_MIGRATIONS:-0}" != "1" ]; then
+  echo "Running database migrations..."
+  alembic upgrade head
+else
+  echo "SKIP_MIGRATIONS=1; skipping alembic upgrade head"
 fi
 
 API_HOST="${API_HOST:-0.0.0.0}"

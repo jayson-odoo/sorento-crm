@@ -22,35 +22,29 @@ from sorento_crm_mcp.user_guides import register_user_guide_tools
 
 logger = logging.getLogger(__name__)
 
-TOOL_QUERY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {
-    # Normalize frequent caller habit: sending `query` instead of `q`.
-    "crm_workflow_forms_definitions_list": {"q": ("query",)},
-}
+TOOL_QUERY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {}
 
 TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {}
 
-# Tools that MUST receive at least one narrowing filter (id / date-range) or
-# they short-circuit to an empty page. Prevents the AI assistant from doing a
-# "list everything" sweep when entity resolution failed upstream.
+# Parent-relation tools: meaningless without a parent entity UUID.
+# These are "list X belonging to parent Y" tools, not general browse lists.
+# Without a narrowing key, short-circuit to empty page (and let the agent know
+# via tool description that the param is required).
 TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
-    "crm_incoming_stock_shipments": (
-        "shipment_ids",
-        "supplier_ids",
-        "eta_from",
-        "eta_to",
-    ),
-    "crm_inventory_stock_balance_list": (
-        "product_ids",
-        "warehouse_id",
-    ),
-    "crm_order_management_orders_list": (
-        "order_ids",
-        "customer_ids",
-        "product_ids",
-        "transporter_ids",
-        "actual_delivery_date_from",
-        "actual_delivery_date_to",
-    ),
+    "crm_master_product_attachments_list": ("product_ids", "attachment_ids"),
+    "crm_marketing_promotion_products_list": ("promotion_ids", "product_ids"),
+    "crm_marketing_promotion_attachments_list": ("promotion_ids", "attachment_ids"),
+    "crm_order_management_orders_by_product_list": ("product_ids",),
+    "crm_incoming_stock_by_product": ("product_ids",),
+    # Shipments without any narrower returns the entire open inbound list — too
+    # broad for an AI answer. Require shipment / supplier UUID or an ETA window
+    # so questions about a specific shipment, supplier, or date scope get a
+    # targeted result. "Incoming for product X" questions should be routed to
+    # `crm_incoming_stock_by_product` instead.
+    "crm_incoming_stock_shipments": ("shipment_ids", "supplier_ids", "eta_from", "eta_to"),
+    # Domain-scoped attachment lookup: only resolves known catalogue UUIDs.
+    # No UUIDs → empty page (mirrors n8n's domain-hint filtering contract).
+    "crm_resource_attachments_catalogue": ("attachment_ids",),
 }
 
 
@@ -72,14 +66,9 @@ def _empty_narrowing_response(tool_name: str, query: dict[str, Any] | None, need
             "total": 0,
             "page": 1,
             "limit": (query or {}).get("limit"),
-            "message": (
-                f"No narrowing filter supplied to {tool_name}. "
-                f"Resolve entities first (e.g. via crm_find_entity) and pass at least one of: "
-                f"{list(needed)}."
-            ),
-            "code": "NARROWING_FILTER_REQUIRED",
         }
     )
+
 
 TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     # Promotion list must always return active promotions only.
@@ -87,6 +76,9 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     # Orders list (DO discovery) should surface the latest order first by default.
     # UI grid passes its own sort/dir, so this only affects MCP/agent calls that omit them.
     "crm_order_management_orders_list": {"sort": "order_date", "dir": "desc"},
+    # Domain-scoped tool: hard-pins backend filter to AttachmentType=catalogue so
+    # the n8n catalogue-hinted agent cannot accidentally return non-catalogue rows.
+    "crm_resource_attachments_catalogue": {"attachment_type_code": "catalogue"},
 }
 
 PROMOTION_TOOL_NAMES: set[str] = {
@@ -695,6 +687,73 @@ def _slim_orders_list_response(data: Any, product_query: str | None = None) -> A
 _PROMO_PRODUCT_TOOL_PREFIXES = (
     "crm_marketing_promotion_products_",
 )
+
+# Promotion-list rows: drop UUID-bearing fields so the agent answers using
+# human-readable identifiers (description + dates + access_levels) only.
+# Nested attachments keep their own UUID handling via _strip_attachment_internals.
+_PROMOTIONS_LIST_TOOL = "crm_marketing_promotions_list"
+_PROMOTIONS_LIST_DROP_KEYS = frozenset({"id", "created_by"})
+_PORTAL_LINK_TOOL = "crm_portal_link_get"
+
+# Tools whose row payload carries an inline attachment(s) blob. Browse-mode
+# calls (no UUID narrowing — agent listing the whole catalog) strip those
+# inline blobs to keep the response small and to stop the agent from echoing
+# every linked file when the user just asked "what forms / promos do we have".
+# UUID-narrowed calls keep attachments — the agent asked for a specific row
+# and needs the linked files in the answer.
+#
+# (tool_name, narrowing_query_keys, row_keys_to_strip_when_browsing)
+_BROWSE_ATTACHMENT_STRIP_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    (
+        "crm_marketing_promotions_list",
+        ("promotion_ids", "product_ids"),
+        ("attachments",),
+    ),
+    (
+        "crm_forms_management_forms_list",
+        ("form_ids",),
+        ("attachment", "attachments"),
+    ),
+)
+
+
+def _is_browse_mode(query: dict[str, Any] | None, narrowing_keys: tuple[str, ...]) -> bool:
+    q = query or {}
+    for k in narrowing_keys:
+        v = q.get(k)
+        if v not in (None, "", []):
+            return False
+    return True
+
+
+def _strip_inline_attachment_keys(data: Any, drop_keys: tuple[str, ...]) -> Any:
+    if not isinstance(data, dict):
+        return data
+    rows = data.get("data")
+    if not isinstance(rows, list):
+        return data
+    cleaned = []
+    for row in rows:
+        if not isinstance(row, dict):
+            cleaned.append(row)
+            continue
+        cleaned.append({k: v for k, v in row.items() if k not in drop_keys})
+    return {**data, "data": cleaned}
+
+
+def _strip_promotions_list_row_ids(data: Any) -> Any:
+    if not isinstance(data, dict):
+        return data
+    rows = data.get("data")
+    if not isinstance(rows, list):
+        return data
+    cleaned = []
+    for row in rows:
+        if not isinstance(row, dict):
+            cleaned.append(row)
+            continue
+        cleaned.append({k: v for k, v in row.items() if k not in _PROMOTIONS_LIST_DROP_KEYS})
+    return {**data, "data": cleaned}
 # Keys removed recursively from every dict in the promotion-products payload
 # (top-level promotion_product row, nested `product`, `promotion`, and inline
 # `promotion_attachments`). Pure noise for the AI agent.
@@ -783,21 +842,52 @@ _RESOURCE_ATTACHMENT_LIST_EXTRA_KEYS = frozenset(
 )
 _RESOURCE_ATTACHMENT_LIST_TOOL = "crm_resource_attachments_list"
 
+# Catalogue-domain tool drops UUIDs from the response. Caller already supplied
+# attachment_ids on the way in (REQUIRED narrowing); the n8n catalogue flow only
+# needs file metadata + URL to forward the doc, never the row UUID back. Keeps
+# the agent from echoing internal ids into chat output.
+_RESOURCE_ATTACHMENT_CATALOGUE_TOOL = "crm_resource_attachments_catalogue"
+_RESOURCE_ATTACHMENT_CATALOGUE_DROP_KEYS = frozenset(
+    {"id", "attachment_type_id", "entity_id"}
+)
 
-def _strip_attachment_internals(node: Any) -> Any:
+
+def _strip_resource_attachment_catalogue_ids(node: Any) -> Any:
+    if isinstance(node, list):
+        return [_strip_resource_attachment_catalogue_ids(item) for item in node]
+    if isinstance(node, dict):
+        return {
+            k: _strip_resource_attachment_catalogue_ids(v)
+            for k, v in node.items()
+            if k not in _RESOURCE_ATTACHMENT_CATALOGUE_DROP_KEYS
+        }
+    return node
+
+
+def _strip_attachment_internals(node: Any, _parent_key: str | None = None) -> Any:
     """Recurse + drop attachment internal fields (TCK-2026-000015).
 
     Triggered for attachment-bearing tool responses. Recurses into dicts +
     lists so nested `attachment` blocks (e.g. promotion_attachment rows that
     embed an `attachment` sub-object) are slimmed too.
+
+    Also drops `description` from any nested `attachment_type` dict — the
+    long-form description on AttachmentType is taxonomy admin noise (e.g.
+    "Product Photos / Actual Photos / Photos by Marketing") that the LLM
+    doesn't need to surface in chat. `type_name` already conveys what the
+    file class is. Care: only stripped when the dict was reached via an
+    `attachment_type` key — the sibling `Attachment.description` column
+    (per-file caption) stays intact.
     """
     if isinstance(node, list):
-        return [_strip_attachment_internals(item) for item in node]
+        return [_strip_attachment_internals(item, _parent_key) for item in node]
     if isinstance(node, dict):
+        is_attachment_type = _parent_key == "attachment_type"
         return {
-            k: _strip_attachment_internals(v)
+            k: _strip_attachment_internals(v, k)
             for k, v in node.items()
             if k not in _ATTACHMENT_INTERNAL_KEYS
+            and not (is_attachment_type and k == "description")
         }
     return node
 
@@ -923,8 +1013,21 @@ def _sanitize_tool_response(
         data = _strip_attachment_internals(data)
     if tool_name == _RESOURCE_ATTACHMENT_LIST_TOOL:
         data = _strip_resource_attachment_list_extras(data)
+    if tool_name == _RESOURCE_ATTACHMENT_CATALOGUE_TOOL:
+        data = _strip_resource_attachment_catalogue_ids(data)
     if any(tool_name.startswith(p) for p in _PROMO_PRODUCT_TOOL_PREFIXES):
         data = _slim_promotion_products_response(data)
+    if tool_name == _PROMOTIONS_LIST_TOOL:
+        data = _strip_promotions_list_row_ids(data)
+    if tool_name == _PORTAL_LINK_TOOL and isinstance(data, dict):
+        # The portal link is the deliverable; the raw expiry timestamp is
+        # internal bookkeeping the assistant should not surface to the user.
+        data.pop("expires_at", None)
+    # Browse-mode attachment strip — applied LAST so it runs after the
+    # promotion / forms row-level sanitizers have already done their work.
+    for rule_tool, narrowing_keys, drop_keys in _BROWSE_ATTACHMENT_STRIP_RULES:
+        if tool_name == rule_tool and _is_browse_mode(query, narrowing_keys):
+            data = _strip_inline_attachment_keys(data, drop_keys)
     return json.dumps(data)
 
 
@@ -1214,9 +1317,5 @@ def create_mcp_app(settings: Settings) -> FastMCP:
 
     register_user_guide_tools(mcp, settings)
     logger.debug("Registered user-guide tools")
-
-    from sorento_crm_mcp.discovery import register_discovery_tools
-    register_discovery_tools(mcp, settings, CATALOG)
-    logger.debug("Registered discovery tools")
 
     return mcp

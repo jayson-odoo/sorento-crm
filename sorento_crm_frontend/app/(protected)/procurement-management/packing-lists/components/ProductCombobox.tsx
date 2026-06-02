@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button, ButtonArrow } from '@/components/ui/button';
@@ -33,6 +33,10 @@ interface ProductComboboxProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  /** Server-side search callback. Combobox debounces typing and calls back so
+   *  the parent can refetch from `/products?query=...` rather than relying on
+   *  the local 500-row slice. */
+  onSearch?: (query: string) => void;
 }
 
 export function ProductCombobox({
@@ -43,8 +47,20 @@ export function ProductCombobox({
   placeholder = 'Select product',
   disabled,
   className,
+  onSearch,
 }: ProductComboboxProps) {
   const [open, setOpen] = useState(false);
+  const [inputValue, setInputValue] = useState('');
+
+  // Debounce search input → parent fetch. 300ms balances responsiveness vs
+  // backend hit rate while typing.
+  useEffect(() => {
+    if (!onSearch) return;
+    const id = setTimeout(() => {
+      onSearch(inputValue);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [inputValue, onSearch]);
   const selected = products.find((p) => p.id === value) ?? (value ? productFallback : null);
   const displayLabel = selected
     ? `${selected.product_code}${selected.product_name && selected.product_name !== selected.product_code ? ` - ${selected.product_name}` : ''}`
@@ -74,8 +90,18 @@ export function ProductCombobox({
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-(--radix-popper-anchor-width) p-0">
-        <Command>
-          <CommandInput placeholder={placeholder} />
+        {/*
+          shouldFilter=false: cmdk's built-in local filter would silently drop
+          server-fetched candidates whose label doesn't include the typed
+          string verbatim. We do the filtering server-side via `onSearch` so
+          every row coming back from the API is shown.
+        */}
+        <Command shouldFilter={!onSearch}>
+          <CommandInput
+            placeholder={placeholder}
+            value={inputValue}
+            onValueChange={setInputValue}
+          />
           <CommandList>
             <ScrollArea viewportClassName="max-h-[300px] [&>div]:block!">
               <CommandEmpty>No product found.</CommandEmpty>

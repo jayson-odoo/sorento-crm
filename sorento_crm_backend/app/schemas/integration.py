@@ -1,9 +1,45 @@
 """Integration logging schemas."""
-from pydantic import BaseModel, field_validator
-from typing import Optional, Any
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Literal, Optional, Any
 from datetime import datetime
+import logging
 import uuid
 import json
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# n8n callback v1 schema — see docs/plans/PLAN-upload-activity-drawer.md §4.4
+# ---------------------------------------------------------------------------
+
+
+class LinkedEntityV1(BaseModel):
+    entity_type: str
+    entity_id: str
+    display_name: str
+    matched_by: str
+
+
+class UnlinkedReasonV1(BaseModel):
+    reason: str
+
+
+class ErrorEntryV1(BaseModel):
+    code: str
+    message: str
+    retryable: bool = False
+
+
+class N8nCallbackPayloadV1(BaseModel):
+    """Structured response_payload n8n must POST back. v1 schema."""
+
+    schema_version: Literal[1]
+    outcome: Literal["linked", "unlinked", "failed", "partial"]
+    summary: str = Field(..., max_length=500)
+    linked: List[LinkedEntityV1] = Field(default_factory=list)
+    unlinked_reasons: List[UnlinkedReasonV1] = Field(default_factory=list)
+    errors: List[ErrorEntryV1] = Field(default_factory=list)
 
 
 class IntegrationLogBase(BaseModel):
@@ -93,19 +129,43 @@ class IntegrationLogUpdateRequest(BaseModel):
     @field_validator('response_payload', mode='before')
     @classmethod
     def normalize_response_payload(cls, v):
-        """Require response payload to be valid JSON object/array."""
+        """
+        Require response payload to be valid JSON object/array.
+
+        v1 schema policy (see N8nCallbackPayloadV1):
+        - If payload carries `schema_version == 1`, validate every field;
+          malformed v1 → ValueError (422 to caller).
+        - If `schema_version` absent → legacy free-form; accept but emit a
+          deprecation warning so we can track outstanding flows.
+        """
         if v is None:
             return None
+
         if isinstance(v, (dict, list)):
-            return json.dumps(v)
-        if isinstance(v, (bytes, bytearray)):
-            v = v.decode('utf-8', errors='ignore')
-        if isinstance(v, str):
+            parsed = v
+        elif isinstance(v, (bytes, bytearray, str)):
+            if isinstance(v, (bytes, bytearray)):
+                v = v.decode('utf-8', errors='ignore')
             try:
                 parsed = json.loads(v)
             except json.JSONDecodeError:
                 raise ValueError("response_payload must be valid JSON.")
             if not isinstance(parsed, (dict, list)):
                 raise ValueError("response_payload must be a JSON object or array.")
-            return json.dumps(parsed)
-        raise ValueError("response_payload must be a JSON object or array.")
+        else:
+            raise ValueError("response_payload must be a JSON object or array.")
+
+        # Versioned-validation gate.
+        if isinstance(parsed, dict) and "schema_version" in parsed:
+            try:
+                N8nCallbackPayloadV1.model_validate(parsed)
+            except Exception as exc:  # noqa: BLE001
+                # Re-raise as ValueError so FastAPI returns 422 with detail.
+                raise ValueError(f"Invalid n8n callback v1 payload: {exc}") from exc
+        else:
+            logger.warning(
+                "Integration log callback missing schema_version=1; "
+                "accepting legacy free-form payload (deprecated)."
+            )
+
+        return json.dumps(parsed)

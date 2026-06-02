@@ -16,6 +16,7 @@ from app.schemas.inventory import (
 )
 from app.schemas.common import ListResponse, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
+from app.services.uuid_list_param import parse_uuid_list
 
 router = APIRouter()
 
@@ -29,6 +30,10 @@ async def get_warehouses(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
+    warehouse_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter by canonical warehouse UUIDs (repeated / csv / JSON array).",
+    ),
     is_active: Optional[bool] = Query(None),
     sort: Optional[str] = Query(None, description="Sort field: warehouse_code|warehouse_name|location|is_active|created_at|updated_at|zones_count|stock_count"),
     dir: Optional[str] = Query("asc", description="asc|desc"),
@@ -42,6 +47,7 @@ async def get_warehouses(
             page=page,
             limit=limit,
             query=query,
+            warehouse_ids=parse_uuid_list(warehouse_ids, param_name="warehouse_ids"),
             is_active=is_active,
             sort_field=sort,
             sort_dir=dir,

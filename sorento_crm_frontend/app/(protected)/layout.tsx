@@ -7,6 +7,10 @@ import { ScreenLoader } from '@/components/common/screen-loader';
 import { Demo1Layout } from '../components/layouts/demo1/layout';
 import { useImpersonation } from '@/hooks/useImpersonation';
 import GuideTargetSpotlight from '@/app/components/common/GuideTargetSpotlight';
+import {
+  UploadActivityDrawer,
+  UploadManagerProvider,
+} from '@/components/upload-activity';
 
 export default function ProtectedLayout({
   children,
@@ -52,9 +56,10 @@ fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{metho
   }
 
   return (
-    <>
+    <UploadManagerProvider>
       <GuideTargetSpotlight />
       <Demo1Layout>{children}</Demo1Layout>
-    </>
+      <UploadActivityDrawer />
+    </UploadManagerProvider>
   );
 }

@@ -37,6 +37,7 @@ export default function PackingListForm({
   const { data: packingList, isLoading: isLoadingPackingList } = usePackingList(packingListId ?? null);
   const { data: suppliers = [] } = useSupplierSelectQuery();
   const [products, setProducts] = useState<Array<{ id: string; product_code: string; product_name?: string }>>([]);
+  const [productSearch, setProductSearch] = useState('');
 
   const createMutation = useCreatePackingList();
   const updateMutation = useUpdatePackingList();
@@ -61,17 +62,25 @@ export default function PackingListForm({
     name: 'shipment_lines',
   });
 
+  // Server-side product search. Refetches whenever the combobox input changes
+  // (debounced inside ProductCombobox). Backend product list endpoint already
+  // filters by code / name / description via the `query` param, so any of the
+  // 10k+ products in the catalog is reachable — no more 500-row client slice.
   useEffect(() => {
+    let cancelled = false;
     getProducts({
       pageIndex: 0,
-      pageSize: 500,
+      pageSize: 100,
       sorting: [],
-      searchQuery: '',
+      searchQuery: productSearch,
       status: 'active',
     }).then((res) => {
-      setProducts(res.data ?? []);
+      if (!cancelled) setProducts(res.data ?? []);
     });
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [productSearch]);
 
   const lastInitializedIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -284,6 +293,7 @@ export default function PackingListForm({
                             products={products}
                             productFallback={packingList?.shipment_lines?.[index]?.product}
                             placeholder="Select product"
+                            onSearch={setProductSearch}
                           />
                         </FormControl>
                         <FormMessage />

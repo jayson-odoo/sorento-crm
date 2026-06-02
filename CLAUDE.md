@@ -147,6 +147,45 @@ Frontend (`sorento_crm_frontend/.env` or `.env.local`): `DATABASE_URL` (Prisma �
 
 MCP (`sorento_crm_mcp/`): `CRM_BASE_URL`, `EXTERNAL_API_KEY`, optional `CRM_MCP_HOST/PORT/TIMEOUT/MAX_RESPONSE_BYTES/LOG_LEVEL`.
 
+## Development methodology — three-phase loop
+
+All non-trivial feature work follows three phases in order. Skipping or reordering is a process violation; if a phase can't be done (e.g. no design to prototype), call it out explicitly in the PR description.
+
+### Phase 1 — Frontend prototype
+
+Build the UI against **mock data / stubbed hooks** first, before any backend endpoint exists. Goal: nail UX, layout, states (loading / empty / error / partial), and the data contract the FE needs.
+
+- Create components with hard-coded mock fixtures (`__mocks__/foo.ts` or inline `useState` seeds).
+- Stub mutation/query hooks to return synthetic responses including `success`, `failed`, `processing`, `partial` cases.
+- Verify in browser via Playwright MCP — click sidebar → reach the new screen → exercise every state. Screenshot the golden path + edge cases.
+- Output: working FE branch where the new screens render correctly with mock data; a documented **expected API contract** (request shape, response shape, status enums) at the top of the relevant service file or in the plan doc.
+- Do NOT touch backend code in this phase. Do NOT write tests yet — the UI shape may still shift after stakeholder review of the prototype.
+
+### Phase 2 — Backend wiring + tests
+
+Once the FE prototype is signed off, build the backend to match the contract documented in Phase 1, then wire the FE off mocks onto the real API.
+
+- BE: models, migrations, schemas, services, routes. Match the Phase 1 contract exactly; if a deviation is unavoidable, update the contract doc and adjust FE in the same PR.
+- FE: replace mocks with real hooks / services / `api-client` calls. Delete `__mocks__` fixtures unless they're reused by tests.
+- **Tests must land in this phase, not deferred:**
+  - **Vitest** (`sorento_crm_frontend/`): component tests for every new component covering loading / empty / error / data states. Hook tests for new query/mutation hooks. Use existing `vitest` + `@testing-library/react` patterns. Single test: `npx vitest run path/to/file.test.ts`.
+  - **Playwright** (`sorento_crm_frontend/e2e/`): one spec per user-facing flow that exercises the FE→BE→DB round-trip (click sidebar → action → assert outcome → check `browser_network_requests` for the right `/api/v1/*` call). Add real fixtures to `e2e/fixtures/` for AI / file flows.
+  - **pytest** (`sorento_crm_backend/`): endpoint tests for every new route covering happy path + auth denial + validation error. Service-level tests for non-trivial business logic.
+- Re-verify with Playwright MCP against the real stack: `localhost:3000` (FE) + `localhost:8000` (BE) + worker if relevant. Hit the same flows the prototype demonstrated; states should look identical with live data.
+- Output: backend merged, FE off-mocks, all three test suites green in CI.
+
+### Phase 3 — Code review
+
+Run `/code-review` (or `/code-review ultra` for big diffs) on the merged Phase 1 + Phase 2 branch before opening PR for human review. Address findings with `/code-review --fix` or `/simplify` where appropriate. Then open the PR.
+
+- Reviewer checklist: `docs/PR-CHECKLIST.md` plus — "did Phase 1 prototype get a screenshot in the PR description? did Phase 2 add tests (vitest + playwright + pytest)? does the contract doc match what shipped?"
+
+### Why this order
+
+- **Prototype first** stops us building a backend for a UI the user ends up rejecting. UX disagreements surface against a clickable mock, not a deployed feature.
+- **Tests in Phase 2, not Phase 3** because once the contract is locked the wiring is the right time to pin it — adding tests after review usually means rushed tests.
+- **Code review last** because reviewing a mocked FE in isolation tells you nothing about whether the data flow works end-to-end.
+
 ## Browser verification (Playwright)
 
 Frontend changes are not done until verified in a real browser. Type-check + Vitest = code correctness, not feature correctness. UI/flow changes MUST be exercised end-to-end before reporting complete.
@@ -183,7 +222,11 @@ If unable to reach a browser (server down, sandboxed, etc.), state that explicit
 
 ## Cache reset (frontend)
 
-If FE changes don't appear: stop dev server, `rm -rf sorento_crm_frontend/.next` (and optionally `node_modules/.cache`), restart `npm run build && npm start`, hard-refresh browser.
+This project runs FE as a **production build** via `npm run build && npm start` — there is **no HMR**. Any FE code change requires a full rebuild before it shows up in the browser. Do not assume hot-reload.
+
+- If FE changes don't appear: stop the server, `rm -rf sorento_crm_frontend/.next` (and optionally `node_modules/.cache`), `npm run build && npm start`, hard-refresh browser.
+- `npm run dev` exists but is not how this stack is normally run; using it can hide build-time errors (e.g. server component / RSC mistakes) that only surface during `next build`.
+- Playwright MCP verification flow: if the running server is `npm start`, file edits will NOT be visible. Either ask the user to rebuild, or run a separate `npm run dev -- -p <free-port>` and point Playwright at the new port. Don't kill the user's `npm start` process without confirmation — it's their primary dev surface.
 
 ## PR checklist
 

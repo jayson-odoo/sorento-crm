@@ -8,6 +8,7 @@ from app.services.product_service import ProductCategoryService
 from app.schemas.product import ProductCategoryCreate, ProductCategoryUpdate, ProductCategoryResponse
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
+from app.services.uuid_list_param import parse_uuid_list
 
 router = APIRouter()
 
@@ -36,13 +37,27 @@ async def get_categories(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     query: Optional[str] = Query(None),
+    category_ids: Optional[List[str]] = Query(
+        None,
+        description="Filter by canonical category UUIDs (repeated / csv / JSON array).",
+    ),
+    product_ids: Optional[List[str]] = Query(
+        None,
+        description="Filter to the categories of these product UUIDs (repeated / csv / JSON array).",
+    ),
     current_user: dict = Depends(require_permission_with_api_key("master_data.product_categories.view")),
     db: Session = Depends(get_db)
 ):
     """Get product categories with pagination and search."""
     try:
         service = ProductCategoryService(db)
-        result = service.list_categories(page=page, limit=limit, query=query)
+        result = service.list_categories(
+            page=page,
+            limit=limit,
+            query=query,
+            category_ids=parse_uuid_list(category_ids, param_name="category_ids"),
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+        )
         return result
     except Exception as e:
         raise handle_internal_error(str(e))

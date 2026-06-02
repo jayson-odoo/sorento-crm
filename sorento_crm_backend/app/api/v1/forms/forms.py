@@ -69,17 +69,14 @@ async def get_forms(
             or (query and query.strip())
             or norm
         )
-        # Gate the "no filter = empty page" guard to API-key / MCP callers only.
-        # Interactive JWT users (FE DataGrid) land on /forms with no filters
-        # and expect the full catalog; only the chatbot/MCP path needs the guard
-        # against accidental whole-catalog enumeration.
+        # API-key / MCP callers without a narrowing filter still get a real
+        # page — caller-supplied `limit` is respected verbatim (already capped
+        # to 100 by the Query() validator above). Default sort = updated_at
+        # desc so newest forms surface first when the caller didn't pick one.
         is_api_key_caller = (current_user or {}).get("auth_method") == "api_key"
         if is_api_key_caller and not has_narrowing_filter:
-            return {
-                "data": [],
-                "pagination": {"total": 0, "page": page, "limit": limit},
-                "empty": True,
-            }
+            sort_field = sort_field or "updated_at"
+            sort_dir = sort_dir or "desc"
 
         entity_form_codes: Optional[list[str]] = None
         entity_echo = None

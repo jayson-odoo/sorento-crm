@@ -93,6 +93,10 @@ def get_stock_balance(
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     warehouse_id: Optional[str] = Query(None),
+    warehouse_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter by canonical warehouse UUIDs (repeated / csv / JSON array).",
+    ),
     product_id: Optional[str] = Query(
         None,
         description="Single product UUID or product_code (kept for direct callers).",
@@ -113,6 +117,7 @@ def get_stock_balance(
             sort=sort,
             dir=dir,
             warehouse_id=warehouse_id,
+            warehouse_ids=parse_uuid_list(warehouse_ids, param_name="warehouse_ids"),
             product_id=product_id,
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             quantity_operator=quantity_operator,

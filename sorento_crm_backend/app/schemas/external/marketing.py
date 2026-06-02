@@ -78,6 +78,42 @@ class PromotionRequest(BaseModel):
     attachment_id: Optional[str] = None
     notify_user_id: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_n8n_shape(cls, data: Any) -> Any:
+        """Canonicalise three incoming shapes into the internal `promotions` object:
+
+        1. Flat root (preferred): `start_date`, `end_date`, `is_active`,
+           `description` live at the root. We hoist them into `promotions`.
+        2. n8n table mirror: `promotions` arrives as a single-element list —
+           unwrap to the object.
+        3. Strict legacy: `promotions` already an object — passthrough.
+
+        Root `description` always wins over an empty header `description`
+        (the integration sends the source filename at the root).
+        Unknown root keys like `promo_type` are silently dropped by Pydantic.
+        """
+        if not isinstance(data, dict):
+            return data
+        promos = data.get("promotions")
+        if isinstance(promos, list) and len(promos) == 1 and isinstance(promos[0], dict):
+            promos = promos[0]
+            data["promotions"] = promos
+        if not isinstance(promos, dict):
+            promos = {}
+            data["promotions"] = promos
+        for header_key in ("start_date", "end_date", "is_active"):
+            if header_key in data and promos.get(header_key) is None:
+                promos[header_key] = data[header_key]
+        root_desc = data.get("description")
+        if (
+            isinstance(root_desc, str)
+            and root_desc.strip()
+            and not (promos.get("description") or "").strip()
+        ):
+            promos["description"] = root_desc
+        return data
+
     @model_validator(mode="after")
     def require_products_or_groups(self):
         has_flat = bool(self.promotion_products and len(self.promotion_products) > 0)

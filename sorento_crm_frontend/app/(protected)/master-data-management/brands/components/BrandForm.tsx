@@ -18,8 +18,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateBrand, useUpdateBrand, useBrand } from '../hooks/useBrands';
+import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { BrandSchema, type BrandSchemaType } from '../forms/brand-schema';
 import type { BrandFormData } from '../types/brand.types';
 
@@ -32,6 +34,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
   const router = useRouter();
   const isEditMode = !!brandId;
   const { data: brand, isLoading: isLoadingBrand } = useBrand(brandId || null);
+  const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const createMutation = useCreateBrand();
   const updateMutation = useUpdateBrand();
 
@@ -45,6 +48,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
       description: null,
       logo_url: null,
       is_active: true,
+      access_levels: [],
     },
     mode: 'onSubmit',
   });
@@ -60,6 +64,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
         description: brand.description || null,
         logo_url: brand.logo_url || null,
         is_active: brand.is_active,
+        access_levels: brand.access_levels ?? [],
       });
     }
   }, [brand, isEditMode, form]);
@@ -75,6 +80,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
         description: data.description ?? undefined,
         logo_url: data.logo_url ?? undefined,
         is_active: data.is_active,
+        access_levels: data.access_levels ?? [],
       };
       
       if (isEditMode && brandId) {
@@ -242,6 +248,45 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
                       onChange={(e) => field.onChange(e.target.value || null)}
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="access_levels"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Access Levels</FormLabel>
+                  <FormDescription>
+                    Choose who can see products in this brand. Used by the AI
+                    promotion fallback to scope product search to brands the
+                    active contact is allowed to view. Leave empty for no
+                    visibility restriction.
+                  </FormDescription>
+                  <div className="mt-2 flex flex-wrap gap-4">
+                    {accessTypeOptions.map((opt) => {
+                      const checked = field.value?.includes(opt.code);
+                      return (
+                        <label key={opt.code} className="flex items-center gap-2 text-sm">
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(value) => {
+                              const next = new Set(field.value || []);
+                              if (value) {
+                                next.add(opt.code);
+                              } else {
+                                next.delete(opt.code);
+                              }
+                              field.onChange(Array.from(next));
+                            }}
+                          />
+                          {opt.name || opt.code}
+                        </label>
+                      );
+                    })}
+                  </div>
                   <FormMessage />
                 </FormItem>
               )}

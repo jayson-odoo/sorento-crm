@@ -271,14 +271,29 @@ class InboundShipmentService:
                 )
         
         if query:
+            term = f"%{query}%"
+            # Product-line match: surface shipments whose lines contain a
+            # product whose code / name / description matches the term. Uses
+            # EXISTS-on-line + joined Product so the predicate stays
+            # sargable against pg_trgm indexes on Product columns.
+            product_line_clause = InboundShipment.shipment_lines.any(
+                InboundShipmentLine.product.has(
+                    or_(
+                        Product.product_code.ilike(term),
+                        Product.product_name.ilike(term),
+                        Product.description.ilike(term),
+                    )
+                )
+            )
             filters.append(
                 or_(
-                    InboundShipment.shipment_number.ilike(f"%{query}%"),
-                    InboundShipment.bill_of_lading_number.ilike(f"%{query}%"),
-                    InboundShipment.shipping_container_number.ilike(f"%{query}%"),
-                    InboundShipment.invoice_number.ilike(f"%{query}%"),
-                    InboundShipment.supplier.has(Supplier.supplier_name.ilike(f"%{query}%")),
-                    InboundShipment.supplier.has(Supplier.supplier_code.ilike(f"%{query}%"))
+                    InboundShipment.shipment_number.ilike(term),
+                    InboundShipment.bill_of_lading_number.ilike(term),
+                    InboundShipment.shipping_container_number.ilike(term),
+                    InboundShipment.invoice_number.ilike(term),
+                    InboundShipment.supplier.has(Supplier.supplier_name.ilike(term)),
+                    InboundShipment.supplier.has(Supplier.supplier_code.ilike(term)),
+                    product_line_clause,
                 )
             )
         
@@ -510,46 +525,55 @@ class InboundShipmentService:
         When the shipment is already completed, reject with an explicit message so
         the caller knows the update path is unavailable.
         """
+        # Match an existing shipment by business key (shipment_number) first, then
+        # fall back to the linked attachment_id so a re-upload/replace of the same
+        # packing-list document updates in place instead of creating a duplicate.
+        existing = None
         if shipment_data.shipment_number:
             existing = self.db.query(InboundShipment).filter(
                 InboundShipment.shipment_number == shipment_data.shipment_number
             ).first()
-            if existing:
-                status_l = (getattr(existing, "shipment_status", None) or "").strip().lower()
-                if status_l in ("fully_received", "completed"):
-                    raise handle_conflict(
-                        f"Shipment '{shipment_data.shipment_number}' already completed, cannot update."
-                    )
-                # Update-in-place path: rewrite header + replace lines.
-                shipment_dict = shipment_data.model_dump(exclude={"shipment_lines"})
-                shipment_dict["shipment_status"] = _normalize_inbound_shipment_status(
-                    shipment_dict.get("shipment_status")
+        if existing is None and shipment_data.attachment_id:
+            existing = self.db.query(InboundShipment).filter(
+                InboundShipment.attachment_id == shipment_data.attachment_id
+            ).first()
+        if existing:
+            status_l = (getattr(existing, "shipment_status", None) or "").strip().lower()
+            if status_l in ("fully_received", "completed"):
+                ref = shipment_data.shipment_number or getattr(existing, "shipment_number", None) or existing.id
+                raise handle_conflict(
+                    f"Shipment '{ref}' already completed, cannot update."
                 )
-                for k, v in shipment_dict.items():
-                    if v is not None:
-                        setattr(existing, k, v)
-                # Replace lines
-                for line in existing.shipment_lines[:]:
-                    self.db.delete(line)
-                self.db.flush()
-                if shipment_data.shipment_lines:
-                    merged: dict[str, dict] = {}
-                    for line_data in shipment_data.shipment_lines:
-                        d = line_data.model_dump()
-                        pid = d["product_id"]
-                        if pid in merged:
-                            merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
-                            merged[pid]["cartons_count"] += d.get("cartons_count", 1)
-                        else:
-                            merged[pid] = dict(d)
-                    for d in merged.values():
-                        line = InboundShipmentLine(**d, shipment_id=existing.id)
-                        self.db.add(line)
-                self.db.commit()
-                self.db.refresh(existing)
-                self.refresh_shipment_line_statuses(existing.id)
-                setattr(existing, "_already_existed", True)
-                return existing
+            # Update-in-place path: rewrite header + replace lines.
+            shipment_dict = shipment_data.model_dump(exclude={"shipment_lines"})
+            shipment_dict["shipment_status"] = _normalize_inbound_shipment_status(
+                shipment_dict.get("shipment_status")
+            )
+            for k, v in shipment_dict.items():
+                if v is not None:
+                    setattr(existing, k, v)
+            # Replace lines
+            for line in existing.shipment_lines[:]:
+                self.db.delete(line)
+            self.db.flush()
+            if shipment_data.shipment_lines:
+                merged: dict[str, dict] = {}
+                for line_data in shipment_data.shipment_lines:
+                    d = line_data.model_dump()
+                    pid = d["product_id"]
+                    if pid in merged:
+                        merged[pid]["quantity_shipped"] += d.get("quantity_shipped", 0)
+                        merged[pid]["cartons_count"] += d.get("cartons_count", 1)
+                    else:
+                        merged[pid] = dict(d)
+                for d in merged.values():
+                    line = InboundShipmentLine(**d, shipment_id=existing.id)
+                    self.db.add(line)
+            self.db.commit()
+            self.db.refresh(existing)
+            self.refresh_shipment_line_statuses(existing.id)
+            setattr(existing, "_already_existed", True)
+            return existing
 
         # Create shipment and lines in transaction
         shipment_dict = shipment_data.model_dump(exclude={"shipment_lines"})

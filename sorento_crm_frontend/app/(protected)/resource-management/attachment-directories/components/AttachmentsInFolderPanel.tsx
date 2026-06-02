@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -74,7 +75,6 @@ import type { Attachment } from '../../attachments/types/attachment.types';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import AttachmentUploadDialog from '../../attachments/components/AttachmentUploadDialog';
 import AttachmentBulkImportDialog from '../../attachments/components/AttachmentBulkImportDialog';
-import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
 import AttachmentDeleteDialog from '../../attachments/components/attachment-delete-dialog';
 import AttachmentBulkDeleteDialog from '../../attachments/components/AttachmentBulkDeleteDialog';
 import AttachmentDetailModal from '../../attachments/components/AttachmentDetailModal';
@@ -103,6 +103,7 @@ export default function AttachmentsInFolderPanel({
   const [accessLevelFilters, setAccessLevelFilters] = useState<string[]>([]);
   const [accessLevelsMatch, setAccessLevelsMatch] = useState<'any' | 'all' | 'exact'>('any');
   const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
+  const [linkStatus, setLinkStatus] = useState<'__all__' | 'linked' | 'unlinked'>('__all__');
   const [uploadedBy, setUploadedBy] = useState<string>('__all__');
   const [uploadedRange, setUploadedRange] = useState<DateRange | undefined>();
   const uploadedAtFrom = uploadedRange?.from ? format(uploadedRange.from, 'yyyy-MM-dd') : '';
@@ -121,6 +122,7 @@ export default function AttachmentsInFolderPanel({
   const attachmentTypes = attachmentTypesData?.data ?? [];
   const extraFilterCount =
     (attachmentTypeId !== '__all__' ? 1 : 0) +
+    (linkStatus !== '__all__' ? 1 : 0) +
     (uploadedBy !== '__all__' ? 1 : 0) +
     (uploadedAtFrom || uploadedAtTo ? 1 : 0);
   const totalFilterCount = accessLevelFilters.length + extraFilterCount;
@@ -143,6 +145,25 @@ export default function AttachmentsInFolderPanel({
   const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [viewAttachmentId, setViewAttachmentId] = useState<string | null>(null);
+
+  // Deep-link from Upload Activity drawer: `?attachment_id=<uuid>` opens the
+  // detail modal for that row. We strip the param after handling so back-nav
+  // doesn't keep re-opening the modal.
+  const _router = useRouter();
+  const _pathname = usePathname();
+  const _searchParams = useSearchParams();
+  useEffect(() => {
+    const deepLinkId = _searchParams?.get('attachment_id');
+    if (deepLinkId && deepLinkId !== viewAttachmentId) {
+      setViewAttachmentId(deepLinkId);
+      setViewModalOpen(true);
+      const next = new URLSearchParams(_searchParams?.toString() ?? '');
+      next.delete('attachment_id');
+      const qs = next.toString();
+      _router.replace(qs ? `${_pathname}?${qs}` : (_pathname ?? '/'));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_searchParams]);
   const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [pendingResubmitIds, setPendingResubmitIds] = useState<Set<string>>(new Set());
@@ -167,6 +188,7 @@ export default function AttachmentsInFolderPanel({
     access_levels: accessLevelFilters.length > 0 ? accessLevelFilters : undefined,
     access_levels_match: accessLevelFilters.length > 0 ? accessLevelsMatch : undefined,
     attachment_type_id: attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
+    link_status: linkStatus !== '__all__' ? linkStatus : undefined,
     uploaded_by: uploadedBy !== '__all__' ? uploadedBy : undefined,
     uploaded_at_from: uploadedAtFrom || undefined,
     uploaded_at_to: uploadedAtTo || undefined,
@@ -594,6 +616,7 @@ export default function AttachmentsInFolderPanel({
                             setAccessLevelFilters([]);
                             setAccessLevelsMatch('any');
                             setAttachmentTypeId('__all__');
+                            setLinkStatus('__all__');
                             setUploadedBy('__all__');
                             setUploadedRange(undefined);
                             setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -622,6 +645,25 @@ export default function AttachmentsInFolderPanel({
                               {t.type_name}
                             </SelectItem>
                           ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Link status</p>
+                      <Select
+                        value={linkStatus}
+                        onValueChange={(v) => {
+                          setLinkStatus(v as '__all__' | 'linked' | 'unlinked');
+                          setPagination((p) => ({ ...p, pageIndex: 0 }));
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="All files" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">All files</SelectItem>
+                          <SelectItem value="linked">Linked</SelectItem>
+                          <SelectItem value="unlinked">Not linked</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -890,13 +932,9 @@ export default function AttachmentsInFolderPanel({
               )}
             </div>
           </CardHeader>
-          <div className="mx-5 mb-2 flex flex-wrap gap-4">
-            <LatestImportStatusPanel
-              jobType="attachment_bulk_import"
-              title="Latest bulk import"
-              invalidateQueryKeys={[['attachments'], ['attachment-directories-tree']]}
-            />
-          </div>
+          {/* LatestImportStatusPanel removed — bulk-ZIP progress + n8n
+              integration status now live in the Upload Activity drawer
+              (top-nav icon). See docs/plans/PLAN-upload-activity-drawer.md. */}
           <CardTable>
             <ScrollArea>
               <DraggableAttachmentsTable

@@ -15,7 +15,7 @@ from app.services.uuid_list_param import parse_uuid_list
 from app.config import settings as app_settings
 
 
-_EXTERNAL_ORDERS_LIST_LIMIT_CAP = 10
+_EXTERNAL_ORDERS_LIST_LIMIT_CAP = 20
 
 
 def _request_has_valid_external_api_key(request: Optional[Request]) -> bool:
@@ -392,6 +392,10 @@ async def list_distinct_debtors(
         None,
         description="Free-text partial match on debtor_name or debtor_code (case-insensitive).",
     ),
+    customer_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter source orders by canonical customer UUIDs (Order.customer_id) before aggregation. Repeated / csv / JSON array.",
+    ),
     sort: str = Query("debtor_name", description="One of: debtor_name, debtor_code, order_count."),
     dir: str = Query("asc", description="asc | desc."),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -425,6 +429,10 @@ async def list_distinct_debtors(
         .filter(func.trim(_Order.debtor_name) != "")
         .group_by(name_key)
     )
+
+    parsed_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
+    if parsed_customer_ids is not None:
+        base = base.filter(_Order.customer_id.in_(parsed_customer_ids))
 
     q = (query or "").strip()
     if q:
@@ -464,6 +472,7 @@ async def list_distinct_debtors(
 
 @router.get("/by-product", response_model=ListResponse[OrderSimpleRef])
 async def get_orders_by_product(
+    request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None, description="Matches product code, name, description, order number, or debtor name"),
@@ -537,8 +546,15 @@ async def get_orders_by_product(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get distinct orders matched by product search."""
+    """Get distinct orders matched by product search.
+
+    External API-key callers (e.g. AI agent / MCP) are capped at limit=20 to keep
+    tool responses small enough to reason over, matching the cap on the main
+    orders list endpoint.
+    """
     try:
+        if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_LIST_LIMIT_CAP:
+            limit = _EXTERNAL_ORDERS_LIST_LIMIT_CAP
         norm_entities = _normalize_entities(entities)
         parsed_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
         # Endpoint is product-centric: require a product narrower to prevent

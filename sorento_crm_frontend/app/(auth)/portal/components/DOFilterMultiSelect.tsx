@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent } from 'react';
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -212,6 +212,32 @@ export function DOFilterMultiSelect({
     onChange([...value, v]);
     setFreeText('');
   };
+  // Paste support: a pasted blob of DO numbers (comma / newline / tab /
+  // semicolon / whitespace separated) is split and each unique value becomes
+  // its own pill, deduped against existing values.
+  const commitManyFromText = (text: string) => {
+    const parts = text
+      .split(/[\s,;]+/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length === 0) return;
+    const next = [...value];
+    for (const p of parts) {
+      if (!next.includes(p)) next.push(p);
+    }
+    onChange(next);
+    setFreeText('');
+  };
+  const handlePaste = (e: ReactClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text');
+    if (!text) return;
+    // Only intercept multi-value pastes; single token falls through to the
+    // normal input so the user can keep editing before committing.
+    if (/[\s,;]/.test(text.trim())) {
+      e.preventDefault();
+      commitManyFromText(text);
+    }
+  };
 
   return (
     <div className="space-y-2" id={id}>
@@ -250,8 +276,9 @@ export function DOFilterMultiSelect({
             commitFreeText();
           }
         }}
+        onPaste={handlePaste}
         onBlur={commitFreeText}
-        placeholder="Type DO number and press Enter"
+        placeholder="Type or paste DO number(s), press Enter"
         disabled={disabled}
       />
       <Button
